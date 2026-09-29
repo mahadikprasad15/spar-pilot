@@ -17,3 +17,17 @@ The code is a measurement instrument: correctness of scoring matters more than s
 
 ## Commands
 - Tests: `pytest -q`
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as Markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage roles. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context layout with root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
