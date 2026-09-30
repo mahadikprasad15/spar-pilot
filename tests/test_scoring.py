@@ -1,3 +1,5 @@
+import pytest
+
 from pilot_eval.scoring import score_gsm8k
 
 
@@ -13,3 +15,15 @@ def test_gsm8k_answer_phrase_is_flexible_only():
 
     assert result["strict"]["correct"] is False
     assert result["flexible"]["correct"] is True
+
+
+@pytest.mark.parametrize(
+    ("response", "gold"),
+    [
+        ("#### 1,200", "#### 1200"),
+        ("#### 1/2", "#### 0.5"),
+        ("#### -0.50", "#### -1/2"),
+    ],
+)
+def test_gsm8k_compares_exact_numeric_values(response, gold):
+    assert score_gsm8k(response, gold)["strict"]["correct"] is True
