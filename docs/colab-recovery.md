@@ -25,7 +25,10 @@ RECOVERY_COMMIT = "893c295770fe3d73d40290efc965c800cf2d275b"
 assert (ARTIFACT_ROOT / "plans" / SOURCE_PLAN / "manifest.json").exists(), "Mount Drive and check SOURCE_PLAN."
 assert "run_cli" in globals() and "run_folder" in globals(), "Restore the helper definitions from section 6 first."
 dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO_DIR, text=True).strip()
-assert not dirty, "Preserve local repository edits before switching code."
+artifact_link = REPO_DIR / "artifacts"
+if artifact_link.is_symlink() and artifact_link.resolve() == ARTIFACT_ROOT.resolve():
+    dirty = "\n".join(line for line in dirty.splitlines() if line != "?? artifacts")
+assert not dirty, f"Preserve these local repository edits before switching code:\n{dirty}"
 subprocess.run(["git", "fetch", "origin", RECOVERY_COMMIT], cwd=REPO_DIR, check=True)
 subprocess.run(["git", "checkout", "--detach", RECOVERY_COMMIT], cwd=REPO_DIR, check=True)
 subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=REPO_DIR, check=True)

@@ -10,4 +10,4 @@ wandb/
 *.egg-info/
 build/
 dist/
-artifacts/
+/artifacts
