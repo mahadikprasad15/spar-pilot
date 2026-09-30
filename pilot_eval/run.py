@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pilot_eval.scoring import score_gsm8k, score_mmlu_text
+from pilot_eval.scoring import score_gsm8k, score_mmlu_logits, score_mmlu_text
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -57,23 +57,38 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     try:
         for start in range(0, len(pending), batch_size):
             batch = pending[start : start + batch_size]
-            outputs = backend.generate_batch([item["prompt"] for item in batch], config["decoding"])
+            prompts = [item["prompt"] for item in batch]
+            if config["scorer"] == "mmlu_logits":
+                outputs = backend.choice_logits_batch(
+                    prompts, [item["choice_token_ids"] for item in batch]
+                )
+            else:
+                outputs = backend.generate_batch(prompts, config["decoding"])
             if len(outputs) != len(batch):
                 raise ValueError("model returned the wrong number of outputs")
-            batch_records = [
-                {
+            batch_records = []
+            for item, output in zip(batch, outputs):
+                record = {
                     "id": item["id"], "prompt": item["prompt"], "gold": item["gold"],
                     "subject": item.get("subject"),
-                    "generated_text": output["text"], "token_count": output["token_count"],
-                    "stop_reason": output["stop_reason"],
-                    "score": (
-                        score_gsm8k(output["text"], item["gold"], output["stop_reason"] == "cap")
-                        if config["scorer"] == "gsm8k"
-                        else score_mmlu_text(output["text"], item["gold"], output["stop_reason"] == "cap")
-                    ),
                 }
-                for item, output in zip(batch, outputs)
-            ]
+                if config["scorer"] == "mmlu_logits":
+                    record.update({
+                        "generated_text": None, "candidate_scores": output,
+                        "choice_token_ids": item["choice_token_ids"],
+                        "score": score_mmlu_logits(output, item["gold"]),
+                    })
+                else:
+                    record.update({
+                        "generated_text": output["text"], "token_count": output["token_count"],
+                        "stop_reason": output["stop_reason"],
+                        "score": (
+                            score_gsm8k(output["text"], item["gold"], output["stop_reason"] == "cap")
+                            if config["scorer"] == "gsm8k"
+                            else score_mmlu_text(output["text"], item["gold"], output["stop_reason"] == "cap")
+                        ),
+                    })
+                batch_records.append(record)
             with responses_path.open("a") as stream:
                 for record in batch_records:
                     stream.write(json.dumps(record, sort_keys=True) + "\n")

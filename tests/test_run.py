@@ -132,3 +132,29 @@ def test_mmlu_text_run_saves_choice_and_accuracy(tmp_path):
 
     assert record["score"]["correct"] is True
     assert summary["accuracy"] == 1.0
+
+
+def test_mmlu_logit_run_saves_four_way_decision(tmp_path):
+    class FakeBackend:
+        def choice_logits_batch(self, prompts, token_ids):
+            assert token_ids == [{"A": 11, "B": 12, "C": 13, "D": 14}]
+            return [{"A": 0.1, "B": 2.0, "C": 0.0, "D": -1.0}]
+
+    config = {
+        "run_id": "run-1", "experiment": "pilot-1", "model": "qwen",
+        "dataset": "mmlu", "cohort": "balanced-1140", "variant": "baseline-5shot",
+        "scorer": "mmlu_logits", "decoding": {"do_sample": False}, "batch_size": 1,
+    }
+    items = [{
+        "id": "mmlu:biology:7", "subject": "biology", "prompt": "Answer:",
+        "gold": "B", "choice_token_ids": {"A": 11, "B": 12, "C": 13, "D": 14},
+    }]
+
+    summary = run_evaluation(config, items, FakeBackend(), tmp_path / "artifacts")
+    path = tmp_path / "artifacts/runs/pilot-1/qwen/mmlu/balanced-1140/baseline-5shot/run-1/results/responses.jsonl"
+    record = json.loads(path.read_text())
+
+    assert record["generated_text"] is None
+    assert record["candidate_scores"]["B"] == 2.0
+    assert record["score"]["correct"] is True
+    assert summary["accuracy"] == 1.0
