@@ -51,3 +51,7 @@ def test_mmlu_generated_letter_is_scored():
 
 def test_mmlu_answer_phrase_is_scored():
     assert score_mmlu_text("The answer is C.", "C")["correct"] is True
+
+
+def test_mmlu_choice_can_precede_an_explanation():
+    assert score_mmlu_text("B. Because the second option follows the rule.", "B")["correct"] is True

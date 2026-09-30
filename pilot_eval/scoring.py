@@ -10,7 +10,7 @@ _NUMBER = rf"(?:{_DECIMAL}|[+-]?\d+/\d+)"
 _FINAL = re.compile(rf"^####\s+({_NUMBER})$")
 _ANSWER_PHRASE = re.compile(rf"(?:final answer:|the answer is)\s*({_NUMBER})[.!]?\s*$", re.I)
 _LAST_NUMBER_LINE = re.compile(rf"^({_NUMBER})[.!]?$")
-_MMLU_ANSWER = re.compile(r"^(?:Answer:\s*|The answer is\s*)?([ABCD])[.)]?\s*$", re.I)
+_MMLU_ANSWER = re.compile(r"^(?:(?i:Answer:)\s*|(?i:The answer is)\s*)?([ABCD])(?=\b|[.)])")
 
 
 def _numeric_value(value: str) -> Fraction:
@@ -46,9 +46,11 @@ def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
 
 def score_mmlu_text(response: str, gold_choice: str, capped: bool = False) -> dict:
     """Score a generated MMLU letter response."""
-    match = _MMLU_ANSWER.fullmatch(response.strip())
-    choice = match.group(1).upper() if match else None
-    valid = choice is not None and not capped
+    response = response.strip()
+    match = _MMLU_ANSWER.match(response)
+    choice = match.group(1) if match else None
+    other_choices = re.findall(r"\b[ABCD]\b", response[match.end():]) if match else []
+    valid = choice is not None and not other_choices and not capped
     return {
         "choice": choice if valid else None,
         "status": "valid" if valid else "invalid",
