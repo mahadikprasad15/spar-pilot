@@ -5,6 +5,7 @@ import math
 import os
 import random
 import statistics
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,10 +68,15 @@ def _subject_sampling_interval_95(records: list[dict], seed: int) -> list[float]
 def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) -> dict:
     """Evaluate and persist item-level results under the canonical artifact root."""
     item_ids = [item["id"] for item in items]
+    if not items or config["batch_size"] < 1:
+        raise ValueError("nonempty cohort and positive batch size required")
     if len(item_ids) != len(set(item_ids)):
         raise ValueError("duplicate expected item IDs")
+    components = [config[key] for key in ("experiment", "dataset", "cohort", "variant", "run_id")]
+    if any(not value or value in (".", "..") or "/" in value or "\\" in value for value in components):
+        raise ValueError("unsafe artifact path component")
     run_dir = Path(output_root).joinpath(
-        "runs", config["experiment"], config["model"], config["dataset"],
+        "runs", config["experiment"], config["model"].replace("/", "--"), config["dataset"],
         config["cohort"], config["variant"], config["run_id"],
     )
     results_dir = run_dir / "results"
@@ -80,10 +86,12 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     if config_path.exists():
         if json.loads(config_path.read_text()) != config:
             raise ValueError("run config mismatch")
-        if summary_path.exists():
-            return json.loads(summary_path.read_text())
     else:
-        config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+        _write_json(config_path, config)
+    inputs_path = run_dir / "inputs/items.json"
+    if inputs_path.exists() and json.loads(inputs_path.read_text()) != items:
+        raise ValueError("run input mismatch")
+    _write_json(inputs_path, items)
     manifest_path = run_dir / "meta/run_manifest.json"
     if not manifest_path.exists():
         _write_json(manifest_path, {
@@ -95,7 +103,32 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
         })
     responses_path = results_dir / "responses.jsonl"
     records = [json.loads(line) for line in responses_path.read_text().splitlines()] if responses_path.exists() else []
-    completed = {record["id"] for record in records}
+    expected = {item["id"]: item for item in items}
+    completed = set()
+    for record in records:
+        item = expected.get(record.get("id"))
+        if item is None or record["id"] in completed:
+            raise ValueError("duplicate or unexpected saved item ID")
+        if any(record.get(key) != value for key, value in item.items()):
+            raise ValueError("saved response provenance mismatch")
+        if config["scorer"] == "mmlu_logits":
+            score = score_mmlu_logits(record["candidate_scores"], item["gold"])
+        else:
+            scorer = score_gsm8k if config["scorer"] == "gsm8k" else score_mmlu_text
+            score = scorer(record["generated_text"], item["gold"], record["stop_reason"] == "cap")
+        if score != record["score"]:
+            raise ValueError("saved score mismatch")
+        completed.add(record["id"])
+    errors_path = run_dir / "logs/errors.jsonl"
+    if errors_path.exists():
+        errors = [json.loads(line) for line in errors_path.read_text().splitlines()]
+        if any(error.get("status") == "invalid" for error in errors):
+            raise ValueError("unresolved invalid item error; inspect errors and use a new run ID")
+    if summary_path.exists():
+        summary = json.loads(summary_path.read_text())
+        if completed != set(item_ids) or summary.get("responses_sha256") != hashlib.sha256(responses_path.read_bytes()).hexdigest():
+            raise ValueError("completed run responses are incomplete or changed")
+        return summary
     pending = [item for item in items if item["id"] not in completed]
     batch_size = config["batch_size"]
     _write_state(run_dir, "running", len(records), len(items))
@@ -113,10 +146,7 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
                 raise ValueError("model returned the wrong number of outputs")
             batch_records = []
             for item, output in zip(batch, outputs):
-                record = {
-                    "id": item["id"], "prompt": item["prompt"], "gold": item["gold"],
-                    "subject": item.get("subject"),
-                }
+                record = {**item, "subject": item.get("subject")}
                 if config["scorer"] == "mmlu_logits":
                     record.update({
                         "generated_text": None, "candidate_scores": output,
@@ -141,9 +171,16 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
                 os.fsync(stream.fileno())
             records.extend(batch_records)
             _write_state(run_dir, "running", len(records), len(items))
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         _write_state(run_dir, "failed", len(records), len(items), str(exc))
+        with errors_path.open("a") as stream:
+            stream.write(json.dumps({"error": str(exc), "item": locals().get("item"),
+                                    "output": locals().get("output"),
+                                    "status": "invalid" if isinstance(exc, ValueError) else "recoverable"},
+                                   sort_keys=True) + "\n")
         raise
+    if {record["id"] for record in records} != set(item_ids) or len(records) != len(items):
+        raise ValueError("incomplete run")
     if config["scorer"] == "gsm8k":
         total = len(records)
         strict_correct = sum(record["score"]["strict"]["correct"] for record in records)
@@ -179,6 +216,19 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             "invalid_count": sum(record["score"]["status"] == "invalid" for record in records),
             "cap_count": sum(record.get("stop_reason") == "cap" for record in records),
         }
+    summary["cap_rate"] = summary["cap_count"] / summary["total"]
+    if config["scorer"] == "gsm8k":
+        summary["strict_invalid_rate"] = summary["strict_invalid_count"] / summary["total"]
+        summary["flexible_invalid_rate"] = summary["flexible_invalid_count"] / summary["total"]
+        summary["historical_reference"] = {"accuracy": .640, "mean_response_tokens": 288,
+            "strict_accuracy_gap": summary["strict_accuracy"] - .640,
+            "flexible_accuracy_gap": summary["flexible_accuracy"] - .640,
+            "mean_response_tokens_gap": summary["mean_response_tokens"] - 288}
+    else:
+        summary["invalid_rate"] = summary["invalid_count"] / summary["total"]
+        summary["historical_reference"] = {"accuracy": .570, "accuracy_gap": summary["accuracy"] - .570}
+    summary["comparison_note"] = "New sampled protocol; historical gaps are descriptive, not reproduction gates."
+    summary["responses_sha256"] = hashlib.sha256(responses_path.read_bytes()).hexdigest()
     _write_json(summary_path, summary)
     _write_state(run_dir, "completed", len(records), len(items))
     return summary

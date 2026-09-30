@@ -5,6 +5,53 @@ import pytest
 from pilot_eval.run import run_evaluation
 
 
+@pytest.mark.parametrize("damage", ["duplicate", "unexpected", "changed-prompt", "truncated", "missing"])
+def test_resume_rejects_damaged_completed_artifacts(tmp_path, damage):
+    class Backend:
+        def generate_batch(self, prompts, decoding):
+            return [{"text": "#### 1", "token_count": 2, "stop_reason": "eos"}]
+
+    config = dict(run_id="r", experiment="pilot-1", model="org/qwen", dataset="gsm8k",
+                  cohort="test", variant="baseline", scorer="gsm8k", batch_size=1,
+                  decoding={"do_sample": False, "max_new_tokens": 1024})
+    items = [{"id": "q1", "source_index": 7, "prompt": "q", "gold": "#### 1"}]
+    root = tmp_path / "artifacts"
+    run_evaluation(config, items, Backend(), root)
+    path = next(root.glob("runs/**/responses.jsonl"))
+    record = json.loads(path.read_text())
+    if damage == "duplicate":
+        path.write_text(path.read_text() * 2)
+    elif damage == "unexpected":
+        record["id"] = "alien"
+        path.write_text(json.dumps(record) + "\n")
+    elif damage == "changed-prompt":
+        items[0]["prompt"] = "different"
+    elif damage == "missing":
+        path.write_text("")
+    else:
+        path.write_text('{"id":')
+    with pytest.raises(ValueError):
+        run_evaluation(config, items, Backend(), root)
+
+
+def test_tie_persists_invalid_output_and_failed_status(tmp_path):
+    class Backend:
+        def choice_logits_batch(self, prompts, token_ids):
+            return [{"A": 2., "B": 2., "C": 0., "D": 0.}]
+    config = dict(run_id="r", experiment="pilot-1", model="qwen", dataset="mmlu",
+                  cohort="test", variant="baseline", scorer="mmlu_logits", batch_size=1,
+                  decoding={"do_sample": False})
+    items = [dict(id="q", source_index=7, subject="bio", prompt="p", gold="A",
+                  choice_token_ids=dict(zip("ABCD", range(4))))]
+    with pytest.raises(ValueError, match="tie"):
+        run_evaluation(config, items, Backend(), tmp_path)
+    errors = json.loads(next(tmp_path.glob("runs/**/errors.jsonl")).read_text())
+    assert errors["item"]["source_index"] == 7
+    assert errors["output"]["A"] == 2.
+    assert errors["status"] == "invalid"
+    assert not list(tmp_path.glob("runs/**/results.json"))
+
+
 def test_gsm8k_run_saves_response_and_summary(tmp_path):
     class FakeBackend:
         def generate_batch(self, prompts, decoding):
