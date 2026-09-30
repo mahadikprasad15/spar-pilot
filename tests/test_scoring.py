@@ -34,3 +34,10 @@ def test_gsm8k_flexible_accepts_only_number_on_final_line():
 
     assert result["strict"]["correct"] is False
     assert result["flexible"]["correct"] is True
+
+
+def test_gsm8k_multiple_final_markers_are_invalid():
+    result = score_gsm8k("#### 12\n#### 72", "#### 72")
+
+    assert result["strict"]["status"] == "invalid"
+    assert result["flexible"]["correct"] is False

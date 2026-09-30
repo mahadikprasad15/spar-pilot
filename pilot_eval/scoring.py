@@ -21,6 +21,9 @@ def _numeric_value(value: str) -> Fraction:
 
 def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
     """Score a saved GSM8K response under strict and flexible extraction."""
+    if sum(line.lstrip().startswith("####") for line in response.splitlines()) > 1:
+        invalid = {"extracted": None, "status": "invalid", "correct": False}
+        return {"strict": invalid.copy(), "flexible": invalid.copy()}
     gold = _numeric_value(gold_answer.rsplit("####", 1)[-1].strip())
     final_line = response.strip().splitlines()[-1] if response.strip() else ""
     match = _FINAL.fullmatch(final_line)
