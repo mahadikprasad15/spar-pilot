@@ -1,6 +1,6 @@
 import pytest
 
-from pilot_eval.scoring import score_gsm8k
+from pilot_eval.scoring import score_gsm8k, score_mmlu_text
 
 
 def test_gsm8k_final_marker_scores_strict_and_flexible():
@@ -41,3 +41,9 @@ def test_gsm8k_multiple_final_markers_are_invalid():
 
     assert result["strict"]["status"] == "invalid"
     assert result["flexible"]["correct"] is False
+
+
+def test_mmlu_generated_letter_is_scored():
+    result = score_mmlu_text(" B", "B")
+
+    assert result == {"choice": "B", "status": "valid", "correct": True}

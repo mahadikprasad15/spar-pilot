@@ -41,3 +41,14 @@ def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
         "correct": bool(flexible_match and not capped and _numeric_value(flexible_answer) == gold),
     }
     return {"strict": scored, "flexible": flexible}
+
+
+def score_mmlu_text(response: str, gold_choice: str, capped: bool = False) -> dict:
+    """Score a generated MMLU letter response."""
+    choice = response.strip()
+    valid = choice in "ABCD" and len(choice) == 1 and not capped
+    return {
+        "choice": choice if valid else None,
+        "status": "valid" if valid else "invalid",
+        "correct": valid and choice == gold_choice,
+    }
