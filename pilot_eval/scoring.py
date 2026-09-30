@@ -9,6 +9,7 @@ _DECIMAL = r"[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
 _NUMBER = rf"(?:{_DECIMAL}|[+-]?\d+/\d+)"
 _FINAL = re.compile(rf"^####\s+({_NUMBER})$")
 _ANSWER_PHRASE = re.compile(rf"(?:final answer:|the answer is)\s*({_NUMBER})[.!]?\s*$", re.I)
+_LAST_NUMBER_LINE = re.compile(rf"^({_NUMBER})[.!]?$")
 
 
 def _numeric_value(value: str) -> Fraction:
@@ -29,7 +30,7 @@ def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
         "status": "valid" if match and not capped else "invalid",
         "correct": bool(match and not capped and _numeric_value(extracted) == gold),
     }
-    flexible_match = match or _ANSWER_PHRASE.search(final_line)
+    flexible_match = match or _ANSWER_PHRASE.search(final_line) or _LAST_NUMBER_LINE.fullmatch(final_line)
     flexible_answer = flexible_match.group(1) if flexible_match else None
     flexible = {
         "extracted": flexible_answer,

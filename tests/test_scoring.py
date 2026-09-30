@@ -27,3 +27,10 @@ def test_gsm8k_answer_phrase_is_flexible_only():
 )
 def test_gsm8k_compares_exact_numeric_values(response, gold):
     assert score_gsm8k(response, gold)["strict"]["correct"] is True
+
+
+def test_gsm8k_flexible_accepts_only_number_on_final_line():
+    result = score_gsm8k("6 times 12 equals 72.\n72.", "#### 72")
+
+    assert result["strict"]["correct"] is False
+    assert result["flexible"]["correct"] is True
