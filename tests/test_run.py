@@ -81,8 +81,13 @@ def test_interrupted_run_resumes_only_missing_items(tmp_path):
 
     with pytest.raises(RuntimeError, match="interrupted"):
         run_evaluation(config, items, FlakyBackend(), root)
+    run_dir = root / "runs/pilot-1/qwen/gsm8k/test-150/baseline/run-1"
+    failed_status = json.loads((run_dir / "meta/status.json").read_text())
+    assert failed_status["state"] == "failed"
+    assert failed_status["completed"] == 1
     summary = run_evaluation(config, items, RecoveryBackend(), root)
     path = root / "runs/pilot-1/qwen/gsm8k/test-150/baseline/run-1/results/responses.jsonl"
 
     assert len(path.read_text().splitlines()) == 2
     assert summary["strict_accuracy"] == 1.0
+    assert json.loads((run_dir / "meta/status.json").read_text())["state"] == "completed"
