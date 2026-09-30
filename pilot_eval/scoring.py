@@ -60,6 +60,65 @@ def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
     return {"strict": scored, "flexible": flexible}
 
 
+_V2_CUE = re.compile(r"####|\\boxed\{|final answer\s*:|(?:the\s+)?answer\s+is\s*:?", re.I)
+_V2_TOKEN = re.compile(r"(?<![\w.])[+-]?(?:\d[\d, ]*\d|\d+|\.\d+)(?:\.\d+)?(?:/\d+)?(?!\w)")
+
+
+def extract_gsm8k_flexible_v2(response: str, capped: bool = False) -> dict:
+    """Extract without gold access; v2 grammar is documented in ADR 0003."""
+    result = {"scorer_version": "gsm8k-flexible-v2", "extracted": None,
+              "extraction_rule": None, "status": "invalid", "invalid_reason": None}
+    def invalid(reason):
+        return {**result, "invalid_reason": reason}
+    if capped:
+        return invalid("capped_response")
+    paragraphs = re.split(r"\n\s*\n", response.strip())
+    region = paragraphs[-1]
+    # Include contiguous preceding answer paragraphs to expose contradictions.
+    for paragraph in reversed(paragraphs[:-1]):
+        if not _V2_CUE.search(paragraph):
+            break
+        region = paragraph + "\n\n" + region
+    cue = _V2_CUE.search(region)
+    # A phrase delimits the conclusion from calculations in the same paragraph.
+    if cue and cue.group(0).lower() not in ("####", "\\boxed{"):
+        region = region[cue.start():]
+    normalized = re.sub(r"(?<=\d),[ \t]+(?=\d{3}\b)", ",", region)
+    for boxed in re.findall(r"\\boxed\{([^{}]*)\}", normalized):
+        if not re.fullmatch(_NUMBER, boxed.strip()):
+            return invalid("malformed_boxed_answer")
+    if "\\boxed" in normalized and not re.search(r"\\boxed\{[^{}]*\}", normalized):
+        return invalid("malformed_boxed_answer")
+    tokens = list(_V2_TOKEN.finditer(normalized))
+    if not tokens:
+        return invalid("no_numeric_answer")
+    values = []
+    for token in tokens:
+        raw = token.group(0).strip()
+        if not re.fullmatch(_NUMBER, raw):
+            return invalid("malformed_number")
+        try:
+            values.append(_numeric_value(raw))
+        except (ValueError, ZeroDivisionError):
+            return invalid("malformed_number")
+    if len(set(values)) != 1:
+        return invalid("conflicting_answers" if "####" in region or "\\boxed" in region else "ambiguous_numbers")
+    remainder = _V2_TOKEN.sub("", normalized)
+    if re.search(r"[+=*/]", remainder):
+        return invalid("unsupported_expression")
+    value = values[0]
+    canonical = str(value.numerator) if value.denominator == 1 else f"{value.numerator}/{value.denominator}"
+    rule = ("final_marker" if "####" in region else "boxed_answer" if "\\boxed" in region
+            else "final_phrase_single_value" if cue else "final_paragraph_single_value")
+    return {**result, "extracted": canonical, "extraction_rule": rule, "status": "valid"}
+
+
+def score_gsm8k_flexible_v2(response: str, gold_answer: str, capped: bool = False) -> dict:
+    extracted = extract_gsm8k_flexible_v2(response, capped)
+    gold = _numeric_value(gold_answer.rsplit("####", 1)[-1].strip())
+    return {**extracted, "correct": extracted["status"] == "valid" and _numeric_value(extracted["extracted"]) == gold}
+
+
 def score_mmlu_text(response: str, gold_choice: str, capped: bool = False) -> dict:
     """Score a generated MMLU letter response."""
     response = response.strip()
