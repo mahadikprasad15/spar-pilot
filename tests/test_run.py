@@ -25,6 +25,9 @@ def test_gsm8k_run_saves_response_and_summary(tmp_path):
 
     assert records[0]["score"]["strict"]["correct"] is True
     assert summary["strict_accuracy"] == 1.0
+    manifest = json.loads((run_dir / "meta/run_manifest.json").read_text())
+    assert manifest["run_id"] == "run-1"
+    assert (run_dir / "logs/run.log").exists()
 
 
 def test_completed_run_is_immutable_on_repeat(tmp_path):

@@ -29,6 +29,10 @@ def _write_state(run_dir: Path, state: str, completed: int, total: int, error: s
         status["error"] = error
     _write_json(run_dir / "meta/status.json", status)
     _write_json(run_dir / "checkpoints/progress.json", {"completed": completed, "total": total})
+    log_path = run_dir / "logs/run.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a") as stream:
+        stream.write(json.dumps(status, sort_keys=True) + "\n")
 
 
 def _wilson_95(correct: int, total: int) -> list[float]:
@@ -80,6 +84,15 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             return json.loads(summary_path.read_text())
     else:
         config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+    manifest_path = run_dir / "meta/run_manifest.json"
+    if not manifest_path.exists():
+        _write_json(manifest_path, {
+            "run_id": config["run_id"],
+            "config": config,
+            "responses_path": "results/responses.jsonl",
+            "summary_path": "results/results.json",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        })
     responses_path = results_dir / "responses.jsonl"
     records = [json.loads(line) for line in responses_path.read_text().splitlines()] if responses_path.exists() else []
     completed = {record["id"] for record in records}
