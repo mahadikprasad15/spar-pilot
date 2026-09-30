@@ -1,4 +1,4 @@
-# SPAR pilot 1 evaluation harness
+# Pilot 1 evaluation harness
 
 Untuned `Qwen/Qwen2.5-1.5B-Instruct`, plus one optional PEFT adapter:
 
