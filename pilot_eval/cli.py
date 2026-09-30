@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pilot_eval.workflow import execute_config, prepare_plan
 from pilot_eval.recovery import fork_plan
+from pilot_eval.reporting import build_report
 
 
 def main(argv=None, *, dependencies=None):
@@ -25,7 +26,10 @@ def main(argv=None, *, dependencies=None):
     fork.add_argument("--source", required=True)
     fork.add_argument("--plan", required=True)
     fork.add_argument("--batch-size", type=int, required=True)
-    for command in (prepare, run, fork):
+    report = commands.add_parser("report", help="verify and combine selected completed source runs")
+    report.add_argument("--selection", type=Path, required=True, help="JSON mapping cell names to plan names")
+    report.add_argument("--name", required=True)
+    for command in (prepare, run, fork, report):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
@@ -37,6 +41,9 @@ def main(argv=None, *, dependencies=None):
         elif args.command == "fork-plan":
             for path in fork_plan(args.output_root, args.source, args.plan, args.batch_size):
                 print(path)
+        elif args.command == "report":
+            summary = build_report(args.output_root, args.name, json.loads(args.selection.read_text()))
+            print(json.dumps(summary, indent=2, sort_keys=True))
         else:
             summary = execute_config(args.config, args.output_root, audit_items=args.audit_items,
                                      dependencies=dependencies)
