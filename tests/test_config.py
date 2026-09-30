@@ -32,6 +32,13 @@ def test_config_requires_exact_revisions_and_run_provenance():
 
     assert validate_config(config) == config
 
+    for field, value in (("decoding", {"do_sample": True, "max_new_tokens": 1024}),
+                         ("quantization", "4bit"), ("dtype", "float32"),
+                         ("deterministic", False), ("prompt_template", "unknown")):
+        changed = {**config, field: value}
+        with pytest.raises(ValueError):
+            validate_config(changed)
+
     config["model_revision"] = "main"
     with pytest.raises(ValueError, match="model_revision"):
         validate_config(config)

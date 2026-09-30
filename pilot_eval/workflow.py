@@ -68,6 +68,7 @@ class HFDependencies:
         return load_dataset(path, name, revision=revision)
 
     def runtime(self, config):
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         import torch
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise ValueError("pilot 1 requires exactly one visible CUDA GPU")
@@ -75,9 +76,12 @@ class HFDependencies:
             raise ValueError("GPU lacks bf16 support; prepare a separate float16 plan")
         versions = {name: importlib.metadata.version(name) for name in (
             "torch", "transformers", "datasets", "peft", "accelerate", "huggingface-hub")}
+        from transformers import GenerationConfig
+        resolved = GenerationConfig(**config["decoding"], repetition_penalty=1.0, no_repeat_ngram_size=0).to_dict()
         return {"versions": versions, "python": sys.version, "platform": platform.platform(),
                 "device": torch.cuda.get_device_name(0), "cuda": torch.version.cuda,
-                "cublas_workspace_config": ":4096:8", "deterministic_algorithms": True}
+                "cublas_workspace_config": os.environ["CUBLAS_WORKSPACE_CONFIG"],
+                "deterministic_algorithms": True, "resolved_generation": resolved}
 
     def load_backend(self, config):
         return load_hf_backend(config)

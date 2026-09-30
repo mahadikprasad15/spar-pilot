@@ -20,6 +20,7 @@ class HFBackend:
         with self.inference_context():
             generated = self.model.generate(
                 **inputs, do_sample=decoding["do_sample"], num_beams=1, num_return_sequences=1,
+                repetition_penalty=1.0, no_repeat_ngram_size=0,
                 max_new_tokens=decoding["max_new_tokens"],
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
@@ -71,6 +72,7 @@ def _default_dependencies():
     import torch
     from peft import PeftConfig, PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import GenerationConfig, enable_full_determinism
 
     return type("Dependencies", (), {
         "tokenizer_factory": AutoTokenizer,
@@ -81,6 +83,8 @@ def _default_dependencies():
         "set_deterministic": staticmethod(torch.use_deterministic_algorithms),
         "inference_context": staticmethod(torch.inference_mode),
         "set_seed": staticmethod(__import__("transformers").set_seed),
+        "enable_full_determinism": staticmethod(enable_full_determinism),
+        "generation_config_factory": GenerationConfig,
     })()
 
 
@@ -90,6 +94,8 @@ def load_hf_backend(config: dict, dependencies=None) -> HFBackend:
     dependencies.set_deterministic(config["deterministic"])
     if hasattr(dependencies, "set_seed"):
         dependencies.set_seed(config.get("seed", 42))
+    if hasattr(dependencies, "enable_full_determinism"):
+        dependencies.enable_full_determinism(config.get("seed", 42))
     tokenizer = dependencies.tokenizer_factory.from_pretrained(
         config["model"], revision=config["tokenizer_revision"],
     )
@@ -117,5 +123,12 @@ def load_hf_backend(config: dict, dependencies=None) -> HFBackend:
             model, config["adapter"], revision=config["adapter_revision"], is_trainable=False,
         )
     model.eval()
+    if hasattr(dependencies, "generation_config_factory"):
+        # Use fresh defaults, so repository generation penalties cannot alter greedy scoring.
+        model.generation_config = dependencies.generation_config_factory(
+            do_sample=False, num_beams=1, num_return_sequences=1,
+            eos_token_id=tokenizer.eos_token_id, pad_token_id=tokenizer.pad_token_id,
+            repetition_penalty=1.0, no_repeat_ngram_size=0,
+        )
     return HFBackend(model=model, tokenizer=tokenizer,
                      inference_context=getattr(dependencies, "inference_context", nullcontext))

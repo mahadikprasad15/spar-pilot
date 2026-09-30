@@ -73,6 +73,9 @@ def test_backend_generates_only_new_tokens_and_reports_eos():
         def generate(self, **kwargs):
             assert kwargs["do_sample"] is False
             assert kwargs["max_new_tokens"] == 4
+            assert kwargs["num_beams"] == 1
+            assert kwargs["repetition_penalty"] == 1.0
+            assert kwargs["no_repeat_ngram_size"] == 0
             return [Row([1, 2, 3, 7, 8, 99])]
 
     outputs = HFBackend(Model(), Tokenizer()).generate_batch(

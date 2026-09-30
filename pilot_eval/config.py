@@ -36,4 +36,17 @@ def validate_config(config: dict) -> dict:
         raise ValueError("seed must be non-negative")
     if config["scorer"] not in {"gsm8k", "mmlu_text", "mmlu_logits"}:
         raise ValueError("unsupported scorer")
+    dataset = "gsm8k" if config["scorer"] == "gsm8k" else "mmlu"
+    if config["dataset"] != dataset or config["prompt_template"] != f"{dataset}-v1":
+        raise ValueError("dataset or prompt template does not match scorer")
+    if config["shots"] not in (0, 5) if "shots" in config else False:
+        raise ValueError("pilot supports zero or five shots")
+    if config["decoding"].get("do_sample") is not False:
+        raise ValueError("sampled decoding requires a future protocol")
+    if config["scorer"] != "mmlu_logits" and config["decoding"].get("max_new_tokens") != (1024 if dataset == "gsm8k" else 32):
+        raise ValueError("generation cap does not match pilot protocol")
+    if config["dtype"] not in ("bfloat16", "float16") or config["quantization"] is not None:
+        raise ValueError("pilot requires unquantized bf16 or fp16")
+    if config["deterministic"] is not True:
+        raise ValueError("deterministic execution required")
     return config

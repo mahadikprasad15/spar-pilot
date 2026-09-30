@@ -92,6 +92,8 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     if inputs_path.exists() and json.loads(inputs_path.read_text()) != items:
         raise ValueError("run input mismatch")
     _write_json(inputs_path, items)
+    if "cohort_manifest" in config:
+        _write_json(run_dir / "inputs/cohort.json", config["cohort_manifest"])
     manifest_path = run_dir / "meta/run_manifest.json"
     if not manifest_path.exists():
         _write_json(manifest_path, {
@@ -134,6 +136,8 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     _write_state(run_dir, "running", len(records), len(items))
     try:
         for start in range(0, len(pending), batch_size):
+            item = output = None
+            outputs = []
             batch = pending[start : start + batch_size]
             prompts = [item["prompt"] for item in batch]
             if config["scorer"] == "mmlu_logits":
@@ -170,12 +174,14 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
                 stream.flush()
                 os.fsync(stream.fileno())
             records.extend(batch_records)
-            _write_state(run_dir, "running", len(records), len(items))
+            if (start // batch_size + 1) % config.get("checkpoint_interval_batches", 1) == 0:
+                _write_state(run_dir, "running", len(records), len(items))
     except (Exception, KeyboardInterrupt) as exc:
         _write_state(run_dir, "failed", len(records), len(items), str(exc))
         with errors_path.open("a") as stream:
             stream.write(json.dumps({"error": str(exc), "item": locals().get("item"),
                                     "output": locals().get("output"),
+                                    "batch_items": locals().get("batch"), "batch_outputs": locals().get("outputs"),
                                     "status": "invalid" if isinstance(exc, ValueError) else "recoverable"},
                                    sort_keys=True) + "\n")
         raise
