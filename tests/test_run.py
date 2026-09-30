@@ -91,3 +91,23 @@ def test_interrupted_run_resumes_only_missing_items(tmp_path):
     assert len(path.read_text().splitlines()) == 2
     assert summary["strict_accuracy"] == 1.0
     assert json.loads((run_dir / "meta/status.json").read_text())["state"] == "completed"
+
+
+def test_run_rejects_duplicate_expected_item_ids(tmp_path):
+    class UnusedBackend:
+        def generate_batch(self, prompts, decoding):
+            raise AssertionError("duplicate IDs should fail before inference")
+
+    config = {
+        "run_id": "run-1", "experiment": "pilot-1", "model": "qwen",
+        "dataset": "gsm8k", "cohort": "test-150", "variant": "baseline",
+        "scorer": "gsm8k", "decoding": {"do_sample": False, "max_new_tokens": 1024},
+        "batch_size": 1,
+    }
+    items = [
+        {"id": "same", "prompt": "q1", "gold": "#### 1"},
+        {"id": "same", "prompt": "q2", "gold": "#### 2"},
+    ]
+
+    with pytest.raises(ValueError, match="duplicate"):
+        run_evaluation(config, items, UnusedBackend(), tmp_path / "artifacts")

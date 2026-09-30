@@ -30,6 +30,9 @@ def _write_state(run_dir: Path, state: str, completed: int, total: int, error: s
 
 def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) -> dict:
     """Evaluate and persist item-level results under the canonical artifact root."""
+    item_ids = [item["id"] for item in items]
+    if len(item_ids) != len(set(item_ids)):
+        raise ValueError("duplicate expected item IDs")
     run_dir = Path(output_root).joinpath(
         "runs", config["experiment"], config["model"], config["dataset"],
         config["cohort"], config["variant"], config["run_id"],
