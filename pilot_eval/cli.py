@@ -8,6 +8,7 @@ from pathlib import Path
 from pilot_eval.workflow import execute_config, prepare_plan
 from pilot_eval.recovery import fork_plan, revise_logits
 from pilot_eval.reporting import build_report
+from pilot_eval.rescoring import rescore_gsm8k
 
 
 def main(argv=None, *, dependencies=None):
@@ -32,7 +33,11 @@ def main(argv=None, *, dependencies=None):
     report = commands.add_parser("report", help="verify and combine selected completed source runs")
     report.add_argument("--selection", type=Path, required=True, help="JSON mapping cell names to plan names")
     report.add_argument("--name", required=True)
-    for command in (prepare, run, fork, revise, report):
+    rescore = commands.add_parser("rescore-gsm8k", help="CPU-only flexible v2 rescoring of saved responses")
+    for field in ("responses", "config", "summary"):
+        rescore.add_argument("--" + field, type=Path, required=True)
+    rescore.add_argument("--name", required=True)
+    for command in (prepare, run, fork, revise, report, rescore):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
@@ -49,6 +54,9 @@ def main(argv=None, *, dependencies=None):
                 print(path)
         elif args.command == "report":
             summary = build_report(args.output_root, args.name, json.loads(args.selection.read_text()))
+            print(json.dumps(summary, indent=2, sort_keys=True))
+        elif args.command == "rescore-gsm8k":
+            summary = rescore_gsm8k(args.responses, args.config, args.summary, args.output_root, args.name)
             print(json.dumps(summary, indent=2, sort_keys=True))
         else:
             summary = execute_config(args.config, args.output_root, audit_items=args.audit_items,
