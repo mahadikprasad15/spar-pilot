@@ -36,6 +36,10 @@ def validate_config(config: dict) -> dict:
         raise ValueError("seed must be non-negative")
     if config["scorer"] not in {"gsm8k", "mmlu_text", "mmlu_logits"}:
         raise ValueError("unsupported scorer")
+    if "logit_tie_policy" in config or "scorer_version" in config:
+        if (config["scorer"] != "mmlu_logits" or config.get("logit_tie_policy") != "invalid"
+                or config.get("scorer_version") != "mmlu-logits-v2"):
+            raise ValueError("revised logit policy requires mmlu-logits-v2 and invalid ties")
     dataset = "gsm8k" if config["scorer"] == "gsm8k" else "mmlu"
     if config["dataset"] != dataset or config["prompt_template"] != f"{dataset}-v1":
         raise ValueError("dataset or prompt template does not match scorer")

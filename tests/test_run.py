@@ -5,6 +5,26 @@ import pytest
 from pilot_eval.run import run_evaluation
 
 
+def test_revised_logit_policy_counts_ties_and_resumes(tmp_path):
+    class Backend:
+        def choice_logits_batch(self, prompts, token_ids):
+            return [{"A": 1., "B": 2., "C": 2., "D": 0.},
+                    {"A": 3., "B": 2., "C": 1., "D": 0.}]
+    config = dict(run_id="v2", experiment="pilot-1", model="qwen", dataset="mmlu",
+                  cohort="test", variant="baseline", scorer="mmlu_logits", batch_size=2,
+                  decoding={"do_sample": False}, logit_tie_policy="invalid",
+                  scorer_version="mmlu-logits-v2")
+    items = [dict(id=str(i), subject="bio", prompt=str(i), gold="A",
+                  choice_token_ids=dict(zip("ABCD", range(4)))) for i in range(2)]
+    summary = run_evaluation(config, items, Backend(), tmp_path)
+    assert summary["accuracy"] == .5
+    assert summary["total"] == 2
+    assert summary["tie_count"] == summary["invalid_count"] == 1
+    record = json.loads(next(tmp_path.glob("runs/**/responses.jsonl")).read_text().splitlines()[0])
+    assert record["score"] == dict(choice=None, status="invalid", correct=False, tied_choices=["B", "C"])
+    assert run_evaluation(config, items, None, tmp_path) == summary
+
+
 @pytest.mark.parametrize("damage", ["duplicate", "unexpected", "changed-prompt", "truncated", "missing", "summary"])
 def test_resume_rejects_damaged_completed_artifacts(tmp_path, damage):
     class Backend:

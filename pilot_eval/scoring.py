@@ -74,14 +74,19 @@ def score_mmlu_text(response: str, gold_choice: str, capped: bool = False) -> di
     }
 
 
-def score_mmlu_logits(candidate_scores: dict[str, float], gold_choice: str) -> dict:
+def score_mmlu_logits(candidate_scores: dict[str, float], gold_choice: str, tie_policy="stop") -> dict:
     """Score next-token logits over four MMLU choices."""
+    if tie_policy not in ("stop", "invalid"):
+        raise ValueError("unsupported logit tie policy")
     if set(candidate_scores) != set("ABCD"):
         raise ValueError("candidate scores must contain A, B, C, and D")
     if not all(math.isfinite(score) for score in candidate_scores.values()):
         raise ValueError("candidate logits must be finite")
     highest = max(candidate_scores.values())
-    if sum(score == highest for score in candidate_scores.values()) != 1:
+    tied = sorted(choice for choice, score in candidate_scores.items() if score == highest)
+    if len(tied) != 1:
+        if tie_policy == "invalid":
+            return {"choice": None, "status": "invalid", "correct": False, "tied_choices": tied}
         raise ValueError("top-logit tie makes the item invalid")
     choice = max(candidate_scores, key=candidate_scores.get)
     return {"choice": choice, "status": "valid", "correct": choice == gold_choice}

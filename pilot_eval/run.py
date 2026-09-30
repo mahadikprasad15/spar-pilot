@@ -115,7 +115,7 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
         if any(record.get(key) != value for key, value in item.items()):
             raise ValueError("saved response provenance mismatch")
         if config["scorer"] == "mmlu_logits":
-            score = score_mmlu_logits(record["candidate_scores"], item["gold"])
+            score = score_mmlu_logits(record["candidate_scores"], item["gold"], config.get("logit_tie_policy", "stop"))
         else:
             scorer = score_gsm8k if config["scorer"] == "gsm8k" else score_mmlu_text
             score = scorer(record["generated_text"], item["gold"], record["stop_reason"] == "cap")
@@ -156,7 +156,7 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
                     record.update({
                         "generated_text": None, "candidate_scores": output,
                         "choice_token_ids": item["choice_token_ids"],
-                        "score": score_mmlu_logits(output, item["gold"]),
+                        "score": score_mmlu_logits(output, item["gold"], config.get("logit_tie_policy", "stop")),
                     })
                 else:
                     record.update({
@@ -223,6 +223,11 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             "invalid_count": sum(record["score"]["status"] == "invalid" for record in records),
             "cap_count": sum(record.get("stop_reason") == "cap" for record in records),
         }
+    if config["scorer"] == "mmlu_logits" and config.get("logit_tie_policy") == "invalid":
+        summary["scorer_version"] = "mmlu-logits-v2"
+        summary["logit_tie_policy"] = "invalid"
+        summary["tie_count"] = sum(bool(record["score"].get("tied_choices")) for record in records)
+        summary["tie_rate"] = summary["tie_count"] / summary["total"]
     summary["cap_rate"] = summary["cap_count"] / summary["total"]
     if config["scorer"] == "gsm8k":
         summary["strict_invalid_rate"] = summary["strict_invalid_count"] / summary["total"]
