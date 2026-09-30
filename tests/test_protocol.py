@@ -2,6 +2,7 @@ import pytest
 
 from pilot_eval.protocol import (
     build_gsm8k_prompt,
+    build_gsm8k_items,
     build_mmlu_prompt,
     choice_token_ids,
     persist_cohort,
@@ -105,3 +106,22 @@ def test_frozen_cohort_rejects_changed_indices(tmp_path):
             tmp_path / "artifacts", dataset="gsm8k", revision="rev-1",
             name="test-150", indices=[1, 4, 8], seed=42,
         )
+
+
+def test_gsm8k_items_keep_source_index_and_gold_solution():
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            return "CHAT:" + messages[0]["content"]
+
+    rows = [
+        {"question": "one?", "answer": "work\n#### 1"},
+        {"question": "two?", "answer": "work\n#### 2"},
+    ]
+
+    items = build_gsm8k_items(rows, [1], FakeTokenizer())
+
+    assert items == [{
+        "id": "gsm8k:test:1", "source_index": 1,
+        "prompt": "CHAT:Solve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: two?",
+        "gold": "work\n#### 2",
+    }]

@@ -98,3 +98,16 @@ def persist_cohort(
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     os.replace(temporary, path)
     return manifest
+
+
+def build_gsm8k_items(rows, indices: list[int], tokenizer) -> list[dict]:
+    """Build scored GSM8K items from a frozen list of test indices."""
+    return [
+        {
+            "id": f"gsm8k:test:{index}",
+            "source_index": index,
+            "prompt": build_gsm8k_prompt(rows[index]["question"], tokenizer),
+            "gold": rows[index]["answer"],
+        }
+        for index in indices
+    ]
