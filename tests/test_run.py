@@ -158,3 +158,31 @@ def test_mmlu_logit_run_saves_four_way_decision(tmp_path):
     assert record["candidate_scores"]["B"] == 2.0
     assert record["score"]["correct"] is True
     assert summary["accuracy"] == 1.0
+
+
+def test_gsm8k_summary_reports_both_scorers_and_response_lengths(tmp_path):
+    class FakeBackend:
+        def generate_batch(self, prompts, decoding):
+            return [
+                {"text": "#### 1", "token_count": 8, "stop_reason": "eos"},
+                {"text": "Final answer: 2", "token_count": 4, "stop_reason": "eos"},
+            ]
+
+    config = {
+        "run_id": "run-1", "experiment": "pilot-1", "model": "qwen",
+        "dataset": "gsm8k", "cohort": "test-150", "variant": "baseline",
+        "scorer": "gsm8k", "decoding": {"do_sample": False, "max_new_tokens": 1024},
+        "batch_size": 2,
+    }
+    items = [
+        {"id": "q1", "prompt": "q1", "gold": "#### 1"},
+        {"id": "q2", "prompt": "q2", "gold": "#### 2"},
+    ]
+
+    summary = run_evaluation(config, items, FakeBackend(), tmp_path / "artifacts")
+
+    assert summary["strict_correct"] == 1
+    assert summary["flexible_correct"] == 2
+    assert summary["total"] == 2
+    assert summary["mean_response_tokens"] == 6
+    assert summary["median_response_tokens"] == 6

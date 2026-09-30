@@ -2,6 +2,7 @@
 
 import json
 import os
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -100,8 +101,18 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
         _write_state(run_dir, "failed", len(records), len(items), str(exc))
         raise
     if config["scorer"] == "gsm8k":
+        total = len(records)
+        strict_correct = sum(record["score"]["strict"]["correct"] for record in records)
+        flexible_correct = sum(record["score"]["flexible"]["correct"] for record in records)
+        lengths = [record["token_count"] for record in records]
         summary = {
-            "strict_accuracy": sum(record["score"]["strict"]["correct"] for record in records) / len(records),
+            "total": total,
+            "strict_correct": strict_correct,
+            "flexible_correct": flexible_correct,
+            "strict_accuracy": strict_correct / total,
+            "flexible_accuracy": flexible_correct / total,
+            "mean_response_tokens": statistics.mean(lengths),
+            "median_response_tokens": statistics.median(lengths),
         }
     else:
         summary = {"accuracy": sum(record["score"]["correct"] for record in records) / len(records)}
