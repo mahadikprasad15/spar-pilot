@@ -1,5 +1,9 @@
 # Pilot 1 evaluation harness
 
+[Open the guided notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/output/jupyter-notebook/pilot-1-colab.ipynb)
+
+The notebook explains the SPAR context, freezes a pinned harness revision, persists artifacts to Google Drive, guides a five-item audit per cell, and runs/resumes the full evaluation after a recorded manual review. It also displays uncertainty ranges and supports export. Its audit-to-results flow was verified with fake boundaries locally; real Drive mounting, dependency installation, and GPU inference require Colab execution.
+
 Untuned `Qwen/Qwen2.5-1.5B-Instruct`, plus one optional PEFT adapter:
 
 - GSM8K: 150 frozen test items, greedy generation, strict and flexible extraction.
