@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from pilot_eval.workflow import execute_config, prepare_plan
+from pilot_eval.recovery import fork_plan
 
 
 def main(argv=None, *, dependencies=None):
@@ -20,7 +21,11 @@ def main(argv=None, *, dependencies=None):
     run = commands.add_parser("run", help="execute/resume one frozen cell")
     run.add_argument("--config", type=Path, required=True)
     run.add_argument("--audit-items", type=int, help="separate fixed-prefix audit run, e.g. 5")
-    for command in (prepare, run):
+    fork = commands.add_parser("fork-plan", help="copy frozen inputs into a new batch-size plan")
+    fork.add_argument("--source", required=True)
+    fork.add_argument("--plan", required=True)
+    fork.add_argument("--batch-size", type=int, required=True)
+    for command in (prepare, run, fork):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
@@ -28,6 +33,9 @@ def main(argv=None, *, dependencies=None):
             paths = prepare_plan(args.output_root, args.plan, model=args.model, dtype=args.dtype,
                                  batch_size=args.batch_size, adapter=args.adapter, dependencies=dependencies)
             for path in paths:
+                print(path)
+        elif args.command == "fork-plan":
+            for path in fork_plan(args.output_root, args.source, args.plan, args.batch_size):
                 print(path)
         else:
             summary = execute_config(args.config, args.output_root, audit_items=args.audit_items,
