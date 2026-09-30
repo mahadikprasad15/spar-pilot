@@ -76,6 +76,8 @@ For recovery after a batch-8 five-shot OOM, use the [same-notebook recovery cell
 
 For an exact top-logit tie, use the [logit tie recovery cells](docs/colab-logit-ties.md) (notebook sections 16–19). `revise-logits` freezes scorer v2, reuses verified raw source logits, and counts ties as invalid and incorrect while continuing. Completed GSM8K and text runs remain selected in the combined report.
 
+If notebook progress polling raises `JSONDecodeError`, first [check and monitor the existing evaluation process](docs/colab-progress-recovery.md). It may still be running. The corrected helper tolerates unreadable progress snapshots; no new plan is required.
+
 ```text
 artifacts/
   cohorts/<dataset>/<revision>/<cohort>/{manifest.json,source.json}
