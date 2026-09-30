@@ -10,6 +10,7 @@ _NUMBER = rf"(?:{_DECIMAL}|[+-]?\d+/\d+)"
 _FINAL = re.compile(rf"^####\s+({_NUMBER})$")
 _ANSWER_PHRASE = re.compile(rf"(?:final answer:|the answer is)\s*({_NUMBER})[.!]?\s*$", re.I)
 _LAST_NUMBER_LINE = re.compile(rf"^({_NUMBER})[.!]?$")
+_MMLU_ANSWER = re.compile(r"^(?:Answer:\s*|The answer is\s*)?([ABCD])[.)]?\s*$", re.I)
 
 
 def _numeric_value(value: str) -> Fraction:
@@ -45,8 +46,9 @@ def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
 
 def score_mmlu_text(response: str, gold_choice: str, capped: bool = False) -> dict:
     """Score a generated MMLU letter response."""
-    choice = response.strip()
-    valid = choice in "ABCD" and len(choice) == 1 and not capped
+    match = _MMLU_ANSWER.fullmatch(response.strip())
+    choice = match.group(1).upper() if match else None
+    valid = choice is not None and not capped
     return {
         "choice": choice if valid else None,
         "status": "valid" if valid else "invalid",

@@ -47,3 +47,7 @@ def test_mmlu_generated_letter_is_scored():
     result = score_mmlu_text(" B", "B")
 
     assert result == {"choice": "B", "status": "valid", "correct": True}
+
+
+def test_mmlu_answer_phrase_is_scored():
+    assert score_mmlu_text("The answer is C.", "C")["correct"] is True
