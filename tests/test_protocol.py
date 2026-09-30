@@ -4,6 +4,7 @@ from pilot_eval.protocol import (
     build_gsm8k_prompt,
     build_mmlu_prompt,
     choice_token_ids,
+    persist_cohort,
     select_gsm8k_indices,
     select_mmlu_indices,
 )
@@ -86,3 +87,21 @@ def test_mmlu_choice_validation_rejects_multitoken_continuation():
 
     with pytest.raises(ValueError, match="one token"):
         choice_token_ids(FakeTokenizer(), "prompt")
+
+
+def test_frozen_cohort_rejects_changed_indices(tmp_path):
+    first = persist_cohort(
+        tmp_path / "artifacts", dataset="gsm8k", revision="rev-1",
+        name="test-150", indices=[1, 4, 7], seed=42,
+    )
+
+    assert first["indices"] == [1, 4, 7]
+    assert persist_cohort(
+        tmp_path / "artifacts", dataset="gsm8k", revision="rev-1",
+        name="test-150", indices=[1, 4, 7], seed=42,
+    ) == first
+    with pytest.raises(ValueError, match="cohort mismatch"):
+        persist_cohort(
+            tmp_path / "artifacts", dataset="gsm8k", revision="rev-1",
+            name="test-150", indices=[1, 4, 8], seed=42,
+        )

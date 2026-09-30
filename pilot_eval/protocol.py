@@ -1,6 +1,9 @@
 """Public cohort and prompt protocol."""
 
+import json
+import os
 import random
+from pathlib import Path
 
 
 def select_gsm8k_indices(total: int, count: int = 150, seed: int = 42) -> list[int]:
@@ -69,3 +72,29 @@ def choice_token_ids(tokenizer, prompt: str) -> dict[str, int]:
     if len(set(choices.values())) != 4:
         raise ValueError("A/B/C/D continuations must use distinct token IDs")
     return choices
+
+
+def persist_cohort(
+    output_root: Path, *, dataset: str, revision: str, name: str,
+    indices: list[int] | dict[str, list[int]], seed: int,
+) -> dict:
+    """Save a cohort once and reject later changes to its membership."""
+    manifest = {
+        "dataset": dataset,
+        "revision": revision,
+        "name": name,
+        "seed": seed,
+        "selection_method": "python-random-sample-without-replacement-sorted",
+        "indices": indices,
+    }
+    path = Path(output_root) / "cohorts" / dataset / revision / name / "manifest.json"
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if saved != manifest:
+            raise ValueError("cohort mismatch with frozen manifest")
+        return saved
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    os.replace(temporary, path)
+    return manifest
