@@ -1,6 +1,7 @@
 from pilot_eval.protocol import (
     build_gsm8k_prompt,
     build_mmlu_prompt,
+    choice_token_ids,
     select_gsm8k_indices,
     select_mmlu_indices,
 )
@@ -56,3 +57,20 @@ def test_mmlu_prompt_prefills_assistant_after_subject_example():
     prompt = build_mmlu_prompt("1 + 1?", ["1", "2", "3", "4"], [example], FakeTokenizer())
 
     assert prompt == "rendered Answer:"
+
+
+def test_mmlu_choice_ids_follow_the_rendered_prefix():
+    class FakeTokenizer:
+        def encode(self, text, add_special_tokens):
+            assert add_special_tokens is False
+            return {
+                "prompt": [7, 8],
+                "prompt A": [7, 8, 11],
+                "prompt B": [7, 8, 12],
+                "prompt C": [7, 8, 13],
+                "prompt D": [7, 8, 14],
+            }[text]
+
+    assert choice_token_ids(FakeTokenizer(), "prompt") == {
+        "A": 11, "B": 12, "C": 13, "D": 14,
+    }

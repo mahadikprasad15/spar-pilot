@@ -55,3 +55,12 @@ def build_mmlu_prompt(
         tokenize=False,
         continue_final_message=True,
     )
+
+
+def choice_token_ids(tokenizer, prompt: str) -> dict[str, int]:
+    """Get A/B/C/D continuation IDs after the rendered MMLU prompt."""
+    prefix = tokenizer.encode(prompt, add_special_tokens=False)
+    return {
+        letter: tokenizer.encode(prompt + " " + letter, add_special_tokens=False)[len(prefix)]
+        for letter in "ABCD"
+    }
