@@ -111,3 +111,24 @@ def test_run_rejects_duplicate_expected_item_ids(tmp_path):
 
     with pytest.raises(ValueError, match="duplicate"):
         run_evaluation(config, items, UnusedBackend(), tmp_path / "artifacts")
+
+
+def test_mmlu_text_run_saves_choice_and_accuracy(tmp_path):
+    class FakeBackend:
+        def generate_batch(self, prompts, decoding):
+            return [{"text": " B", "token_count": 1, "stop_reason": "eos"}]
+
+    config = {
+        "run_id": "run-1", "experiment": "pilot-1", "model": "qwen",
+        "dataset": "mmlu", "cohort": "balanced-1140", "variant": "baseline-5shot",
+        "scorer": "mmlu_text", "decoding": {"do_sample": False, "max_new_tokens": 32},
+        "batch_size": 1,
+    }
+    items = [{"id": "mmlu:biology:7", "subject": "biology", "prompt": "Answer:", "gold": "B"}]
+
+    summary = run_evaluation(config, items, FakeBackend(), tmp_path / "artifacts")
+    path = tmp_path / "artifacts/runs/pilot-1/qwen/mmlu/balanced-1140/baseline-5shot/run-1/results/responses.jsonl"
+    record = json.loads(path.read_text())
+
+    assert record["score"]["correct"] is True
+    assert summary["accuracy"] == 1.0

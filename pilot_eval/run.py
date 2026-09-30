@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pilot_eval.scoring import score_gsm8k
+from pilot_eval.scoring import score_gsm8k, score_mmlu_text
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -63,9 +63,14 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             batch_records = [
                 {
                     "id": item["id"], "prompt": item["prompt"], "gold": item["gold"],
+                    "subject": item.get("subject"),
                     "generated_text": output["text"], "token_count": output["token_count"],
                     "stop_reason": output["stop_reason"],
-                    "score": score_gsm8k(output["text"], item["gold"], output["stop_reason"] == "cap"),
+                    "score": (
+                        score_gsm8k(output["text"], item["gold"], output["stop_reason"] == "cap")
+                        if config["scorer"] == "gsm8k"
+                        else score_mmlu_text(output["text"], item["gold"], output["stop_reason"] == "cap")
+                    ),
                 }
                 for item, output in zip(batch, outputs)
             ]
@@ -79,9 +84,12 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     except Exception as exc:
         _write_state(run_dir, "failed", len(records), len(items), str(exc))
         raise
-    summary = {
-        "strict_accuracy": sum(record["score"]["strict"]["correct"] for record in records) / len(records),
-    }
+    if config["scorer"] == "gsm8k":
+        summary = {
+            "strict_accuracy": sum(record["score"]["strict"]["correct"] for record in records) / len(records),
+        }
+    else:
+        summary = {"accuracy": sum(record["score"]["correct"] for record in records) / len(records)}
     _write_json(summary_path, summary)
     _write_state(run_dir, "completed", len(records), len(items))
     return summary
