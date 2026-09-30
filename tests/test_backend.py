@@ -1,6 +1,6 @@
 import pytest
 
-from pilot_eval.backend import load_hf_backend
+from pilot_eval.backend import HFBackend, load_hf_backend
 
 
 class _Factory:
@@ -41,3 +41,42 @@ def test_loader_rejects_adapter_for_a_different_base_model():
 
     with pytest.raises(ValueError, match="base model"):
         load_hf_backend(config, dependencies)
+
+
+def test_backend_generates_only_new_tokens_and_reports_eos():
+    class Batch(dict):
+        def to(self, device):
+            return self
+
+    class InputIds:
+        shape = (1, 3)
+
+    class Row(list):
+        def tolist(self):
+            return list(self)
+
+    class Tokenizer:
+        pad_token_id = 0
+        eos_token_id = 99
+
+        def __call__(self, prompts, **kwargs):
+            assert kwargs == {"return_tensors": "pt", "padding": True, "add_special_tokens": False}
+            return Batch(input_ids=InputIds())
+
+        def decode(self, token_ids, skip_special_tokens):
+            assert skip_special_tokens is True
+            return "answer"
+
+    class Model:
+        device = "cuda"
+
+        def generate(self, **kwargs):
+            assert kwargs["do_sample"] is False
+            assert kwargs["max_new_tokens"] == 4
+            return [Row([1, 2, 3, 7, 8, 99])]
+
+    outputs = HFBackend(Model(), Tokenizer()).generate_batch(
+        ["prompt"], {"do_sample": False, "max_new_tokens": 4}
+    )
+
+    assert outputs == [{"text": "answer", "token_count": 2, "stop_reason": "eos"}]

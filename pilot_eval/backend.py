@@ -8,6 +8,41 @@ class HFBackend:
     model: object
     tokenizer: object
 
+    def generate_batch(self, prompts: list[str], decoding: dict) -> list[dict]:
+        """Generate continuations and return text plus auditable stop metadata."""
+        inputs = self.tokenizer(
+            prompts, return_tensors="pt", padding=True, add_special_tokens=False,
+        ).to(self.model.device)
+        input_width = inputs["input_ids"].shape[1]
+        generated = self.model.generate(
+            **inputs,
+            do_sample=decoding["do_sample"],
+            max_new_tokens=decoding["max_new_tokens"],
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+        )
+        eos_ids = self.tokenizer.eos_token_id
+        eos_ids = {eos_ids} if isinstance(eos_ids, int) else set(eos_ids or [])
+        outputs = []
+        for row in generated:
+            sliced = row[input_width:]
+            continuation = sliced.tolist() if hasattr(sliced, "tolist") else list(sliced)
+            eos_index = next(
+                (index for index, token_id in enumerate(continuation) if token_id in eos_ids),
+                None,
+            )
+            tokens = continuation if eos_index is None else continuation[:eos_index]
+            outputs.append({
+                "text": self.tokenizer.decode(tokens, skip_special_tokens=True),
+                "token_count": len(tokens),
+                "stop_reason": (
+                    "eos" if eos_index is not None
+                    else "cap" if len(continuation) >= decoding["max_new_tokens"]
+                    else "other"
+                ),
+            })
+        return outputs
+
 
 def _default_dependencies():
     import torch
