@@ -39,7 +39,7 @@ def validate_config(config: dict) -> dict:
     dataset = "gsm8k" if config["scorer"] == "gsm8k" else "mmlu"
     if config["dataset"] != dataset or config["prompt_template"] != f"{dataset}-v1":
         raise ValueError("dataset or prompt template does not match scorer")
-    if config["shots"] not in (0, 5) if "shots" in config else False:
+    if config.get("shots", 0) not in (0, 5):
         raise ValueError("pilot supports zero or five shots")
     if config["decoding"].get("do_sample") is not False:
         raise ValueError("sampled decoding requires a future protocol")
@@ -49,4 +49,6 @@ def validate_config(config: dict) -> dict:
         raise ValueError("pilot requires unquantized bf16 or fp16")
     if config["deterministic"] is not True:
         raise ValueError("deterministic execution required")
+    if config.get("checkpoint_interval_batches", 1) < 1:
+        raise ValueError("checkpoint interval must be positive")
     return config

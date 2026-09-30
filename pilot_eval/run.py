@@ -73,7 +73,7 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     if len(item_ids) != len(set(item_ids)):
         raise ValueError("duplicate expected item IDs")
     components = [config[key] for key in ("experiment", "dataset", "cohort", "variant", "run_id")]
-    if any(not value or value in (".", "..") or "/" in value or "\\" in value for value in components):
+    if config["model"] in (".", "..") or any(not value or value in (".", "..") or "/" in value or "\\" in value for value in components):
         raise ValueError("unsafe artifact path component")
     run_dir = Path(output_root).joinpath(
         "runs", config["experiment"], config["model"].replace("/", "--"), config["dataset"],
@@ -91,8 +91,9 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     inputs_path = run_dir / "inputs/items.json"
     if inputs_path.exists() and json.loads(inputs_path.read_text()) != items:
         raise ValueError("run input mismatch")
-    _write_json(inputs_path, items)
-    if "cohort_manifest" in config:
+    if not inputs_path.exists():
+        _write_json(inputs_path, items)
+    if "cohort_manifest" in config and not (run_dir / "inputs/cohort.json").exists():
         _write_json(run_dir / "inputs/cohort.json", config["cohort_manifest"])
     manifest_path = run_dir / "meta/run_manifest.json"
     if not manifest_path.exists():
@@ -126,14 +127,14 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
         errors = [json.loads(line) for line in errors_path.read_text().splitlines()]
         if any(error.get("status") == "invalid" for error in errors):
             raise ValueError("unresolved invalid item error; inspect errors and use a new run ID")
-    if summary_path.exists():
-        summary = json.loads(summary_path.read_text())
-        if completed != set(item_ids) or summary.get("responses_sha256") != hashlib.sha256(responses_path.read_bytes()).hexdigest():
+    saved_summary = json.loads(summary_path.read_text()) if summary_path.exists() else None
+    if saved_summary is not None:
+        if completed != set(item_ids) or saved_summary.get("responses_sha256") != hashlib.sha256(responses_path.read_bytes()).hexdigest():
             raise ValueError("completed run responses are incomplete or changed")
-        return summary
     pending = [item for item in items if item["id"] not in completed]
     batch_size = config["batch_size"]
-    _write_state(run_dir, "running", len(records), len(items))
+    if saved_summary is None:
+        _write_state(run_dir, "running", len(records), len(items))
     try:
         for start in range(0, len(pending), batch_size):
             item = output = None
@@ -235,6 +236,10 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
         summary["historical_reference"] = {"accuracy": .570, "accuracy_gap": summary["accuracy"] - .570}
     summary["comparison_note"] = "New sampled protocol; historical gaps are descriptive, not reproduction gates."
     summary["responses_sha256"] = hashlib.sha256(responses_path.read_bytes()).hexdigest()
+    if saved_summary is not None:
+        if summary != saved_summary:
+            raise ValueError("saved summary differs from response-derived aggregate")
+        return summary
     _write_json(summary_path, summary)
     _write_state(run_dir, "completed", len(records), len(items))
     return summary

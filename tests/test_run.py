@@ -5,7 +5,7 @@ import pytest
 from pilot_eval.run import run_evaluation
 
 
-@pytest.mark.parametrize("damage", ["duplicate", "unexpected", "changed-prompt", "truncated", "missing"])
+@pytest.mark.parametrize("damage", ["duplicate", "unexpected", "changed-prompt", "truncated", "missing", "summary"])
 def test_resume_rejects_damaged_completed_artifacts(tmp_path, damage):
     class Backend:
         def generate_batch(self, prompts, decoding):
@@ -28,6 +28,11 @@ def test_resume_rejects_damaged_completed_artifacts(tmp_path, damage):
         items[0]["prompt"] = "different"
     elif damage == "missing":
         path.write_text("")
+    elif damage == "summary":
+        summary_path = path.parent / "results.json"
+        summary = json.loads(summary_path.read_text())
+        summary["strict_accuracy"] = 0.
+        summary_path.write_text(json.dumps(summary))
     else:
         path.write_text('{"id":')
     with pytest.raises(ValueError):
