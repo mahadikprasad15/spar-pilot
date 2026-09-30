@@ -28,3 +28,30 @@ def build_gsm8k_prompt(question: str, tokenizer) -> str:
     return tokenizer.apply_chat_template(
         [{"role": "user", "content": content}], tokenize=False, add_generation_prompt=True
     )
+
+
+def build_mmlu_prompt(
+    question: str, choices: list[str], examples: list[dict], tokenizer
+) -> str:
+    """Render MMLU v1 with an open assistant-side answer prefix."""
+    def formatted_item(item_question: str, item_choices: list[str]) -> str:
+        if len(item_choices) != 4:
+            raise ValueError("MMLU requires four choices")
+        options = "\n".join(f"{letter}. {choice}" for letter, choice in zip("ABCD", item_choices))
+        return f"Question: {item_question}\n{options}"
+
+    parts = ["Choose the correct answer. Reply with only A, B, C, or D."]
+    for example in examples:
+        parts.append(
+            formatted_item(example["question"], example["choices"])
+            + f"\nAnswer: {example['answer']}"
+        )
+    parts.append(formatted_item(question, choices))
+    return tokenizer.apply_chat_template(
+        [
+            {"role": "user", "content": "\n\n".join(parts)},
+            {"role": "assistant", "content": "Answer:"},
+        ],
+        tokenize=False,
+        continue_final_message=True,
+    )
