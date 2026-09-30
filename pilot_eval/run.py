@@ -1,6 +1,7 @@
 """Public run and resume interface."""
 
 import json
+import math
 import os
 import statistics
 from datetime import datetime, timezone
@@ -27,6 +28,17 @@ def _write_state(run_dir: Path, state: str, completed: int, total: int, error: s
         status["error"] = error
     _write_json(run_dir / "meta/status.json", status)
     _write_json(run_dir / "checkpoints/progress.json", {"completed": completed, "total": total})
+
+
+def _wilson_95(correct: int, total: int) -> list[float]:
+    z = 1.959963984540054
+    proportion = correct / total
+    denominator = 1 + z * z / total
+    center = (proportion + z * z / (2 * total)) / denominator
+    half_width = z * math.sqrt(
+        proportion * (1 - proportion) / total + z * z / (4 * total * total)
+    ) / denominator
+    return [center - half_width, center + half_width]
 
 
 def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) -> dict:
@@ -111,6 +123,11 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             "flexible_correct": flexible_correct,
             "strict_accuracy": strict_correct / total,
             "flexible_accuracy": flexible_correct / total,
+            "strict_wilson_95": _wilson_95(strict_correct, total),
+            "flexible_wilson_95": _wilson_95(flexible_correct, total),
+            "strict_invalid_count": sum(record["score"]["strict"]["status"] == "invalid" for record in records),
+            "flexible_invalid_count": sum(record["score"]["flexible"]["status"] == "invalid" for record in records),
+            "cap_count": sum(record["stop_reason"] == "cap" for record in records),
             "mean_response_tokens": statistics.mean(lengths),
             "median_response_tokens": statistics.median(lengths),
         }

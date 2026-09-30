@@ -186,3 +186,29 @@ def test_gsm8k_summary_reports_both_scorers_and_response_lengths(tmp_path):
     assert summary["total"] == 2
     assert summary["mean_response_tokens"] == 6
     assert summary["median_response_tokens"] == 6
+
+
+def test_gsm8k_summary_counts_caps_and_accuracy_interval(tmp_path):
+    class FakeBackend:
+        def generate_batch(self, prompts, decoding):
+            return [
+                {"text": "#### 1", "token_count": 2, "stop_reason": "eos"},
+                {"text": "#### 2", "token_count": 1024, "stop_reason": "cap"},
+            ]
+
+    config = {
+        "run_id": "run-1", "experiment": "pilot-1", "model": "qwen",
+        "dataset": "gsm8k", "cohort": "test-150", "variant": "baseline",
+        "scorer": "gsm8k", "decoding": {"do_sample": False, "max_new_tokens": 1024},
+        "batch_size": 2,
+    }
+    items = [
+        {"id": "q1", "prompt": "q1", "gold": "#### 1"},
+        {"id": "q2", "prompt": "q2", "gold": "#### 2"},
+    ]
+
+    summary = run_evaluation(config, items, FakeBackend(), tmp_path / "artifacts")
+
+    assert summary["cap_count"] == 1
+    assert summary["strict_invalid_count"] == 1
+    assert summary["strict_wilson_95"][0] < 0.5 < summary["strict_wilson_95"][1]
