@@ -60,7 +60,12 @@ def build_mmlu_prompt(
 def choice_token_ids(tokenizer, prompt: str) -> dict[str, int]:
     """Get A/B/C/D continuation IDs after the rendered MMLU prompt."""
     prefix = tokenizer.encode(prompt, add_special_tokens=False)
-    return {
-        letter: tokenizer.encode(prompt + " " + letter, add_special_tokens=False)[len(prefix)]
-        for letter in "ABCD"
-    }
+    choices = {}
+    for letter in "ABCD":
+        full = tokenizer.encode(prompt + " " + letter, add_special_tokens=False)
+        if full[: len(prefix)] != prefix or len(full) != len(prefix) + 1:
+            raise ValueError(f"{letter} continuation must be exactly one token in context")
+        choices[letter] = full[-1]
+    if len(set(choices.values())) != 4:
+        raise ValueError("A/B/C/D continuations must use distinct token IDs")
+    return choices

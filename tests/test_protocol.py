@@ -1,3 +1,5 @@
+import pytest
+
 from pilot_eval.protocol import (
     build_gsm8k_prompt,
     build_mmlu_prompt,
@@ -74,3 +76,13 @@ def test_mmlu_choice_ids_follow_the_rendered_prefix():
     assert choice_token_ids(FakeTokenizer(), "prompt") == {
         "A": 11, "B": 12, "C": 13, "D": 14,
     }
+
+
+def test_mmlu_choice_validation_rejects_multitoken_continuation():
+    class FakeTokenizer:
+        def encode(self, text, add_special_tokens):
+            ids = {"prompt": [7], "prompt A": [7, 11, 99]}
+            return ids.get(text, [7, 12])
+
+    with pytest.raises(ValueError, match="one token"):
+        choice_token_ids(FakeTokenizer(), "prompt")
