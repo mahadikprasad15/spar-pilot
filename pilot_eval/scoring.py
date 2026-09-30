@@ -56,3 +56,11 @@ def score_mmlu_text(response: str, gold_choice: str, capped: bool = False) -> di
         "status": "valid" if valid else "invalid",
         "correct": valid and choice == gold_choice,
     }
+
+
+def score_mmlu_logits(candidate_scores: dict[str, float], gold_choice: str) -> dict:
+    """Score next-token logits over four MMLU choices."""
+    if set(candidate_scores) != set("ABCD"):
+        raise ValueError("candidate scores must contain A, B, C, and D")
+    choice = max(candidate_scores, key=candidate_scores.get)
+    return {"choice": choice, "status": "valid", "correct": choice == gold_choice}

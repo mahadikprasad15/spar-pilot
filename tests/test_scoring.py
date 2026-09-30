@@ -1,6 +1,6 @@
 import pytest
 
-from pilot_eval.scoring import score_gsm8k, score_mmlu_text
+from pilot_eval.scoring import score_gsm8k, score_mmlu_logits, score_mmlu_text
 
 
 def test_gsm8k_final_marker_scores_strict_and_flexible():
@@ -55,3 +55,9 @@ def test_mmlu_answer_phrase_is_scored():
 
 def test_mmlu_choice_can_precede_an_explanation():
     assert score_mmlu_text("B. Because the second option follows the rule.", "B")["correct"] is True
+
+
+def test_mmlu_logits_choose_highest_scored_letter():
+    result = score_mmlu_logits({"A": 0.2, "B": 1.4, "C": 0.1, "D": -0.3}, "B")
+
+    assert result == {"choice": "B", "status": "valid", "correct": True}
