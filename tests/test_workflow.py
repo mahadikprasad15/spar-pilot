@@ -91,3 +91,25 @@ def test_execute_rejects_changed_inputs_before_model_load(tmp_path):
     inputs.write_text(json.dumps(items))
     with pytest.raises(ValueError, match="hash"):
         execute_config(paths[0], tmp_path, dependencies=Dependencies())
+
+
+def test_local_adapter_is_content_pinned_and_changes_are_rejected(tmp_path):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text('{"base_model_name_or_path": "Qwen/Qwen2.5-1.5B-Instruct"}')
+    (adapter / "adapter_model.safetensors").write_bytes(b"fake weights")
+    paths = prepare_plan(tmp_path / "artifacts", "adapter-v1", adapter=str(adapter), dependencies=Dependencies())
+    config = json.loads(paths[0].read_text())
+    assert len(config["adapter_sha256"]) == 64
+    (adapter / "adapter_model.safetensors").write_bytes(b"changed weights")
+    with pytest.raises(ValueError, match="adapter hash"):
+        execute_config(paths[0], tmp_path / "artifacts", dependencies=Dependencies())
+
+
+def test_cli_prepares_and_runs_an_audit_with_fake_boundaries(tmp_path, capsys):
+    from pilot_eval.cli import main
+    assert main(["prepare", "--plan", "cli-v1", "--output-root", str(tmp_path)], dependencies=Dependencies()) == 0
+    paths = capsys.readouterr().out.strip().splitlines()
+    assert len(paths) == 5
+    assert main(["run", "--config", paths[0], "--audit-items", "2", "--output-root", str(tmp_path)], dependencies=Dependencies()) == 0
+    assert json.loads(capsys.readouterr().out)["total"] == 2

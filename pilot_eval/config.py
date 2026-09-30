@@ -1,6 +1,7 @@
 """Run configuration validation."""
 
 import re
+from pathlib import Path
 
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -22,7 +23,10 @@ def validate_config(config: dict) -> dict:
         if not isinstance(config[field], str) or not _SHA.fullmatch(config[field]):
             raise ValueError(f"{field} must be an exact 40-character commit SHA")
     if config["adapter"]:
-        if not _SHA.fullmatch(config.get("adapter_revision", "")):
+        if Path(config["adapter"]).is_absolute():
+            if not re.fullmatch(r"[0-9a-f]{64}", config.get("adapter_sha256") or ""):
+                raise ValueError("local adapter requires adapter_sha256")
+        elif not _SHA.fullmatch(config.get("adapter_revision") or ""):
             raise ValueError("adapter_revision must be an exact 40-character commit SHA")
     elif config.get("adapter_revision") is not None:
         raise ValueError("adapter_revision must be null when adapter is null")
