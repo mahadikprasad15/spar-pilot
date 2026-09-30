@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spar-pilot-eval"
+version = "0.1.0"
+description = "Frozen GSM8K and MMLU evaluation for SPAR selective fine-tuning pilots"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+gpu = [
+    "torch>=2.2,<3",
+    "transformers>=4.45,<5",
+    "datasets>=3,<5",
+    "peft>=0.13,<1",
+    "accelerate>=1,<2",
+    "huggingface-hub>=0.26,<1",
+]
+
+[project.scripts]
+pilot-eval = "pilot_eval.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pilot_eval*"]
