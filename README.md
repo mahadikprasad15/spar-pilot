@@ -74,6 +74,8 @@ Local directories are pinned by a content SHA256; Hub adapters are pinned by a c
 
 For recovery after a batch-8 five-shot OOM, use the [same-notebook recovery cells](docs/colab-recovery.md). `fork-plan` copies the original frozen inputs with a smaller batch size; `report` combines explicitly selected completed runs while retaining their paths, hashes, batch sizes and protocol warnings. Completed earlier evaluations do not need to run again.
 
+For an exact top-logit tie, use the [logit tie recovery cells](docs/colab-logit-ties.md) (notebook sections 16–19). `revise-logits` freezes scorer v2, reuses verified raw source logits, and counts ties as invalid and incorrect while continuing. Completed GSM8K and text runs remain selected in the combined report.
+
 ```text
 artifacts/
   cohorts/<dataset>/<revision>/<cohort>/{manifest.json,source.json}
