@@ -123,3 +123,27 @@ def test_backend_reads_four_choice_logits_at_next_token():
         {"A": 11, "B": 12, "C": 13, "D": 14},
         {"A": 121, "B": 122, "C": 123, "D": 124},
     ]
+
+
+def test_loader_sets_left_padding_and_inference_context():
+    from contextlib import contextmanager
+    entered = []
+    @contextmanager
+    def inference():
+        entered.append(True)
+        yield
+    tokenizer = type("Tokenizer", (), {"pad_token_id": 0, "eos_token_id": 99})()
+    model = type("Model", (), {"eval": lambda self: self})()
+    dependencies = type("Dependencies", (), {
+        "tokenizer_factory": _Factory(tokenizer), "model_factory": _Factory(model),
+        "dtype_values": {"bfloat16": "bf16"},
+        "set_deterministic": staticmethod(lambda enabled: None),
+        "inference_context": staticmethod(inference),
+    })()
+    config = dict(model="org/model", model_revision="a"*40, tokenizer_revision="a"*40,
+                  adapter=None, dtype="bfloat16", attention_implementation="eager", deterministic=True)
+    backend = load_hf_backend(config, dependencies)
+    assert tokenizer.padding_side == "left"
+    with backend.inference_context():
+        pass
+    assert entered == [True]

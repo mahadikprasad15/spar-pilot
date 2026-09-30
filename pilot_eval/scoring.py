@@ -1,12 +1,13 @@
 """Public scoring interface for saved benchmark responses."""
 
 import re
+import math
 from decimal import Decimal
 from fractions import Fraction
 
 
 _DECIMAL = r"[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
-_NUMBER = rf"(?:{_DECIMAL}|[+-]?\d+/\d+)"
+_NUMBER = rf"(?:[+-]?\d+/\d+|{_DECIMAL})"
 _FINAL = re.compile(rf"^####\s+({_NUMBER})$")
 _ANSWER_PHRASE = re.compile(rf"(?:final answer:|the answer is)\s*({_NUMBER})[.!]?\s*$", re.I)
 _LAST_NUMBER_LINE = re.compile(rf"^({_NUMBER})[.!]?$")
@@ -22,13 +23,23 @@ def _numeric_value(value: str) -> Fraction:
 
 def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
     """Score a saved GSM8K response under strict and flexible extraction."""
-    if sum(line.lstrip().startswith("####") for line in response.splitlines()) > 1:
+    markers = sum(line.lstrip().startswith("####") for line in response.splitlines())
+    phrases = re.findall(r"(?:final answer:|the answer is)\s*(" + _NUMBER + r")", response, re.I)
+    final_line = response.strip().splitlines()[-1] if response.strip() else ""
+    if markers > 1 or len(phrases) > 1 or (markers and not _FINAL.fullmatch(final_line)):
         invalid = {"extracted": None, "status": "invalid", "correct": False}
         return {"strict": invalid.copy(), "flexible": invalid.copy()}
     gold = _numeric_value(gold_answer.rsplit("####", 1)[-1].strip())
-    final_line = response.strip().splitlines()[-1] if response.strip() else ""
     match = _FINAL.fullmatch(final_line)
     extracted = match.group(1) if match else None
+    if match:
+        try:
+            value = _numeric_value(extracted)
+            if phrases and any(_numeric_value(phrase) != value for phrase in phrases):
+                raise ValueError("contradictory answer")
+        except (ValueError, ZeroDivisionError):
+            invalid = {"extracted": extracted, "status": "invalid", "correct": False}
+            return {"strict": invalid.copy(), "flexible": invalid.copy()}
     scored = {
         "extracted": extracted,
         "status": "valid" if match and not capped else "invalid",
@@ -36,6 +47,11 @@ def score_gsm8k(response: str, gold_answer: str, capped: bool = False) -> dict:
     }
     flexible_match = match or _ANSWER_PHRASE.search(final_line) or _LAST_NUMBER_LINE.fullmatch(final_line)
     flexible_answer = flexible_match.group(1) if flexible_match else None
+    if flexible_match:
+        try:
+            _numeric_value(flexible_answer)
+        except (ValueError, ZeroDivisionError):
+            flexible_match = None
     flexible = {
         "extracted": flexible_answer,
         "status": "valid" if flexible_match and not capped else "invalid",
@@ -62,6 +78,8 @@ def score_mmlu_logits(candidate_scores: dict[str, float], gold_choice: str) -> d
     """Score next-token logits over four MMLU choices."""
     if set(candidate_scores) != set("ABCD"):
         raise ValueError("candidate scores must contain A, B, C, and D")
+    if not all(math.isfinite(score) for score in candidate_scores.values()):
+        raise ValueError("candidate logits must be finite")
     highest = max(candidate_scores.values())
     if sum(score == highest for score in candidate_scores.values()) != 1:
         raise ValueError("top-logit tie makes the item invalid")

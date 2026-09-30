@@ -1,12 +1,15 @@
 """Hugging Face model boundary for GPU evaluation."""
 
 from dataclasses import dataclass
+from contextlib import nullcontext
+import os
 
 
 @dataclass
 class HFBackend:
     model: object
     tokenizer: object
+    inference_context: object = nullcontext
 
     def generate_batch(self, prompts: list[str], decoding: dict) -> list[dict]:
         """Generate continuations and return text plus auditable stop metadata."""
@@ -14,13 +17,13 @@ class HFBackend:
             prompts, return_tensors="pt", padding=True, add_special_tokens=False,
         ).to(self.model.device)
         input_width = inputs["input_ids"].shape[1]
-        generated = self.model.generate(
-            **inputs,
-            do_sample=decoding["do_sample"],
-            max_new_tokens=decoding["max_new_tokens"],
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-        )
+        with self.inference_context():
+            generated = self.model.generate(
+                **inputs, do_sample=decoding["do_sample"], num_beams=1, num_return_sequences=1,
+                max_new_tokens=decoding["max_new_tokens"],
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
         eos_ids = self.tokenizer.eos_token_id
         eos_ids = {eos_ids} if isinstance(eos_ids, int) else set(eos_ids or [])
         outputs = []
@@ -52,7 +55,8 @@ class HFBackend:
         inputs = self.tokenizer(
             prompts, return_tensors="pt", padding=True, add_special_tokens=False,
         ).to(self.model.device)
-        logits = self.model(**inputs).logits
+        with self.inference_context():
+            logits = self.model(**inputs).logits
         return [
             {
                 letter: float(logits[row_index, -1, candidate_id].item())
@@ -63,6 +67,7 @@ class HFBackend:
 
 
 def _default_dependencies():
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     import torch
     from peft import PeftConfig, PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -74,6 +79,8 @@ def _default_dependencies():
         "adapter_model_factory": PeftModel,
         "dtype_values": {"bfloat16": torch.bfloat16, "float16": torch.float16},
         "set_deterministic": staticmethod(torch.use_deterministic_algorithms),
+        "inference_context": staticmethod(torch.inference_mode),
+        "set_seed": staticmethod(__import__("transformers").set_seed),
     })()
 
 
@@ -81,9 +88,15 @@ def load_hf_backend(config: dict, dependencies=None) -> HFBackend:
     """Load one pinned causal LM and an optional compatible PEFT adapter."""
     dependencies = dependencies or _default_dependencies()
     dependencies.set_deterministic(config["deterministic"])
+    if hasattr(dependencies, "set_seed"):
+        dependencies.set_seed(config.get("seed", 42))
     tokenizer = dependencies.tokenizer_factory.from_pretrained(
         config["model"], revision=config["tokenizer_revision"],
     )
+    if hasattr(tokenizer, "eos_token_id"):
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token = tokenizer.eos_token
     model = dependencies.model_factory.from_pretrained(
         config["model"],
         revision=config["model_revision"],
@@ -104,4 +117,5 @@ def load_hf_backend(config: dict, dependencies=None) -> HFBackend:
             model, config["adapter"], revision=config["adapter_revision"], is_trainable=False,
         )
     model.eval()
-    return HFBackend(model=model, tokenizer=tokenizer)
+    return HFBackend(model=model, tokenizer=tokenizer,
+                     inference_context=getattr(dependencies, "inference_context", nullcontext))

@@ -66,3 +66,19 @@ def test_mmlu_logits_choose_highest_scored_letter():
 def test_mmlu_logit_tie_stops_scoring():
     with pytest.raises(ValueError, match="tie"):
         score_mmlu_logits({"A": 1.0, "B": 1.0, "C": 0.1, "D": 0.0}, "B")
+import math
+
+import pytest
+
+
+@pytest.mark.parametrize("text", ["#### 1/0", "Final answer: 1/0", "Final answer: 1; Final answer: 2", "#### 1\nFinal answer: 2"])
+def test_malformed_or_contradictory_numeric_answers_are_invalid(text):
+    from pilot_eval.scoring import score_gsm8k
+    assert score_gsm8k(text, "#### 2")["flexible"]["status"] == "invalid"
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_nonfinite_logits_stop_scoring(value):
+    from pilot_eval.scoring import score_mmlu_logits
+    with pytest.raises(ValueError, match="finite"):
+        score_mmlu_logits(dict(A=value, B=1., C=0., D=0.), "B")
