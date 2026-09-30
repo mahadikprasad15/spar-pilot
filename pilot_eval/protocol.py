@@ -111,3 +111,45 @@ def build_gsm8k_items(rows, indices: list[int], tokenizer) -> list[dict]:
         }
         for index in indices
     ]
+
+
+def _answer_letter(answer) -> str:
+    if isinstance(answer, int):
+        if answer not in range(4):
+            raise ValueError("MMLU answer index must be 0 through 3")
+        return "ABCD"[answer]
+    if answer in "ABCD" and len(answer) == 1:
+        return answer
+    raise ValueError("MMLU answer must be A/B/C/D or 0 through 3")
+
+
+def build_mmlu_items(
+    test_by_subject: dict, dev_by_subject: dict, selected: dict[str, list[int]],
+    shots: int, tokenizer, constrained: bool = False,
+) -> list[dict]:
+    """Build MMLU items with same-subject examples and saved provenance."""
+    if shots not in (0, 5):
+        raise ValueError("pilot 1 supports only 0 or 5 shots")
+    items = []
+    for subject in sorted(selected):
+        dev_rows = dev_by_subject.get(subject, [])
+        if shots == 5 and len(dev_rows) < 5:
+            raise ValueError(f"{subject} has fewer than five dev examples")
+        examples = [
+            {**row, "answer": _answer_letter(row["answer"])}
+            for row in dev_rows[:shots]
+        ]
+        for index in selected[subject]:
+            row = test_by_subject[subject][index]
+            prompt = build_mmlu_prompt(row["question"], row["choices"], examples, tokenizer)
+            item = {
+                "id": f"mmlu:{subject}:{index}",
+                "source_index": index,
+                "subject": subject,
+                "prompt": prompt,
+                "gold": _answer_letter(row["answer"]),
+            }
+            if constrained:
+                item["choice_token_ids"] = choice_token_ids(tokenizer, prompt)
+            items.append(item)
+    return items

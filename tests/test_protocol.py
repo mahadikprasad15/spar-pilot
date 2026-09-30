@@ -3,6 +3,7 @@ import pytest
 from pilot_eval.protocol import (
     build_gsm8k_prompt,
     build_gsm8k_items,
+    build_mmlu_items,
     build_mmlu_prompt,
     choice_token_ids,
     persist_cohort,
@@ -125,3 +126,24 @@ def test_gsm8k_items_keep_source_index_and_gold_solution():
         "prompt": "CHAT:Solve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: two?",
         "gold": "work\n#### 2",
     }]
+
+
+def test_mmlu_items_use_five_dev_examples_and_normalize_gold_label():
+    class FakeTokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            return messages[0]["content"] + "\nASSISTANT " + messages[1]["content"]
+
+    dev = [{
+        "question": f"example {index}", "choices": ["a", "b", "c", "d"], "answer": 0,
+    } for index in range(5)]
+    test = [{"question": "target", "choices": ["a", "b", "c", "d"], "answer": 1}]
+
+    items = build_mmlu_items(
+        {"biology": test}, {"biology": dev}, {"biology": [0]}, 5, FakeTokenizer()
+    )
+
+    assert len(items) == 1
+    assert items[0]["id"] == "mmlu:biology:0"
+    assert items[0]["gold"] == "B"
+    assert items[0]["prompt"].count("Question:") == 6
+    assert items[0]["prompt"].endswith("Question: target\nA. a\nB. b\nC. c\nD. d\nASSISTANT Answer:")
