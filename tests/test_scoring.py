@@ -61,3 +61,8 @@ def test_mmlu_logits_choose_highest_scored_letter():
     result = score_mmlu_logits({"A": 0.2, "B": 1.4, "C": 0.1, "D": -0.3}, "B")
 
     assert result == {"choice": "B", "status": "valid", "correct": True}
+
+
+def test_mmlu_logit_tie_stops_scoring():
+    with pytest.raises(ValueError, match="tie"):
+        score_mmlu_logits({"A": 1.0, "B": 1.0, "C": 0.1, "D": 0.0}, "B")

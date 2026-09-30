@@ -62,5 +62,8 @@ def score_mmlu_logits(candidate_scores: dict[str, float], gold_choice: str) -> d
     """Score next-token logits over four MMLU choices."""
     if set(candidate_scores) != set("ABCD"):
         raise ValueError("candidate scores must contain A, B, C, and D")
+    highest = max(candidate_scores.values())
+    if sum(score == highest for score in candidate_scores.values()) != 1:
+        raise ValueError("top-logit tie makes the item invalid")
     choice = max(candidate_scores, key=candidate_scores.get)
     return {"choice": choice, "status": "valid", "correct": choice == gold_choice}
