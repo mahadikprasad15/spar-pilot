@@ -17,3 +17,14 @@ def select_mmlu_indices(
         subject: sorted(rng.sample(range(subject_sizes[subject]), count_per_subject))
         for subject in sorted(subject_sizes)
     }
+
+
+def build_gsm8k_prompt(question: str, tokenizer) -> str:
+    """Render the GSM8K v1 chat prompt."""
+    content = (
+        "Solve the following problem step by step. End your response with a final line "
+        "in the form #### <number>.\n\nProblem: " + question
+    )
+    return tokenizer.apply_chat_template(
+        [{"role": "user", "content": content}], tokenize=False, add_generation_prompt=True
+    )
