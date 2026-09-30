@@ -80,3 +80,46 @@ def test_backend_generates_only_new_tokens_and_reports_eos():
     )
 
     assert outputs == [{"text": "answer", "token_count": 2, "stop_reason": "eos"}]
+
+
+def test_backend_reads_four_choice_logits_at_next_token():
+    class Batch(dict):
+        def to(self, device):
+            return self
+
+    class Value:
+        def __init__(self, value):
+            self.value = value
+
+        def item(self):
+            return self.value
+
+    class Logits:
+        def __getitem__(self, key):
+            row, position, token_id = key
+            assert position == -1
+            return Value(row * 100 + token_id)
+
+    class Tokenizer:
+        def __call__(self, prompts, **kwargs):
+            assert prompts == ["p1", "p2"]
+            return Batch(input_ids="ids", attention_mask="mask")
+
+    class Model:
+        device = "cuda"
+
+        def __call__(self, **inputs):
+            return type("Output", (), {"logits": Logits()})()
+
+    scores = HFBackend(Model(), Tokenizer()).choice_logits_batch(
+        ["p1", "p2"],
+        [
+            {"A": 11, "B": 12, "C": 13, "D": 14},
+            {"A": 21, "B": 22, "C": 23, "D": 24},
+        ],
+    )
+
+    assert scores == [
+        {"A": 11, "B": 12, "C": 13, "D": 14},
+        {"A": 121, "B": 122, "C": 123, "D": 124},
+    ]

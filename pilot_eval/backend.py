@@ -43,6 +43,24 @@ class HFBackend:
             })
         return outputs
 
+    def choice_logits_batch(
+        self, prompts: list[str], token_ids: list[dict[str, int]],
+    ) -> list[dict[str, float]]:
+        """Read next-token logits for each item's validated A/B/C/D tokens."""
+        if len(prompts) != len(token_ids):
+            raise ValueError("prompts and choice token IDs must have equal length")
+        inputs = self.tokenizer(
+            prompts, return_tensors="pt", padding=True, add_special_tokens=False,
+        ).to(self.model.device)
+        logits = self.model(**inputs).logits
+        return [
+            {
+                letter: float(logits[row_index, -1, candidate_id].item())
+                for letter, candidate_id in item_token_ids.items()
+            }
+            for row_index, item_token_ids in enumerate(token_ids)
+        ]
+
 
 def _default_dependencies():
     import torch
