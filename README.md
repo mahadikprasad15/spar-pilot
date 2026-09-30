@@ -78,6 +78,8 @@ For an exact top-logit tie, use the [logit tie recovery cells](docs/colab-logit-
 
 If notebook progress polling raises `JSONDecodeError`, first [check and monitor the existing evaluation process](docs/colab-progress-recovery.md). It may still be running. The corrected helper tolerates unreadable progress snapshots; no new plan is required.
 
+For CPU-only GSM8K flexible-v2 rescoring, use [these two Colab cells](docs/colab-flexible-v2.md) (sections 20–21). They verify saved source responses and create a separate immutable report containing all old/new scores and changed extractions. No model inference is required. Strict/v1 and MMLU results remain unchanged; see [ADR 0003](docs/adr/0003-gsm8k-flexible-v2.md) for the grammar.
+
 ```text
 artifacts/
   cohorts/<dataset>/<revision>/<cohort>/{manifest.json,source.json}
