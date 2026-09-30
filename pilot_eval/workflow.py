@@ -206,6 +206,24 @@ def execute_config(config_path, output_root, *, audit_items=None, dependencies=N
                   "prompt_indices": [{"id": item["id"], "source_index": item["source_index"]} for item in items]}
     deps = dependencies or HFDependencies()
     config = {**config, "runtime": deps.runtime(config)}
+    cached = {}
+    if "replay_path" in config:
+        replay_path = (root / config["replay_path"]).resolve()
+        if not replay_path.is_relative_to(root):
+            raise ValueError("replay path escapes artifact root")
+        replay = json.loads(replay_path.read_text())
+        if _hash(replay) != config["replay_sha256"]:
+            raise ValueError("replay hash mismatch")
+        if replay["records"] and replay["runtime"] != config["runtime"]:
+            raise ValueError("replayed logits require matching runtime provenance")
+        expected = {i["id"]: i for i in json.loads(items_path.read_text())}
+        for record in replay["records"]:
+            item = record["item"]
+            if expected.get(item["id"]) != item:
+                raise ValueError("replay item mismatch")
+            if item["id"] in cached:
+                raise ValueError("duplicate replay item")
+            cached[item["id"]] = record["candidate_scores"]
 
     class LazyBackend:
         backend = None
@@ -218,7 +236,15 @@ def execute_config(config_path, output_root, *, audit_items=None, dependencies=N
         def generate_batch(self, *args):
             return self._get().generate_batch(*args)
 
-        def choice_logits_batch(self, *args):
-            return self._get().choice_logits_batch(*args)
+        def choice_logits_items_batch(self, batch):
+            prompts = [item["prompt"] for item in batch]
+            tokens = [item["choice_token_ids"] for item in batch]
+            keys = [item["id"] for item in batch]
+            missing = [i for i, key in enumerate(keys) if key not in cached]
+            inferred = self._get().choice_logits_batch([prompts[i] for i in missing], [tokens[i] for i in missing]) if missing else []
+            if len(inferred) != len(missing):
+                raise ValueError("model returned the wrong number of outputs")
+            outputs = dict(zip(missing, inferred))
+            return [cached[key] if key in cached else outputs[i] for i, key in enumerate(keys)]
 
     return run_evaluation(config, items, LazyBackend(), root)

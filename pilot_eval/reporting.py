@@ -44,6 +44,8 @@ def build_report(output_root, name, selection):
     dataset_configs, prompts, runtimes = {}, {}, []
     entries, discrepancies = [], []
     first = selected[0][3]
+    logits = [config for _, _, _, config in selected if config["scorer"] == "mmlu_logits"]
+    _same(logits[0], logits[1], ("logit_tie_policy", "scorer_version"))
     for cell, plan, config_path, config in selected:
         _same(first, config, _GLOBAL)
         for key in ("do_sample", "num_beams", "num_return_sequences", "eos_token_id", "pad_token_id"):
@@ -89,6 +91,8 @@ def build_report(output_root, name, selection):
                         "config_sha256": _sha(run_dir / "config.json"),
                         "responses_sha256": summary["responses_sha256"],
                         "summary_sha256": _sha(run_dir / "results/results.json"), "summary": summary})
+        if config.get("scorer_version"):
+            entries[-1].update(scorer_version=config["scorer_version"], logit_tie_policy=config["logit_tie_policy"])
     report = {"state": "completed", "name": name, "selection": selection, "cells": entries,
               "protocol_discrepancies": discrepancies, "protocol_compliant": not discrepancies,
               "note": "Combined source runs; batch size is reported per cell. Historical gaps are descriptive. "
@@ -107,6 +111,12 @@ def build_report(output_root, name, selection):
             interval = summary[f"{scorer}_wilson_95"] if scorer else summary["sampling_interval_95"]
             lines.append(f"| {label} | {accuracy:.3f} | [{interval[0]:.3f}, {interval[1]:.3f}] | {entry['batch_size']} | {entry['plan']} |")
     gsm = entries[0]["summary"]
+    revised = [entry for entry in entries if entry.get("scorer_version") == "mmlu-logits-v2"]
+    if revised:
+        lines.extend(["", "## Logit scoring v2", "",
+                      "Ties count as invalid and incorrect and remain in the accuracy denominator."])
+        for entry in revised:
+            lines.append(f"- {entry['cell']}: {entry['summary']['tie_count']} ties ({entry['summary']['tie_rate']:.3%}); scorer mmlu-logits-v2.")
     lines.extend(["", f"GSM8K mean/median response tokens: {gsm['mean_response_tokens']} / {gsm['median_response_tokens']}.",
                   "", "## Source runs", ""])
     for entry in entries:

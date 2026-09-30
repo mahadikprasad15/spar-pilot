@@ -142,7 +142,7 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             batch = pending[start : start + batch_size]
             prompts = [item["prompt"] for item in batch]
             if config["scorer"] == "mmlu_logits":
-                outputs = backend.choice_logits_batch(
+                outputs = backend.choice_logits_items_batch(batch) if hasattr(backend, "choice_logits_items_batch") else backend.choice_logits_batch(
                     prompts, [item["choice_token_ids"] for item in batch]
                 )
             else:
@@ -153,6 +153,8 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             for item, output in zip(batch, outputs):
                 record = {**item, "subject": item.get("subject")}
                 if config["scorer"] == "mmlu_logits":
+                    if item["id"] in config.get("replayed_item_ids", []):
+                        record["logit_source"] = config["replay_path"]
                     record.update({
                         "generated_text": None, "candidate_scores": output,
                         "choice_token_ids": item["choice_token_ids"],

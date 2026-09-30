@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from pilot_eval.workflow import execute_config, prepare_plan
-from pilot_eval.recovery import fork_plan
+from pilot_eval.recovery import fork_plan, revise_logits
 from pilot_eval.reporting import build_report
 
 
@@ -26,10 +26,13 @@ def main(argv=None, *, dependencies=None):
     fork.add_argument("--source", required=True)
     fork.add_argument("--plan", required=True)
     fork.add_argument("--batch-size", type=int, required=True)
+    revise = commands.add_parser("revise-logits", help="version tie policy and reuse verified raw source logits")
+    revise.add_argument("--source", required=True)
+    revise.add_argument("--plan", required=True)
     report = commands.add_parser("report", help="verify and combine selected completed source runs")
     report.add_argument("--selection", type=Path, required=True, help="JSON mapping cell names to plan names")
     report.add_argument("--name", required=True)
-    for command in (prepare, run, fork, report):
+    for command in (prepare, run, fork, revise, report):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
@@ -40,6 +43,9 @@ def main(argv=None, *, dependencies=None):
                 print(path)
         elif args.command == "fork-plan":
             for path in fork_plan(args.output_root, args.source, args.plan, args.batch_size):
+                print(path)
+        elif args.command == "revise-logits":
+            for path in revise_logits(args.output_root, args.source, args.plan):
                 print(path)
         elif args.command == "report":
             summary = build_report(args.output_root, args.name, json.loads(args.selection.read_text()))
