@@ -72,6 +72,8 @@ Local directories are pinned by a content SHA256; Hub adapters are pinned by a c
 
 ## Artifacts
 
+For recovery after a batch-8 five-shot OOM, use the [same-notebook recovery cells](docs/colab-recovery.md). `fork-plan` copies the original frozen inputs with a smaller batch size; `report` combines explicitly selected completed runs while retaining their paths, hashes, batch sizes and protocol warnings. Completed earlier evaluations do not need to run again.
+
 ```text
 artifacts/
   cohorts/<dataset>/<revision>/<cohort>/{manifest.json,source.json}

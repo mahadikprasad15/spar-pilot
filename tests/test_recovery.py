@@ -5,7 +5,7 @@ import pytest
 
 from pilot_eval.cli import main
 from pilot_eval.workflow import prepare_plan, execute_config
-from test_workflow import Dependencies
+from test_workflow import Dependencies, Tokenizer
 
 
 def test_fork_plan_preserves_frozen_inputs_without_external_access(tmp_path, capsys):
@@ -29,6 +29,10 @@ def test_fork_plan_preserves_frozen_inputs_without_external_access(tmp_path, cap
 @pytest.fixture
 def selected_runs(tmp_path):
     deps = Dependencies()
+    class SystemTokenizer(Tokenizer):
+        def apply_chat_template(self, messages, **kwargs):
+            return "<|im_start|>system\nDefault system message\n<|im_end|>\n" + super().apply_chat_template(messages, **kwargs)
+    deps.tokenizer = SystemTokenizer()
     old = prepare_plan(tmp_path, "batch8", batch_size=8, dependencies=deps)
     assert main(["fork-plan", "--source", "batch8", "--plan", "batch2", "--batch-size", "2", "--output-root", str(tmp_path)]) == 0
     manifest = json.loads((tmp_path / "plans/batch2/manifest.json").read_text())
@@ -46,6 +50,7 @@ def selected_runs(tmp_path):
 def test_combined_report_references_verified_sources_and_batch_sizes(selected_runs, capsys):
     root, selection, paths = selected_runs
     args = ["report", "--selection", str(selection), "--name", "combined", "--output-root", str(root)]
+    before = {path: path.read_bytes() for path in (root / "runs").rglob("*") if path.is_file()}
     assert main(args) == 0
     report = json.loads((root / "reports/combined/results/results.json").read_text())
     assert report["state"] == "completed"
@@ -53,8 +58,11 @@ def test_combined_report_references_verified_sources_and_batch_sizes(selected_ru
     assert [cell["summary"]["total"] for cell in report["cells"]] == [150, 1140, 1140, 1140, 1140]
     assert all((root / cell["run_path"] / "results/responses.jsonl").exists() for cell in report["cells"])
     assert len(list(root.glob("runs/**/responses.jsonl"))) == 5
+    assert report["protocol_compliant"] is False
+    assert len(report["protocol_discrepancies"]) == 5
     assert "Batch" in (root / "reports/combined/results/report.md").read_text()
     assert main(args) == 0
+    assert all(path.read_bytes() == value for path, value in before.items())
 
 
 def test_report_rejects_partial_or_tampered_source_runs(selected_runs):
@@ -74,3 +82,15 @@ def test_report_rejects_partial_or_tampered_source_runs(selected_runs):
         stream.write(responses.read_text().splitlines()[0] + "\n")
     assert main(args) == 1
     assert not (root / "reports/rejected/results/results.json").exists()
+
+
+def test_report_rejects_incompatible_selected_cohorts(selected_runs, capsys):
+    root, selection, paths = selected_runs
+    path = paths[2]
+    config = json.loads(path.read_text())
+    config["dataset_revision"] = "b" * 40
+    path.write_text(json.dumps(config))
+    args = ["report", "--selection", str(selection), "--name", "mismatch", "--output-root", str(root)]
+    assert main(args) == 1
+    assert "mismatched dataset_revision" in capsys.readouterr().err
+    assert not (root / "reports/mismatch/results/results.json").exists()
