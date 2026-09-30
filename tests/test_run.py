@@ -212,3 +212,32 @@ def test_gsm8k_summary_counts_caps_and_accuracy_interval(tmp_path):
     assert summary["cap_count"] == 1
     assert summary["strict_invalid_count"] == 1
     assert summary["strict_wilson_95"][0] < 0.5 < summary["strict_wilson_95"][1]
+
+
+def test_mmlu_summary_reports_subject_counts_and_sampling_range(tmp_path):
+    class FakeBackend:
+        def generate_batch(self, prompts, decoding):
+            return [
+                {"text": letter, "token_count": 1, "stop_reason": "eos"}
+                for letter in ["A", "B", "A", "A"]
+            ]
+
+    config = {
+        "run_id": "run-1", "experiment": "pilot-1", "model": "qwen",
+        "dataset": "mmlu", "cohort": "balanced-1140", "variant": "baseline-0shot",
+        "scorer": "mmlu_text", "decoding": {"do_sample": False, "max_new_tokens": 32},
+        "batch_size": 4, "seed": 42,
+    }
+    items = [
+        {"id": "bio-1", "subject": "biology", "prompt": "q1", "gold": "A"},
+        {"id": "bio-2", "subject": "biology", "prompt": "q2", "gold": "A"},
+        {"id": "hist-1", "subject": "history", "prompt": "q3", "gold": "A"},
+        {"id": "hist-2", "subject": "history", "prompt": "q4", "gold": "A"},
+    ]
+
+    summary = run_evaluation(config, items, FakeBackend(), tmp_path / "artifacts")
+
+    assert summary["accuracy"] == 0.75
+    assert summary["subjects"]["biology"] == {"correct": 1, "total": 2}
+    assert summary["subjects"]["history"] == {"correct": 2, "total": 2}
+    assert summary["sampling_interval_95"] == [0.5, 1.0]

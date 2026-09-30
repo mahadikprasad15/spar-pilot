@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import random
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,24 @@ def _wilson_95(correct: int, total: int) -> list[float]:
         proportion * (1 - proportion) / total + z * z / (4 * total * total)
     ) / denominator
     return [center - half_width, center + half_width]
+
+
+def _subject_sampling_interval_95(records: list[dict], seed: int) -> list[float]:
+    grouped = {}
+    for record in records:
+        grouped.setdefault(record["subject"], []).append(int(record["score"]["correct"]))
+    rng = random.Random(seed)
+    draws = []
+    for _ in range(2000):
+        sampled = [
+            rng.choice(values)
+            for subject in sorted(grouped)
+            for values in [grouped[subject]]
+            for _ in values
+        ]
+        draws.append(sum(sampled) / len(sampled))
+    draws.sort()
+    return [draws[49], draws[1949]]
 
 
 def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) -> dict:
@@ -132,7 +151,21 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
             "median_response_tokens": statistics.median(lengths),
         }
     else:
-        summary = {"accuracy": sum(record["score"]["correct"] for record in records) / len(records)}
+        subjects = {}
+        for record in records:
+            counts = subjects.setdefault(record["subject"], {"correct": 0, "total": 0})
+            counts["total"] += 1
+            counts["correct"] += int(record["score"]["correct"])
+        correct = sum(record["score"]["correct"] for record in records)
+        summary = {
+            "accuracy": correct / len(records),
+            "correct": correct,
+            "total": len(records),
+            "subjects": subjects,
+            "sampling_interval_95": _subject_sampling_interval_95(records, config.get("seed", 42)),
+            "invalid_count": sum(record["score"]["status"] == "invalid" for record in records),
+            "cap_count": sum(record.get("stop_reason") == "cap" for record in records),
+        }
     _write_json(summary_path, summary)
     _write_state(run_dir, "completed", len(records), len(items))
     return summary
