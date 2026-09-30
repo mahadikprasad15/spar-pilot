@@ -14,7 +14,15 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     )
     results_dir = run_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+    config_path = run_dir / "config.json"
+    summary_path = results_dir / "results.json"
+    if config_path.exists():
+        if json.loads(config_path.read_text()) != config:
+            raise ValueError("run config mismatch")
+        if summary_path.exists():
+            return json.loads(summary_path.read_text())
+    else:
+        config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
     outputs = backend.generate_batch([item["prompt"] for item in items], config["decoding"])
     records = []
     for item, output in zip(items, outputs):
@@ -30,5 +38,5 @@ def run_evaluation(config: dict, items: list[dict], backend, output_root: Path) 
     summary = {
         "strict_accuracy": sum(record["score"]["strict"]["correct"] for record in records) / len(records),
     }
-    (results_dir / "results.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     return summary

@@ -23,3 +23,30 @@ def test_gsm8k_run_saves_response_and_summary(tmp_path):
 
     assert records[0]["score"]["strict"]["correct"] is True
     assert summary["strict_accuracy"] == 1.0
+
+
+def test_completed_run_is_immutable_on_repeat(tmp_path):
+    class FakeBackend:
+        calls = 0
+
+        def generate_batch(self, prompts, decoding):
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("completed run generated again")
+            return [{"text": "#### 72", "token_count": 3, "stop_reason": "eos"}]
+
+    config = {
+        "run_id": "run-1", "experiment": "pilot-1", "model": "qwen",
+        "dataset": "gsm8k", "cohort": "test-150", "variant": "baseline",
+        "scorer": "gsm8k", "decoding": {"do_sample": False, "max_new_tokens": 1024},
+        "batch_size": 1,
+    }
+    items = [{"id": "gsm8k:test:7", "prompt": "question", "gold": "#### 72"}]
+    backend = FakeBackend()
+
+    first = run_evaluation(config, items, backend, tmp_path / "artifacts")
+    second = run_evaluation(config, items, backend, tmp_path / "artifacts")
+    path = tmp_path / "artifacts/runs/pilot-1/qwen/gsm8k/test-150/baseline/run-1/results/responses.jsonl"
+
+    assert first == second
+    assert len(path.read_text().splitlines()) == 1
