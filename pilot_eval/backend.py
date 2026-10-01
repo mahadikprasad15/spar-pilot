@@ -79,7 +79,7 @@ def _default_dependencies():
         "model_factory": AutoModelForCausalLM,
         "adapter_config_factory": PeftConfig,
         "adapter_model_factory": PeftModel,
-        "dtype_values": {"bfloat16": torch.bfloat16, "float16": torch.float16},
+        "dtype_values": {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32},
         "set_deterministic": staticmethod(torch.use_deterministic_algorithms),
         "inference_context": staticmethod(torch.inference_mode),
         "set_seed": staticmethod(__import__("transformers").set_seed),

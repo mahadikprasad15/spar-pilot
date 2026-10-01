@@ -49,7 +49,9 @@ def validate_config(config: dict) -> dict:
         raise ValueError("sampled decoding requires a future protocol")
     if config["scorer"] != "mmlu_logits" and config["decoding"].get("max_new_tokens") != (1024 if dataset == "gsm8k" else 32):
         raise ValueError("generation cap does not match pilot protocol")
-    if config["dtype"] not in ("bfloat16", "float16") or config["quantization"] is not None:
+    pilot2_fp32 = (config['dtype'] == 'float32' and config.get('protocol_version') == 'pilot2-eval-v1'
+                   and config['scorer'] == 'gsm8k')
+    if (config["dtype"] not in ("bfloat16", "float16") and not pilot2_fp32) or config["quantization"] is not None:
         raise ValueError("pilot requires unquantized bf16 or fp16")
     if config["deterministic"] is not True:
         raise ValueError("deterministic execution required")

@@ -41,11 +41,25 @@ def main(argv=None, *, dependencies=None):
     sft_prepare = commands.add_parser('sft-prepare', help='freeze Pilot 2 training inputs and analysis plan')
     sft_prepare.add_argument('--source-config', type=Path, required=True)
     sft_prepare.add_argument('--name', required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare):
+    sft_train = commands.add_parser('sft-train', help='preflight or resume Pilot 2 training')
+    sft_train.add_argument('--config', type=Path, required=True)
+    sft_train.add_argument('--preflight-only', action='store_true')
+    sft_eval = commands.add_parser('sft-evaluate', help='evaluate a matched baseline or adapter checkpoint')
+    sft_eval.add_argument('--config', type=Path, required=True)
+    sft_eval.add_argument('--checkpoint', choices=['baseline', '0', '8', '16', '32', '64'], required=True)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'sft-prepare':
+        if args.command == 'sft-evaluate':
+            from pilot_eval.sft_evaluation import evaluate_sft
+            print(json.dumps(evaluate_sft(args.config, args.output_root, args.checkpoint,
+                dependencies=dependencies), indent=2))
+        elif args.command == 'sft-train':
+            from pilot_eval.training import run_sft
+            print(json.dumps(run_sft(args.config, args.output_root,
+                preflight_only=args.preflight_only, dependencies=dependencies), indent=2))
+        elif args.command == 'sft-prepare':
             print(prepare_sft(args.source_config, args.output_root, args.name, dependencies=dependencies))
         elif args.command == "prepare":
             paths = prepare_plan(args.output_root, args.plan, model=args.model, dtype=args.dtype,
