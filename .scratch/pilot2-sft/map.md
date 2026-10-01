@@ -66,7 +66,11 @@ reproduction of the historical optimization recipe. The user approved comparing
 the adapter with a matched untuned baseline on identical evaluation items and
 scorer, reporting accuracy and response-length changes.
 
-### Round 2 proposals (not yet confirmed)
+### Round 2 resolved, with precision still open
+
+The user approved the proposed recipe and data/target formatting, and selected
+Colab with a T4. The native-bf16 recommendation therefore does not apply to the
+selected device; training/evaluation precision requires a separate decision.
 
 - Learning rate 1e-4: explicit new adapter-training choice, not the historical LR
   or the TRL 0.26.2 SFTConfig default (2e-5).
@@ -78,8 +82,8 @@ scorer, reporting accuracy and response-length changes.
   and #### markers; seeded sample 42 from the pinned official train split.
 - Same actual chat/system behavior as baseline, completion-only targets with
   end-turn included, packing off and fail on full rendered sequence overflow.
-- Select a native-bf16 GPU platform; measure a fresh matched baseline in its
-  locked training/evaluation environment if the original platform differs.
+- Colab T4 selected; select and record a suitable precision explicitly, then
+  measure a fresh matched baseline in the locked training/evaluation environment.
 
 Official defaults were checked in TRL 0.26.2 SFTConfig, Transformers 4.57.6
 TrainingArguments, and PEFT 0.18 LoraConfig. No library-default behavior will be
@@ -111,9 +115,13 @@ https://raw.githubusercontent.com/pytorch/pytorch/v2.9.0/torch/cuda/__init__.py.
 
 ## Fog / current interview frontier
 
-1. Confirm the proposed optimization settings or requested changes.
-2. Confirm training selection and target formatting.
-3. Choose the GPU platform for native-bf16 training and matched evaluation.
+1. Select precision and memory settings suitable for the chosen Colab T4.
+2. Q6 pending: GSM8K at all checkpoints; four MMLU settings at baseline and
+   final checkpoint only, or GSM8K-only scope.
+3. Q7 approved: paired accuracy changes and length ratios without a new binary
+   collapse gate. Historical numbers remain descriptive references.
+4. Q8 pending: FP32 with a memory/stability preflight (recommended) or FP16
+   frozen base plus FP32 trainable adapters and AMP scaling on the T4.
 
 Checkpoint-evaluation scope, numerical collapse criteria, preregistered
 diagnostic predictions and public training test seams still need agreement.
