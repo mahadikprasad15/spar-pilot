@@ -25,7 +25,7 @@ class Engine:
             cp.mkdir(parents=True, exist_ok=True)
             for file in ['adapter_config.json', 'adapter_model.safetensors', 'optimizer.pt',
                          'scheduler.pt', 'rng_state.pth', 'trainer_state.json']:
-                (cp / file).write_text(json.dumps({'step': step}))
+                (cp / file).write_text(json.dumps({'global_step': step}))
             seal_checkpoint(cp, step)
             if self.interrupt and step == 8:
                 raise RuntimeError('simulated interruption')
@@ -65,3 +65,34 @@ def test_public_training_recovers_from_sealed_checkpoint_and_skips_completed(tmp
     (directory / 'checkpoints/checkpoint-64/optimizer.pt').write_text('corrupt')
     with pytest.raises(ValueError, match='checkpoint'):
         run_sft(path, tmp_path, dependencies=deps)
+
+
+def test_model_loading_failure_is_saved_without_masking_original_error(tmp_path):
+    from pilot_eval.sft import prepare_sft
+    from pilot_eval.training import run_sft, training_directory
+    path = prepare_sft(source_plan(tmp_path), tmp_path, 'failed', dependencies=TrainingData())
+
+    class FailingModel(TrainingBoundary):
+        def training_engine(self, config, rows):
+            raise RuntimeError('CUDA out of memory during model load')
+
+    with pytest.raises(RuntimeError, match='model load'):
+        run_sft(path, tmp_path, dependencies=FailingModel())
+    directory = training_directory(tmp_path, json.loads(path.read_text()))
+    status = json.loads((directory / 'meta/status.json').read_text())
+    assert status['state'] == 'failed'
+    assert 'model load' in status['error']
+    assert 'CUDA out of memory' in (directory / 'logs/errors.jsonl').read_text()
+
+
+def test_checkpoint_manifest_cannot_omit_required_resume_state(tmp_path):
+    from pilot_eval.training import verified_checkpoints
+    Engine().train(tmp_path, None)
+    checkpoint = tmp_path / 'checkpoints/checkpoint-8'
+    manifest_path = checkpoint / 'complete.json'
+    manifest = json.loads(manifest_path.read_text())
+    del manifest['files']['optimizer.pt']
+    manifest_path.write_text(json.dumps(manifest))
+    (checkpoint / 'optimizer.pt').unlink()
+    with pytest.raises(ValueError, match='required state'):
+        verified_checkpoints(tmp_path)

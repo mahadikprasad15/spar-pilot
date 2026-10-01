@@ -1,4 +1,6 @@
 import json
+import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,3 +66,40 @@ def test_real_cpu_trainer_masks_accumulates_and_preserves_frozen_weights(tmp_pat
     assert len(logs) == 64
     assert len({item for log in logs for item in log['example_ids']}) == 512
     assert all(log['learning_rate'] == 1e-4 for log in logs)
+
+
+def test_completion_loss_weights_unequal_targets_by_total_supervised_tokens():
+    torch = pytest.importorskip('torch', exc_type=ImportError)
+    from pilot_eval.sft_backend import completion_loss
+    parameter = torch.zeros(2, requires_grad=True)
+    a = SimpleNamespace(logits=parameter.reshape(1, 1, 2).expand(1, 3, 2))
+    b = SimpleNamespace(logits=(parameter + torch.tensor([math.log(3), 0])).reshape(1, 1, 2).expand(1, 5, 2))
+    loss_a = completion_loss(a, torch.tensor([[-100, 1, 1]]), 6)
+    loss_b = completion_loss(b, torch.tensor([[-100, 1, 1, 1, 1]]), 6)
+    assert (loss_a + loss_b).item() == pytest.approx((2 * math.log(2) + 4 * math.log(4)) / 6)
+    loss_a.backward()
+    loss_b.backward()
+    assert parameter.grad.tolist() == pytest.approx([2 / 3, -2 / 3])
+    with pytest.raises(ValueError, match='nonfinite'):
+        completion_loss(SimpleNamespace(logits=torch.full((1, 3, 2), float('nan'))),
+                        torch.tensor([[-100, 1, 1]]), 2)
+
+
+def test_training_runtime_uses_frozen_decoding_without_model_download(tmp_path, monkeypatch):
+    torch = pytest.importorskip('torch', exc_type=ImportError)
+    pytest.importorskip('transformers', exc_type=ImportError)
+    from pilot_eval.sft import prepare_sft, load_sft
+    from pilot_eval.sft_backend import HFTrainingEngine, PINS
+    from test_sft_prepare import TrainingData, source_plan
+    path = prepare_sft(source_plan(tmp_path), tmp_path, 'runtime', dependencies=TrainingData())
+    config, _, _ = load_sft(path, tmp_path)
+    import importlib.metadata
+    original_version = importlib.metadata.version
+    monkeypatch.setattr(importlib.metadata, 'version', lambda name: PINS.get(name) or original_version(name))
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(torch.cuda, 'device_count', lambda: 1)
+    monkeypatch.setattr(torch.cuda, 'get_device_name', lambda i: 'Tesla T4')
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda i: (7, 5))
+    runtime = HFTrainingEngine.runtime(config)
+    assert runtime['resolved_generation']['max_new_tokens'] == 1024
+    assert runtime['compute_capability'] == [7, 5]

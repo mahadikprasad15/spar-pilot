@@ -24,7 +24,7 @@ def _interval(values):
 
 def _paired_intervals(base, adapted, plan):
     rng = random.Random(plan['seed'])
-    draws = {k: [] for k in ['strict_change', 'flexible_v2_change', 'length_change', 'length_ratio']}
+    draws: dict[str, list[float | None]] = {k: [] for k in ['strict_change', 'flexible_v2_change', 'length_change', 'length_ratio']}
     for _ in range(plan['draws']):
         ids = rng.choices(range(len(base)), k=len(base))
         for scorer in ['strict', 'flexible_v2']:
@@ -34,7 +34,7 @@ def _paired_intervals(base, adapted, plan):
         after = statistics.mean(adapted[i]['token_count'] for i in ids)
         draws['length_change'].append(after - before)
         draws['length_ratio'].append(after / before if before else None)
-    return {key: _interval(values) if all(v is not None for v in values) else None
+    return {key: _interval([v for v in values if v is not None]) if all(v is not None for v in values) else None
             for key, values in draws.items()}
 
 
@@ -80,7 +80,8 @@ def compare_sft(config_path, output_root):
             rescored_sha256=file_hash(response_path))
     baseline = cohorts['baseline']
     baseline_length = statistics.mean(r['token_count'] for r in baseline)
-    trajectory, paired = [], []
+    trajectory: list[dict] = []
+    paired: list[dict] = []
     for checkpoint, records in cohorts.items():
         lengths = [r['token_count'] for r in records]
         entry = dict(step=None if checkpoint == 'baseline' else int(checkpoint),
@@ -161,8 +162,8 @@ def compare_sft(config_path, output_root):
             axes[0].plot(steps, [r[scorer + '_accuracy'] for r in trajectory[1:]],
                          marker='o', label=scorer, color=color)
             axes[0].errorbar(steps, [r[scorer + '_accuracy'] for r in trajectory[1:]],
-                yerr=[[r[scorer + '_accuracy'] - r[scorer + '_95'][0] for r in trajectory[1:]],
-                      [r[scorer + '_95'][1] - r[scorer + '_accuracy'] for r in trajectory[1:]]],
+                yerr=[[max(0, r[scorer + '_accuracy'] - r[scorer + '_95'][0]) for r in trajectory[1:]],
+                      [max(0, r[scorer + '_95'][1] - r[scorer + '_accuracy']) for r in trajectory[1:]]],
                 fmt='none', ecolor=color, capsize=3, alpha=.7)
             axes[0].axhline(trajectory[0][scorer + '_accuracy'], color=color, linestyle='--', alpha=.6)
         axes[0].set(xlabel='Optimizer step', ylabel='Accuracy', ylim=(0, 1), title='GSM8K accuracy')

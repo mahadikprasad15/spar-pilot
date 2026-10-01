@@ -107,7 +107,8 @@ class HFTrainingEngine:
         versions = {name: importlib.metadata.version(name) for name in PINS}
         if any(versions[name].split('+')[0] != version for name, version in PINS.items()):
             raise ValueError(f'Pilot 2 requires pinned training dependencies: {PINS}; actual: {versions}')
-        runtime = HFDependencies().runtime(config)
+        runtime_config = {**config, 'decoding': config.get('decoding', config.get('source_config', {}).get('decoding'))}
+        runtime = HFDependencies().runtime(runtime_config)
         import torch
         if 'T4' not in runtime['device']:
             raise ValueError('this protocol requires the selected Colab T4; record a variant for another GPU')
@@ -198,7 +199,10 @@ class HFTrainingEngine:
 
         class OrderedTrainer(SFTTrainer):
             def _get_train_sampler(self, train_dataset=None):
-                return SequentialSampler(train_dataset if train_dataset is not None else self.train_dataset)
+                dataset = train_dataset if train_dataset is not None else self.train_dataset
+                if dataset is None:
+                    raise ValueError('training dataset is required')
+                return SequentialSampler(dataset)
 
             def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
                 engine.seen.extend(inputs.pop('example_ids'))
@@ -215,6 +219,8 @@ class HFTrainingEngine:
             def on_optimizer_step(self, args, state, control, optimizer=None, **kwargs):
                 if getattr(optimizer, 'step_was_skipped', False):
                     raise ValueError('optimizer update was skipped')
+                if any(not torch.isfinite(p).all() for p in engine.model.parameters() if p.requires_grad):
+                    raise ValueError('nonfinite adapter weights after optimizer update')
 
             def on_step_end(self, args, state, control, **kwargs):
                 step = state.global_step

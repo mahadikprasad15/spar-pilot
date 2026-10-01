@@ -8,8 +8,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pilot_eval.config import validate_config
-from pilot_eval.protocol import build_gsm8k_prompt
+from pilot_eval.protocol import build_gsm8k_prompt, gsm8k_messages
 from pilot_eval.workflow import HFDependencies, _hash, _save_frozen
+
+
+def optimizer_settings():
+    return dict(name='adamw_torch', learning_rate=1e-4, beta1=0.9, beta2=0.999,
+                epsilon=1e-8, weight_decay=0.0, max_grad_norm=1.0,
+                scheduler='constant', warmup_steps=0, microbatch=1,
+                gradient_accumulation_steps=8, max_steps=64)
+
+
+def adapter_settings():
+    return dict(rank=1, alpha=1, dropout=0.0, layers=28,
+                projections=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'])
 
 
 def safe_name(name):
@@ -27,13 +39,36 @@ def read_artifact(root, relative):
 
 def load_sft(config_path, root):
     config = json.loads(Path(config_path).read_text())
+    safe_name(config.get('run_id', ''))
     if config['protocol_version'] != 'pilot2-sft-v1' or config['dtype'] != 'float32':
         raise ValueError('unsupported SFT protocol/precision')
+    locked = dict(seed=42, experiment='pilot-2', optimizer=optimizer_settings(),
+                  adapter=adapter_settings(), full_determinism=True,
+                  gradient_checkpointing=True, use_cache=False, packing=False,
+                  checkpoint_steps=[0, 8, 16, 32, 64])
+    if any(config.get(key) != value for key, value in locked.items()):
+        raise ValueError('configuration differs from locked Pilot 2 protocol; record a new protocol version')
+    source = validate_config(config['source_config'])
+    if (source['model'] != 'Qwen/Qwen2.5-1.5B-Instruct' or source['adapter'] is not None
+            or source['scorer'] != 'gsm8k' or len(source['prompt_indices']) != 150
+            or any(config.get(key) != source[key] for key in ['model', 'model_revision', 'tokenizer_revision'])):
+        raise ValueError('configuration does not match pinned untuned source')
     rows = read_artifact(root, config['training_items_path'])
     items = read_artifact(root, config['evaluation_items_path'])
     for field, data in [('training', rows), ('evaluation', items)]:
         if _hash(data) != config[field + '_items_sha256']:
             raise ValueError(field + ' input hash mismatch')
+    if (len(rows) != 512 or len({r['id'] for r in rows}) != 512
+            or [r['source_index'] for r in rows] != config['training_indices']
+            or config['max_length'] != max(len(r['input_ids']) for r in rows)
+            or config['evaluation_items_sha256'] != source['items_sha256']):
+        raise ValueError('configuration/cohort mismatch')
+    for row in rows:
+        boundary = row['prompt_tokens']
+        if (not 0 < boundary < len(row['input_ids'])
+                or row['labels'] != [-100] * boundary + row['input_ids'][boundary:]
+                or row['labels'][-1] != source['decoding']['eos_token_id']):
+            raise ValueError('invalid completion-only labels/end-turn')
     plan = read_artifact(root, config['analysis_plan_path'])
     if _hash(plan) != config['analysis_plan_sha256']:
         raise ValueError('analysis plan hash mismatch')
@@ -82,11 +117,8 @@ def prepare_sft(source_config, output_root, name, *, dependencies=None):
         if ' '.join(row['question'].split()) in test_questions:
             raise ValueError('training/evaluation question overlap')
         prompt = build_gsm8k_prompt(row['question'], tokenizer)
-        # Reuse the exact user text from the evaluation protocol.
-        content = ('Solve the following problem step by step. End your response with a final line '
-                   'in the form #### <number>.\n\nProblem: ' + row['question'])
         full = tokenizer.apply_chat_template(
-            [{'role': 'user', 'content': content}, {'role': 'assistant', 'content': row['answer']}],
+            gsm8k_messages(row['question']) + [{'role': 'assistant', 'content': row['answer']}],
             tokenize=False, add_generation_prompt=False)
         prefix = tokenizer.encode(prompt, add_special_tokens=False)
         tokens = tokenizer.encode(full, add_special_tokens=False)
@@ -118,17 +150,12 @@ def prepare_sft(source_config, output_root, name, *, dependencies=None):
                     diagnostics=['gold-target lengths', 'checkpoint trajectory', 'paired responses'],
                     limitations=['single training seed', 'sampled evaluation cohort',
                                  'historical recipe unavailable', 'no causal interpretation'])
-    optimizer = dict(name='adamw_torch', learning_rate=1e-4, beta1=0.9, beta2=0.999,
-                     epsilon=1e-8, weight_decay=0.0, max_grad_norm=1.0,
-                     scheduler='constant', warmup_steps=0, microbatch=1,
-                     gradient_accumulation_steps=8, max_steps=64)
     training_path = directory / 'training.items.json'
     eval_path = directory / 'evaluation.items.json'
     config = dict(protocol_version='pilot2-sft-v1', run_id=name, experiment='pilot-2',
                   source_config=source, model=source['model'], model_revision=source['model_revision'],
                   tokenizer_revision=source['tokenizer_revision'], seed=42, dtype='float32',
-                  optimizer=optimizer, adapter=dict(rank=1, alpha=1, dropout=0.0, layers=28,
-                      projections=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']),
+                  optimizer=optimizer_settings(), adapter=adapter_settings(),
                   full_determinism=True, gradient_checkpointing=True, use_cache=False,
                   packing=False, checkpoint_steps=[0, 8, 16, 32, 64],
                   max_length=max(len(r['input_ids']) for r in rows), training_indices=indices,

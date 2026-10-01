@@ -108,3 +108,13 @@ def test_sft_prepare_rejects_unmatched_or_truncated_data(tmp_path, failure):
     with pytest.raises(ValueError, match={'overlap': 'overlap', 'context': 'overflow',
                                          'template': 'template'}[failure]):
         prepare_sft(source, tmp_path, 'broken', dependencies=BrokenData())
+
+
+def test_sft_rejects_configuration_that_cannot_match_execution(tmp_path):
+    from pilot_eval.sft import prepare_sft, load_sft
+    path = prepare_sft(source_plan(tmp_path), tmp_path, 'sft', dependencies=TrainingData())
+    config = json.loads(path.read_text())
+    config['adapter']['rank'] = 2
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match='configuration|config'):
+        load_sft(path, tmp_path)

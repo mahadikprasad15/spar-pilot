@@ -22,15 +22,18 @@ def select_mmlu_indices(
     }
 
 
-def build_gsm8k_prompt(question: str, tokenizer) -> str:
-    """Render the GSM8K v1 chat prompt."""
+def gsm8k_messages(question: str) -> list[dict]:
+    """Shared user message for training and evaluation under GSM8K v1."""
     content = (
         "Solve the following problem step by step. End your response with a final line "
         "in the form #### <number>.\n\nProblem: " + question
     )
-    return tokenizer.apply_chat_template(
-        [{"role": "user", "content": content}], tokenize=False, add_generation_prompt=True
-    )
+    return [{"role": "user", "content": content}]
+
+
+def build_gsm8k_prompt(question: str, tokenizer) -> str:
+    """Render the GSM8K v1 chat prompt."""
+    return tokenizer.apply_chat_template(gsm8k_messages(question), tokenize=False, add_generation_prompt=True)
 
 
 def build_mmlu_prompt(

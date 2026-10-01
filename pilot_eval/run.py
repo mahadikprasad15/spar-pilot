@@ -12,7 +12,7 @@ from pathlib import Path
 from pilot_eval.scoring import score_gsm8k, score_mmlu_logits, score_mmlu_text
 
 
-def _write_json(path: Path, value: dict) -> None:
+def _write_json(path: Path, value: dict | list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
