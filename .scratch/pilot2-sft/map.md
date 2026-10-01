@@ -1,12 +1,13 @@
 # Pilot 2: rank-1 SFT collapse
 
-Status: needs-info
+Status: ready-for-agent
 
 ## Notes
 
 The user invokes grill-with-docs, followed by to-spec, to-tickets and implement.
 The seed brief requires shared understanding before any spec or training code.
-This map records the inventory and current design frontier, not an approved spec.
+This map records the inventory and decision history. The approved protocol is
+published in spec.md after the user's consolidated confirmation.
 Project tests passed at session start: 93 CPU tests.
 
 ### Existing instrument
@@ -66,11 +67,12 @@ reproduction of the historical optimization recipe. The user approved comparing
 the adapter with a matched untuned baseline on identical evaluation items and
 scorer, reporting accuracy and response-length changes.
 
-### Round 2 resolved, with precision still open
+### Round 2 resolved
 
 The user approved the proposed recipe and data/target formatting, and selected
 Colab with a T4. The native-bf16 recommendation therefore does not apply to the
-selected device; training/evaluation precision requires a separate decision.
+selected device. The user subsequently selected unquantized FP32 with a
+memory/stability preflight and a fresh FP32 matched untuned baseline.
 
 - Learning rate 1e-4: explicit new adapter-training choice, not the historical LR
   or the TRL 0.26.2 SFTConfig default (2e-5).
@@ -82,8 +84,8 @@ selected device; training/evaluation precision requires a separate decision.
   and #### markers; seeded sample 42 from the pinned official train split.
 - Same actual chat/system behavior as baseline, completion-only targets with
   end-turn included, packing off and fail on full rendered sequence overflow.
-- Colab T4 selected; select and record a suitable precision explicitly, then
-  measure a fresh matched baseline in the locked training/evaluation environment.
+- Colab T4, unquantized FP32 and gradient checkpointing selected; measure a
+  fresh matched baseline in the locked training/evaluation environment.
 
 Official defaults were checked in TRL 0.26.2 SFTConfig, Transformers 4.57.6
 TrainingArguments, and PEFT 0.18 LoraConfig. No library-default behavior will be
@@ -115,16 +117,22 @@ https://raw.githubusercontent.com/pytorch/pytorch/v2.9.0/torch/cuda/__init__.py.
 
 ## Fog / current interview frontier
 
-1. Select precision and memory settings suitable for the chosen Colab T4.
-2. Q6 pending: GSM8K at all checkpoints; four MMLU settings at baseline and
-   final checkpoint only, or GSM8K-only scope.
-3. Q7 approved: paired accuracy changes and length ratios without a new binary
+1. Q6 approved: GSM8K only, matched untuned baseline and checkpoints
+   0, 8, 16, 32, 64; same held-out 150 items and frozen scorers.
+2. Q7 approved: paired accuracy changes and length ratios without a new binary
    collapse gate. Historical numbers remain descriptive references.
-4. Q8 pending: FP32 with a memory/stability preflight (recommended) or FP16
-   frozen base plus FP32 trainable adapters and AMP scaling on the T4.
+3. Q8 approved: FP32 with a memory/stability preflight on the T4.
+4. Q9 approved: deterministic seed 42, eval batch 1, no training cache,
+   full-sequence-derived length limit, resumable states at the agreed checkpoints,
+   stop on memory/numerical preflight failure without silent setting changes.
+5. Q10 approved: local dated exploratory analysis plan without a directional
+   prediction or binary collapse threshold.
+6. Q11 approved after explanation: CPU public command tests with tiny/fake
+   model/data boundaries plus
+   masking/target/freeze/resume invariants, and a guided Pilot 2 Colab notebook.
 
-Checkpoint-evaluation scope, numerical collapse criteria, preregistered
-diagnostic predictions and public training test seams still need agreement.
+The interview frontier is closed. The user confirmed shared understanding and
+requested the spec, now published in spec.md. No training code has been written.
 
 Moving to a different GPU/library stack requires a fresh matched untuned
 measurement there before attributing differences to training. The existing
