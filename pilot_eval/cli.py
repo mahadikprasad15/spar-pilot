@@ -9,6 +9,7 @@ from pilot_eval.workflow import execute_config, prepare_plan
 from pilot_eval.recovery import fork_plan, revise_logits
 from pilot_eval.reporting import build_report
 from pilot_eval.rescoring import rescore_gsm8k
+from pilot_eval.sft import prepare_sft
 
 
 def main(argv=None, *, dependencies=None):
@@ -37,11 +38,16 @@ def main(argv=None, *, dependencies=None):
     for field in ("responses", "config", "summary"):
         rescore.add_argument("--" + field, type=Path, required=True)
     rescore.add_argument("--name", required=True)
-    for command in (prepare, run, fork, revise, report, rescore):
+    sft_prepare = commands.add_parser('sft-prepare', help='freeze Pilot 2 training inputs and analysis plan')
+    sft_prepare.add_argument('--source-config', type=Path, required=True)
+    sft_prepare.add_argument('--name', required=True)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == "prepare":
+        if args.command == 'sft-prepare':
+            print(prepare_sft(args.source_config, args.output_root, args.name, dependencies=dependencies))
+        elif args.command == "prepare":
             paths = prepare_plan(args.output_root, args.plan, model=args.model, dtype=args.dtype,
                                  batch_size=args.batch_size, adapter=args.adapter, dependencies=dependencies)
             for path in paths:

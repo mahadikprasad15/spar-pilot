@@ -1,7 +1,7 @@
 # 02: Preflight, train and resume the rank-1 adapter
 
 Type: task
-Status: ready-for-agent
+Status: claimed
 Blocked by: 01 - Prepare frozen training inputs and exploratory plan
 
 **What to build:** Public GPU preflight and training operations that consume the
