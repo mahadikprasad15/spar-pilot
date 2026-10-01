@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pilot_eval.rescoring import rescore_gsm8k
 from pilot_eval.sft import load_sft
-from pilot_eval.training import TrainingDependencies, training_directory, verified_checkpoints
+from pilot_eval.training import TrainingDependencies, run_lock, training_directory, verified_checkpoints
 from pilot_eval.workflow import _save_frozen, adapter_digest, execute_config
 
 
@@ -56,6 +56,11 @@ def verify_zero(root, config):
 def evaluate_sft(config_path, output_root, checkpoint, *, dependencies=None):
     root = Path(output_root).resolve()
     config, _, _ = load_sft(config_path, root)
+    with run_lock(training_directory(root, config)):
+        return _evaluate(config, root, checkpoint, dependencies)
+
+
+def _evaluate(config, root, checkpoint, dependencies):
     checkpoint = str(checkpoint)
     if checkpoint not in ['baseline', '0']:
         verify_zero(root, config)

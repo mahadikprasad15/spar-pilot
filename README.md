@@ -1,5 +1,22 @@
 # Pilot 1 evaluation harness
 
+## Pilot 2: exploratory rank-1 SFT
+
+[Open the Pilot 2 notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/output/jupyter-notebook/pilot-2-colab.ipynb)
+
+The [Pilot 2 guide](docs/pilot2-sft.md) covers frozen training inputs, a real T4
+preflight, a fresh matched FP32 GSM8K baseline, rank-1 SFT training and checkpoint
+resume, and paired accuracy/length reports. The new exploratory protocol uses
+512 training problems and 64 optimizer steps; historical collapse numbers are
+references, not acceptance gates. See [.scratch/pilot2-sft/spec.md](.scratch/pilot2-sft/spec.md).
+
+The CPU suite includes an optional real tiny-model TRL/PEFT integration test
+when training dependencies are installed. It constructs the model locally,
+requires no model download, and verifies training and resume. Actual Qwen/T4
+execution remains unverified until the notebook's GPU preflight runs.
+
+## Pilot 1
+
 [Open the guided notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/output/jupyter-notebook/pilot-1-colab.ipynb)
 
 The notebook explains the SPAR context, freezes a pinned harness revision, persists artifacts to Google Drive, guides a five-item audit per cell, and runs/resumes the full evaluation after a recorded manual review. It also displays uncertainty ranges and supports export. Its audit-to-results flow was verified with fake boundaries locally; real Drive mounting, dependency installation, and GPU inference require Colab execution.
@@ -68,7 +85,7 @@ Constrained scoring checks that ` A/B/C/D` are distinct single tokens in context
 python -m pilot_eval prepare --plan adapter-v1 --adapter /path/to/adapter --dtype bfloat16
 ```
 
-Local directories are pinned by a content SHA256; Hub adapters are pinned by a commit SHA. The loader validates `base_model_name_or_path` against the configured model and loads the adapter for inference. Local paths must exist on the GPU host. Adapter stacks, merged adapters, sampled-decoding aggregation and training are future work. Before later training, check training IDs against the frozen test manifest.
+Local directories are pinned by a content SHA256; Hub adapters are pinned by a commit SHA. The loader validates `base_model_name_or_path` against the configured model and loads the adapter for inference. Local paths must exist on the GPU host. Adapter stacks, merged adapters and sampled-decoding aggregation are future work. Pilot 2 adds the separately versioned SFT workflow described above.
 
 ## Artifacts
 

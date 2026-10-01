@@ -123,7 +123,8 @@ The user approved five tickets, now published separately under issues/:
 01 frozen inputs and exploratory plan → 02 preflight/training/resume →
 03 matched evaluation → 04 paired report → 05 Colab integration/review.
 Each depends on its immediate predecessor. Ticket 01 can start immediately.
-All are ready-for-agent; no implementation ticket is complete yet.
+All five implementation tickets are resolved. CPU verification and review are
+complete; real Qwen/T4 execution remains unverified.
 
 1. Q6 approved: GSM8K only, matched untuned baseline and checkpoints
    0, 8, 16, 32, 64; same held-out 150 items and frozen scorers.
@@ -140,7 +141,7 @@ All are ready-for-agent; no implementation ticket is complete yet.
    masking/target/freeze/resume invariants, and a guided Pilot 2 Colab notebook.
 
 The interview frontier is closed. The user confirmed shared understanding and
-requested the spec, now published in spec.md. No training code has been written.
+requested the spec, now published in spec.md. Training code is now implemented; no real Qwen training run has been executed.
 
 Moving to a different GPU/library stack requires a fresh matched untuned
 measurement there before attributing differences to training. The existing
@@ -150,3 +151,15 @@ After these answers, explain and resolve data/target formatting, optimization,
 platform, checkpoint evaluation scope and preregistered predictions. Then use
 the selected skills to agree testing seams, publish a spec and ticket breakdown,
 implement with TDD, and review. No training has been run.
+
+## Implementation verification
+
+The five approved slices are implemented with red/green CPU tests. The full
+suite passed 110 tests using isolated pinned training libraries, including a
+real tiny Qwen architecture and step-8 interruption/resume through step 64.
+A final preservation regression and the affected four-test training suite passed
+separately. Mypy checks all five new modules including untyped bodies.
+Two-axis review found and prompted fixes for runtime decoding, failure evidence,
+locked settings, checkpoint completeness, weighted loss verification and plot
+endpoint rounding. No historical acceptance values or scorers were changed.
+The Colab notebook is ready for the actual T4 preflight; GPU success is not claimed.

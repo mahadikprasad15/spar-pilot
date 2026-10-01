@@ -96,3 +96,21 @@ def test_checkpoint_manifest_cannot_omit_required_resume_state(tmp_path):
     (checkpoint / 'optimizer.pt').unlink()
     with pytest.raises(ValueError, match='required state'):
         verified_checkpoints(tmp_path)
+
+
+def test_incompatible_invocation_preserves_completed_run(tmp_path):
+    from pilot_eval.sft import prepare_sft
+    from pilot_eval.training import run_sft, training_directory
+    path = prepare_sft(source_plan(tmp_path), tmp_path, 'sft', dependencies=TrainingData())
+    deps = TrainingBoundary()
+    deps.engine = Engine()
+    run_sft(path, tmp_path, dependencies=deps)
+    config = json.loads(path.read_text())
+    directory = training_directory(tmp_path, config)
+    before = {p: p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    config['source_config']['batch_size'] = 2
+    changed = path.parent / 'changed.config.json'
+    changed.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match='frozen artifact mismatch'):
+        run_sft(changed, tmp_path, dependencies=deps)
+    assert all(p.read_bytes() == content for p, content in before.items())

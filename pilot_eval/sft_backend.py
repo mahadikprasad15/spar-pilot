@@ -10,6 +10,8 @@ import os
 import random
 import subprocess
 from pathlib import Path
+from collections.abc import Sized
+from typing import cast
 
 from pilot_eval.run import _write_json, _write_state
 from pilot_eval.training import seal_checkpoint
@@ -202,7 +204,7 @@ class HFTrainingEngine:
                 dataset = train_dataset if train_dataset is not None else self.train_dataset
                 if dataset is None:
                     raise ValueError('training dataset is required')
-                return SequentialSampler(dataset)
+                return SequentialSampler(cast(Sized, dataset))
 
             def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
                 engine.seen.extend(inputs.pop('example_ids'))

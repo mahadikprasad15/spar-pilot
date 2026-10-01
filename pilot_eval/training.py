@@ -88,12 +88,19 @@ def run_sft(config_path, output_root, *, preflight_only=False, dependencies=None
     directory = training_directory(output_root, config)
     deps = dependencies or TrainingDependencies()
     with run_lock(directory):
+        # A conflicting caller has no ownership of this run's status/logs.
+        _save_frozen(directory / 'config.json', config)
+        runtime_path = directory / 'meta/runtime.json'
+        runtime = None
+        if runtime_path.exists():
+            runtime = deps.runtime(config)
+            if runtime != json.loads(runtime_path.read_text()):
+                raise ValueError('training runtime mismatch; preserve existing run and record a variant')
         engine = None
         checkpoints = {}
         try:
-            _save_frozen(directory / 'config.json', config)
-            runtime = deps.runtime(config)
-            _save_frozen(directory / 'meta/runtime.json', runtime)
+            runtime = runtime or deps.runtime(config)
+            _save_frozen(runtime_path, runtime)
             _save_frozen(directory / 'inputs/training.json', rows)
             _save_frozen(directory / 'meta/run_manifest.json', dict(
                 config=config, runtime=runtime, results='results/results.json',
@@ -131,7 +138,11 @@ def run_sft(config_path, output_root, *, preflight_only=False, dependencies=None
             _write_json(result_path, result)
             _write_state(directory, 'completed', 64, 64)
             return result
-        except Exception as exc:
+        except BaseException as exc:
+            try:
+                checkpoints = verified_checkpoints(directory)
+            except (ValueError, OSError, json.JSONDecodeError):
+                pass  # Preserve the original error when a checkpoint is corrupt.
             _write_state(directory, 'failed', max(checkpoints, default=0), 64, str(exc))
             error_path = directory / 'logs/errors.jsonl'
             with error_path.open('a') as stream:
