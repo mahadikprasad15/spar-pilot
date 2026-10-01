@@ -58,6 +58,34 @@ Recommendations in the pasted brief are not silently treated as confirmed
 choices where the brief explicitly marks them open or asks for an interview.
 No collapse tolerance has been approved.
 
+### Interview round 1 resolved
+
+The user has no original training repo, config or local path. Pilot 2 will
+therefore select and document a new training protocol; it cannot claim exact
+reproduction of the historical optimization recipe. The user approved comparing
+the adapter with a matched untuned baseline on identical evaluation items and
+scorer, reporting accuracy and response-length changes.
+
+### Round 2 proposals (not yet confirmed)
+
+- Learning rate 1e-4: explicit new adapter-training choice, not the historical LR
+  or the TRL 0.26.2 SFTConfig default (2e-5).
+- Effective batch 8 on one GPU, realized as microbatch 1 × accumulation 8.
+  This is distinct from the evaluation batch size that caused OOM previously.
+- Constant LR schedule, zero warmup, AdamW explicitly selected, max grad norm
+  1.0, weight decay 0, LoRA dropout 0.
+- Keep 512 selected gold solutions unchanged including calculator annotations
+  and #### markers; seeded sample 42 from the pinned official train split.
+- Same actual chat/system behavior as baseline, completion-only targets with
+  end-turn included, packing off and fail on full rendered sequence overflow.
+- Select a native-bf16 GPU platform; measure a fresh matched baseline in its
+  locked training/evaluation environment if the original platform differs.
+
+Official defaults were checked in TRL 0.26.2 SFTConfig, Transformers 4.57.6
+TrainingArguments, and PEFT 0.18 LoraConfig. No library-default behavior will be
+relied on silently; actual selected optimizer, LR/schedule and effective batch
+will be recorded. Gradient-accumulation loss normalization still requires tests.
+
 ## Verified technical context
 
 - The current Qwen config plus Transformers Qwen2 implementation imply
@@ -83,11 +111,12 @@ https://raw.githubusercontent.com/pytorch/pytorch/v2.9.0/torch/cuda/__init__.py.
 
 ## Fog / current interview frontier
 
-1. Original training repo/config or its availability: learning rate, effective
-   batch, schedule, dropout and original training indices. Do not guess the LR.
-2. Meaning of collapse: matched untuned-to-adapter changes under one scorer and
-   evaluation protocol versus exact historical-protocol recovery. A trained
-   accuracy near 42% is not a meaningful drop from our 42.67% baseline.
+1. Confirm the proposed optimization settings or requested changes.
+2. Confirm training selection and target formatting.
+3. Choose the GPU platform for native-bf16 training and matched evaluation.
+
+Checkpoint-evaluation scope, numerical collapse criteria, preregistered
+diagnostic predictions and public training test seams still need agreement.
 
 Moving to a different GPU/library stack requires a fresh matched untuned
 measurement there before attributing differences to training. The existing
