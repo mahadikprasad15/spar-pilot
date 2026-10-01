@@ -1,0 +1,12 @@
+# Exact direct environment pins for the new FP32 Colab T4 protocol.
+# Install before importing torch/transformers; restart Colab after installation.
+torch==2.9.0
+torchvision==0.24.0
+transformers==4.57.6
+trl==0.26.2
+peft==0.18.0
+datasets==4.4.1
+accelerate==1.12.0
+huggingface-hub==0.36.0
+matplotlib==3.10.8
+pytest==8.4.2
