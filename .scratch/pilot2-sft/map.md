@@ -117,6 +117,14 @@ https://raw.githubusercontent.com/pytorch/pytorch/v2.9.0/torch/cuda/__init__.py.
 
 ## Fog / current interview frontier
 
+### Approved implementation frontier
+
+The user approved five tickets, now published separately under issues/:
+01 frozen inputs and exploratory plan → 02 preflight/training/resume →
+03 matched evaluation → 04 paired report → 05 Colab integration/review.
+Each depends on its immediate predecessor. Ticket 01 can start immediately.
+All are ready-for-agent; no implementation ticket is complete yet.
+
 1. Q6 approved: GSM8K only, matched untuned baseline and checkpoints
    0, 8, 16, 32, 64; same held-out 150 items and frozen scorers.
 2. Q7 approved: paired accuracy changes and length ratios without a new binary
