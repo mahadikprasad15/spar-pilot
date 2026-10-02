@@ -41,6 +41,8 @@ def main(argv=None, *, dependencies=None):
     sft_prepare = commands.add_parser('sft-prepare', help='freeze Pilot 2 training inputs and analysis plan')
     sft_prepare.add_argument('--source-config', type=Path, required=True)
     sft_prepare.add_argument('--name', required=True)
+    sft_prepare.add_argument('--hardware', choices=['T4', 'L4'], default='T4')
+    sft_prepare.add_argument('--evaluation-batch-size', type=int, choices=[1, 2], default=1)
     sft_train = commands.add_parser('sft-train', help='preflight or resume Pilot 2 training')
     sft_train.add_argument('--config', type=Path, required=True)
     sft_train.add_argument('--preflight-only', action='store_true')
@@ -66,7 +68,8 @@ def main(argv=None, *, dependencies=None):
             print(json.dumps(run_sft(args.config, args.output_root,
                 preflight_only=args.preflight_only, dependencies=dependencies), indent=2))
         elif args.command == 'sft-prepare':
-            print(prepare_sft(args.source_config, args.output_root, args.name, dependencies=dependencies))
+            print(prepare_sft(args.source_config, args.output_root, args.name, dependencies=dependencies,
+                hardware=args.hardware, evaluation_batch_size=args.evaluation_batch_size))
         elif args.command == "prepare":
             paths = prepare_plan(args.output_root, args.plan, model=args.model, dtype=args.dtype,
                                  batch_size=args.batch_size, adapter=args.adapter, dependencies=dependencies)

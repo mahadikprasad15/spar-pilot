@@ -30,9 +30,11 @@ def evaluation_config(config, root, checkpoint):
     label = 'baseline' if checkpoint == 'baseline' else f'step-{checkpoint}'
     result = {**source, 'protocol_version': 'pilot2-eval-v1', 'experiment': 'pilot-2-eval',
         'run_id': config['run_id'] + '-' + label, 'variant': 'float32-' + label,
-        'dtype': 'float32', 'batch_size': 1, 'adapter': adapter, 'adapter_revision': None,
+        'dtype': 'float32', 'batch_size': config.get('evaluation_batch_size', 1), 'adapter': adapter, 'adapter_revision': None,
         'adapter_sha256': adapter_digest(adapter) if adapter else None,
         'items_path': config['evaluation_items_path'], 'items_sha256': config['evaluation_items_sha256']}
+    if config.get('hardware'):
+        result['hardware'] = config['hardware']
     path = Path(root).resolve() / 'plans' / config['run_id'] / 'evaluations' / f'{label}.config.json'
     _save_frozen(path, result)
     return path, result

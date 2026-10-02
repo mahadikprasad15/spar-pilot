@@ -48,6 +48,11 @@ def load_sft(config_path, root):
                   checkpoint_steps=[0, 8, 16, 32, 64])
     if any(config.get(key) != value for key, value in locked.items()):
         raise ValueError('configuration differs from locked Pilot 2 protocol; record a new protocol version')
+    hardware = config.get('hardware', 'T4')
+    batch = config.get('evaluation_batch_size', 1)
+    if (hardware not in ('T4', 'L4') or batch not in (1, 2)
+            or (hardware == 'T4' and batch != 1)):
+        raise ValueError('unsupported hardware/evaluation batch variant')
     source = validate_config(config['source_config'])
     if (source['model'] != 'Qwen/Qwen2.5-1.5B-Instruct' or source['adapter'] is not None
             or source['scorer'] != 'gsm8k' or len(source['prompt_indices']) != 150
@@ -75,8 +80,12 @@ def load_sft(config_path, root):
     return config, rows, items
 
 
-def prepare_sft(source_config, output_root, name, *, dependencies=None):
+def prepare_sft(source_config, output_root, name, *, dependencies=None, hardware='T4', evaluation_batch_size=1):
     """Freeze a 512-item training plan derived from an existing untuned cell."""
+    if hardware not in ('T4', 'L4') or evaluation_batch_size not in (1, 2):
+        raise ValueError('unsupported hardware/evaluation batch variant')
+    if hardware == 'T4' and evaluation_batch_size != 1:
+        raise ValueError('T4 protocol requires evaluation batch 1')
     root = Path(output_root).resolve()
     directory = root / 'plans' / safe_name(name)
     path = directory / 'sft.config.json'
@@ -89,8 +98,9 @@ def prepare_sft(source_config, output_root, name, *, dependencies=None):
     source = {k: v for k, v in source.items() if k != 'runtime'}
     if path.exists():
         config, _, _ = load_sft(path, root)
-        if config['source_config'] != source:
-            raise ValueError('SFT source config mismatch; use a new plan')
+        if (config['source_config'] != source or config.get('hardware', 'T4') != hardware
+                or config.get('evaluation_batch_size', 1) != evaluation_batch_size):
+            raise ValueError('SFT source/hardware/batch variant mismatch; use a new plan')
         return path
     items = read_artifact(root, source['items_path'])
     if _hash(items) != source['items_sha256']:
@@ -163,6 +173,8 @@ def prepare_sft(source_config, output_root, name, *, dependencies=None):
                   training_items_path=str(training_path.relative_to(root)), training_items_sha256=_hash(rows),
                   evaluation_items_path=str(eval_path.relative_to(root)), evaluation_items_sha256=_hash(items),
                   analysis_plan_path=str(plan_path.relative_to(root)), analysis_plan_sha256=_hash(plan))
+    if hardware == 'L4':
+        config.update(hardware=hardware, evaluation_batch_size=evaluation_batch_size)
     for file, value in [(training_path, rows), (eval_path, items), (plan_path, plan),
                         (directory / 'lengths.json', dict(gold_mean=statistics.mean(r['gold_tokens'] for r in rows),
                             gold_median=statistics.median(r['gold_tokens'] for r in rows),

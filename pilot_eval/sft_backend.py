@@ -112,8 +112,9 @@ class HFTrainingEngine:
         runtime_config = {**config, 'decoding': config.get('decoding', config.get('source_config', {}).get('decoding'))}
         runtime = HFDependencies().runtime(runtime_config)
         import torch
-        if 'T4' not in runtime['device']:
-            raise ValueError('this protocol requires the selected Colab T4; record a variant for another GPU')
+        hardware = config.get('hardware', 'T4')
+        if hardware not in ('T4', 'L4') or hardware not in runtime['device']:
+            raise ValueError(f'this protocol requires the selected {hardware}; record a variant for another GPU')
         runtime['versions'] = versions
         runtime['compute_capability'] = list(torch.cuda.get_device_capability(0))
         try:
