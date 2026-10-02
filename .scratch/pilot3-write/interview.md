@@ -47,12 +47,24 @@ length-stratified or generated-response experiments are not yet approved.
   vector, as the primary relative block summary.
 - Use the ratio of average adapter-contribution magnitude to average ordinary
   module-output magnitude as the primary module summary.
-- Retention of mean change magnitude, the alternative block denominator and
-  mean per-token module ratios as secondary diagnostics remains to be confirmed.
+- Retain mean change magnitude, the alternative block denominator and mean
+  per-token module ratios as secondary diagnostics, separate from primary plots.
+
+## Accepted: round 4 (Q10–Q12)
+
+- Use FineWeb for the unrelated-text control; freeze the selected text and
+  source identities at a pinned dataset revision.
+- Exactly zero denominators yield undefined ratios (`null`), with explicit
+  undefined counts and coverage. Small nonzero denominators remain defined;
+  preserve denominator diagnostics. Do not silently add epsilon.
+- A zero numerator with a nonzero denominator is a valid zero ratio.
+- For ratios of average magnitudes, individual zero-denominator tokens remain
+  in the aggregate; the aggregate is undefined only if its averaged denominator
+  is zero. For mean per-token ratios, average only defined ratios and report
+  the conditional coverage explicitly.
 
 ## Still open
 
-Secondary diagnostics; unrelated corpus and selection;
-zero-denominator policy; numerical acceptance tolerances;
+FineWeb selection, lengths and presentation; numerical acceptance tolerances;
 checkpoint provenance and loader after the Drive rename; artifact details,
 resume, plots and interpretive limits.
