@@ -85,6 +85,21 @@ resume, plots and interpretive limits.
 - Stop on missing/mismatched inputs, incorrect hooks, nonfinite activations or
   failed validation. Persist diagnostics and failure status.
 
+## Accepted: round 7 (Q19–Q21)
+
+- Preserve complete GSM8K question-and-gold-solution sequences. Never silently
+  truncate to match FineWeb length; stop if a hard sequence limit is exceeded.
+  Relative normalization does not remove context-length differences. Keep
+  question/solution views separate and cross-corpus comparisons descriptive.
+- Construct and validate tokenizer-aware content masks. Exclude ambiguous
+  boundary-crossing tokens and report their counts rather than guess ownership.
+- Reuse one untuned block-activation reference per fixed batch across five
+  checkpoints only after checking that switching checkpoints leaves disabled-
+  adapter outputs unchanged. Require identical token IDs, masks, positions,
+  frozen weights and numerical settings. Keep the temporary cache bounded
+  and profile memory. Main forward work is one untuned plus five adapted passes
+  per batch, excluding validation/preflight overhead.
+
 ## Accepted: round 5 (Q13–Q15)
 
 - Inspect the first 2,000 documents of a pinned FineWeb stream. Keep documents
