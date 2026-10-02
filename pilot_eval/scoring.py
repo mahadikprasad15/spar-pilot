@@ -149,3 +149,28 @@ def score_mmlu_logits(candidate_scores: dict[str, float], gold_choice: str, tie_
         raise ValueError("top-logit tie makes the item invalid")
     choice = max(candidate_scores, key=candidate_scores.get)
     return {"choice": choice, "status": "valid", "correct": choice == gold_choice}
+
+
+def extract_gsm8k_flexible_v3(response: str, capped: bool = False) -> dict:
+    """Extend v2 with the strict final-line contract; no gold access."""
+    final_line = response.strip().splitlines()[-1] if response.strip() else ''
+    match = _FINAL.fullmatch(final_line)
+    markers = sum(line.lstrip().startswith('####') for line in response.splitlines())
+    phrases = re.findall(r'(?:final answer:|the answer is)\s*(' + _NUMBER + r')', response, re.I)
+    if not capped and match and markers == 1 and len(phrases) <= 1:
+        try:
+            value = _numeric_value(match.group(1))
+            if all(_numeric_value(phrase) == value for phrase in phrases):
+                answer = str(value.numerator) if value.denominator == 1 else f'{value.numerator}/{value.denominator}'
+                return dict(scorer_version='gsm8k-flexible-v3', extracted=answer,
+                            extraction_rule='strict_final_line', status='valid', invalid_reason=None)
+        except (ValueError, ZeroDivisionError):
+            pass
+    result = extract_gsm8k_flexible_v2(response, capped)
+    return {**result, 'scorer_version': 'gsm8k-flexible-v3'}
+
+
+def score_gsm8k_flexible_v3(response: str, gold_answer: str, capped: bool = False) -> dict:
+    extracted = extract_gsm8k_flexible_v3(response, capped)
+    gold = _numeric_value(gold_answer.rsplit('####', 1)[-1].strip())
+    return {**extracted, 'correct': extracted['status'] == 'valid' and _numeric_value(extracted['extracted']) == gold}
