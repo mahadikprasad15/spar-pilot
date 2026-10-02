@@ -49,13 +49,18 @@ def main(argv=None, *, dependencies=None):
     sft_eval = commands.add_parser('sft-evaluate', help='evaluate a matched baseline or adapter checkpoint')
     sft_eval.add_argument('--config', type=Path, required=True)
     sft_eval.add_argument('--checkpoint', choices=['baseline', '0', '8', '16', '32', '64'], required=True)
+    sft_benchmark = commands.add_parser('sft-benchmark', help='measure untuned generation speed at batch 1 and 2')
+    sft_benchmark.add_argument('--config', type=Path, required=True)
     sft_compare = commands.add_parser('sft-compare', help='CPU-only paired checkpoint trajectory report')
     sft_compare.add_argument('--config', type=Path, required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare):
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'sft-compare':
+        if args.command == 'sft-benchmark':
+            from pilot_eval.sft_benchmark import benchmark_sft
+            print(json.dumps(benchmark_sft(args.config, args.output_root, dependencies=dependencies), indent=2))
+        elif args.command == 'sft-compare':
             from pilot_eval.sft_reporting import compare_sft
             result = compare_sft(args.config, args.output_root)
             print(json.dumps({'mode': result['mode'], 'trajectory': result['trajectory']}, indent=2))
