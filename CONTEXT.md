@@ -47,3 +47,15 @@ _Avoid_: Direct adapter contribution
 **Instrument validation**:
 Checks that activation measurements observe the intended quantities and satisfy known identities before interpreting the measurements.
 _Avoid_: Accuracy evaluation
+
+**Fixed measurement sequence**:
+A predetermined token sequence supplied identically to the adapted and untuned model for paired activation measurements.
+_Avoid_: Generated response, when describing teacher-forced inputs
+
+**Token-weighted measurement**:
+An aggregate in which every counted token receives equal weight, so longer examples contribute more tokens.
+_Avoid_: Equal-example average
+
+**Equal-example-weighted measurement**:
+An aggregate in which each example's token-level measurements are averaged before giving every example equal weight.
+_Avoid_: Token-weighted average

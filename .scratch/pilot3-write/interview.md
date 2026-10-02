@@ -17,10 +17,32 @@ to begin implementation. Remaining decisions must be settled before a spec.
 - Do not assume an accuracy collapse: corrected Pilot 2 accuracy was 68% to
   66%, while mean response length decreased from about 216 to 138 tokens.
 
+## Accepted: round 2 (Q4–Q6)
+
+- Use Hugging Face forward hooks and the same loaded model, with the adapter
+  disabled and enabled in sequential passes on each batch.
+- Feed identical held-out question plus gold-solution token sequences to both
+  passes. No answer generation. Report question and solution token positions
+  separately; exclude padding, system text and template/formatting markers from
+  counted positions while retaining required context in the input sequence.
+- Report token-weighted measurements as primary and equal-example-weighted
+  measurements as a sensitivity view. Both use token-level measurements.
+
+## Pinned research question: length and weighting
+
+Could longer gold solutions dominate the aggregate effective-write profile,
+and does the profile change when every problem receives equal weight? Length
+is relevant because Pilot 2 changed generated-response length.
+
+Fixed gold-solution lengths in Pilot 3 are distinct from generated lengths in
+Pilot 2. A weighting discrepancy demonstrates sensitivity to the measurement
+cohort's lengths; it does not establish why the adapter generated shorter
+answers. Keep this question visible in the spec and final report. Further
+length-stratified or generated-response experiments are not yet approved.
+
 ## Still open
 
-Framework and adapter on/off procedure; fixed token sequences and counted
-positions; token versus example weighting; unrelated corpus and selection;
+Unrelated corpus and selection;
 normalizations; zero-denominator policy; numerical acceptance tolerances;
 checkpoint provenance and loader after the Drive rename; artifact details,
 resume, plots and interpretive limits.
