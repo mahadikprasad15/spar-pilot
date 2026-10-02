@@ -28,3 +28,15 @@ chosen batch remains consistent for baseline and every adapter checkpoint.
 Runtime checks continue to require the recorded GPU, library versions and code
 commit. The L4 experiment is not locally GPU-verified; CPU tests use fakes at
 the benchmark boundary and the existing tiny real model for training integration.
+
+## Broader standalone profiling (approved follow-up)
+
+The user requested a small batch-1/2/4/8 tester with OOM continuation and advice
+on expert practice. `scripts/profile_inference.py` is independent of SFT plans
+and GPU names; it saves diagnostics separately, preserves source inputs, and
+reuses completed candidates. It recommends the fastest measured successful
+batch without silently changing scientific settings. A new L4 plan may freeze
+1/2/4/8 after reviewing memory headroom and output differences. Existing T4 and
+L4 scientific runs retain their original settings. This broader diagnostic
+handles OOM per candidate; the earlier fixed 1/2 SFT benchmark and scientific
+training/evaluation still stop on OOM.

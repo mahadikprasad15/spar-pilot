@@ -50,7 +50,7 @@ def load_sft(config_path, root):
         raise ValueError('configuration differs from locked Pilot 2 protocol; record a new protocol version')
     hardware = config.get('hardware', 'T4')
     batch = config.get('evaluation_batch_size', 1)
-    if (hardware not in ('T4', 'L4') or batch not in (1, 2)
+    if (hardware not in ('T4', 'L4') or batch not in (1, 2, 4, 8)
             or (hardware == 'T4' and batch != 1)):
         raise ValueError('unsupported hardware/evaluation batch variant')
     source = validate_config(config['source_config'])
@@ -82,7 +82,7 @@ def load_sft(config_path, root):
 
 def prepare_sft(source_config, output_root, name, *, dependencies=None, hardware='T4', evaluation_batch_size=1):
     """Freeze a 512-item training plan derived from an existing untuned cell."""
-    if hardware not in ('T4', 'L4') or evaluation_batch_size not in (1, 2):
+    if hardware not in ('T4', 'L4') or evaluation_batch_size not in (1, 2, 4, 8):
         raise ValueError('unsupported hardware/evaluation batch variant')
     if hardware == 'T4' and evaluation_batch_size != 1:
         raise ValueError('T4 protocol requires evaluation batch 1')

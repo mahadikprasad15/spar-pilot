@@ -42,7 +42,7 @@ def main(argv=None, *, dependencies=None):
     sft_prepare.add_argument('--source-config', type=Path, required=True)
     sft_prepare.add_argument('--name', required=True)
     sft_prepare.add_argument('--hardware', choices=['T4', 'L4'], default='T4')
-    sft_prepare.add_argument('--evaluation-batch-size', type=int, choices=[1, 2], default=1)
+    sft_prepare.add_argument('--evaluation-batch-size', type=int, choices=[1, 2, 4, 8], default=1)
     sft_train = commands.add_parser('sft-train', help='preflight or resume Pilot 2 training')
     sft_train.add_argument('--config', type=Path, required=True)
     sft_train.add_argument('--preflight-only', action='store_true')

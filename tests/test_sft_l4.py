@@ -48,3 +48,10 @@ def test_runtime_requires_recorded_l4_and_does_not_accept_old_t4_plan(tmp_path, 
     t4 = prepare_sft(source, tmp_path, 't4', dependencies=TrainingData())
     with pytest.raises(ValueError, match='T4'):
         HFTrainingEngine.runtime(load_sft(t4, tmp_path)[0])
+
+
+def test_profiled_larger_batch_can_be_frozen_for_new_l4_plan(tmp_path):
+    from pilot_eval.sft import prepare_sft, load_sft
+    path = prepare_sft(source_plan(tmp_path), tmp_path, 'l4-batch8', hardware='L4',
+                       evaluation_batch_size=8, dependencies=TrainingData())
+    assert load_sft(path, tmp_path)[0]['evaluation_batch_size'] == 8
