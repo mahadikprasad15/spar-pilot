@@ -1,7 +1,7 @@
 # Pilot 2: exploratory rank-1 GSM8K SFT
 
 Use [the guided notebook](../output/jupyter-notebook/pilot-2-colab.ipynb) on a Colab
-T4. The actual Qwen GPU run is not verified locally. CPU tests cover the workflow
+L4 (the original T4 variant remains supported). The actual Qwen GPU run is not verified locally. CPU tests cover the workflow
 and a real tiny Qwen architecture built from configuration without downloads.
 
 ## What runs
@@ -13,6 +13,7 @@ and a real tiny Qwen architecture built from configuration without downloads.
 - Unquantized FP32, microbatch 1, accumulation 8, 64 optimizer updates, LR 1e-4,
   constant schedule, no warmup, AdamW, weight decay 0, gradient clipping 1.0.
 - Completion-only supervision, including end-turn; no packing or truncation.
+- The current L4 notebook uses matched evaluation batch 2; original T4 plans use batch 1.
 - A fresh FP32 untuned baseline and checkpoints 0/8/16/32/64, greedy GSM8K only,
   using the same 150 held-out items and strict/flexible-v2 scorers.
 
@@ -101,3 +102,24 @@ Precomputed labels are passed through a dedicated collator to preserve the
 audited mask. The explicit token-summed loss is normalized across the full
 accumulation window. Optional TRL entropy diagnostics are omitted to reduce
 full-vocabulary temporary tensors; the SFT objective is unchanged.
+
+## L4 variant and speed benchmark
+
+The current notebook defaults to L4, plan `pilot2-sft-fp32-l4-batch2-v1`, and
+matched evaluation batch 2. Select L4 in Colab. Section 6a benchmarks batches
+1/2 on eight fixed prompt-length ranks with the original generation cap;
+inspect tokens/sec, peak allocated memory, projected run costs and any output
+differences before starting section 7. This notebook has not been GPU-tested
+locally. T4 plans remain supported by the CLI and keep their original meaning.
+
+```bash
+python -m pilot_eval sft-prepare --source-config artifacts/plans/baseline-batch8-v1/gsm8k-0shot.config.json --name pilot2-sft-fp32-l4-batch2-v1 --hardware L4 --evaluation-batch-size 2
+# Run the usual preflight for this new config before benchmarking.
+python -m pilot_eval sft-benchmark --config artifacts/plans/pilot2-sft-fp32-l4-batch2-v1/sft.config.json
+```
+
+Changing hardware clears Colab local state, not saved Drive artifacts. Reinstall
+and restart as instructed. Reuse frozen cohort identities; do not mix partial
+T4 baseline responses into the new L4 scientific run. Check that the old child
+process stopped before switching runtime. The benchmark does not prove speed
+on every checkpoint, and never silently changes the frozen evaluation batch.

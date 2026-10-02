@@ -51,3 +51,24 @@ def test_benchmark_times_both_batches_saves_outputs_and_reuses_verified_result(t
     response.write_text('corrupted')
     with pytest.raises(ValueError, match='hash'):
         benchmark_sft(path, tmp_path, dependencies=deps)
+
+
+def test_benchmark_records_oom_without_starting_scientific_evaluation(tmp_path):
+    from pilot_eval.sft import prepare_sft
+    from pilot_eval.training import run_sft, training_directory
+    from pilot_eval.sft_benchmark import benchmark_sft
+    path = prepare_sft(source_plan(tmp_path), tmp_path, 'l4', hardware='L4',
+                       evaluation_batch_size=2, dependencies=TrainingData())
+    deps = BenchmarkBoundary()
+    run_sft(path, tmp_path, preflight_only=True, dependencies=deps)
+    class OOM:
+        def generate_batch(self, prompts, decoding):
+            raise RuntimeError('CUDA out of memory')
+    deps.load_backend = lambda config: OOM()
+    with pytest.raises(RuntimeError, match='out of memory'):
+        benchmark_sft(path, tmp_path, dependencies=deps)
+    training = training_directory(tmp_path, json.loads(path.read_text()))
+    status = json.loads((training / 'benchmark/meta/status.json').read_text())
+    assert status['state'] == 'failed'
+    assert not (training / 'benchmark/results/results.json').exists()
+    assert not (tmp_path / 'runs/pilot-2-eval').exists()

@@ -27,3 +27,24 @@ def test_l4_plan_freezes_hardware_batch_and_preserves_t4_inputs(tmp_path):
     assert evaluation['batch_size'] == 2
     with pytest.raises(ValueError, match='variant|mismatch'):
         prepare_sft(source, tmp_path, 'l4', hardware='T4', dependencies=TrainingData())
+
+
+def test_runtime_requires_recorded_l4_and_does_not_accept_old_t4_plan(tmp_path, monkeypatch):
+    torch = pytest.importorskip('torch', exc_type=ImportError)
+    from pilot_eval.sft import prepare_sft, load_sft
+    from pilot_eval.sft_backend import HFTrainingEngine, PINS
+    import importlib.metadata
+    source = source_plan(tmp_path)
+    path = prepare_sft(source, tmp_path, 'l4', hardware='L4', evaluation_batch_size=2,
+                       dependencies=TrainingData())
+    config, _, _ = load_sft(path, tmp_path)
+    original = importlib.metadata.version
+    monkeypatch.setattr(importlib.metadata, 'version', lambda name: PINS.get(name) or original(name))
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(torch.cuda, 'device_count', lambda: 1)
+    monkeypatch.setattr(torch.cuda, 'get_device_name', lambda i: 'NVIDIA L4')
+    monkeypatch.setattr(torch.cuda, 'get_device_capability', lambda i: (8, 9))
+    assert HFTrainingEngine.runtime(config)['compute_capability'] == [8, 9]
+    t4 = prepare_sft(source, tmp_path, 't4', dependencies=TrainingData())
+    with pytest.raises(ValueError, match='T4'):
+        HFTrainingEngine.runtime(load_sft(t4, tmp_path)[0])

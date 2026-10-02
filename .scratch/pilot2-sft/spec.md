@@ -252,3 +252,14 @@ system-message discrepancy.
 Session-start verification: 93 CPU tests passed. No Pilot 2 training code or GPU
 run has been executed. The next workflow stage is to propose implementation
 tickets for approval before publishing them.
+
+## Approved L4 hardware/throughput variant (2026-10-02)
+
+See `docs/adr/0004-pilot2-l4-throughput.md`. A separately named L4 plan keeps
+FP32 and all training/data/scorer settings, freezes evaluation batch 2, and runs
+a fresh hardware preflight and matched L4 baseline/checkpoints. The old T4 plan
+and artifacts remain immutable. A separate full-length eight-item benchmark
+compares inference batches 1/2 before baseline, saving timings, memory and raw
+outputs without adding diagnostic responses to scientific runs. Estimates are
+conditional on those untuned examples and exclude training/setup. GPU execution
+is verified in Colab, not inferred from CPU test success.
