@@ -1,8 +1,8 @@
-# Pilot 1 evaluation harness
+# SPAR evaluation and fine-tuning pilots
 
 ## Pilot 2: exploratory rank-1 SFT
 
-[Open the Pilot 2 notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/output/jupyter-notebook/pilot-2-colab.ipynb)
+[Open the Pilot 2 notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/notebooks/pilot-2-colab.ipynb)
 
 The [Pilot 2 guide](docs/pilot2-sft.md) covers frozen training inputs, a real T4
 preflight, a fresh matched FP32 GSM8K baseline, rank-1 SFT training and checkpoint
@@ -17,7 +17,7 @@ execution remains unverified until the notebook's GPU preflight runs.
 
 ## Pilot 1
 
-[Open the guided notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/output/jupyter-notebook/pilot-1-colab.ipynb)
+[Open the guided notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/notebooks/pilot-1-colab.ipynb)
 
 The notebook explains the SPAR context, freezes a pinned harness revision, persists artifacts to Google Drive, guides a five-item audit per cell, and runs/resumes the full evaluation after a recorded manual review. It also displays uncertainty ranges and supports export. Its audit-to-results flow was verified with fake boundaries locally; real Drive mounting, dependency installation, and GPU inference require Colab execution.
 
@@ -119,3 +119,14 @@ Progress is recorded in `meta/status.json` and `logs/run.log`; the CLI prints th
 ## Source references
 
 The external boundaries follow the official [Transformers generation and padding guidance](https://huggingface.co/docs/transformers/llm_tutorial), [chat template guidance](https://huggingface.co/docs/transformers/chat_templating), [PEFT loader API](https://huggingface.co/docs/peft/package_reference/peft_model), and dataset records from [GSM8K](https://huggingface.co/datasets/openai/gsm8k) and [MMLU](https://huggingface.co/datasets/cais/mmlu).
+
+## Shared workspace
+
+Both guided notebooks live in `notebooks/`. Their code checkout is
+`/content/spar-pilot`; their persistent Drive root is
+`SPAR/spar-pilot/artifacts`. Pilot 1 and Pilot 2 retain separate run identities
+inside that shared root. See [workspace migration notes](docs/workspace-layout.md).
+
+Flexible v3 is implemented in the scripts and available in **section 12 of the
+Pilot 2 notebook**. For completed runs, run only that CPU section to write the
+corrected report to Drive; no GPU evaluation repeats.

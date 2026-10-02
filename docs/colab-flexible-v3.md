@@ -4,15 +4,19 @@ This is CPU-only. It does not load a model, train, or generate responses.
 Keep the original v2 trajectory report. V3 is a post-hoc scoring revision;
 apply it to the baseline and every checkpoint together.
 
+The simplest Colab workflow is **section 12** of the updated
+[Pilot 2 notebook](../notebooks/pilot-2-colab.ipynb). That section is self-contained:
+mount Drive and run it on a CPU runtime without repeating training or evaluation.
+
 ## Saved source location
 
 The Pilot 2 notebook uses the same Drive artifact root as Pilot 1:
-`/content/drive/MyDrive/SPAR/pilot1/artifacts`.
+`/content/drive/MyDrive/SPAR/spar-pilot/artifacts`.
 The `pilot1` directory name does not mean it contains only Pilot 1.
 
 The completed trajectory's source file is:
 `reports/pilot2-sft-fp32-l4-batch8-v1-trajectory/results/paired-items.jsonl`
-under that artifact root. `/content/spar-pilot2` is the temporary code checkout;
+under that artifact root. `/content/spar-pilot` is the temporary code checkout;
 the notebook's output display is not where the responses are stored.
 
 ## Run after checking out code containing audit-sft-scores

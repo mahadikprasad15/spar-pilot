@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def test_notebook_progress_survives_transient_empty_status(tmp_path):
-    notebook = json.loads((Path(__file__).parents[1] / "output/jupyter-notebook/pilot-1-colab.ipynb").read_text())
+    notebook = json.loads((Path(__file__).parents[1] / "notebooks/pilot-1-colab.ipynb").read_text())
     source = next("".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code" and "def run_cli(" in "".join(c["source"]))
     tree = ast.parse(source)
     tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)]

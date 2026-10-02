@@ -13,7 +13,7 @@ from google.colab import drive
 
 drive.mount("/content/drive")
 REPO_DIR = Path("/content/spar-pilot")
-ARTIFACT_ROOT = Path("/content/drive/MyDrive/SPAR/pilot1/artifacts")
+ARTIFACT_ROOT = Path("/content/drive/MyDrive/SPAR/spar-pilot/artifacts")
 V2_COMMIT = "be287098ce43f6c695d66b2d8a8555f033157aa4"
 assert (ARTIFACT_ROOT / "reports/baseline-combined-logits-v2/results/results.json").is_file(), "Check Drive and artifact location."
 if not REPO_DIR.exists():

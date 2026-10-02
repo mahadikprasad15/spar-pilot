@@ -17,7 +17,7 @@ from pathlib import Path
 import json, os, subprocess, sys
 
 REPO_DIR = Path("/content/spar-pilot")
-ARTIFACT_ROOT = Path("/content/drive/MyDrive/SPAR/pilot1/artifacts")
+ARTIFACT_ROOT = Path("/content/drive/MyDrive/SPAR/spar-pilot/artifacts")
 SOURCE_PLAN = "baseline-batch8-v1"
 RECOVERY_PLAN = "baseline-batch2-recovery-v1"
 RECOVERY_COMMIT = "893c295770fe3d73d40290efc965c800cf2d275b"

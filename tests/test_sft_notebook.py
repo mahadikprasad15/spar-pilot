@@ -8,7 +8,7 @@ from test_sft_prepare import TrainingData, source_plan
 def test_notebook_restores_frozen_state_after_reconnect(tmp_path):
     from pilot_eval.sft import prepare_sft
     path = prepare_sft(source_plan(tmp_path), tmp_path, 'sft', dependencies=TrainingData())
-    notebook_path = Path(__file__).parents[1] / 'output/jupyter-notebook/pilot-2-colab.ipynb'
+    notebook_path = Path(__file__).parents[1] / 'notebooks/pilot-2-colab.ipynb'
     notebook = json.loads(notebook_path.read_text())
     codes = [''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code']
     for source in codes:
@@ -28,7 +28,7 @@ def test_notebook_restores_frozen_state_after_reconnect(tmp_path):
 
 
 def test_notebook_selects_l4_and_benchmarks_before_baseline():
-    notebook = json.loads((Path(__file__).parents[1] / 'output/jupyter-notebook/pilot-2-colab.ipynb').read_text())
+    notebook = json.loads((Path(__file__).parents[1] / 'notebooks/pilot-2-colab.ipynb').read_text())
     codes = [''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code']
     setup = next(s for s in codes if 'REPO_URL =' in s)
     assert "HARDWARE = 'L4'" in setup

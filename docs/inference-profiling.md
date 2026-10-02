@@ -7,7 +7,7 @@ libraries first; do not run another model job concurrently.
 From the repository checkout:
 
 ```bash
-python scripts/profile_inference.py --config /content/drive/MyDrive/SPAR/pilot1/artifacts/plans/baseline-batch8-v1/gsm8k-0shot.config.json --output-root /content/drive/MyDrive/SPAR/pilot1/artifacts --name fp32-batch-sweep-v1
+python scripts/profile_inference.py --config /content/drive/MyDrive/SPAR/spar-pilot/artifacts/plans/baseline-batch8-v1/gsm8k-0shot.config.json --output-root /content/drive/MyDrive/SPAR/spar-pilot/artifacts --name fp32-batch-sweep-v1
 ```
 
 Default: FP32, batches 1/2/4/8, eight fixed questions spanning prompt lengths,
