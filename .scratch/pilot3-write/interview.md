@@ -69,6 +69,22 @@ Numerical acceptance tolerances;
 checkpoint provenance and loader after the Drive rename; artifact details,
 resume, plots and interpretive limits.
 
+## Accepted: validation scope (Q16–Q18)
+
+- Require exactly zero step-0 block/module changes, exact equality of recorded
+  before/after base-weight hashes and verified loaded checkpoint file hashes.
+- Check the rank-1 identity in all 196 modules at all five checkpoints on the
+  same module input, with predeclared FP32 tolerance (still to be settled).
+- CPU tests use all valid tokens of a tiny locally constructed model. Real
+  validation samples up to 16 counted positions per module/checkpoint/input
+  view, fixed reproducibly and spread across examples. Actual measurement
+  aggregates still include every counted token.
+- Include deliberately wrong cases in CPU tests to establish that the check
+  catches errors. Expand real validation if results approach tolerances or
+  show unexpected variation; do not silently relax acceptance thresholds.
+- Stop on missing/mismatched inputs, incorrect hooks, nonfinite activations or
+  failed validation. Persist diagnostics and failure status.
+
 ## Accepted: round 5 (Q13–Q15)
 
 - Inspect the first 2,000 documents of a pinned FineWeb stream. Keep documents
