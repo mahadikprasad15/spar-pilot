@@ -53,11 +53,18 @@ def main(argv=None, *, dependencies=None):
     sft_benchmark.add_argument('--config', type=Path, required=True)
     sft_compare = commands.add_parser('sft-compare', help='CPU-only paired checkpoint trajectory report')
     sft_compare.add_argument('--config', type=Path, required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark):
+    score_audit = commands.add_parser('audit-sft-scores', help='CPU-only post-hoc flexible v3 audit of paired responses')
+    score_audit.add_argument('--paired', type=Path, required=True)
+    score_audit.add_argument('--name', required=True)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'sft-benchmark':
+        if args.command == 'audit-sft-scores':
+            from pilot_eval.sft_score_audit import audit_sft_scores
+            result = audit_sft_scores(args.paired, args.output_root, args.name)
+            print(json.dumps(result, indent=2))
+        elif args.command == 'sft-benchmark':
             from pilot_eval.sft_benchmark import benchmark_sft
             print(json.dumps(benchmark_sft(args.config, args.output_root, dependencies=dependencies), indent=2))
         elif args.command == 'sft-compare':
