@@ -1,4 +1,4 @@
-# Pilot 1 Evaluation
+# SPAR Evaluation and Fine-tuning Pilots
 
 Vocabulary for comparing selective fine-tuning evaluations on fixed benchmark questions.
 
@@ -27,3 +27,23 @@ _Avoid_: Trained base model, when only the adapter changed
 **Optimizer step**:
 One update of the trainable parameters, which may combine gradients from several batches of examples.
 _Avoid_: Batch, when referring to the number of parameter updates
+
+**Decoder block**:
+One transformer layer containing attention, an MLP and residual operations; its output is the representation passed onward through the model.
+_Avoid_: Module, when referring to an entire decoder layer
+
+**Adapted linear module**:
+A linear transformation inside a decoder block to which a LoRA adapter is attached.
+_Avoid_: Block, when referring to an individual projection
+
+**Direct module contribution**:
+The output contribution of a module's own adapter on a fixed input, excluding changes to that input caused by upstream interventions.
+_Avoid_: Total module-output change
+
+**Block-output change**:
+The difference between adapted and untuned activations at a decoder block's output for identical input token sequences, including propagated upstream effects.
+_Avoid_: Direct adapter contribution
+
+**Instrument validation**:
+Checks that activation measurements observe the intended quantities and satisfy known identities before interpreting the measurements.
+_Avoid_: Accuracy evaluation
