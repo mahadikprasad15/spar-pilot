@@ -40,9 +40,19 @@ cohort's lengths; it does not establish why the adapter generated shorter
 answers. Keep this question visible in the spec and final report. Further
 length-stratified or generated-response experiments are not yet approved.
 
+## Accepted primary summaries: round 3
+
+- Normalize the magnitude of the mean block-output change by the average
+  baseline activation magnitude, not by the magnitude of the average baseline
+  vector, as the primary relative block summary.
+- Use the ratio of average adapter-contribution magnitude to average ordinary
+  module-output magnitude as the primary module summary.
+- Retention of mean change magnitude, the alternative block denominator and
+  mean per-token module ratios as secondary diagnostics remains to be confirmed.
+
 ## Still open
 
-Unrelated corpus and selection;
-normalizations; zero-denominator policy; numerical acceptance tolerances;
+Secondary diagnostics; unrelated corpus and selection;
+zero-denominator policy; numerical acceptance tolerances;
 checkpoint provenance and loader after the Drive rename; artifact details,
 resume, plots and interpretive limits.
