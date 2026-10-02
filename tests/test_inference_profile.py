@@ -72,3 +72,16 @@ def test_non_memory_errors_stop_and_completed_candidates_resume(tmp_path):
     assert result['measurements'][0]['status'] == 'completed'
     assert not any(batch == 1 for batch, cap in deps.calls)
     assert result['measurements'][-1]['status'] == 'completed'
+
+
+def test_standalone_script_help_works_without_editable_package_install():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(__file__).parents[1] / 'scripts/profile_inference.py'
+    env = dict(os.environ, PYTHONPATH='')
+    result = subprocess.run([sys.executable, str(script), '--help'], cwd='/tmp',
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert '--batch-sizes' in result.stdout

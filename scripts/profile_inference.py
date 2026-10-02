@@ -1,7 +1,11 @@
 """Small CLI wrapper: benchmark batch sizes before committing to a full run."""
 import argparse
 import json
+import sys
 from pathlib import Path
+
+# Support direct execution from a checkout, even without an editable install.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pilot_eval.inference_profile import profile_inference
 
 

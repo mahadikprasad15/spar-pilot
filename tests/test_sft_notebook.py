@@ -36,7 +36,7 @@ def test_notebook_selects_l4_and_benchmarks_before_baseline():
     assert 'EVALUATION_BATCH_SIZE = 2' in setup
     prepare = next(s for s in codes if "['sft-prepare'" in s)
     assert "'--hardware', HARDWARE" in prepare
-    benchmark = next(i for i, s in enumerate(codes) if "['sft-benchmark'" in s)
+    benchmark = next(i for i, s in enumerate(codes) if "'scripts/profile_inference.py'" in s)
     baseline = next(i for i, s in enumerate(codes) if "'--checkpoint', 'baseline'" in s)
     assert benchmark < baseline
     assert 'BENCHMARK_REVIEWED' in codes[baseline]

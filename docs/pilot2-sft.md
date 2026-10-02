@@ -106,8 +106,8 @@ full-vocabulary temporary tensors; the SFT objective is unchanged.
 ## L4 variant and speed benchmark
 
 The current notebook defaults to L4, plan `pilot2-sft-fp32-l4-batch2-v1`, and
-matched evaluation batch 2. Select L4 in Colab. Section 6a benchmarks batches
-1/2 on eight fixed prompt-length ranks with the original generation cap;
+matched evaluation batch 2. Select L4 in Colab. Section 6a profiles batches
+1/2/4/8 on eight fixed prompt-length ranks with the original generation cap;
 inspect tokens/sec, peak allocated memory, projected run costs and any output
 differences before starting section 7. This notebook has not been GPU-tested
 locally. T4 plans remain supported by the CLI and keep their original meaning.
@@ -123,3 +123,7 @@ and restart as instructed. Reuse frozen cohort identities; do not mix partial
 T4 baseline responses into the new L4 scientific run. Check that the old child
 process stopped before switching runtime. The benchmark does not prove speed
 on every checkpoint, and never silently changes the frozen evaluation batch.
+
+For the independent one-command tester and choosing a larger new plan, see
+[inference profiling](inference-profiling.md). It can run after installation,
+before training preparation or GPU preflight.

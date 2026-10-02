@@ -63,9 +63,10 @@ def profile_inference(config_path, output_root, name, *, dtype='float32',
     deps = dependencies or ProfileDependencies()
     directory = root / 'runs/diagnostics/inference-profile' / safe_name(name)
     with run_lock(directory):
-        config = dict(source_sha256=_hash(source), dtype=dtype, batch_sizes=list(batch_sizes),
+        config = dict(source_config=source, source_sha256=_hash(source), dtype=dtype, batch_sizes=list(batch_sizes),
             sample_ids=[item['id'] for item in sample], items_sha256=_hash(sample),
             repeats=repeats, decoding=source['decoding'], warmup_new_tokens=8,
+            implementation_sha256=file_hash(__file__),
             runtime=deps.runtime(inference))
         _save_frozen(directory / 'config.json', config)
         _save_frozen(directory / 'inputs/items.json', sample)
@@ -89,6 +90,7 @@ def profile_inference(config_path, output_root, name, *, dtype='float32',
                 else:
                     if backend is None:
                         backend = deps.load_backend(inference)
+                    print(f'Profiling batch {size} on {sample_size} prompts...', flush=True)
                     outputs = []
                     timings = []
                     try:
