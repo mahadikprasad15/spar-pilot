@@ -65,6 +65,24 @@ length-stratified or generated-response experiments are not yet approved.
 
 ## Still open
 
-FineWeb selection, lengths and presentation; numerical acceptance tolerances;
+Numerical acceptance tolerances;
 checkpoint provenance and loader after the Drive rename; artifact details,
 resume, plots and interpretive limits.
+
+## Accepted: round 5 (Q13–Q15)
+
+- Inspect the first 2,000 documents of a pinned FineWeb stream. Keep documents
+  with at least 128 Qwen content tokens; select 150 with seed 42. Use their first
+  128 content tokens. Freeze text, token IDs and source identities. This is a
+  sample of that bounded pool, not a representative sample of the whole web.
+- Present FineWeb as user text under the same Qwen chat wrapper. Primarily
+  contrast it with GSM8K question-token measurements; solution-token results
+  stay separate. Content and task differences remain, so this is a descriptive
+  cross-input contrast rather than proof of task specificity.
+- Exclude chat structure, system text, padding and task instructions from counted
+  positions. Keep complete gold-solution content, including calculator annotations
+  and the final answer marker, because those were in the training targets.
+  This clarifies the earlier ambiguous phrase 'formatting markers'.
+- Pilot 3 validates and describes activation changes. It does not establish a
+  causal explanation for shorter generation. Later intervention experiments may
+  use the measured vectors to test such explanations.
