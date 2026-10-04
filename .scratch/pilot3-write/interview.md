@@ -142,6 +142,24 @@ resume, plots and interpretive limits.
   Colab preflight. No scientific inference, training or code implementation starts
   merely because the interview notes exist.
 
+## Round 10: thresholds, inputs and report
+
+- The proposed output-subtraction acceptance threshold per coordinate is
+  1e-6 + 1e-5*abs(expected_write) + 4*epsilon_fp32*(abs(adapted_output)+
+  abs(ordinary_output)), with epsilon_fp32=2**-23. Pre-addition branch validation
+  uses only the first two terms. The user agreed but requested clarification of
+  how this relates to the three instrument checks; explain before final design
+  confirmation. These are engineering thresholds, not guaranteed error bounds.
+- Use the verified Pilot 2 training-run manifest to obtain model/tokenizer pins
+  and checkpoint identities. Resolve files under the new root and verify hashes;
+  preserve historical configs rather than edit their absolute paths.
+- Report block-write checkpoint/depth curves, layer-by-module ratio heatmaps,
+  token versus equal-example weighting sensitivity, validation/denominator/
+  resolution diagnostics, and 95% example-bootstrap intervals for primary scalar
+  summaries (2,000 draws, seed 42). Resample GSM8K IDs jointly across checkpoints;
+  resample FineWeb separately. Intervals do not represent training-seed variability.
+- Final visual layout and test-boundary confirmation remain open before to-spec.
+
 ## Accepted: round 5 (Q13–Q15)
 
 - Inspect the first 2,000 documents of a pinned FineWeb stream. Keep documents
