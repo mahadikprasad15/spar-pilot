@@ -1,6 +1,7 @@
 """Public Pilot 3 preparation tests: real files, controlled offline source access."""
 
 import json
+import pytest
 
 from pilot_eval.cli import main
 from pilot_eval.sft import prepare_sft
@@ -98,3 +99,18 @@ def test_prepare_command_freezes_auditable_complete_inputs_and_reuses_them(tmp_p
     assert main(['activation-audit', '--config', str(manifest_path),
                  '--output-root', str(tmp_path)]) == 0
     assert 'prepared' in capsys.readouterr().out
+
+
+def test_preparation_rejects_completion_marker_that_omits_required_audit(tmp_path):
+    source = completed_source(tmp_path)
+    args = ['activation-prepare', '--source-config', str(source), '--name', 'write-v1',
+            '--output-root', str(tmp_path)]
+    assert main(args, dependencies=ActivationData()) == 0
+    path = tmp_path / 'plans/write-v1/activation.prepared.json'
+    config = json.loads(path.read_text())
+    marker_path = path.parent / 'prepare-complete.json'
+    marker = json.loads(marker_path.read_text())
+    del marker['files'][config['audit_path']]
+    marker_path.write_text(json.dumps(marker))
+    (tmp_path / config['audit_path']).unlink()
+    assert main(args, dependencies=ActivationData()) == 1

@@ -147,6 +147,10 @@ def load_prepared(config_path, output_root):
     marker = json.loads((path.parent / 'prepare-complete.json').read_text())
     if marker['config_sha256'] != _hash(config):
         raise ValueError('prepared config hash mismatch')
+    required = {str(path.relative_to(root)), config['items_path'], config['audit_path'],
+                config['run_path'] + '/meta/run_manifest.json'}
+    if not required.issubset(marker['files']):
+        raise ValueError('preparation completion marker omits required payloads')
     for relative, digest in marker['files'].items():
         payload = (root / relative).resolve()
         if not payload.is_relative_to(root) or file_hash(payload) != digest:
