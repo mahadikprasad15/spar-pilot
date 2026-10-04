@@ -158,7 +158,16 @@ resume, plots and interpretive limits.
   resolution diagnostics, and 95% example-bootstrap intervals for primary scalar
   summaries (2,000 draws, seed 42). Resample GSM8K IDs jointly across checkpoints;
   resample FineWeb separately. Intervals do not represent training-seed variability.
-- Final visual layout and test-boundary confirmation remain open before to-spec.
+- The user confirmed the subsequent clarification: local contribution/subtraction
+  validation belongs to test C, not the exact-zero step-0 test. The full proposed
+  threshold above is accepted as an engineering acceptance rule.
+- Accepted plot layout: block curves use token-view rows and weighting columns,
+  with checkpoint lines. Primary module heatmaps use layer rows and module-type
+  columns, separated by checkpoint/view, with weighting sensitivity supplementary.
+  Module ratios are activation-contribution ratios, not relative weight norms or
+  additive fractions of total causal effect.
+- Test-boundary and final shared-understanding confirmation remain open before
+  to-spec.
 
 ## Accepted: round 5 (Q13–Q15)
 
