@@ -127,7 +127,20 @@ resume, plots and interpretive limits.
   alongside aggregate results. Do not retain full token-by-token activations by
   default. This supports weighting/length sensitivity and example-level uncertainty
   without repeating GPU inference; it cannot reconstruct arbitrary token-level
-  analyses. File format and exact schema remain open.
+  analyses. NPZ arrays plus JSON/JSONL metadata are approved; exact schema remains
+  to be specified. Use a baseline shard once per batch and hashed completion
+  markers written last to validate each completed batch/checkpoint shard.
+
+## Agreed workflow
+
+- Complete grilling and confirm shared understanding before writing a spec.
+- Apply to-spec: confirm the proposed external test boundaries, then synthesize
+  the settled decisions as a ready-for-agent spec in the local issue tracker.
+- Apply to-tickets: propose independently verifiable vertical slices with true
+  blocking edges; obtain approval of granularity/dependencies before publishing.
+- Implementation follows approved tickets with red/green CPU tests and real-model
+  Colab preflight. No scientific inference, training or code implementation starts
+  merely because the interview notes exist.
 
 ## Accepted: round 5 (Q13–Q15)
 
