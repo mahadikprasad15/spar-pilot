@@ -141,6 +141,10 @@ resume, plots and interpretive limits.
 - Implementation follows approved tickets with red/green CPU tests and real-model
   Colab preflight. No scientific inference, training or code implementation starts
   merely because the interview notes exist.
+- Deliver a guided Colab notebook and keep the interview/question explanations
+  in the repository. Incorporate earlier pilot failures as explicit safeguards;
+  see `prior-pilot-learnings.md`. The user requested an explanation of layered
+  workflow testing and its alternatives before confirming the test boundaries.
 
 ## Round 10: thresholds, inputs and report
 
