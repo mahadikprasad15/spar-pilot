@@ -114,3 +114,19 @@ def test_preparation_rejects_completion_marker_that_omits_required_audit(tmp_pat
     marker_path.write_text(json.dumps(marker))
     (tmp_path / config['audit_path']).unlink()
     assert main(args, dependencies=ActivationData()) == 1
+
+
+def test_insufficient_control_pool_records_failure_without_a_completion_marker(tmp_path):
+    source = completed_source(tmp_path)
+
+    class ShortPool(ActivationData):
+        def stream_fineweb(self, config, revision):
+            yield {'id': 'only-one', 'text': 'x' * 160}
+
+    assert main(['activation-prepare', '--source-config', str(source), '--name', 'short-pool',
+                 '--output-root', str(tmp_path)], dependencies=ShortPool()) == 1
+    plan = tmp_path / 'plans/short-pool'
+    assert not (plan / 'prepare-complete.json').exists()
+    status = json.loads((plan / 'meta/status.json').read_text())
+    assert status['state'] == 'failed'
+    assert 'eligible' in status['error']

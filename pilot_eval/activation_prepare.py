@@ -3,6 +3,7 @@
 import itertools
 import json
 import random
+from contextlib import contextmanager
 from pathlib import Path
 
 from pilot_eval.protocol import build_gsm8k_prompt, gsm8k_messages
@@ -14,6 +15,27 @@ from pilot_eval.workflow import HFDependencies, _hash, _save_frozen
 STEPS = [0, 8, 16, 32, 64]
 PROJECTIONS = ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
 VIEWS = ['question', 'solution', 'user']
+
+
+@contextmanager
+def _preparation_status(plan):
+    """Record failures only for owned, unfinished preparations."""
+    already_complete = (plan / 'prepare-complete.json').exists()
+    if not already_complete:
+        _write_json(plan / 'meta/status.json', {'state': 'running', 'stage': 'prepare'})
+    try:
+        yield
+        if not already_complete:
+            _write_json(plan / 'meta/status.json', {'state': 'prepared', 'stage': 'prepare'})
+    except BaseException as exc:
+        if not already_complete:
+            _write_json(plan / 'meta/status.json', {'state': 'failed', 'stage': 'prepare',
+                                                  'error': str(exc)})
+            log = plan / 'logs/errors.jsonl'
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with log.open('a') as stream:
+                stream.write(json.dumps({'type': type(exc).__name__, 'error': str(exc)}) + '\n')
+        raise
 
 
 class ActivationInputDependencies(HFDependencies):
@@ -175,7 +197,7 @@ def prepare_activation(source_config, output_root, name, *, dependencies=None,
     source_path = Path(source_config).resolve()
     if not source_path.is_relative_to(root):
         raise ValueError('source config must resolve within the artifact root')
-    with run_lock(plan):
+    with run_lock(plan), _preparation_status(plan):
         if (plan / 'prepare-complete.json').exists():
             config, _ = load_prepared(path, root)
             if (config['source_config_path'] != str(source_path.relative_to(root))
