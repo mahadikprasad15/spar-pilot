@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Verify all five source checkpoint manifests and frozen-base hash evidence; resolve relocated files without modifying historical configs.
 - [ ] Preserve the 150 source GSM8K IDs, complete questions/gold solutions and actual chat template; pin FineWeb configuration/revision and freeze the approved bounded sample.

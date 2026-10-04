@@ -135,7 +135,8 @@ inference. Preserve the interview and decision explanations in the repository.
   input and token IDs. This is teacher forcing, not generation.
 - Keep complete GSM8K sequences. Validate the model's sequence limit and stop
   on an oversized example; never silently truncate or drop it.
-- FineWeb control: inspect the first 2,000 documents of a pinned, explicitly
+- FineWeb control: use the user-approved `sample-10BT` configuration; inspect
+  the first 2,000 documents of a pinned, explicitly
   recorded stream configuration. Keep documents with at least 128 Qwen content
   tokens, then sample 150 without replacement using seed 42. If fewer than 150
   qualify, stop rather than silently expanding the pool or changing eligibility.

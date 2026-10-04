@@ -56,11 +56,27 @@ def main(argv=None, *, dependencies=None):
     score_audit = commands.add_parser('audit-sft-scores', help='CPU-only post-hoc flexible v3 audit of paired responses')
     score_audit.add_argument('--paired', type=Path, required=True)
     score_audit.add_argument('--name', required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit):
+    activation_prepare = commands.add_parser('activation-prepare', help='freeze Pilot 3 sources, inputs and masks')
+    activation_prepare.add_argument('--source-config', type=Path, required=True)
+    activation_prepare.add_argument('--name', required=True)
+    activation_prepare.add_argument('--fineweb-config', default='sample-10BT')
+    activation_prepare.add_argument('--fineweb-revision')
+    activation_audit = commands.add_parser('activation-audit', help='verify and display the saved Pilot 3 input audit')
+    activation_audit.add_argument('--config', type=Path, required=True)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'audit-sft-scores':
+        if args.command == 'activation-prepare':
+            from pilot_eval.activation_prepare import prepare_activation
+            print(prepare_activation(args.source_config, args.output_root, args.name,
+                dependencies=dependencies, fineweb_config=args.fineweb_config,
+                fineweb_revision=args.fineweb_revision))
+        elif args.command == 'activation-audit':
+            from pilot_eval.activation_prepare import load_prepared
+            config, _ = load_prepared(args.config, args.output_root)
+            print((args.output_root / config['audit_path']).read_text())
+        elif args.command == 'audit-sft-scores':
             from pilot_eval.sft_score_audit import audit_sft_scores
             result = audit_sft_scores(args.paired, args.output_root, args.name)
             print(json.dumps(result, indent=2))

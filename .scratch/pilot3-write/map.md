@@ -14,8 +14,8 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 
 ## Fog
 
-- FineWeb stream configuration requires explicit user selection; preparation
-  accepts an explicit configuration and records it without a hidden default.
+- FineWeb `sample-10BT` was explicitly approved; resolve and record its dataset
+  revision once during preparation, then reuse frozen inputs.
 - Real source checkpoint verification and GPU validation remain Colab work.
 
 ## Frontier
