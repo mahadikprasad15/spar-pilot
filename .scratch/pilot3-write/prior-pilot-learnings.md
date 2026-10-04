@@ -1,7 +1,7 @@
 # Lessons from Pilots 1 and 2 for Pilot 3
 
-These are design inputs for the pending Pilot 3 spec. Proposed verification
-boundaries still require the user's final confirmation. The interview remains
+These are design inputs for the Pilot 3 spec. The user confirmed the layered
+verification boundaries on 2026-10-04. The interview remains
 the record of questions and decisions; this document explains the safeguards.
 
 | Earlier issue | Lesson | Pilot 3 safeguard |

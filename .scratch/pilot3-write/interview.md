@@ -3,6 +3,10 @@
 This records agreed decisions during grilling. It is not a spec or permission
 to begin implementation. Remaining decisions must be settled before a spec.
 
+Final confirmation, 2026-10-04: the user approved the layered test boundaries
+and requested the spec. The interview is complete; `spec.md` is authoritative
+for settled requirements. Earlier open-question notes below are historical.
+
 ## Accepted: round 1
 
 - Validate the activation-measuring instrument and describe the saved Pilot 2
