@@ -113,6 +113,22 @@ resume, plots and interpretive limits.
   numerical-agreement checks. Benchmark OOM marks a candidate unsuitable;
   production OOM stops with saved progress. Agreement thresholds remain open.
 
+## Accepted: progress and retained summaries (Q25–Q27)
+
+- Treat numerical tolerances as predeclared engineering acceptance thresholds,
+  not guaranteed floating-point error bounds. The direct-contribution proposal
+  is atol=1e-6, rtol=1e-5; batch-summary agreement proposal is atol=1e-5,
+  rtol=1e-5. The complete subtraction-rounding allowance is not yet settled.
+- Save completed batch/checkpoint combinations with verified input/config hashes;
+  freeze batch membership and numerical settings. Use completion markers and
+  integrity checks to reject partial writes, and aggregate completed combinations
+  exactly once on resume.
+- Retain per-example vector sums, baseline and magnitude summaries and counts,
+  alongside aggregate results. Do not retain full token-by-token activations by
+  default. This supports weighting/length sensitivity and example-level uncertainty
+  without repeating GPU inference; it cannot reconstruct arbitrary token-level
+  analyses. File format and exact schema remain open.
+
 ## Accepted: round 5 (Q13–Q15)
 
 - Inspect the first 2,000 documents of a pinned FineWeb stream. Keep documents
