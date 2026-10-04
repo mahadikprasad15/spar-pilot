@@ -100,6 +100,19 @@ resume, plots and interpretive limits.
   and profile memory. Main forward work is one untuned plus five adapted passes
   per batch, excluding validation/preflight overhead.
 
+## Accepted: round 8 (Q22–Q24)
+
+- Validate both the pre-addition adapter contribution and the post-addition
+  module output difference. Use predeclared FP32 tolerances, report maximum
+  errors and contributions below subtraction resolution, and require negative
+  controls. Exact tolerance constants remain to be confirmed before the spec.
+- Explicit FP32 model computation; disable mixed precision and TF32; evaluation
+  mode. Accumulate summary sums in FP64 and record numerical settings.
+- Profile batches 1, 2, 4, 8, 16 including long GSM8K sequences and the bounded
+  untuned-reference cache. Choose the fastest candidate passing memory and
+  numerical-agreement checks. Benchmark OOM marks a candidate unsuitable;
+  production OOM stops with saved progress. Agreement thresholds remain open.
+
 ## Accepted: round 5 (Q13–Q15)
 
 - Inspect the first 2,000 documents of a pinned FineWeb stream. Keep documents
