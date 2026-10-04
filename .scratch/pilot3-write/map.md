@@ -11,6 +11,9 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 - Dependency order: 01 → 02 → 03 → 04 → 05 → 06.
 - Source training artifacts are not available in the local checkout; CPU fixtures
   can exercise the workflow without inventing real source evidence.
+- Ticket 01 resolved: public frozen preparation/audit, source checks, token masks,
+  completion integrity, failure status and relocation tests. Ten new CPU tests;
+  full suite 141 passed. See ticket 01 Answer for the verification limits.
 
 ## Fog
 
@@ -20,4 +23,4 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 
 ## Frontier
 
-01 — Freeze and audit measurement inputs.
+02 — Validate and measure one batch (unblocked; not yet claimed).

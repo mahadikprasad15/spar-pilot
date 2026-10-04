@@ -1,6 +1,7 @@
 """Public Pilot 3 preparation tests: real files, controlled offline source access."""
 
 import json
+import shutil
 import pytest
 
 from pilot_eval.cli import main
@@ -152,3 +153,57 @@ def test_control_tokens_in_web_text_are_not_counted_as_content(tmp_path):
         assert sum(row['masks']['user']) == 128
         assert all(not counted for token, counted in zip(row['input_ids'], row['masks']['user']) if token == 3)
         assert row['content'] == 'x' * 10 + '<end>' + 'y' * 118
+
+
+@pytest.mark.parametrize('corruption', ['inputs', 'checkpoint', 'base', 'template'])
+def test_preparation_rejects_changed_evidence(tmp_path, corruption):
+    source = completed_source(tmp_path)
+    args = ['activation-prepare', '--source-config', str(source), '--name', 'write-v1',
+            '--output-root', str(tmp_path)]
+    assert main(args, dependencies=ActivationData()) == 0
+    prepared = tmp_path / 'plans/write-v1/activation.prepared.json'
+    config = json.loads(prepared.read_text())
+    if corruption == 'inputs':
+        rows_path = tmp_path / config['items_path']
+        rows = json.loads(rows_path.read_text())
+        rows[0]['input_ids'][0] += 1
+        rows_path.write_text(json.dumps(rows))
+    elif corruption == 'checkpoint':
+        cp = tmp_path / config['source_evidence']['checkpoints']['64']['path']
+        (cp / 'adapter_model.safetensors').write_text('changed checkpoint')
+    elif corruption == 'base':
+        training = training_directory(tmp_path, json.loads(source.read_text()))
+        result_path = training / 'results/results.json'
+        result = json.loads(result_path.read_text())
+        result['base_sha256_after'] = 'c' * 64
+        result_path.write_text(json.dumps(result))
+    else:
+        source_config = json.loads(source.read_text())
+        source_config['source_config']['chat_template_sha256'] = 'changed'
+        source.write_text(json.dumps(source_config))
+    assert main(args, dependencies=ActivationData()) == 1
+
+
+def test_prepared_evidence_survives_artifact_root_relocation(tmp_path):
+    original = tmp_path / 'old-root'
+    original.mkdir()
+    source = completed_source(original)
+    assert main(['activation-prepare', '--source-config', str(source), '--name', 'write-v1',
+                 '--output-root', str(original)], dependencies=ActivationData()) == 0
+    moved = tmp_path / 'new-root'
+    shutil.move(str(original), moved)
+    moved_source = moved / source.relative_to(original)
+    assert main(['activation-prepare', '--source-config', str(moved_source), '--name', 'write-v1',
+                 '--output-root', str(moved)], dependencies=ActivationData()) == 0
+
+
+def test_preparation_rejects_context_overflow_instead_of_truncating(tmp_path):
+    source = completed_source(tmp_path)
+
+    class SmallContext(ActivationData):
+        def load_tokenizer(self, model, revision):
+            return self.tokenizer, 20
+
+    assert main(['activation-prepare', '--source-config', str(source), '--name', 'too-long',
+                 '--output-root', str(tmp_path)], dependencies=SmallContext()) == 1
+    assert not (tmp_path / 'plans/too-long/prepare-complete.json').exists()
