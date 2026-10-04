@@ -111,8 +111,10 @@ def _record(tokenizer, rendered, spans, context, **metadata):
         raise ValueError('complete measurement sequence context overflow; truncation forbidden')
     masks = {view: [False] * len(tokens) for view in VIEWS}
     ambiguous = {view: [] for view in VIEWS}
+    special_ids = set(getattr(tokenizer, 'all_special_ids', []))
+    special_positions = [index for index, token in enumerate(tokens) if token in special_ids]
     for index, (start, end) in enumerate(offsets):
-        if start == end:
+        if start == end or tokens[index] in special_ids:
             continue
         for view, (left, right) in spans.items():
             if left <= start < end <= right:
@@ -125,7 +127,8 @@ def _record(tokenizer, rendered, spans, context, **metadata):
             'attention_mask': [1] * len(tokens), 'masks': masks,
             'content_spans': {view: list(span) for view, span in spans.items()},
             'counts': {view: sum(mask) for view, mask in masks.items()},
-            'ambiguous_positions': ambiguous, 'offsets': [list(pair) for pair in offsets],
+            'ambiguous_positions': ambiguous, 'excluded_special_positions': special_positions,
+            'offsets': [list(pair) for pair in offsets],
             'input_sha256': _hash({'tokens': tokens, 'masks': masks})}
 
 
@@ -244,9 +247,12 @@ def prepare_activation(source_config, output_root, name, *, dependencies=None,
         for index, doc in enumerate(itertools.islice(deps.stream_fineweb(fineweb_config, revision), 2000)):
             text = doc['text']
             tokens, offsets = _tokenize(tokenizer, text)
-            if len(tokens) >= 128:
-                prefix = text[:offsets[127][1]]
-                eligible.append((index, doc, prefix, tokens[:128]))
+            special_ids = set(getattr(tokenizer, 'all_special_ids', []))
+            content_positions = [i for i, token in enumerate(tokens)
+                                 if token not in special_ids and offsets[i][0] < offsets[i][1]]
+            if len(content_positions) >= 128:
+                prefix = text[:offsets[content_positions[127]][1]]
+                eligible.append((index, doc, prefix, [tokens[i] for i in content_positions[:128]]))
         if len(eligible) < 150:
             raise ValueError('FineWeb prefix has fewer than 150 eligible documents')
         selected = sorted(random.Random(42).sample(range(len(eligible)), 150))

@@ -11,6 +11,7 @@ from test_sft_training import TrainingBoundary, Engine
 
 
 class OffsetTokenizer(ChatTokenizer):
+    all_special_ids = [0, 3]
     def __call__(self, text, **kwargs):
         # Independent fixture: one character per token except the end-turn marker.
         ids, offsets = [], []
@@ -130,3 +131,24 @@ def test_insufficient_control_pool_records_failure_without_a_completion_marker(t
     status = json.loads((plan / 'meta/status.json').read_text())
     assert status['state'] == 'failed'
     assert 'eligible' in status['error']
+
+
+def test_control_tokens_in_web_text_are_not_counted_as_content(tmp_path):
+    source = completed_source(tmp_path)
+
+    class ControlText(ActivationData):
+        def stream_fineweb(self, config, revision):
+            for index in range(2000):
+                yield {'id': str(index), 'text': 'x' * 10 + '<end>' + 'y' * 150}
+
+    assert main(['activation-prepare', '--source-config', str(source), '--name', 'controls',
+                 '--output-root', str(tmp_path)], dependencies=ControlText()) == 0
+    path = tmp_path / 'plans/controls/activation.prepared.json'
+    config = json.loads(path.read_text())
+    rows = json.loads((tmp_path / config['items_path']).read_text())
+    for row in rows:
+        if row['corpus'] != 'fineweb':
+            continue
+        assert sum(row['masks']['user']) == 128
+        assert all(not counted for token, counted in zip(row['input_ids'], row['masks']['user']) if token == 3)
+        assert row['content'] == 'x' * 10 + '<end>' + 'y' * 118
