@@ -133,3 +133,93 @@ a different execution name. Production must check the runtime again when it star
 
 Full-cohort resumable measurement is Ticket 4; profiling/freezing do not claim that
 the scientific run has completed. The guided Pilot 3 notebook follows in Ticket 6.
+
+## Execute and resume full-cohort measurement (Ticket 4)
+
+Use the frozen **execution** manifest, not the prepared-input manifest. The
+execution name must differ from the preparation name so their run directories
+remain separate.
+
+```bash
+python -u -m pilot_eval activation-measure \
+  --config artifacts/plans/write-production-v1/activation.execution.json \
+  --output-root artifacts
+```
+
+This processes all 150 GSM8K and 150 FineWeb sequences. Examples run in parallel
+inside the frozen batches; the five checkpoints run sequentially on one loaded
+model. Every batch gets a bounded untuned reference cache. Before reuse, each
+checkpoint's disabled-adapter pass must still match that reference. The cache is
+released after the batch and on errors.
+
+For each batch the journal stores:
+
+```text
+batches/batch-000000/
+  baseline/
+    summaries.npz       # block counts, vector sums, magnitude sums
+    metadata.json       # IDs/input hashes, axes, shapes, FP64 types
+    complete.json       # written last; identity and payload hashes
+  checkpoints/step-0/   # also step-8, step-16, step-32, step-64
+    summaries.npz       # block deltas; module ordinary/contribution/ratio sums
+    metadata.json
+    validation.json     # hooks, sampled positions, gate errors and coverage
+    complete.json
+```
+
+The shared baseline is for **untuned block outputs**. Each checkpoint retains its
+own module ordinary-output magnitudes, because those are measured on that
+checkpoint's adapted inputs. Full token activations are temporary, not saved.
+
+The run also saves immutable `config.json` and `meta/run_manifest.json`, mutable
+status/progress/logs, and `results/aggregate-sums.npz` plus `results/results.json`.
+The final arrays contain verified full-cohort sufficient sums; per-example shards
+remain available for equal-example weighting and bootstrap analysis. Interpretation,
+plots and confidence intervals belong to the CPU report in Ticket 5.
+
+### Resume rules
+
+Repeat the exact command after an interruption:
+
+1. Verify source, preparation, reviewed profile and execution/runtime identities.
+2. Read completion markers for the expected batches/checkpoints. Validate hashes,
+   array shapes/counts, hook identities and saved rank-1 evidence before skipping.
+3. Skip a fully completed batch without model work. For a partial batch, recreate
+   its untuned activations and require exactly matching saved baseline summaries.
+4. Process only its missing checkpoint combinations. Replace owned **unmarked**
+   leftovers; preserve completed siblings and do not count progress twice.
+5. Check the frozen base and verify every required combination before publishing
+   final completion. Aggregate each batch/checkpoint exactly once.
+
+The progress file lists verified `(batch index, checkpoint step)` pairs. Markers
+and payloads are authoritative; status/progress alone are insufficient. Corrupt
+marked data stops. Production OOM, nonfinite outputs and failed gates stop while
+preserving verified shards; they do not change batches, precision or input length.
+Changed execution settings/runtime/code identity require a separately named,
+reviewed plan. A completion marker whose required files have disappeared is
+corrupted completion evidence, not permission to silently regenerate those files.
+
+### Monitor the process; verify scientific completion separately
+
+The library helper `monitor_activation_process(process, run_directory,
+last_snapshot=...)` checks the actual `subprocess.Popen` child and tolerates empty,
+partial, missing or invalid mutable status snapshots. It can retain a labelled
+last-known snapshot. Neither a stale `completed` status nor exit code zero alone
+establishes scientific completion. Use the strict CPU-only command afterward:
+
+```bash
+python -m pilot_eval activation-verify \
+  --config artifacts/plans/write-production-v1/activation.execution.json \
+  --output-root artifacts
+```
+
+Before restarting after a notebook-cell interruption, inspect the earlier child
+PID (for example `!pgrep -af 'pilot_eval.*activation-measure'`). It can still be
+running. The workflow rejects a second writer through the run lock; use one writer
+for a named run. Keep the model job in its CLI subprocess so GPU ownership ends
+when that process exits. The guided notebook will use these commands/helpers in
+Ticket 6.
+
+Local CPU fixtures exercise persistence and recovery, and tiny locally constructed
+Qwen/PEFT models exercise hooks and reference summaries. These tests do not replace
+real-source validation and CUDA execution in Colab.

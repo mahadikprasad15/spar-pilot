@@ -22,6 +22,11 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
   evidence and explicit reviewed execution freezing. See ticket 03 and the
   instrument guide; full suite 158 passed. Actual CUDA profiling still requires Colab.
 
+- Ticket 04 resolved: full-cohort verified shards, partial-batch recovery, strict
+  CPU completion checks and process-aware progress monitoring. Full suite 171
+  passed; actual CUDA/source runs remain runtime gates. See ticket 04 and the
+  instrument guide.
+
 ## Fog
 
 - FineWeb `sample-10BT` was explicitly approved; resolve and record its dataset
@@ -30,4 +35,4 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 
 ## Frontier
 
-04 — Resumable all-checkpoint measurement (unblocked; not yet claimed).
+05 — Reconstruct the scientific report on CPU (unblocked; not yet claimed).
