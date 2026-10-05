@@ -269,3 +269,27 @@ more weight in token averages. Their lengths are fixed teacher-forced inputs,
 not the adapter's generated response lengths. Intervals describe the frozen
 cohorts and one training seed. These geometry measurements do not establish
 causality, task specificity or useful layers for fine-tuning.
+
+
+## Guided Colab
+
+Use [notebooks/pilot-3-colab.ipynb](../notebooks/pilot-3-colab.ipynb).
+Sections 1–4 restore pinned code, Drive, dependencies and helpers; 5–6 verify
+sources and audit inputs; 7–9 validate and profile the actual model; 10 freezes
+reviewed execution and measures/resumes; 11 verifies complete evidence; 12–13
+reconstruct and display the CPU report. Section 14 explains recovery and
+inspects children/logs without killing processes or deleting files.
+
+Do not use Run all: installation requires a session restart, and input/profile
+reviews require reading the evidence. For CPU reporting after GPU disconnect,
+set `CPU_REPORT_ONLY=True` and run 1, 2 if dependencies are needed/restart,
+3, 4, 11, 12, 13. Preserve the source adapter files and the same artifact root.
+The source plan default matches the earlier `pilot2-sft-fp32-l4-batch8-v1` run;
+choose the actual saved source config printed by setup if your plan differs.
+
+The notebook pins core code at `c547501`, which already contains all eight
+activation commands. Notebook edits and documentation can live at a newer Git
+revision while inference uses that verified core revision. A changed production
+code/runtime identity requires new profiling and a separately named execution.
+Local syntax/format, saved-workflow and recovery tests do not establish that
+Colab installation, Drive access or the real GPU/source gates pass.

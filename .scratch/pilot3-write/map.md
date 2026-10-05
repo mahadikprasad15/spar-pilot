@@ -31,6 +31,10 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
   weightings, provenance/coverage/validation tables and scientific plots. Full
   offline suite 175 passed; fixture plots inspected. See ticket 05 and the guide.
 
+- Ticket 06 resolved: guided notebook, pinned entry-point/version checks, manual
+  reviews, persistent process monitoring, CPU reconnect/report route and recovery
+  explanations. Full offline suite 178 passed; see ticket 06.
+
 ## Fog
 
 - FineWeb `sample-10BT` was explicitly approved; resolve and record its dataset
@@ -39,4 +43,6 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 
 ## Frontier
 
-06 — Guided Colab workflow (unblocked; not yet claimed).
+All six implementation tickets resolved. Next: run the guided notebook with
+real saved sources in Colab; its source, CUDA, profiling and completion gates
+remain required before interpreting scientific results.

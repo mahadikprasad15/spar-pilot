@@ -1,5 +1,22 @@
 # SPAR evaluation and fine-tuning pilots
 
+## Pilot 3: fixed-token activation measurements
+
+[Open the Pilot 3 notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/notebooks/pilot-3-colab.ipynb)
+
+Reuse completed Pilot 2 adapters at steps 0/8/16/32/64; measure block-output
+changes and direct module contributions on fixed GSM8K gold sequences and
+FineWeb passages. The guided stages verify sources, audit masks, validate the
+instrument, profile/review batches, freeze execution, measure/resume and
+reconstruct uncertainty/plots on CPU. It performs no training or generation.
+See the [instrument guide](docs/pilot3-instrument.md) and
+[spec/design](.scratch/pilot3-write/spec.md).
+
+The notebook pins measurement code at `c547501`; the notebook itself can be
+opened from the newer main branch. CPU workflow and recovery are locally tested.
+Actual Drive access, package installation, source checkpoints and CUDA gates
+must be verified in Colab. Section 11 identifies when the GPU can be disconnected.
+
 ## Pilot 2: exploratory rank-1 SFT
 
 [Open the Pilot 2 notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/notebooks/pilot-2-colab.ipynb)
@@ -122,9 +139,9 @@ The external boundaries follow the official [Transformers generation and padding
 
 ## Shared workspace
 
-Both guided notebooks live in `notebooks/`. Their code checkout is
+All three guided notebooks live in `notebooks/`. Their code checkout is
 `/content/spar-pilot`; their persistent Drive root is
-`SPAR/spar-pilot/artifacts`. Pilot 1 and Pilot 2 retain separate run identities
+`SPAR/spar-pilot/artifacts`. The pilots retain separate run identities
 inside that shared root. See [workspace migration notes](docs/workspace-layout.md).
 
 Flexible v3 is implemented in the scripts and available in **section 12 of the
