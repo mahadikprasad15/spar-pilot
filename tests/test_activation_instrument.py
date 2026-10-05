@@ -109,6 +109,9 @@ def test_real_qwen_engine_validates_zero_switching_and_all_projection_hooks(tmp_
             assert np.array_equal(value, joined)
         else:
             assert np.allclose(value, joined, atol=1e-5, rtol=1e-5)
+    engine.release_reference(reference)
+    assert reference == {}
+    assert len(rows) == 2
     assert engine.base_hash() == initial_hash
     engine.close()
     assert not any(module._forward_hooks or module._forward_pre_hooks for module in model.modules())

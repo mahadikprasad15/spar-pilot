@@ -351,7 +351,11 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                     _progress(directory, 'running', completed, total)
                     print(f"activation measurement: {len(completed)}/{total}; batch {batch['index']}; step {step}; examples {len(batch_rows)}", flush=True)
                     del measured, payload
-                reference = None
+                stage = 'release-reference'
+                try:
+                    engine.release_reference(reference)
+                finally:
+                    reference = None
             stage = 'final-frozen-base-check'
             if engine is not None and engine.base_hash() != prepared['source_evidence']['base_sha256']:
                 raise ValueError('production frozen base changed')
@@ -384,6 +388,11 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                     'type': type(exc).__name__, 'diagnostics': getattr(exc, 'diagnostics', {})}) + '\n')
             raise
         finally:
-            reference = None
-            if engine is not None:
-                engine.close()
+            try:
+                if engine is not None and reference is not None:
+                    engine.release_reference(reference)
+            finally:
+                reference = None
+                if engine is not None:
+                    engine.close()
+                engine = None

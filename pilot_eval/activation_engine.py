@@ -136,6 +136,10 @@ class ActivationEngine:
             raise InstrumentFailure('missing decoder block outputs')
         return {'rows': rows, 'inputs': inputs, 'masks': masks, 'blocks': blocks}
 
+    def release_reference(self, reference):
+        """Release the batch cache, including aliases retained by error tracebacks."""
+        reference.clear()
+
     def summarize_reference(self, reference):
         """FP64 sufficient sums of the cached untuned block outputs, no new pass."""
         examples = len(reference['rows'])

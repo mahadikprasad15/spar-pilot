@@ -30,6 +30,15 @@ def execution(tmp_path, frozen_source):
 
 
 class MeasurementEngine(ProfileEngine):
+    def capture_reference(self, rows):
+        result = super().capture_reference(rows)
+        self.deps.live_references += 1
+        self.deps.max_live_references = max(self.deps.max_live_references, self.deps.live_references)
+        return result
+
+    def release_reference(self, reference):
+        self.deps.live_references -= 1
+
     def summarize_reference(self, rows):
         counts = np.array([[r['counts'][v] for v in VIEWS] for r in rows], dtype=float)
         counts = np.repeat(counts[..., None], 28, axis=2)
@@ -81,6 +90,7 @@ class MeasurementDependencies(ProfileDependencies):
         self.fault = fault
         self.measure_calls = []
         self.engine_loads = 0
+        self.live_references = self.max_live_references = 0
 
     def activation_engine(self, config, root):
         self.engine_loads += 1
@@ -104,6 +114,8 @@ def test_full_run_saves_one_baseline_per_batch_all_checkpoints_and_verified_tota
     assert len(deps.batch_calls) == 19
     assert len(deps.measure_calls) == 95
     assert deps.engine_loads == deps.closed == 1
+    assert deps.max_live_references == 1
+    assert deps.live_references == 0
     assert len(list((directory / 'batches').glob('*/baseline/complete.json'))) == 19
     assert len(list((directory / 'batches').glob('*/checkpoints/step-*/complete.json'))) == 95
     with np.load(directory / 'results/aggregate-sums.npz', allow_pickle=False) as totals:
@@ -123,6 +135,7 @@ def test_interruption_resumes_only_missing_units_and_matches_uninterrupted(execu
         measure_activation(execution, tmp_path, dependencies=failing)
     directory = run_dir(execution, tmp_path)
     assert failing.closed == 1
+    assert failing.live_references == 0
     assert not (directory / 'complete.json').exists()
     progress = json.loads((directory / 'checkpoints/progress.json').read_text())
     assert progress['completed_units'] == [[0, 0], [0, 8]]
