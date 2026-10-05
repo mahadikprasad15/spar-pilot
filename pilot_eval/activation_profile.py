@@ -286,6 +286,8 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
     """CPU-only explicit review; production will verify the saved runtime again."""
     root = Path(output_root).resolve()
     config, rows = load_prepared(config_path, root)
+    if name == config['run_id']:
+        raise ValueError('production execution needs a distinct name from input preparation')
     if not review_notes.strip() or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name):
         raise ValueError('freeze requires review notes and a safe new execution name')
     directory = _relative(profile, root)

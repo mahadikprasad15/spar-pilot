@@ -45,6 +45,8 @@ def load_execution(config_path, output_root):
         raise ValueError('unsupported or incompatible frozen execution identity')
     if path != root / 'plans' / name / 'activation.execution.json':
         raise ValueError('frozen execution manifest/name path mismatch')
+    if name == prepared['run_id']:
+        raise ValueError('production execution needs a distinct name from input preparation')
     if execution['run_path'] != str(Path(prepared['run_path']).parent / name):
         raise ValueError('frozen execution run path mismatch')
     if len(rows) != 300 or Counter(r['corpus'] for r in rows) != {'gsm8k': 150, 'fineweb': 150}:

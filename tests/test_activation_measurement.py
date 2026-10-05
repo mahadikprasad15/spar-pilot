@@ -305,3 +305,17 @@ def test_final_check_rejects_missing_completion_marker(execution, tmp_path):
     (directory / 'batches/batch-000018/checkpoints/step-64/complete.json').unlink()
     with pytest.raises(ValueError, match='missing a required'):
         verify_measurement(execution, tmp_path)
+
+
+def test_execution_name_cannot_reuse_preparation_run_directory(execution, tmp_path):
+    from pilot_eval.activation_profile import freeze_execution
+    current = json.loads(execution.read_text())
+    source = tmp_path / current['prepared_path']
+    prepared_config = json.loads(source.read_text())
+    evidence = tmp_path / prepared_config['run_path'] / 'meta/run_manifest.json'
+    before = evidence.read_bytes()
+    with pytest.raises(ValueError, match='distinct'):
+        freeze_execution(source, tmp_path, profile=current['profile_path'], batch_size=16,
+                         name=prepared_config['run_id'], review_notes='Reviewed candidate.')
+    assert evidence.read_bytes() == before
+    assert not (source.parent / 'activation.execution.json').exists()
