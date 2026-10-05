@@ -138,7 +138,9 @@ class ActivationEngine:
         from peft import get_peft_model_state_dict, set_peft_model_state_dict
         from peft.utils.save_and_load import load_peft_weights
         weights = load_peft_weights(str(checkpoint), device=str(next(self.model.parameters()).device))
-        expected = get_peft_model_state_dict(self.model)
+        # Embeddings are frozen and excluded by the verified module inventory.
+        # Explicit False also prevents PEFT's auto-export Hub config lookup.
+        expected = get_peft_model_state_dict(self.model, save_embedding_layers=False)
         if weights.keys() != expected.keys() or any(
                 weights[key].shape != expected[key].shape or weights[key].dtype != self.torch.float32
                 or not self.torch.isfinite(weights[key]).all().item() for key in weights):
@@ -268,6 +270,10 @@ class ActivationEngine:
         return {'arrays': arrays, 'validation': {'exact_zero': exact_zero if step == 0 else None,
                 'rank1_passed': True, 'reference_invariant': invariant, 'module_count': len(seen_modules),
                 'base_sha256': self.expected_base_hash, 'sample_limit': self.validation_limit,
+                'block_hooks': [f'model.layers.{index}' for index in range(layers)],
+                'module_hooks': [f"model.layers.{index}.{'self_attn' if projection in PROJECTIONS[:4] else 'mlp'}.{projection}"
+                                 for index, projection, _ in self.modules],
+                'block_position': 'decoder-block-output-before-final-model-norm',
                 'positions': diagnostics, 'thresholds': {'atol': 1e-6, 'rtol': 1e-5, 'rounding_factor': 4}}}
 
     def close(self):

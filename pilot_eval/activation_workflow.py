@@ -17,11 +17,13 @@ from pilot_eval.workflow import _hash, _save_frozen
 
 class HFActivationDependencies:
     def runtime(self):
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
         import torch
         from pilot_eval.sft_backend import PINS
         versions = {name: importlib.metadata.version(name) for name in PINS if name != 'trl'}
         if any(versions[name].split('+')[0] != PINS[name] for name in versions):
             raise ValueError(f'activation dependencies differ from validated pins: {versions}')
+        versions['numpy'] = np.__version__
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise ValueError('real activation validation requires one visible CUDA GPU')
         return {'versions': versions, 'python': sys.version, 'cuda': torch.version.cuda,

@@ -14,6 +14,9 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 - Ticket 01 resolved: public frozen preparation/audit, source checks, token masks,
   completion integrity, failure status and relocation tests. Ten new CPU tests;
   full suite 141 passed. See ticket 01 Answer for the verification limits.
+- Ticket 02 resolved: activation engine, numerical summaries and persisted
+  diagnostic workflow; full suite 152 passed. Actual GPU/source validation still
+  required. See ticket 02 Answer and the instrument usage guide.
 
 ## Fog
 
@@ -23,4 +26,4 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 
 ## Frontier
 
-02 — Validate and measure one batch (unblocked; not yet claimed).
+03 — Profile and freeze production batching (unblocked; not yet claimed).
