@@ -98,6 +98,14 @@ def test_real_qwen_engine_validates_zero_switching_and_all_projection_hooks(tmp_
     assert result['arrays']['block_delta_sum'].shape == (2, 3, layer_count, 4)
     assert result['arrays']['module_count'].shape == (2, 3, layer_count, 7)
     assert result['arrays']['block_count'][:, 1, 0].tolist() == [2, 1]
+    # Independently measure the same examples singly and in one padded batch.
+    single = [engine.measure(trained, engine.capture_reference([row]), step=8)['arrays'] for row in rows]
+    for key, value in result['arrays'].items():
+        joined = np.concatenate([item[key] for item in single])
+        if key.endswith('count'):
+            assert np.array_equal(value, joined)
+        else:
+            assert np.allclose(value, joined, atol=1e-5, rtol=1e-5)
     assert engine.base_hash() == initial_hash
     engine.close()
     assert not any(module._forward_hooks or module._forward_pre_hooks for module in model.modules())

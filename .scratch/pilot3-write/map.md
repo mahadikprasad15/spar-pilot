@@ -18,6 +18,10 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
   diagnostic workflow; full suite 152 passed. Actual GPU/source validation still
   required. See ticket 02 Answer and the instrument usage guide.
 
+- Ticket 03 resolved: fixed-workload batch profiling, saved numerical/memory
+  evidence and explicit reviewed execution freezing. See ticket 03 and the
+  instrument guide; full suite 158 passed. Actual CUDA profiling still requires Colab.
+
 ## Fog
 
 - FineWeb `sample-10BT` was explicitly approved; resolve and record its dataset
@@ -26,4 +30,4 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 
 ## Frontier
 
-03 — Profile and freeze production batching (unblocked; not yet claimed).
+04 — Resumable all-checkpoint measurement (unblocked; not yet claimed).

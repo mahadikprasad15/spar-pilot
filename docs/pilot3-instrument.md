@@ -69,3 +69,67 @@ Thresholds are fixed engineering acceptance rules. Validation saves errors,
 fractions of thresholds and sampled subtraction-resolution counts; near-threshold
 or unexpected behavior needs inspection and expanded validation before production.
 Local CPU success is not a claim that the real Drive checkpoints passed on GPU.
+
+## Profile and review a production batch plan (Ticket 3)
+
+After reviewing the input audit, run the following on the single GPU. Profiling
+verifies/reuses the instrument diagnostic first; it never bypasses a failed gate.
+Replace the illustrative paths and names with your actual prepared plan.
+
+```bash
+python -m pilot_eval activation-profile \
+  --config artifacts/plans/write-v1/activation.prepared.json \
+  --output-root artifacts
+```
+
+Every candidate (1, 2, 4, 8, 16) processes the same **16 examples**: the eight
+longest complete GSM8K sequences and eight longest FineWeb sequences, ordered by
+length then ID within each corpus. This includes all three token views and the
+actual GPU reference cache. It is a deliberately demanding profiling workload,
+not a new scientific evaluation cohort.
+
+Each candidate warms up its longest batch with all five checkpoints. Warmup and
+model loading are outside timing. CUDA synchronization brackets reference capture
+and each validated checkpoint measurement; peak allocated and reserved memory
+are recorded after warmup. The model is loaded once per candidate, with examples
+parallel within its batches and checkpoint passes sequential. No GPU name whitelist
+is used.
+
+`input_tokens_per_second` counts original unpadded sequence tokens completed through
+the **whole five-checkpoint measurement workflow** per second. It is not generation
+speed or a per-pass model throughput claim. Saved checkpoint timing separates
+adapter switching, disabled-reference checks, hashes and rank-1 checks from the
+adapted forward plus summary reductions. The latter still includes finite/zero
+checks and timing instrumentation. Use the whole-workflow timing for batch choice;
+this small workload does not guarantee a full-run duration.
+
+Numeric evidence includes per-example summaries for every checkpoint. Agreement
+with batch 1 requires the approved `atol=1e-5, rtol=1e-5`, exact counts and
+undefined coverage, and agreement of derived measurements under both weightings.
+OOM records an unsuitable candidate and continues after cleanup. Other errors,
+including numerical disagreement, stop and persist diagnostics. Verified completed
+candidates are reused after interruption; marked corruption stops.
+
+The result is saved under the prepared run's `profile/results.json`. Review the
+speed, memory, numeric agreement and validation evidence. The fastest passing
+candidate is a **provisional recommendation**, not approval. Explicitly freeze
+one reviewed passing candidate:
+
+```bash
+python -m pilot_eval activation-freeze \
+  --config artifacts/plans/write-v1/activation.prepared.json \
+  --profile artifacts/runs/pilot-3/Qwen--Qwen2.5-1.5B-Instruct/gsm8k-fineweb/heldout150-control150-seed42/float32/write-v1/profile \
+  --batch-size 8 --name write-production-v1 \
+  --review-notes 'Reviewed timing, peak memory, agreement and instrument evidence.' \
+  --output-root artifacts
+```
+
+The freeze step runs on CPU and re-verifies saved diagnostic/profile hashes and
+numeric evidence. It writes `plans/write-production-v1/activation.execution.json`,
+containing ordered memberships for **all 300 prepared examples**, input/profile
+hashes, thresholds, numerical/runtime identity and review notes. It leaves prepared
+inputs unchanged. Repeating identical freeze settings is safe; changing them needs
+a different execution name. Production must check the runtime again when it starts.
+
+Full-cohort resumable measurement is Ticket 4; profiling/freezing do not claim that
+the scientific run has completed. The guided Pilot 3 notebook follows in Ticket 6.

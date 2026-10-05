@@ -313,6 +313,8 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
                  'profile_complete_sha256': file_hash(directory / 'complete.json'),
                  'validation_complete_sha256': file_hash(diagnostic_dir / 'complete.json'),
                  'runtime': identity['runtime'], 'batch_size': batch_size, 'agreement': AGREEMENT,
+                 'precision': config['dtype'], 'reduction_precision': 'float64',
+                 'rank1_thresholds': {'atol': 1e-6, 'rtol': 1e-5, 'rounding_factor': 4},
                  'review': {'notes': review_notes, 'batch_size': batch_size},
                  'checkpoint_steps': STEPS, 'views': VIEWS, 'projections': PROJECTIONS,
                  'run_path': str(Path(config['run_path']).parent / name),
