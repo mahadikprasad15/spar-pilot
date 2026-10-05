@@ -239,6 +239,15 @@ def verify_measurement(config_path, output_root):
     return result
 
 
+def _progress(directory, state, completed, total, error=None):
+    _write_state(directory, state, len(completed), total, error)
+    _write_json(directory / 'checkpoints/progress.json', {
+        'completed': len(completed), 'total': total,
+        'completed_units': [list(unit) for unit in sorted(completed)],
+        'unit': 'batch-index/checkpoint-step',
+        'source_of_truth': 'verified-completion-markers'})
+
+
 def measure_activation(config_path, output_root, *, dependencies=None):
     root = Path(output_root).resolve()
     execution, prepared, rows = load_execution(config_path, root)
@@ -258,10 +267,13 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                         'decoding': None, 'scorer': None, 'execution': 'forward-only'}
             _save_frozen(directory / 'meta/run_manifest.json', manifest)
             if (directory / 'complete.json').exists():
-                return verify_measurement(config_path, root)
+                result = verify_measurement(config_path, root)
+                completed = {(b['index'], s) for b in execution['batches'] for s in STEPS}
+                _progress(directory, 'completed', completed, total)
+                return result
             stage = 'verify-existing-shards'
             completed, _, _ = _scan(directory, execution, prepared, rows)
-            _write_state(directory, 'running', len(completed), total)
+            _progress(directory, 'running', completed, total)
             by_id = {r['id']: r for r in rows}
             for batch in execution['batches']:
                 pending = [step for step in STEPS if (batch['index'], step) not in completed]
@@ -308,7 +320,7 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                     _commit_shard(shard, identity, payload, evidence=measured['validation'])
                     _read_shard(shard, identity, batch_rows, prepared, baseline=base, step=step)
                     completed.add((batch['index'], step))
-                    _write_state(directory, 'running', len(completed), total)
+                    _progress(directory, 'running', completed, total)
                     print(f"activation measurement: {len(completed)}/{total}; batch {batch['index']}; step {step}; examples {len(batch_rows)}", flush=True)
                     del measured, payload
                 reference = None
@@ -333,10 +345,10 @@ def measure_activation(config_path, output_root, *, dependencies=None):
             _write_json(directory / 'complete.json', {'execution_sha256': _hash(execution),
                 'files': {str(p.relative_to(directory)): file_hash(p) for p in files}})
             result = verify_measurement(config_path, root)
-            _write_state(directory, 'completed', len(completed), total)
+            _progress(directory, 'completed', completed, total)
             return result
         except BaseException as exc:
-            _write_state(directory, 'failed', len(completed), total, str(exc))
+            _progress(directory, 'failed', completed, total, str(exc))
             log = directory / 'logs/errors.jsonl'
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open('a') as stream:

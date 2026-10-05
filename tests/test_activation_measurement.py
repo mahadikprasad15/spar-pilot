@@ -91,3 +91,41 @@ def test_full_run_saves_one_baseline_per_batch_all_checkpoints_and_verified_tota
     assert measure_activation(execution, tmp_path, dependencies=deps) == result
     assert len(deps.measure_calls) == calls
     assert deps.engine_loads == 1
+
+
+def test_interruption_resumes_only_missing_units_and_matches_uninterrupted(execution, tmp_path):
+    from pilot_eval.activation_measurement import measure_activation
+    failing = MeasurementDependencies(fail_at=3, exception=KeyboardInterrupt)
+    with pytest.raises(KeyboardInterrupt, match='controlled'):
+        measure_activation(execution, tmp_path, dependencies=failing)
+    directory = run_dir(execution, tmp_path)
+    assert failing.closed == 1
+    assert not (directory / 'complete.json').exists()
+    progress = json.loads((directory / 'checkpoints/progress.json').read_text())
+    assert progress['completed_units'] == [[0, 0], [0, 8]]
+    baseline_marker = directory / 'batches/batch-000000/baseline/complete.json'
+    baseline_bytes = baseline_marker.read_bytes()
+    # Unmarked leftovers are not trusted. They can be replaced, marked siblings cannot.
+    incomplete = directory / 'batches/batch-000000/checkpoints/step-16'
+    incomplete.mkdir(parents=True, exist_ok=True)
+    (incomplete / 'summaries.npz').write_bytes(b'half-written')
+    resumed = MeasurementDependencies()
+    result = measure_activation(execution, tmp_path, dependencies=resumed)
+    assert result['completed_combinations'] == 95
+    assert len(resumed.measure_calls) == 93
+    assert resumed.measure_calls[0][1] == 16
+    assert baseline_marker.read_bytes() == baseline_bytes
+    source = tmp_path / json.loads(execution.read_text())['prepared_path']
+    from pilot_eval.activation_profile import freeze_execution
+    manifest = freeze_execution(source, tmp_path,
+        profile=json.loads(execution.read_text())['profile_path'], batch_size=16,
+        name='uninterrupted', review_notes='Matched fixture run.')
+    measure_activation(manifest, tmp_path, dependencies=MeasurementDependencies())
+    other = run_dir(manifest, tmp_path)
+    with np.load(directory / 'results/aggregate-sums.npz', allow_pickle=False) as a, np.load(
+            other / 'results/aggregate-sums.npz', allow_pickle=False) as b:
+        assert set(a.files) == set(b.files)
+        assert all(np.array_equal(a[k], b[k]) for k in a.files)
+    for payload in (directory / 'batches').rglob('summaries.npz'):
+        with np.load(payload, allow_pickle=False) as a, np.load(other / payload.relative_to(directory), allow_pickle=False) as b:
+            assert all(np.array_equal(a[k], b[k]) for k in a.files)
