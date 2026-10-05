@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Validate and measure one batch.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Profile batches 1/2/4/8/16 including the longest inputs and actual reference cache; save synchronized timing/memory/evidence.
 - [ ] Compare summaries to batch 1 at the accepted tolerance; identity/count/undefined coverage must match.
