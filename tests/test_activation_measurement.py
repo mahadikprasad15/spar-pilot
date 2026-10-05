@@ -231,3 +231,77 @@ def test_monitor_uses_process_liveness_and_tolerates_transient_status(tmp_path):
     finished = monitor_activation_process(process, tmp_path)
     assert finished['process_state'] == 'exited-successfully'
     assert finished['completion_verified'] is False
+
+
+def test_production_oom_keeps_verified_units_and_same_batch_can_resume(execution, tmp_path):
+    from pilot_eval.activation_measurement import measure_activation
+    from test_activation_profile import FixtureOOM
+    deps = MeasurementDependencies(fail_at=3, exception=FixtureOOM)
+    with pytest.raises(FixtureOOM):
+        measure_activation(execution, tmp_path, dependencies=deps)
+    directory = run_dir(execution, tmp_path)
+    assert deps.live_references == 0
+    assert json.loads((directory / 'meta/status.json').read_text())['completed'] == 2
+    assert not (directory / 'complete.json').exists()
+    saved_config = execution.read_bytes()
+    recovered = MeasurementDependencies()
+    assert measure_activation(execution, tmp_path, dependencies=recovered)['measurement_complete']
+    assert recovered.measure_calls[0][1] == 16
+    assert len(recovered.measure_calls) == 93
+    assert execution.read_bytes() == saved_config
+
+
+def test_reference_mismatch_or_corrupt_marked_shard_stops_before_new_unit(execution, tmp_path):
+    from pilot_eval.activation_measurement import measure_activation
+    with pytest.raises(RuntimeError):
+        measure_activation(execution, tmp_path, dependencies=MeasurementDependencies(fail_at=3))
+    directory = run_dir(execution, tmp_path)
+    first = directory / 'batches/batch-000000/checkpoints/step-0/complete.json'
+    marker = first.read_bytes()
+    shifted = MeasurementDependencies(reference_shift=1)
+    with pytest.raises(ValueError, match='recreated reference'):
+        measure_activation(execution, tmp_path, dependencies=shifted)
+    assert shifted.measure_calls == []
+    assert shifted.live_references == 0
+    assert first.read_bytes() == marker
+    payload = first.parent / 'summaries.npz'
+    payload.write_bytes(b'corrupt marked evidence')
+    clean = MeasurementDependencies()
+    with pytest.raises(ValueError, match='marked shard'):
+        measure_activation(execution, tmp_path, dependencies=clean)
+    assert clean.engine_loads == 0
+    assert payload.read_bytes() == b'corrupt marked evidence'
+    assert first.read_bytes() == marker
+
+
+def test_runtime_mismatch_and_competing_writer_do_not_run_inference(execution, tmp_path):
+    from pilot_eval.activation_measurement import measure_activation
+    from pilot_eval.training import run_lock
+    deps = MeasurementDependencies()
+    deps.runtime = lambda: {'device': 'different-numerical-runtime'}
+    with pytest.raises(ValueError, match='runtime mismatch'):
+        measure_activation(execution, tmp_path, dependencies=deps)
+    assert deps.engine_loads == 0
+    directory = run_dir(execution, tmp_path)
+    status = directory / 'meta/status.json'
+    before = status.read_bytes()
+    clean = MeasurementDependencies()
+    with run_lock(directory), pytest.raises(RuntimeError, match='another process'):
+        measure_activation(execution, tmp_path, dependencies=clean)
+    assert clean.engine_loads == 0
+    assert status.read_bytes() == before
+    config = json.loads(execution.read_text())
+    config['batches'][0]['example_ids'].reverse()
+    execution.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match='membership'):
+        measure_activation(execution, tmp_path, dependencies=clean)
+    assert clean.engine_loads == 0
+
+
+def test_final_check_rejects_missing_completion_marker(execution, tmp_path):
+    from pilot_eval.activation_measurement import measure_activation, verify_measurement
+    measure_activation(execution, tmp_path, dependencies=MeasurementDependencies())
+    directory = run_dir(execution, tmp_path)
+    (directory / 'batches/batch-000018/checkpoints/step-64/complete.json').unlink()
+    with pytest.raises(ValueError, match='missing a required'):
+        verify_measurement(execution, tmp_path)
