@@ -109,3 +109,30 @@ def test_cli_profiles_then_freezes_and_rejects_unreviewed_or_changed_evidence(tm
     assert main(changed) == 1
     (profile / 'batch-8/step-8.npz').write_bytes(b'broken')
     assert main(freeze) == 1
+
+
+def test_profile_preserves_oom_evidence_continues_and_refuses_to_freeze_it(tmp_path):
+    from pilot_eval.activation_profile import profile_activation, freeze_execution
+    config = prepared(tmp_path)
+    deps = ProfileDependencies(oom=8)
+    result = profile_activation(config, tmp_path, dependencies=deps)
+    assert [r['status'] for r in result['measurements']] == ['passed', 'passed', 'passed', 'oom', 'passed']
+    assert deps.closed == 6  # diagnostic plus each candidate, including failed one
+    with pytest.raises(ValueError, match='passing'):
+        freeze_execution(config, tmp_path, profile=result['profile_path'], batch_size=8,
+                         name='bad', review_notes='Reviewed failed candidate.')
+    assert not (tmp_path / 'plans/bad/activation.execution.json').exists()
+
+
+@pytest.mark.parametrize('setting,message', [('drift', 'summary agreement'), ('failure', 'missing hook')])
+def test_non_oom_validation_errors_stop_with_evidence_and_no_success_marker(tmp_path, setting, message):
+    from pilot_eval.activation_profile import profile_activation
+    config = prepared(tmp_path)
+    deps = ProfileDependencies(**{setting: 4})
+    with pytest.raises(ValueError, match=message):
+        profile_activation(config, tmp_path, dependencies=deps)
+    profile = tmp_path / json.loads(config.read_text())['run_path'] / 'profile'
+    assert not (profile / 'complete.json').exists()
+    assert json.loads((profile / 'meta/status.json').read_text())['state'] == 'failed'
+    assert (profile / 'logs/errors.jsonl').exists()
+    assert not (profile / 'batch-8/complete.json').exists()

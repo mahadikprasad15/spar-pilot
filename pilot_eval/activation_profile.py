@@ -233,6 +233,8 @@ def profile_activation(config_path, output_root, *, dependencies=None):
                     _write_json(target / 'results.json', result)
                     payloads = [target / 'results.json'] + ([target / f'step-{s}.npz' for s in STEPS] if candidate is not None else [])
                     _seal(target, candidate_identity, payloads)
+                if result['status'] == 'numerical-mismatch':
+                    raise ValueError('profile summary agreement failed; inspect saved candidate evidence')
                 if batch == 1 and candidate is not None:
                     baseline = candidate
                 measurements.append(result)
