@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from pilot_eval.activation_prepare import load_prepared, STEPS, VIEWS, PROJECTIONS
+from pilot_eval.activation_math import derive_measurements
 from pilot_eval.activation_workflow import (
     HFActivationDependencies, validate_activation, _save_arrays, _verify_complete,
 )
@@ -23,6 +24,11 @@ ARRAYS = {'block_count', 'block_base_norm_sum', 'block_delta_norm_sum',
 
 
 class HFProfileDependencies(HFActivationDependencies):
+    def activation_engine(self, config, root):
+        engine = super().activation_engine(config, root)
+        engine.profile_timings = True
+        return engine
+
     def synchronize(self):
         import torch
         torch.cuda.synchronize()
@@ -99,6 +105,23 @@ def _agreement(reference, candidate):
             if not matching:
                 failures.append({'step': step, 'array': key,
                                  'max_absolute_error': float(np.max(np.abs(a - b)))})
+        # Ratios can magnify small differences in their sufficient sums.
+        for prefix in ['block', 'module']:
+            for index in np.ndindex(reference[step][prefix + '_count'].shape[1:]):
+                summaries = []
+                for payload in [reference[step], candidate[step]]:
+                    summary = {key.removeprefix(prefix + '_'): value[(slice(None), *index)]
+                               for key, value in payload.items() if key.startswith(prefix + '_')}
+                    summaries.append(summary)
+                for weighting in ['token', 'example']:
+                    a, b = [derive_measurements(summary, weighting) for summary in summaries]
+                    for key in a:
+                        matching = (a[key] is None and b[key] is None) if a[key] is None or b[key] is None else (
+                            np.isfinite(a[key]).all() and np.isfinite(b[key]).all()
+                            and np.allclose(a[key], b[key], **AGREEMENT))
+                        if not matching:
+                            failures.append({'step': step, 'measurement': key, 'kind': prefix,
+                                             'index': list(index), 'weighting': weighting})
     return {'passed': not failures, 'thresholds': AGREEMENT, 'differences': failures}
 
 

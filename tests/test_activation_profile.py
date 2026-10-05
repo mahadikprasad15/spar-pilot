@@ -136,3 +136,24 @@ def test_non_oom_validation_errors_stop_with_evidence_and_no_success_marker(tmp_
     assert json.loads((profile / 'meta/status.json').read_text())['state'] == 'failed'
     assert (profile / 'logs/errors.jsonl').exists()
     assert not (profile / 'batch-8/complete.json').exists()
+
+
+class SmallDenominatorEngine(ProfileEngine):
+    def measure(self, checkpoint, rows, *, step):
+        result = super().measure(checkpoint, rows, step=step)
+        for key in ['block_base_norm_sum', 'module_base_norm_sum']:
+            result['arrays'][key] *= 1e-8 * (2 if len(rows) == 4 else 1)
+        return result
+
+
+class SmallDenominatorDependencies(ProfileDependencies):
+    def activation_engine(self, config, root):
+        return SmallDenominatorEngine(self)
+
+
+def test_profile_compares_derived_ratios_not_just_small_sufficient_sums(tmp_path):
+    from pilot_eval.activation_profile import profile_activation
+    config = prepared(tmp_path)
+    # Small norm sums differ by less than atol; their ratios differ by a factor of two.
+    with pytest.raises(ValueError, match='summary agreement'):
+        profile_activation(config, tmp_path, dependencies=SmallDenominatorDependencies())

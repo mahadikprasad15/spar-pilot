@@ -1,6 +1,7 @@
 """FP32 Qwen/PEFT activation instrument, usable with a locally constructed model."""
 
 from contextlib import contextmanager
+import time
 
 import numpy as np
 
@@ -26,6 +27,7 @@ class ActivationEngine:
         self.expected_alpha = expected_alpha
         self.validation_limit = validation_limit
         self._closed = False
+        self.profile_timings = False
         self._initial_adapter = model.active_adapters[0]
         self._initial_training = model.training
         self._initial_grad_flags = {name: p.requires_grad for name, p in model.named_parameters()}
@@ -158,8 +160,17 @@ class ActivationEngine:
                      for example, tokens in enumerate(by_example) if offset < len(tokens)]
         return positions if self.validation_limit is None else positions[:self.validation_limit]
 
+    def _profile_clock(self):
+        if not self.profile_timings:
+            return 0.
+        if next(self.model.parameters()).is_cuda:
+            self.torch.cuda.synchronize()
+        return time.perf_counter()
+
     def measure(self, checkpoint, reference, *, step):
         torch = self.torch
+        started = self._profile_clock()
+        rank1_seconds = 0.
         self._switch(checkpoint)
         repeated = self.capture_reference(reference['rows'])
         invariant = all(torch.equal(reference['blocks'][i], repeated['blocks'][i]) for i in reference['blocks'])
@@ -168,6 +179,8 @@ class ActivationEngine:
             raise InstrumentFailure('disabled-adapter reference changed after checkpoint switch')
         if self.base_hash() != self.expected_base_hash:
             raise InstrumentFailure('frozen-base hash changed after checkpoint switch')
+        before_forward = self._profile_clock()
+        pre_validation_seconds = before_forward - started
         arrays, diagnostics = {}, []
         masks = reference['masks']
         examples = len(reference['rows'])
@@ -227,6 +240,8 @@ class ActivationEngine:
                 if index in seen_modules:
                     raise InstrumentFailure('duplicate adapted module hook')
                 seen_modules.add(index)
+                nonlocal rank1_seconds
+                validation_started = self._profile_clock()
                 x = args[0]
                 ordinary, branch = captured.pop('ordinary'), captured.pop('branch')
                 scale = m.scaling['default']
@@ -257,17 +272,25 @@ class ActivationEngine:
                     diagnostics.append(evidence)
                     if (branch_error > direct_limit).any() or (subtraction_error > direct_limit + rounding).any():
                         raise InstrumentFailure('rank-1 identity validation failed', evidence)
+                rank1_seconds += self._profile_clock() - validation_started
                 store('module', index, ordinary, actual)
             registrations.extend([(module.base_layer, 'register_forward_hook', ordinary_hook),
                                   (module.lora_B['default'], 'register_forward_hook', branch_hook),
                                   (module, 'register_forward_hook', module_hook)])
+        forward_started = self._profile_clock()
         with self._hooks(registrations):
             self._forward(reference['inputs'])
+        forward_finished = self._profile_clock()
         if len(seen_blocks) != layers or len(seen_modules) != layers * 7:
             raise InstrumentFailure('incomplete hook coverage')
         if self.base_hash() != self.expected_base_hash:
             raise InstrumentFailure('frozen-base hash changed during measurement')
-        return {'arrays': arrays, 'validation': {'exact_zero': exact_zero if step == 0 else None,
+        finished = self._profile_clock()
+        return {'arrays': arrays, 'timing': {
+                'validation_seconds': pre_validation_seconds + rank1_seconds + finished - forward_finished,
+                'adapted_forward_and_reductions_seconds': forward_finished - forward_started - rank1_seconds,
+                'scope': 'synchronized; validation includes switch, disabled pass, hashes and rank-1 checks; forward includes reductions and zero/finite checks'
+                } if self.profile_timings else None, 'validation': {'exact_zero': exact_zero if step == 0 else None,
                 'rank1_passed': True, 'reference_invariant': invariant, 'module_count': len(seen_modules),
                 'base_sha256': self.expected_base_hash, 'sample_limit': self.validation_limit,
                 'block_hooks': [f'model.layers.{index}' for index in range(layers)],
