@@ -28,6 +28,9 @@ class ActivationEngine:
         self._closed = False
         self._initial_adapter = model.active_adapters[0]
         self._initial_training = model.training
+        self._initial_grad_flags = {name: p.requires_grad for name, p in model.named_parameters()}
+        self._initial_adapter_weights = {name: p.detach().cpu().clone()
+                                        for name, p in model.named_parameters() if 'lora_' in name}
         self.body = model.get_base_model().model
         self.layers = list(self.body.layers)
         if len(self.layers) != expected_layers:
@@ -271,7 +274,13 @@ class ActivationEngine:
         if self._closed:
             return
         self.model.set_adapter(self._initial_adapter)
+        with self.torch.no_grad():
+            for name, parameter in self.model.named_parameters():
+                if name in self._initial_adapter_weights:
+                    parameter.copy_(self._initial_adapter_weights[name].to(parameter.device))
+                parameter.requires_grad_(self._initial_grad_flags[name])
         self.model.train(self._initial_training)
         self.torch.set_float32_matmul_precision(self._precision)
         self.torch.backends.cuda.matmul.allow_tf32 = self._tf32
+        self._initial_adapter_weights.clear()
         self._closed = True

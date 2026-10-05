@@ -65,6 +65,17 @@ def test_real_qwen_engine_validates_zero_switching_and_all_projection_hooks(tmp_
     engine = ActivationEngine(model=model, expected_layers=2, expected_alpha=2,
                               expected_base_hash=initial_hash, validation_limit=None)
     reference = engine.capture_reference(rows)
+    # Prove the memory-saving transformer-body path hooks the same block outputs
+    # as a complete causal-LM forward, without comparing final normalized states.
+    causal_blocks = {}
+    handles = [layer.register_forward_hook(lambda m, a, output, i=i:
+               causal_blocks.__setitem__(i, (output[0] if isinstance(output, tuple) else output).detach().clone()))
+               for i, layer in enumerate(model.get_base_model().model.layers)]
+    with torch.no_grad(), model.disable_adapter():
+        model(**reference['inputs'], use_cache=False)
+    for handle in handles:
+        handle.remove()
+    assert all(torch.equal(value, causal_blocks[i]) for i, value in reference['blocks'].items())
     zero_result = engine.measure(zero, reference, step=0)
     assert zero_result['validation']['exact_zero']
     assert zero_result['validation']['module_count'] == 14
@@ -79,3 +90,61 @@ def test_real_qwen_engine_validates_zero_switching_and_all_projection_hooks(tmp_
     assert engine.base_hash() == initial_hash
     engine.close()
     assert not any(module._forward_hooks or module._forward_pre_hooks for module in model.modules())
+
+
+@pytest.mark.parametrize('mistake', ['sign', 'scale', 'token', 'module'])
+def test_negative_controls_fail_rank1_and_cleanup_restores_adapter_state(tmp_path, mistake):
+    torch = pytest.importorskip('torch', exc_type=ImportError)
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+    from peft import LoraConfig, get_peft_model
+    from pilot_eval.activation_engine import ActivationEngine, InstrumentFailure
+    from pilot_eval.activation_prepare import PROJECTIONS
+    from pilot_eval.sft_backend import frozen_weight_hash
+    torch.set_num_threads(1)
+    torch.manual_seed(42)
+    model = get_peft_model(Qwen2ForCausalLM(Qwen2Config(vocab_size=16, hidden_size=4,
+        intermediate_size=8, num_hidden_layers=1, num_attention_heads=1,
+        num_key_value_heads=1, max_position_embeddings=32, pad_token_id=0,
+        attn_implementation='eager')), LoraConfig(r=1, lora_alpha=2,
+            lora_dropout=0, target_modules=PROJECTIONS, task_type='CAUSAL_LM'))
+    original = {name: value.detach().clone() for name, value in model.named_parameters() if 'lora_' in name}
+    with torch.no_grad():
+        for name, value in model.named_parameters():
+            if 'lora_B' in name:
+                value.fill_(.1)
+    checkpoint = tmp_path / 'checkpoint'
+    model.save_pretrained(checkpoint)
+    with torch.no_grad():
+        for name, value in model.named_parameters():
+            if name in original:
+                value.copy_(original[name])
+    engine = ActivationEngine(model=model, expected_layers=1, expected_alpha=2,
+        expected_base_hash=frozen_weight_hash(model), validation_limit=None)
+    reference = engine.capture_reference([{'id': 'test', 'input_ids': [1, 2, 3],
+        'attention_mask': [1, 1, 1], 'masks': {'question': [True] * 3,
+                                           'solution': [False] * 3, 'user': [False] * 3}}])
+    query = model.get_base_model().model.layers[0].self_attn.q_proj
+    key = model.get_base_model().model.layers[0].self_attn.k_proj
+    captured = {}
+    def remember(module, args):
+        captured['x'] = args[0]
+    def corrupt(module, args, output):
+        if mistake == 'sign':
+            return -output
+        if mistake == 'scale':
+            return output * .5
+        if mistake == 'token':
+            return output.roll(1, dims=1)
+        return torch.nn.functional.linear(torch.nn.functional.linear(captured['x'],
+            key.lora_A['default'].weight), key.lora_B['default'].weight)
+    handles = [query.register_forward_pre_hook(remember),
+               query.lora_B['default'].register_forward_hook(corrupt)]
+    try:
+        with pytest.raises(InstrumentFailure, match='rank-1'):
+            engine.measure(checkpoint, reference, step=8)
+    finally:
+        for handle in handles:
+            handle.remove()
+        engine.close()
+    assert not any(module._forward_hooks or module._forward_pre_hooks for module in model.modules())
+    assert all(torch.equal(value, original[name]) for name, value in model.named_parameters() if name in original)
