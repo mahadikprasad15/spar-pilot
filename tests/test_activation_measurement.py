@@ -194,3 +194,40 @@ def test_production_rejects_bad_measurement_evidence_without_fallback(execution,
     assert all(len(ids) == 16 for ids in deps.batch_calls)
     errors = [json.loads(line) for line in (directory / 'logs/errors.jsonl').read_text().splitlines()]
     assert errors[-1]['unit'] == {'batch_index': 0, 'step': 0 if fault == 'nonzero-init' else 8}
+
+
+class ObservedProcess:
+    def __init__(self, returncode=None):
+        self.returncode = returncode
+    def poll(self):
+        return self.returncode
+
+
+def test_monitor_uses_process_liveness_and_tolerates_transient_status(tmp_path):
+    from pilot_eval.activation_measurement import monitor_activation_process
+    process = ObservedProcess()
+    snapshot = monitor_activation_process(process, tmp_path)
+    assert snapshot['process_state'] == 'running'
+    assert snapshot['snapshot'] is None
+    status = tmp_path / 'meta/status.json'
+    status.parent.mkdir()
+    status.write_text('')
+    snapshot = monitor_activation_process(process, tmp_path)
+    assert snapshot['process_state'] == 'running'
+    assert snapshot['status_error']
+    status.write_text(json.dumps({'state': 'running', 'completed': 2, 'total': 95}))
+    good = monitor_activation_process(process, tmp_path)
+    assert good['snapshot']['completed'] == 2
+    status.write_text('{"state":')
+    recovered = monitor_activation_process(process, tmp_path, last_snapshot=good['snapshot'])
+    assert recovered['snapshot']['completed'] == 2
+    assert recovered['snapshot_is_current'] is False
+    # A stale status file cannot override a living child, or prove its success.
+    status.write_text(json.dumps({'state': 'completed', 'completed': 95, 'total': 95}))
+    assert monitor_activation_process(process, tmp_path)['process_state'] == 'running'
+    process.returncode = 1
+    assert monitor_activation_process(process, tmp_path)['process_state'] == 'exited-with-error'
+    process.returncode = 0
+    finished = monitor_activation_process(process, tmp_path)
+    assert finished['process_state'] == 'exited-successfully'
+    assert finished['completion_verified'] is False

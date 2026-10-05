@@ -396,3 +396,24 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                 if engine is not None:
                     engine.close()
                 engine = None
+
+
+def monitor_activation_process(process, run_directory, *, last_snapshot=None):
+    """Observe a Popen child; mutable progress never proves scientific completion."""
+    returncode = process.poll()
+    state = 'running' if returncode is None else ('exited-successfully' if returncode == 0 else 'exited-with-error')
+    def valid(snapshot):
+        return (isinstance(snapshot, dict) and snapshot.get('state') in ['running', 'failed', 'completed', 'paused']
+                and type(snapshot.get('completed')) is int and type(snapshot.get('total')) is int
+                and 0 <= snapshot['completed'] <= snapshot['total'])
+    snapshot, error, current = None, None, False
+    try:
+        snapshot = json.loads((Path(run_directory) / 'meta/status.json').read_text())
+        if not valid(snapshot):
+            raise ValueError('invalid progress snapshot')
+        current = True
+    except (OSError, ValueError) as exc:
+        error = str(exc)
+        snapshot = dict(last_snapshot) if valid(last_snapshot) else None
+    return {'process_state': state, 'returncode': returncode, 'snapshot': snapshot,
+            'snapshot_is_current': current, 'status_error': error, 'completion_verified': False}
