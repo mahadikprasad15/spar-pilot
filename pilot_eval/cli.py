@@ -63,11 +63,18 @@ def main(argv=None, *, dependencies=None):
     activation_prepare.add_argument('--fineweb-revision')
     activation_audit = commands.add_parser('activation-audit', help='verify and display the saved Pilot 3 input audit')
     activation_audit.add_argument('--config', type=Path, required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit):
+    activation_validate = commands.add_parser('activation-validate', help='validate one diagnostic batch across five checkpoints')
+    activation_validate.add_argument('--config', type=Path, required=True)
+    activation_validate.add_argument('--batch-size', type=int, default=2)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'activation-prepare':
+        if args.command == 'activation-validate':
+            from pilot_eval.activation_workflow import validate_activation
+            print(json.dumps(validate_activation(args.config, args.output_root,
+                batch_size=args.batch_size, dependencies=dependencies), indent=2))
+        elif args.command == 'activation-prepare':
             from pilot_eval.activation_prepare import prepare_activation
             print(prepare_activation(args.source_config, args.output_root, args.name,
                 dependencies=dependencies, fineweb_config=args.fineweb_config,
