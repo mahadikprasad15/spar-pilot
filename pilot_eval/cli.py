@@ -74,11 +74,20 @@ def main(argv=None, *, dependencies=None):
     activation_freeze.add_argument('--batch-size', type=int, choices=[1, 2, 4, 8, 16], required=True)
     activation_freeze.add_argument('--name', required=True)
     activation_freeze.add_argument('--review-notes', required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze):
+    activation_measure = commands.add_parser('activation-measure', help='execute/resume frozen activation batches')
+    activation_measure.add_argument('--config', type=Path, required=True)
+    activation_verify = commands.add_parser('activation-verify', help='CPU-only verification of completed activation measurement')
+    activation_verify.add_argument('--config', type=Path, required=True)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_measure, activation_verify):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'activation-profile':
+        if args.command in ['activation-measure', 'activation-verify']:
+            from pilot_eval.activation_measurement import measure_activation, verify_measurement
+            result = (measure_activation(args.config, args.output_root, dependencies=dependencies)
+                      if args.command == 'activation-measure' else verify_measurement(args.config, args.output_root))
+            print(json.dumps({key: value for key, value in result.items() if key != 'example_ids'}))
+        elif args.command == 'activation-profile':
             from pilot_eval.activation_profile import profile_activation
             result = profile_activation(args.config, args.output_root, dependencies=dependencies)
             print(json.dumps({'profile_path': result['profile_path'],

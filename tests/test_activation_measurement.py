@@ -129,3 +129,13 @@ def test_interruption_resumes_only_missing_units_and_matches_uninterrupted(execu
     for payload in (directory / 'batches').rglob('summaries.npz'):
         with np.load(payload, allow_pickle=False) as a, np.load(other / payload.relative_to(directory), allow_pickle=False) as b:
             assert all(np.array_equal(a[k], b[k]) for k in a.files)
+
+
+def test_public_commands_measure_and_verify_without_loading_model_for_cpu_check(execution, tmp_path, capsys):
+    from pilot_eval.cli import main
+    args = ['--config', str(execution), '--output-root', str(tmp_path)]
+    deps = MeasurementDependencies()
+    assert main(['activation-measure', *args], dependencies=deps) == 0
+    assert deps.engine_loads == 1
+    assert main(['activation-verify', *args]) == 0
+    assert json.loads(capsys.readouterr().out.splitlines()[-1])['measurement_complete'] is True
