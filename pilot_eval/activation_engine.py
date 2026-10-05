@@ -136,6 +136,29 @@ class ActivationEngine:
             raise InstrumentFailure('missing decoder block outputs')
         return {'rows': rows, 'inputs': inputs, 'masks': masks, 'blocks': blocks}
 
+    def summarize_reference(self, reference):
+        """FP64 sufficient sums of the cached untuned block outputs, no new pass."""
+        examples = len(reference['rows'])
+        hidden = self.model.config.hidden_size
+        arrays = {
+            'block_count': np.zeros((examples, 3, len(self.layers)), dtype=np.float64),
+            'block_base_norm_sum': np.zeros((examples, 3, len(self.layers)), dtype=np.float64),
+            'block_base_sum': np.zeros((examples, 3, len(self.layers), hidden), dtype=np.float64)}
+        if sorted(reference['blocks']) != list(range(len(self.layers))):
+            raise InstrumentFailure('incomplete reference blocks')
+        for layer, tensor in reference['blocks'].items():
+            self._check_finite(tensor)
+            base = tensor.double()
+            norms = base.norm(dim=-1)
+            for vi, view in enumerate(VIEWS):
+                mask = reference['masks'][view]
+                arrays['block_count'][:, vi, layer] = mask.sum(dim=1).cpu().numpy()
+                arrays['block_base_norm_sum'][:, vi, layer] = (norms * mask).sum(dim=1).cpu().numpy()
+                arrays['block_base_sum'][:, vi, layer] = (base * mask[..., None]).sum(dim=1).cpu().numpy()
+        if any(not np.isfinite(v).all() for v in arrays.values()):
+            raise InstrumentFailure('nonfinite reference sufficient sums')
+        return arrays
+
     def _switch(self, checkpoint):
         from peft import get_peft_model_state_dict, set_peft_model_state_dict
         from peft.utils.save_and_load import load_peft_weights

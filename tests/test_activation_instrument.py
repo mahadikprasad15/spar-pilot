@@ -85,7 +85,10 @@ def test_real_qwen_engine_validates_zero_switching_and_all_projection_hooks(tmp_
         handle.remove()
     assert all(torch.equal(value, causal_blocks[i]) for i, value in reference['blocks'].items())
     engine.profile_timings = True
+    baseline_summaries = engine.summarize_reference(reference)
     zero_result = engine.measure(zero, reference, step=0)
+    assert set(baseline_summaries) == {'block_count', 'block_base_sum', 'block_base_norm_sum'}
+    assert all(np.array_equal(value, zero_result['arrays'][key]) for key, value in baseline_summaries.items())
     assert zero_result['timing']['validation_seconds'] > 0
     assert zero_result['timing']['adapted_forward_and_reductions_seconds'] > 0
     assert zero_result['validation']['exact_zero']

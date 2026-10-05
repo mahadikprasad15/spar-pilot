@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Profile and freeze production batching.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Persist baseline/checkpoint summaries with hashes and completion markers last; reuse only verified combinations.
 - [ ] Recreate temporary baseline activations for a partial batch and verify saved baseline summaries before continuing.
