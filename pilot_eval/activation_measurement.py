@@ -116,7 +116,7 @@ def _validate_arrays(arrays, rows, *, baseline=None, step=None):
             raise ValueError('step 0 saved summaries contain nonzero write')
 
 
-def _validate_evidence(evidence, prepared, step):
+def _validate_evidence(evidence, prepared, step, rows):
     _check_gate(evidence, prepared, step)
     block_hooks = [f'model.layers.{i}' for i in range(28)]
     module_hooks = [f"model.layers.{i}.{'self_attn' if p in PROJECTIONS[:4] else 'mlp'}.{p}"
@@ -125,6 +125,34 @@ def _validate_evidence(evidence, prepared, step):
             or evidence['sample_limit'] != 16 or evidence['thresholds'] != THRESHOLDS
             or evidence['block_position'] != 'decoder-block-output-before-final-model-norm'):
         raise ValueError('checkpoint hook identity or validation policy mismatch')
+    expected = {}
+    for view in VIEWS:
+        by_example = [[i for i, chosen in enumerate(row['masks'][view]) if chosen] for row in rows]
+        positions = [[rows[b]['id'], indices[offset]]
+                     for offset in range(max(map(len, by_example), default=0))
+                     for b, indices in enumerate(by_example) if offset < len(indices)][:16]
+        if positions:
+            expected.update({(layer, projection, view): positions
+                             for layer in range(28) for projection in PROJECTIONS})
+    seen = set()
+    for record in evidence['positions']:
+        key = (record['layer'], record['projection'], record['view'])
+        if key in seen or key not in expected or record['positions'] != expected[key]:
+            raise ValueError('rank-1 sampled token/module coverage mismatch')
+        seen.add(key)
+        for name in ['branch_max_error', 'subtraction_max_error', 'branch_max_fraction', 'subtraction_max_fraction']:
+            value = record[name]
+            if not isinstance(value, (int, float)) or not np.isfinite(value) or value < 0:
+                raise ValueError('rank-1 nonfinite or negative validation evidence')
+        if record['branch_max_fraction'] > 1 or record['subtraction_max_fraction'] > 1:
+            raise ValueError('rank-1 saved threshold exceeded')
+        count, below = record['coordinate_count'], record['below_resolution_coordinates']
+        if (not isinstance(count, int) or count < len(expected[key])
+                or not isinstance(below, int) or not 0 <= below <= count):
+            raise ValueError('rank-1 resolution coverage mismatch')
+    if seen != set(expected):
+        raise ValueError('rank-1 incomplete sampled module/view coverage')
+
 
 
 def _commit_shard(directory, identity, arrays, *, evidence=None):
@@ -164,7 +192,7 @@ def _read_shard(directory, identity, rows, prepared, *, baseline=None, step=None
     if metadata != expected:
         raise ValueError('shard saved shape/axis metadata mismatch')
     if step is not None:
-        _validate_evidence(json.loads((directory / 'validation.json').read_text()), prepared, step)
+        _validate_evidence(json.loads((directory / 'validation.json').read_text()), prepared, step, rows)
     return arrays
 
 
@@ -308,7 +336,7 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                             or file_hash(checkpoint / 'adapter_model.safetensors') != source['adapter_sha256']):
                         raise ValueError('source checkpoint changed during production')
                     measured = engine.measure(checkpoint, reference, step=step)
-                    _validate_evidence(measured['validation'], prepared, step)
+                    _validate_evidence(measured['validation'], prepared, step, batch_rows)
                     if set(measured['arrays']) != BASE_KEYS | CHECKPOINT_KEYS or any(
                             not np.array_equal(base[k], measured['arrays'][k]) for k in BASE_KEYS):
                         raise ValueError('checkpoint reference/count summaries disagree')

@@ -49,13 +49,36 @@ class MeasurementEngine(ProfileEngine):
             module_hooks=[f"model.layers.{i}.{'self_attn' if p in PROJECTIONS[:4] else 'mlp'}.{p}"
                           for i in range(28) for p in PROJECTIONS],
             thresholds={'atol': 1e-6, 'rtol': 1e-5, 'rounding_factor': 4})
+        for view in VIEWS:
+            selected = [[i for i, flag in enumerate(row['masks'][view]) if flag] for row in rows]
+            positions = [[rows[b]['id'], indices[offset]]
+                         for offset in range(max(map(len, selected), default=0))
+                         for b, indices in enumerate(selected) if offset < len(indices)][:16]
+            if positions:
+                result['validation']['positions'].extend([
+                    {'layer': layer, 'projection': projection, 'view': view, 'positions': positions,
+                     'branch_max_error': 0., 'subtraction_max_error': 0.,
+                     'branch_max_fraction': 0., 'subtraction_max_fraction': 0.,
+                     'coordinate_count': len(positions) * 4,
+                     'below_resolution_coordinates': len(positions) * 4 if step == 0 else 0}
+                    for layer in range(28) for projection in PROJECTIONS])
+        if self.deps.fault == 'nonzero-init' and step == 0:
+            result['arrays']['block_delta_sum'][0, 0, 0, 0] = 1e-20
+        if step == 8:
+            if self.deps.fault == 'nonfinite':
+                result['arrays']['block_delta_sum'][0, 0, 0, 0] = np.nan
+            if self.deps.fault == 'wrong-hooks':
+                result['validation']['module_hooks'].pop()
+            if self.deps.fault == 'rank-evidence':
+                result['validation']['positions'][0]['branch_max_fraction'] = 2.
         return result
 
 
 class MeasurementDependencies(ProfileDependencies):
-    def __init__(self, *, fail_at=None, exception=RuntimeError, reference_shift=0):
+    def __init__(self, *, fail_at=None, exception=RuntimeError, reference_shift=0, fault=None):
         super().__init__()
         self.fail_at, self.exception, self.reference_shift = fail_at, exception, reference_shift
+        self.fault = fault
         self.measure_calls = []
         self.engine_loads = 0
 
@@ -139,3 +162,22 @@ def test_public_commands_measure_and_verify_without_loading_model_for_cpu_check(
     assert deps.engine_loads == 1
     assert main(['activation-verify', *args]) == 0
     assert json.loads(capsys.readouterr().out.splitlines()[-1])['measurement_complete'] is True
+
+
+@pytest.mark.parametrize('fault,message,kept', [
+    ('nonfinite', 'nonfinite', 1), ('nonzero-init', 'nonzero', 0),
+    ('wrong-hooks', 'hook identity', 1), ('rank-evidence', 'rank-1', 1)])
+def test_production_rejects_bad_measurement_evidence_without_fallback(execution, tmp_path, fault, message, kept):
+    from pilot_eval.activation_measurement import measure_activation
+    deps = MeasurementDependencies(fault=fault)
+    with pytest.raises(ValueError, match=message):
+        measure_activation(execution, tmp_path, dependencies=deps)
+    directory = run_dir(execution, tmp_path)
+    assert not (directory / 'complete.json').exists()
+    assert deps.closed == 1
+    progress = json.loads((directory / 'checkpoints/progress.json').read_text())
+    assert progress['completed'] == kept
+    assert len(list((directory / 'batches').glob('*/checkpoints/*/complete.json'))) == kept
+    assert all(len(ids) == 16 for ids in deps.batch_calls)
+    errors = [json.loads(line) for line in (directory / 'logs/errors.jsonl').read_text().splitlines()]
+    assert errors[-1]['unit'] == {'batch_index': 0, 'step': 0 if fault == 'nonzero-init' else 8}
