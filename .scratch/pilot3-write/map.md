@@ -27,6 +27,10 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
   passed; actual CUDA/source runs remain runtime gates. See ticket 04 and the
   instrument guide.
 
+- Ticket 05 resolved: verified CPU reconstruction, paired bootstrap, both
+  weightings, provenance/coverage/validation tables and scientific plots. Full
+  offline suite 175 passed; fixture plots inspected. See ticket 05 and the guide.
+
 ## Fog
 
 - FineWeb `sample-10BT` was explicitly approved; resolve and record its dataset
@@ -35,4 +39,4 @@ on 2026-10-04 after the user's approval to begin. No GPU experiment has run.
 
 ## Frontier
 
-05 — Reconstruct the scientific report on CPU (unblocked; not yet claimed).
+06 — Guided Colab workflow (unblocked; not yet claimed).

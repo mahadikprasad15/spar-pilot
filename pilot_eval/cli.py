@@ -78,11 +78,18 @@ def main(argv=None, *, dependencies=None):
     activation_measure.add_argument('--config', type=Path, required=True)
     activation_verify = commands.add_parser('activation-verify', help='CPU-only verification of completed activation measurement')
     activation_verify.add_argument('--config', type=Path, required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_measure, activation_verify):
+    activation_report = commands.add_parser('activation-report', help='CPU scientific report from verified activation summaries')
+    activation_report.add_argument('--config', type=Path, required=True)
+    activation_report.add_argument('--name', required=True)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_measure, activation_verify, activation_report):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command in ['activation-measure', 'activation-verify']:
+        if args.command == 'activation-report':
+            from pilot_eval.activation_report import report_activation
+            result = report_activation(args.config, args.output_root, name=args.name)
+            print(json.dumps({'report_complete': result['report_complete'], 'name': result['name']}))
+        elif args.command in ['activation-measure', 'activation-verify']:
             from pilot_eval.activation_measurement import measure_activation, verify_measurement
             result = (measure_activation(args.config, args.output_root, dependencies=dependencies)
                       if args.command == 'activation-measure' else verify_measurement(args.config, args.output_root))

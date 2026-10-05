@@ -223,3 +223,49 @@ Ticket 6.
 Local CPU fixtures exercise persistence and recovery, and tiny locally constructed
 Qwen/PEFT models exercise hooks and reference summaries. These tests do not replace
 real-source validation and CUDA execution in Colab.
+
+## Reconstruct the scientific report on CPU
+
+After `activation-verify` succeeds, the GPU can be disconnected. In a CPU
+session, install the package's report dependencies (`pip install -e '.[report]'`)
+and mount the same artifact root, then run:
+
+```bash
+python -m pilot_eval activation-report \
+  --config artifacts/plans/write-production-v1/activation.execution.json \
+  --output-root artifacts --name write-report-v1
+```
+
+The report verifies complete source shards and instrument gates before reading
+measurements. It reconstructs token-weighted and equal-example block/module
+measurements, then uses 2,000 example bootstrap draws with seed 42. GSM8K draws
+are shared across question/solution views, layers, modules and checkpoints;
+FineWeb draws are independent. Ratios are recomputed from each resample's sums.
+Undefined replicates are excluded from intervals with explicit coverage.
+
+Outputs live in `artifacts/reports/write-report-v1/`:
+
+- `config.json`: full preparation/execution identity, source completion hash,
+  bootstrap and weighting policy.
+- `results/results.json`, `measurements.csv`, `report.md`: measurements,
+  intervals, denominator/zero coverage, limitations and validation summaries.
+- `results/mean-vectors.npz`: mean baseline and change vectors keyed by
+  step/view/layer/weighting.
+- `results/bootstrap-draws.npz`: local cohort indices in frozen input order.
+- `results/bootstrap-primary.npz`: finite scalar replicate payloads and separate
+  `defined-*` masks. A masked zero is storage, **not a measured zero**.
+- `results/validation.jsonl`, `validation-summary.json`: sampled rank-1 errors,
+  fixed-threshold fractions and below-resolution coordinate coverage.
+- `plots/`: block curves with intervals, module heatmaps for both weightings,
+  baseline-denominator sensitivity, PNG/SVG files and a scale manifest.
+
+A repeat verifies and reuses a complete report. Corrupt marked outputs stop;
+changing sources requires a new named report. Interrupted unmarked report work
+is reconstructed from verified measurements without inference. Both report and
+source hashes are checked; status alone never authorizes reuse.
+
+Read token and equal-example profiles together: longer gold solutions carry
+more weight in token averages. Their lengths are fixed teacher-forced inputs,
+not the adapter's generated response lengths. Intervals describe the frozen
+cohorts and one training seed. These geometry measurements do not establish
+causality, task specificity or useful layers for fine-tuning.

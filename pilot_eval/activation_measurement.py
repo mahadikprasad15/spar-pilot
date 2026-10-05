@@ -419,3 +419,27 @@ def monitor_activation_process(process, run_directory, *, last_snapshot=None):
         snapshot = dict(last_snapshot) if valid(last_snapshot) else None
     return {'process_state': state, 'returncode': returncode, 'snapshot': snapshot,
             'snapshot_is_current': current, 'status_error': error, 'completion_verified': False}
+
+
+def iter_measurement_batches(config_path, output_root, *, step):
+    """Stream verified per-example summaries for one checkpoint in frozen order.
+
+    Reporting calls verify_measurement first for whole-run completeness. Each
+    yielded shard is independently checked again, including sampled validation.
+    """
+    if step not in STEPS:
+        raise ValueError('unknown checkpoint step')
+    root = Path(output_root).resolve()
+    execution, prepared, rows = load_execution(config_path, root)
+    directory = root / execution['run_path']
+    by_id = {row['id']: row for row in rows}
+    for batch in execution['batches']:
+        batch_rows = _batch_rows(batch, by_id)
+        folder = _batch_directory(directory, batch)
+        base = _read_shard(folder / 'baseline', _identity(execution, batch), batch_rows, prepared)
+        shard = folder / 'checkpoints' / f'step-{step}'
+        identity = _identity(execution, batch, step=step, baseline=file_hash(folder / 'baseline/complete.json'))
+        arrays = _read_shard(shard, identity, batch_rows, prepared, baseline=base, step=step)
+        yield {'batch_index': batch['index'], 'example_ids': batch['example_ids'],
+               'arrays': {**base, **arrays},
+               'validation': json.loads((shard / 'validation.json').read_text())}

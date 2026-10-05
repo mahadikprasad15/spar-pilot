@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.26,<3"]
 
 [project.optional-dependencies]
+report = ["matplotlib>=3.8,<4"]
 test = ["pytest>=8,<9"]
 gpu = [
     "torch>=2.2,<3",
