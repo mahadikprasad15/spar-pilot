@@ -89,3 +89,23 @@ def test_profile_uses_same_longest_workload_and_freezes_reviewed_passing_candida
     calls = len(deps.batch_calls)
     assert profile_activation(config, tmp_path, dependencies=deps) == result
     assert len(deps.batch_calls) == calls
+
+
+def test_cli_profiles_then_freezes_and_rejects_unreviewed_or_changed_evidence(tmp_path):
+    from pilot_eval.cli import main
+    config = prepared(tmp_path)
+    args = ['activation-profile', '--config', str(config), '--output-root', str(tmp_path)]
+    assert main(args, dependencies=ProfileDependencies()) == 0
+    _, rows = load_prepared(config, tmp_path)
+    profile = tmp_path / json.loads(config.read_text())['run_path'] / 'profile'
+    freeze = ['activation-freeze', '--config', str(config), '--output-root', str(tmp_path),
+              '--profile', str(profile), '--batch-size', '8', '--name', 'production',
+              '--review-notes', 'Reviewed memory and numerical evidence.']
+    assert main(freeze) == 0
+    assert main(freeze) == 0
+    assert main(freeze[:-1] + ['']) == 1
+    changed = list(freeze)
+    changed[changed.index('--batch-size') + 1] = '4'
+    assert main(changed) == 1
+    (profile / 'batch-8/step-8.npz').write_bytes(b'broken')
+    assert main(freeze) == 1

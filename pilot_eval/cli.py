@@ -66,11 +66,30 @@ def main(argv=None, *, dependencies=None):
     activation_validate = commands.add_parser('activation-validate', help='validate one diagnostic batch across five checkpoints')
     activation_validate.add_argument('--config', type=Path, required=True)
     activation_validate.add_argument('--batch-size', type=int, default=2)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate):
+    activation_profile = commands.add_parser('activation-profile', help='profile validated fixed activation workloads')
+    activation_profile.add_argument('--config', type=Path, required=True)
+    activation_freeze = commands.add_parser('activation-freeze', help='freeze an explicitly reviewed passing batch plan')
+    activation_freeze.add_argument('--config', type=Path, required=True)
+    activation_freeze.add_argument('--profile', type=Path, required=True)
+    activation_freeze.add_argument('--batch-size', type=int, choices=[1, 2, 4, 8, 16], required=True)
+    activation_freeze.add_argument('--name', required=True)
+    activation_freeze.add_argument('--review-notes', required=True)
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'activation-validate':
+        if args.command == 'activation-profile':
+            from pilot_eval.activation_profile import profile_activation
+            result = profile_activation(args.config, args.output_root, dependencies=dependencies)
+            print(json.dumps({'profile_path': result['profile_path'],
+                'provisional_fastest_batch': result['provisional_fastest_batch'],
+                'measurements': [{k: v for k, v in row.items() if k != 'validation'}
+                                 for row in result['measurements']]}, indent=2))
+        elif args.command == 'activation-freeze':
+            from pilot_eval.activation_profile import freeze_execution
+            print(freeze_execution(args.config, args.output_root, profile=args.profile,
+                batch_size=args.batch_size, name=args.name, review_notes=args.review_notes))
+        elif args.command == 'activation-validate':
             from pilot_eval.activation_workflow import validate_activation
             print(json.dumps(validate_activation(args.config, args.output_root,
                 batch_size=args.batch_size, dependencies=dependencies), indent=2))
