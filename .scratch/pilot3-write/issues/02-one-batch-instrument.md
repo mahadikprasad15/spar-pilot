@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Freeze and audit measurement inputs.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Measure all intended decoder blocks and adapted projections in FP32 on frozen inputs; distinguish block changes from same-input direct contributions.
 - [ ] Pass exact-zero, frozen-base/source identity, rank-1 and disabled-adapter invariance gates with saved diagnostics under the spec's thresholds.
