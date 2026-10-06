@@ -8,7 +8,7 @@ calibration, profiling or freeze rerun is required.
 
 ```python
 assert not live_children(), 'Inspect any live earlier child before switching code.'
-RECOVERY_COMMIT = 'PRODUCTION_RECOVERY_COMMIT'
+RECOVERY_COMMIT = '8972c433ff00b7823906e64a1ccd291e6289d08e'
 dirty = subprocess.check_output(['git','status','--porcelain'],cwd=REPO_DIR,text=True).strip()
 assert not dirty, 'Preserve local checkout edits first; do not discard them.'
 subprocess.run(['git','fetch','origin',RECOVERY_COMMIT],cwd=REPO_DIR,check=True)
