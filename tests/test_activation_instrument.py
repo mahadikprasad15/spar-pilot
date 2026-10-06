@@ -1,9 +1,109 @@
 """Behavioral tests at the agreed summary/engine/workflow interfaces."""
 
 import math
+from contextlib import contextmanager
 
 import numpy as np
 import pytest
+
+
+def _assert_forward_summaries(arrays, modules, blocks, reference):
+    """NumPy oracle on the same observed FP32 pass, not another batch shape."""
+    def compare(prefix, location, ordinary, delta):
+        for ei, row in enumerate(reference['rows']):
+            for vi, view in enumerate(['question', 'solution', 'user']):
+                positions = np.flatnonzero(row['masks'][view])
+                base, change = ordinary[ei, positions], delta[ei, positions]
+                base_norm = np.linalg.norm(base, axis=-1)
+                change_norm = np.linalg.norm(change, axis=-1)
+                expected = {'count': len(positions), 'base_norm_sum': base_norm.sum(),
+                            'delta_norm_sum': change_norm.sum()}
+                if prefix == 'block':
+                    expected.update(base_sum=base.sum(axis=0), delta_sum=change.sum(axis=0))
+                else:
+                    defined = base_norm != 0
+                    expected.update(defined_count=defined.sum(),
+                                    ratio_sum=(change_norm[defined] / base_norm[defined]).sum())
+                index = (ei, vi, *location)
+                for name, wanted in expected.items():
+                    actual = arrays[f'{prefix}_{name}'][index]
+                    if name.endswith('count'):
+                        np.testing.assert_array_equal(actual, wanted)
+                    else:
+                        np.testing.assert_allclose(actual, wanted, atol=1e-5, rtol=1e-5)
+                if prefix == 'module' and expected['base_norm_sum'] != 0:
+                    # Check the nonlinear primary ratio, not just its small sums.
+                    actual_base = arrays['module_base_norm_sum'][index]
+                    assert actual_base != 0
+                    np.testing.assert_allclose(arrays['module_delta_norm_sum'][index] / actual_base,
+                        expected['delta_norm_sum'] / expected['base_norm_sum'], atol=1e-5, rtol=1e-5)
+
+    for location, snapshot in modules.items():
+        compare('module', location, snapshot['base'], snapshot['delta'])
+    for layer, adapted in blocks.items():
+        ordinary = reference['blocks'][layer]
+        if hasattr(ordinary, 'detach'):
+            ordinary = ordinary.detach().cpu().numpy()
+        # Subtraction is FP32, just as in the instrument; then accumulate in FP64.
+        delta = np.asarray(adapted - ordinary, dtype=np.float64)
+        compare('block', (layer,), np.asarray(ordinary, dtype=np.float64), delta)
+
+
+@contextmanager
+def _observed_forward(engine):
+    """Test-only output taps, removed even if measurement/assertion fails."""
+    modules, blocks, handles = {}, {}, []
+    def array(tensor):
+        return tensor.detach().cpu().numpy().copy()
+    for layer, projection, module in engine.modules:
+        from pilot_eval.activation_prepare import PROJECTIONS
+        location = (layer, PROJECTIONS.index(projection))
+        modules[location] = {}
+        def base_hook(m, args, output, location=location):
+            modules[location]['base'] = array(output).astype(np.float64)
+        def branch_hook(m, args, output, location=location, scale=module.scaling['default']):
+            modules[location]['delta'] = array(output * scale).astype(np.float64)
+        handles.extend([module.base_layer.register_forward_hook(base_hook),
+                        module.lora_B['default'].register_forward_hook(branch_hook)])
+    for layer, block in enumerate(engine.layers):
+        def block_hook(m, args, output, layer=layer):
+            blocks[layer] = array(output[0] if isinstance(output, tuple) else output)
+        handles.append(block.register_forward_hook(block_hook))
+    try:
+        yield modules, blocks
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
+@pytest.mark.parametrize('quantity', ['ratio_sum', 'count', 'delta_norm_sum'])
+def test_same_pass_oracle_rejects_corrupted_measurement(quantity):
+    # Worked example: norms 3 and 4; contributions +1 and -1.
+    # Cancellation gives a zero block vector, but module ratio sum is 7/12.
+    block_shape, module_shape = (1, 3, 1), (1, 3, 1, 1)
+    arrays = {f'block_{key}': np.zeros(block_shape) for key in
+              ['count', 'base_norm_sum', 'delta_norm_sum']}
+    arrays.update({f'block_{key}': np.zeros((*block_shape, 1))
+                   for key in ['base_sum', 'delta_sum']})
+    arrays.update({f'module_{key}': np.zeros(module_shape) for key in
+                   ['count', 'base_norm_sum', 'delta_norm_sum', 'ratio_sum', 'defined_count']})
+    for prefix in ['block', 'module']:
+        index = (0, 0, 0) if prefix == 'block' else (0, 0, 0, 0)
+        for key, value in [('count', 2), ('base_norm_sum', 7), ('delta_norm_sum', 2)]:
+            arrays[f'{prefix}_{key}'][index] = value
+    arrays['block_base_sum'][0, 0, 0, 0] = 7
+    arrays['module_ratio_sum'][0, 0, 0, 0] = 7 / 12
+    arrays['module_defined_count'][0, 0, 0, 0] = 2
+    baseline = np.array([[[3.], [4.]]])
+    contribution = np.array([[[1.], [-1.]]])
+    reference = {'blocks': {0: baseline}, 'rows': [{'masks': {
+        'question': [True, True], 'solution': [False, False], 'user': [False, False]}}]}
+    modules = {(0, 0): {'base': baseline, 'delta': contribution}}
+    blocks = {0: baseline + contribution}
+    _assert_forward_summaries(arrays, modules, blocks, reference)
+    arrays['module_' + quantity][0, 0, 0, 0] += .1
+    with pytest.raises(AssertionError):
+        _assert_forward_summaries(arrays, modules, blocks, reference)
 
 
 def test_summary_contract_preserves_cancellation_weighting_and_undefined_ratios():
@@ -94,21 +194,30 @@ def test_real_qwen_engine_validates_zero_switching_and_all_projection_hooks(tmp_
     assert zero_result['validation']['exact_zero']
     assert zero_result['validation']['module_count'] == 7 * layer_count
     assert all(np.count_nonzero(v) == 0 for k, v in zero_result['arrays'].items() if k.endswith('delta_sum') or k.endswith('delta_norm_sum'))
-    result = engine.measure(trained, reference, step=8)
+    with _observed_forward(engine) as (modules, blocks):
+        result = engine.measure(trained, reference, step=8)
+    _assert_forward_summaries(result['arrays'], modules, blocks, reference)
     assert result['validation']['reference_invariant']
     assert result['validation']['rank1_passed']
     assert np.count_nonzero(result['arrays']['block_delta_sum']) > 0
     assert result['arrays']['block_delta_sum'].shape == (2, 3, layer_count, 4)
     assert result['arrays']['module_count'].shape == (2, 3, layer_count, 7)
     assert result['arrays']['block_count'][:, 1, 0].tolist() == [2, 1]
-    # Independently measure the same examples singly and in one padded batch.
-    single = [engine.measure(trained, engine.capture_reference([row]), step=8)['arrays'] for row in rows]
+    # Validate single and padded execution independently against their own pass.
+    # Floating agreement across batch shapes is a separate profiling gate, not
+    # an unconditional property of this narrow, random FP32 model.
+    single = []
+    for row in rows:
+        single_reference = engine.capture_reference([row])
+        with _observed_forward(engine) as (modules, blocks):
+            measured = engine.measure(trained, single_reference, step=8)['arrays']
+        _assert_forward_summaries(measured, modules, blocks, single_reference)
+        single.append(measured)
+        engine.release_reference(single_reference)
     for key, value in result['arrays'].items():
         joined = np.concatenate([item[key] for item in single])
         if key.endswith('count'):
             assert np.array_equal(value, joined)
-        else:
-            assert np.allclose(value, joined, atol=1e-5, rtol=1e-5)
     engine.release_reference(reference)
     assert reference == {}
     assert len(rows) == 2

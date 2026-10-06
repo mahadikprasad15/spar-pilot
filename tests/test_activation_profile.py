@@ -157,3 +157,37 @@ def test_profile_compares_derived_ratios_not_just_small_sufficient_sums(tmp_path
     # Small norm sums differ by less than atol; their ratios differ by a factor of two.
     with pytest.raises(ValueError, match='summary agreement'):
         profile_activation(config, tmp_path, dependencies=SmallDenominatorDependencies())
+
+
+class ObservedRatioDriftEngine(ProfileEngine):
+    def measure(self, checkpoint, rows, *, step):
+        result = super().measure(checkpoint, rows, step=step)
+        if step == 8:
+            counts = result['arrays']['module_count']
+            # Values observed at layer 13/o_proj in the Colab CPU fixture.
+            base, delta, ratio = (0.001051300261798412, 0.004280802793800831, 4.071912610844265)
+            if len(rows) == 4:
+                base, delta, ratio = (0.0010512869280024661, 0.004280819557607174, 4.07198020215194)
+            result['arrays']['module_base_norm_sum'] = counts * base
+            result['arrays']['module_delta_norm_sum'] = counts * delta
+            result['arrays']['module_ratio_sum'] = counts * ratio
+        return result
+
+
+class ObservedRatioDriftDependencies(ProfileDependencies):
+    def activation_engine(self, config, root):
+        return ObservedRatioDriftEngine(self)
+
+
+def test_profile_keeps_observed_fp32_ratio_drift_as_a_failure(tmp_path):
+    from pilot_eval.activation_profile import profile_activation
+    config = prepared(tmp_path)
+    with pytest.raises(ValueError, match='summary agreement'):
+        profile_activation(config, tmp_path, dependencies=ObservedRatioDriftDependencies())
+    directory = tmp_path / json.loads(config.read_text())['run_path'] / 'profile'
+    evidence = json.loads((directory / 'batch-4/results.json').read_text())
+    assert evidence['status'] == 'numerical-mismatch'
+    assert evidence['agreement']['thresholds'] == {'atol': 1e-5, 'rtol': 1e-5}
+    assert any(d.get('measurement') == 'relative_write'
+               for d in evidence['agreement']['differences'])
+    assert not (directory / 'complete.json').exists()

@@ -70,6 +70,34 @@ fractions of thresholds and sampled subtraction-resolution counts; near-threshol
 or unexpected behavior needs inspection and expanded validation before production.
 Local CPU success is not a claim that the real Drive checkpoints passed on GPU.
 
+### CPU test calculation correctness versus batch sensitivity
+
+The tiny Qwen/PEFT engine test checks summary calculation against independent
+NumPy reductions of outputs captured during the same FP32 forward pass. It does
+this for both individual examples and a padded batch, across all blocks,
+projections and views. Literal worked examples verify the test oracle and show
+that corrupted counts, contribution magnitudes and ratios are rejected. Token
+counts and defined coverage must still agree exactly between batch shapes.
+
+The previous unconditional floating-summary comparison between batch shapes
+failed on the Colab CPU fixture: four module ratios exceeded the unchanged
+`atol=1e-5, rtol=1e-5` threshold. Counted inputs aligned; the four discrepancies
+disappeared in an FP64 diagnostic, and 136 independent same-pass comparisons
+passed. This supports FP32 forward-pass sensitivity, not an incorrect summary
+calculation. It does not establish stability of the actual model and adapters.
+
+Numerical agreement between batch shapes remains a separate production
+profiling gate in notebook section 8. The threshold, derived-ratio checks and
+stop-on-mismatch behavior are unchanged. A regression fixture reproduces the
+observed small norm/ratio drift and requires profiling to reject it. Production
+is still FP32 with frozen batch membership; no scientific tolerance is relaxed.
+
+After updating the checkout to the fix commit, rerun notebook section 3 and then
+continue at section 4. An existing mounted Drive and pinned dependency install
+need not be repeated in the same runtime. Edit section 1's `HARNESS_COMMIT` to
+the new pin as well so reconnecting does not restore the old tests. Do not switch
+code while a child is active or an execution identity has already been frozen.
+
 ## Profile and review a production batch plan (Ticket 3)
 
 After reviewing the input audit, run the following on the single GPU. Profiling
