@@ -84,6 +84,9 @@ def main(argv=None, *, dependencies=None):
     activation_freeze.add_argument('--batch-size', type=int, choices=[1, 2, 4, 8, 16], required=True)
     activation_freeze.add_argument('--name', required=True)
     activation_freeze.add_argument('--review-notes', required=True)
+    activation_recover = commands.add_parser('activation-recover-measurement', help='verify saved units and authorize reviewed production hash scheduling recovery')
+    activation_recover.add_argument('--config', type=Path, required=True)
+    activation_recover.add_argument('--review-notes', required=True)
     activation_measure = commands.add_parser('activation-measure', help='execute/resume frozen activation batches')
     activation_measure.add_argument('--config', type=Path, required=True)
     activation_verify = commands.add_parser('activation-verify', help='CPU-only verification of completed activation measurement')
@@ -91,7 +94,7 @@ def main(argv=None, *, dependencies=None):
     activation_report = commands.add_parser('activation-report', help='CPU scientific report from verified activation summaries')
     activation_report.add_argument('--config', type=Path, required=True)
     activation_report.add_argument('--name', required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_measure, activation_verify, activation_report):
+    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_recover, activation_measure, activation_verify, activation_report):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
@@ -109,6 +112,10 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval.activation_report import report_activation
             result = report_activation(args.config, args.output_root, name=args.name)
             print(json.dumps({'report_complete': result['report_complete'], 'name': result['name']}))
+        elif args.command == 'activation-recover-measurement':
+            from pilot_eval.activation_measurement import authorize_measurement_recovery
+            result = authorize_measurement_recovery(args.config,args.output_root,review_notes=args.review_notes,dependencies=dependencies)
+            print(json.dumps({'policy':result['policy'],'verified_completed_units':result['verified_completed_units'],'actual_runtime':result['actual_runtime']},indent=2))
         elif args.command in ['activation-measure', 'activation-verify']:
             from pilot_eval.activation_measurement import measure_activation, verify_measurement
             result = (measure_activation(args.config, args.output_root, dependencies=dependencies)

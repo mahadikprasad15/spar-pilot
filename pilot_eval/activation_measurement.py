@@ -1,5 +1,6 @@
 """Frozen production execution, verified numeric shards and CPU completion checks."""
 import json
+from contextlib import nullcontext
 import re
 from collections import Counter
 from pathlib import Path
@@ -245,6 +246,61 @@ def _scan(directory, execution, prepared, rows, *, require_complete=False):
     return completed, totals, files
 
 
+PRODUCTION_POLICY = 'batch-boundary-sha256-with-version-guards-v2'
+
+
+def _compatible_runtime(source, actual):
+    # This recovery only changes hashing/publication, never numerical execution.
+    return ({k:v for k,v in source.items() if k!='git_commit'} ==
+            {k:v for k,v in actual.items() if k!='git_commit'})
+
+
+def _recovery_record(directory, execution, *, actual_runtime=None):
+    path = directory / 'meta/production-recovery.json'
+    if not path.exists():
+        return None
+    record = json.loads(path.read_text())
+    if (record['policy'] != PRODUCTION_POLICY or record['execution_sha256'] != _hash(execution)
+            or record['source_runtime'] != execution['runtime']
+            or not _compatible_runtime(record['source_runtime'],record['actual_runtime'])
+            or not record['review_notes'].strip()
+            or (actual_runtime is not None and record['actual_runtime'] != actual_runtime)):
+        raise ValueError('production recovery identity/numerical runtime mismatch')
+    for name,digest in record['preserved_files'].items():
+        if file_hash(_relative(directory/name,directory.resolve())) != digest:
+            raise ValueError('preserved recovery evidence changed')
+    return record
+
+
+def authorize_measurement_recovery(config_path, output_root, *, review_notes, dependencies=None):
+    """Verify old units and authorize only the reviewed implementation revision."""
+    root = Path(output_root).resolve()
+    execution, prepared, rows = load_execution(config_path,root)
+    directory = root/execution['run_path']
+    actual = (dependencies or HFActivationDependencies()).runtime()
+    if not _compatible_runtime(execution['runtime'],actual):
+        raise ValueError('recovery cannot change numerical settings, dependencies or hardware')
+    if not review_notes.strip():
+        raise ValueError('production recovery review notes required')
+    with run_lock(directory):
+        existing = _recovery_record(directory,execution,actual_runtime=actual)
+        if existing is not None:
+            return existing
+        if (directory/'complete.json').exists():
+            raise ValueError('measurement already complete; verify/report instead of recovery')
+        completed, _, files = _scan(directory,execution,prepared,rows)
+        record = {'policy':PRODUCTION_POLICY,'execution_sha256':_hash(execution),
+                  'source_runtime':execution['runtime'],'actual_runtime':actual,
+                  'review_notes':review_notes,
+                  'verified_completed_units':[list(u) for u in sorted(completed)],
+                  'preserved_files':{str(p.relative_to(directory)):file_hash(p) for p in files},
+                  'publication':'new batch payloads published only after final boundary hash',
+                  'numerical_changes':None}
+        _save_frozen(directory/'meta/production-recovery.json',record)
+        print(f"activation measurement: recovery verified {len(completed)}/{len(execution['batches'])*len(STEPS)} saved units; preserved",flush=True)
+        return record
+
+
 def verify_measurement(config_path, output_root):
     """CPU-only strict completion verification, for reuse and subsequent reporting."""
     root = Path(output_root).resolve()
@@ -254,6 +310,9 @@ def verify_measurement(config_path, output_root):
     if marker['execution_sha256'] != _hash(execution):
         raise ValueError('measurement completion identity mismatch')
     completed, totals, files = _scan(directory, execution, prepared, rows, require_complete=True)
+    recovery = _recovery_record(directory, execution)
+    if recovery is not None:
+        files.append(directory/'meta/production-recovery.json')
     required = {str(p.relative_to(directory)) for p in files} | {
         'config.json', 'meta/run_manifest.json', 'results/results.json', 'results/aggregate-sums.npz'}
     if set(marker['files']) != required:
@@ -290,8 +349,10 @@ def measure_activation(config_path, output_root, *, dependencies=None):
         engine, reference, completed = None, None, set()
         stage, current = 'verify-runtime', None
         try:
-            if deps.runtime() != execution['runtime']:
-                raise ValueError('production runtime mismatch; use a new reviewed execution plan')
+            actual_runtime = deps.runtime()
+            recovery = _recovery_record(directory,execution,actual_runtime=actual_runtime)
+            if actual_runtime != execution['runtime'] and recovery is None:
+                raise ValueError('production runtime mismatch; authorize reviewed code-only recovery first')
             _save_frozen(directory / 'config.json', {'execution': execution, 'prepared': prepared})
             manifest = {'schema_version': 1, 'execution_sha256': _hash(execution),
                         'config': 'config.json', 'inputs': execution['prepared_path'],
@@ -319,42 +380,64 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                     engine = deps.activation_engine(prepared, root)
                     if engine.base_hash() != prepared['source_evidence']['base_sha256']:
                         raise ValueError('production loaded base identity mismatch')
-                stage = 'capture-reference'
-                reference = engine.capture_reference(batch_rows)
-                base = engine.summarize_reference(reference)
-                _validate_arrays(base, batch_rows)
+                engine.profile_timings = True
+                scoped = hasattr(engine, 'integrity_scope')
+                scope = engine.integrity_scope() if scoped else nullcontext({})
+                buffered = []
                 baseline_dir = folder / 'baseline'
-                if (baseline_dir / 'complete.json').exists():
-                    saved = _read_shard(baseline_dir, _identity(execution, batch), batch_rows, prepared)
-                    if any(not np.array_equal(saved[k], base[k]) for k in BASE_KEYS):
-                        raise ValueError('recreated reference disagrees with saved baseline summaries')
-                else:
-                    _commit_shard(baseline_dir, _identity(execution, batch), base)
-                    _read_shard(baseline_dir, _identity(execution, batch), batch_rows, prepared)
-                for step in pending:
-                    current['step'] = step
-                    stage = 'measure-checkpoint'
-                    source = prepared['source_evidence']['checkpoints'][str(step)]
-                    checkpoint = root / source['path']
-                    if (file_hash(checkpoint / 'complete.json') != source['complete_sha256']
-                            or file_hash(checkpoint / 'adapter_model.safetensors') != source['adapter_sha256']):
-                        raise ValueError('source checkpoint changed during production')
-                    measured = engine.measure(checkpoint, reference, step=step)
-                    _validate_evidence(measured['validation'], prepared, step, batch_rows)
-                    if set(measured['arrays']) != BASE_KEYS | CHECKPOINT_KEYS or any(
-                            not np.array_equal(base[k], measured['arrays'][k]) for k in BASE_KEYS):
-                        raise ValueError('checkpoint reference/count summaries disagree')
-                    payload = {k: measured['arrays'][k] for k in CHECKPOINT_KEYS}
-                    _validate_arrays(payload, batch_rows, baseline=base, step=step)
+                def publish_baseline():
+                    if not (baseline_dir / 'complete.json').exists():
+                        _commit_shard(baseline_dir, _identity(execution, batch), base)
+                        _read_shard(baseline_dir, _identity(execution, batch), batch_rows, prepared)
+                def publish_checkpoint(step, payload, evidence):
                     shard = folder / 'checkpoints' / f'step-{step}'
                     identity = _identity(execution, batch, step=step, baseline=file_hash(baseline_dir / 'complete.json'))
-                    stage = 'commit-checkpoint'
-                    _commit_shard(shard, identity, payload, evidence=measured['validation'])
+                    _commit_shard(shard, identity, payload, evidence=evidence)
                     _read_shard(shard, identity, batch_rows, prepared, baseline=base, step=step)
                     completed.add((batch['index'], step))
                     _progress(directory, 'running', completed, total)
                     print(f"activation measurement: {len(completed)}/{total}; batch {batch['index']}; step {step}; examples {len(batch_rows)}", flush=True)
-                    del measured, payload
+                print(f"activation measurement: batch {batch['index'] + 1}/{len(execution['batches'])}; pending checkpoints {pending}; before boundary check", flush=True)
+                with scope as integrity:
+                    stage = 'capture-reference'
+                    reference = engine.capture_reference(batch_rows)
+                    base = engine.summarize_reference(reference)
+                    _validate_arrays(base, batch_rows)
+                    if (baseline_dir / 'complete.json').exists():
+                        saved = _read_shard(baseline_dir, _identity(execution, batch), batch_rows, prepared)
+                        if any(not np.array_equal(saved[k], base[k]) for k in BASE_KEYS):
+                            raise ValueError('recreated reference disagrees with saved baseline summaries')
+                    if not scoped:
+                        publish_baseline()
+                    for step in pending:
+                        current['step'] = step
+                        stage = 'measure-checkpoint'
+                        source = prepared['source_evidence']['checkpoints'][str(step)]
+                        checkpoint = root / source['path']
+                        if (file_hash(checkpoint / 'complete.json') != source['complete_sha256']
+                                or file_hash(checkpoint / 'adapter_model.safetensors') != source['adapter_sha256']):
+                            raise ValueError('source checkpoint changed during production')
+                        measured = engine.measure(checkpoint, reference, step=step)
+                        _validate_evidence(measured['validation'], prepared, step, batch_rows)
+                        if set(measured['arrays']) != BASE_KEYS | CHECKPOINT_KEYS or any(
+                                not np.array_equal(base[k], measured['arrays'][k]) for k in BASE_KEYS):
+                            raise ValueError('checkpoint reference/count summaries disagree')
+                        payload = {k: measured['arrays'][k] for k in CHECKPOINT_KEYS}
+                        _validate_arrays(payload, batch_rows, baseline=base, step=step)
+                        if scoped:
+                            buffered.append((step, payload, measured['validation']))
+                        else:
+                            publish_checkpoint(step, payload, measured['validation'])
+                        del measured, payload
+                    stage = 'final-batch-boundary-check'
+                # Publish no new scientific payload until exact final integrity passes.
+                if scoped:
+                    stage = 'commit-verified-batch'
+                    publish_baseline()
+                    for step, payload, evidence in buffered:
+                        evidence['workload_integrity'] = dict(integrity)
+                        publish_checkpoint(step, payload, evidence)
+                buffered.clear()
                 stage = 'release-reference'
                 try:
                     engine.release_reference(reference)
@@ -374,8 +457,12 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                       'checkpoint_steps': STEPS, 'views': VIEWS,
                       'base_sha256': prepared['source_evidence']['base_sha256'],
                       'aggregate_arrays': 'results/aggregate-sums.npz',
-                      'summary_scope': 'sufficient sums; interpretation, weighting and intervals belong to CPU report'}
+                      'summary_scope': 'sufficient sums; interpretation, weighting and intervals belong to CPU report',
+                      'production_integrity_policy': PRODUCTION_POLICY if hasattr(engine,'integrity_scope') else 'per-measurement-hashes',
+                      'recovery_path': 'meta/production-recovery.json' if recovery is not None else None}
             _write_json(directory / 'results/results.json', result)
+            if recovery is not None:
+                files.append(directory/'meta/production-recovery.json')
             files.extend(directory / p for p in ['config.json', 'meta/run_manifest.json',
                                                  'results/results.json', 'results/aggregate-sums.npz'])
             _write_json(directory / 'complete.json', {'execution_sha256': _hash(execution),

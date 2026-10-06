@@ -319,3 +319,79 @@ def test_execution_name_cannot_reuse_preparation_run_directory(execution, tmp_pa
                          name=prepared_config['run_id'], review_notes='Reviewed candidate.')
     assert evidence.read_bytes() == before
     assert not (source.parent / 'activation.execution.json').exists()
+
+
+class ScopedMeasurementEngine(MeasurementEngine):
+    def integrity_scope(self):
+        from contextlib import contextmanager
+        @contextmanager
+        def scope():
+            self.deps.boundary_checks += 1
+            self.deps.inside_scope=True
+            try:
+                yield {'policy':'workload-boundary-sha256-and-measurement-version-guards'}
+                self.deps.boundary_checks += 1
+                if self.deps.boundary_failure:
+                    raise ValueError('final boundary hash failed')
+            finally:
+                self.deps.inside_scope=False
+        return scope()
+    def measure(self,checkpoint,reference,*,step):
+        assert self.deps.inside_scope, 'production still uses repeated per-checkpoint hashing'
+        return super().measure(checkpoint,reference,step=step)
+
+
+class ScopedMeasurementDependencies(MeasurementDependencies):
+    def __init__(self,**kwargs):
+        super().__init__(**kwargs)
+        self.inside_scope=False;self.boundary_checks=0;self.boundary_failure=False
+    def activation_engine(self,config,root):
+        self.engine_loads+=1
+        return ScopedMeasurementEngine(self)
+
+
+def test_production_bounds_hash_work_and_does_not_publish_before_final_hash(execution,tmp_path):
+    from pilot_eval.activation_measurement import measure_activation
+    deps=ScopedMeasurementDependencies();deps.boundary_failure=True
+    with pytest.raises(ValueError,match='final boundary hash'):
+        measure_activation(execution,tmp_path,dependencies=deps)
+    directory=run_dir(execution,tmp_path)
+    assert not list((directory/'batches').rglob('complete.json'))
+    deps=ScopedMeasurementDependencies()
+    result=measure_activation(execution,tmp_path,dependencies=deps)
+    assert result['measurement_complete']
+    assert deps.boundary_checks==38  # 19 batches, before/after each; not 190 checkpoint hashes
+
+
+def test_reviewed_recovery_preserves_old_units_and_allows_only_code_revision_change(execution,tmp_path):
+    from pilot_eval.activation_measurement import measure_activation, authorize_measurement_recovery, verify_measurement
+    old=MeasurementDependencies(fail_at=3,exception=KeyboardInterrupt)
+    with pytest.raises(KeyboardInterrupt): measure_activation(execution,tmp_path,dependencies=old)
+    directory=run_dir(execution,tmp_path)
+    preserved={p:p.read_bytes() for p in (directory/'batches').rglob('*') if p.is_file()}
+    class Updated(ScopedMeasurementDependencies):
+        def runtime(self): return {**super().runtime(),'git_commit':'updated-code'}
+    updated=Updated()
+    with pytest.raises(ValueError,match='runtime mismatch'):
+        measure_activation(execution,tmp_path,dependencies=updated)
+    recovery=authorize_measurement_recovery(execution,tmp_path,review_notes='Approved only hash scheduling and progress changes.',dependencies=updated)
+    assert recovery['verified_completed_units']==[[0,0],[0,8]]
+    assert recovery['source_runtime']!=recovery['actual_runtime']
+    result=measure_activation(execution,tmp_path,dependencies=updated)
+    assert result['measurement_complete']
+    assert len(updated.measure_calls)==93
+    assert all(p.read_bytes()==value for p,value in preserved.items())
+    assert verify_measurement(execution,tmp_path)==result
+    class Changed(Updated):
+        def runtime(self): return {**super().runtime(),'precision':'float16'}
+    with pytest.raises(ValueError,match='numerical'):
+        authorize_measurement_recovery(execution,tmp_path,review_notes='No',dependencies=Changed())
+
+
+def test_public_recovery_command_verifies_saved_progress_without_model_load(execution,tmp_path):
+    from pilot_eval.cli import main
+    deps=MeasurementDependencies()
+    assert main(['activation-recover-measurement','--config',str(execution),
+                 '--review-notes','Approved production integrity performance fix.',
+                 '--output-root',str(tmp_path)],dependencies=deps)==0
+    assert deps.engine_loads==0
