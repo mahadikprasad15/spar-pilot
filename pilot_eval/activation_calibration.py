@@ -350,22 +350,30 @@ def validate_rule(path, output_root, *, dependencies=None):
     with run_lock(target):
         if (target/'complete.json').exists(): return _verified(target,identity,['results.json','config.json'])
         _save_frozen(target/'config.json',identity)
-        reference=_arrays(directory,'batch-1')
-        controls=_negative_controls(reference,rule)
-        agreements={r['variant']:check_agreement(reference,_arrays(directory,r['variant']),rule)
-                    for r in result['records'] if r['status']=='completed'}
-        for required in ['repeat-1','padded-1']:
-            if required not in agreements or not agreements[required]['passed']:
-                raise ValueError('repeatability/padding validation failed; stop and inspect evidence')
-        eligible=[b for b in BATCHES if 'batch-'+str(b) in agreements and agreements['batch-'+str(b)]['passed']]
-        # Failed candidates remain rejected; they never authorize execution.
-        saved={'protocol':PROTOCOL,'rule':rule,'validated_batches':eligible,'negative_controls':controls,
-               'agreements':agreements,'runtime':plan['runtime'],'prepared_sha256':plan['prepared_sha256'],
-               'calibration_plan':str(_relative(path,root).relative_to(root))}
-        _write_json(target/'results.json',saved)
-        _seal(target,identity,[target/'config.json',target/'results.json'])
-        _write_state(target,'completed',len(eligible),len(BATCHES))
-        return saved
+        agreements, controls = {}, {}
+        try:
+            reference=_arrays(directory,'batch-1')
+            controls=_negative_controls(reference,rule)
+            agreements={r['variant']:check_agreement(reference,_arrays(directory,r['variant']),rule)
+                        for r in result['records'] if r['status']=='completed'}
+            for required in ['repeat-1','padded-1']:
+                if required not in agreements or not agreements[required]['passed']:
+                    raise ValueError('repeatability/padding validation failed; stop and inspect evidence')
+            eligible=[b for b in BATCHES if 'batch-'+str(b) in agreements and agreements['batch-'+str(b)]['passed']]
+            # Failed candidates remain rejected; they never authorize execution.
+            saved={'protocol':PROTOCOL,'rule':rule,'validated_batches':eligible,'negative_controls':controls,
+                   'agreements':agreements,'runtime':plan['runtime'],'prepared_sha256':plan['prepared_sha256'],
+                   'calibration_plan':str(_relative(path,root).relative_to(root))}
+            _write_json(target/'results.json',saved)
+            _seal(target,identity,[target/'config.json',target/'results.json'])
+            _write_state(target,'completed',len(eligible),len(BATCHES))
+            return saved
+        except Exception as exc:
+            _write_json(target/'results.json', {'status':'failed','error':str(exc),
+                'agreements':agreements,'negative_controls':controls,'protocol':PROTOCOL})
+            _write_state(target,'failed',0,len(BATCHES),str(exc))
+            raise
+
 
 
 def load_validated_rule(path, output_root, *, prepared, runtime):

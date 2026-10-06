@@ -26,7 +26,7 @@ def test_notebook_is_runnable_and_uses_shared_workflow():
     assert 'SPAR/spar-pilot/artifacts' in text
     assert '/content/spar-pilot2' not in text and 'SPAR/pilot1' not in text
     assert list(code) == ['setup', 'install', 'environment', 'helpers', 'prepare', 'audit',
-                          'validate', 'profile', 'review', 'freeze', 'measure', 'verify', 'report', 'read', 'recovery']
+                          'validate', 'calibrate', 'calibration-review', 'calibration-validate', 'profile', 'review', 'freeze', 'measure', 'verify', 'report', 'read', 'recovery']
     import re
     assert re.search(r"HARNESS_COMMIT = ['\"][0-9a-f]{40}['\"]", code['setup'])
     assert 'activation-report' in code['report']
@@ -62,6 +62,7 @@ def test_notebook_stages_freeze_measure_verify_report_and_restore(tmp_path, froz
         calls.append(args[0])
         assert main(args, dependencies=deps) == 0
 
+    scope['PROFILE_DIR'] = tmp_path / json.loads(prepared_path.read_text())['run_path'] / 'profile'
     scope['run_command'] = run
     scope['live_children'] = lambda: []
     exec(code['audit'], scope)

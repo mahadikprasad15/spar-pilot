@@ -177,3 +177,29 @@ def test_report_direction_resolution_distinguishes_weak_and_resolved():
     assert direction_resolution(1e-3,rule)['direction_resolved'] is True
     assert direction_resolution(None,rule)['direction_resolved'] is None
     assert direction_resolution(1e-3,{})['direction_resolved'] is None
+
+
+def test_padding_validation_failure_persists_rejection_and_never_seals(tmp_path):
+    from pilot_eval.activation_calibration import prepare_calibration, collect_calibration, freeze_rule, validate_rule
+    class BrokenPaddingEngine(CalibrationEngine):
+        def capture_reference(self, rows, *, padded_width=None):
+            self.padded=bool(padded_width)
+            return super().capture_reference(rows,padded_width=padded_width)
+        def measure(self,checkpoint,reference,*,step):
+            result=super().measure(checkpoint,reference,step=step)
+            if self.deps.break_padding and self.padded and step>0:
+                result['arrays']['block_delta_norm_sum']+=100*(result['arrays']['block_count']>0)
+            return result
+    class Deps(CalibrationDeps):
+        break_padding=False
+        def activation_engine(self,config,root): return BrokenPaddingEngine(self)
+    deps=Deps(); config=prepared(tmp_path)
+    plan=prepare_calibration(config,tmp_path,name='padding-control',dependencies=deps)
+    collect_calibration(plan,tmp_path,dependencies=deps)
+    freeze_rule(plan,tmp_path,review_notes='Reviewed')
+    deps.break_padding=True
+    with pytest.raises(ValueError,match='padding validation'):
+        validate_rule(plan,tmp_path,dependencies=deps)
+    target=tmp_path/json.loads(plan.read_text())['run_path']/'validated'
+    assert not (target/'complete.json').exists()
+    assert json.loads((target/'results.json').read_text())['status']=='failed'
