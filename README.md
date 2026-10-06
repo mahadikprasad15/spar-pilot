@@ -4,6 +4,8 @@
 
 [Open the Pilot 3 notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/notebooks/pilot-3-colab.ipynb)
 
+[Cell-by-cell HTML guide with diagrams](output/learning/pilot3-notebook-explained.html) explains inputs, objects, measurement formulas and recovery. Open the downloaded HTML in a browser.
+
 Reuse completed Pilot 2 adapters at steps 0/8/16/32/64; measure block-output
 changes and direct module contributions on fixed GSM8K gold sequences and
 FineWeb passages. The guided stages verify sources, audit masks, validate the
