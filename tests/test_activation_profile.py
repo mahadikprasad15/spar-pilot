@@ -191,3 +191,35 @@ def test_profile_keeps_observed_fp32_ratio_drift_as_a_failure(tmp_path):
     assert any(d.get('measurement') == 'relative_write'
                for d in evidence['agreement']['differences'])
     assert not (directory / 'complete.json').exists()
+
+
+def test_profile_checks_integrity_before_publishing_and_reports_chunk_progress(tmp_path, capsys):
+    from contextlib import contextmanager
+    from pilot_eval.activation_profile import profile_activation
+    class ScopedEngine(ProfileEngine):
+        @contextmanager
+        def integrity_scope(self):
+            yield {'hash_seconds': 0}
+            self.deps.scope_exits += 1
+            if self.deps.reject_boundary and self.deps.scope_exits == 2:
+                raise ValueError('frozen-base hash changed after workload')
+    class ScopedDeps(ProfileDependencies):
+        reject_boundary = False
+        scope_exits = 0
+        def activation_engine(self, config, root):
+            return ScopedEngine(self)
+    config = prepared(tmp_path)
+    deps = ScopedDeps()
+    deps.reject_boundary = True
+    with pytest.raises(ValueError, match='frozen-base hash changed'):
+        profile_activation(config, tmp_path, dependencies=deps)
+    profile = tmp_path / json.loads(config.read_text())['run_path'] / 'profile'
+    assert not (profile / 'batch-1/complete.json').exists()
+    assert not list(profile.glob('batch-*/*.npz'))
+    deps.reject_boundary = False
+    result = profile_activation(config, tmp_path, dependencies=deps)
+    assert all(row['status'] == 'passed' for row in result['measurements'])
+    output = capsys.readouterr().out
+    assert 'warmup chunk 1/1: reference' in output
+    assert 'timed chunk 16/16: reference' in output
+    assert 'checkpoint 64: complete' in output

@@ -338,3 +338,31 @@ revision while inference uses that verified core revision. A changed production
 code/runtime identity requires new profiling and a separately named execution.
 Local syntax/format, saved-workflow and recovery tests do not establish that
 Colab installation, Drive access or the real GPU/source gates pass.
+
+
+## Profiling integrity and performance recovery
+
+Profiling uses exact source-compatible frozen-base SHA256 at the boundaries of
+its warmup workload and timed workload. Within each scope, checkpoint switching
+and measurement boundaries check parameter identity, storage pointer, shape,
+dtype, device and PyTorch mutation version. The final exact hash also detects
+persistent `.data` edits that bypass the version counter. This is not a claim of
+protection against an adversarial edit-and-restore using `.data` between guards.
+Candidate payloads are published only after the final hash passes. Normal
+validation and scientific measurement retain their original per-measurement
+hash checks; numerical acceptance thresholds and activation calculations are
+unchanged. Profile identity records this policy explicitly.
+
+For batch 1 on sixteen inputs plus one warmup batch, measurement-internal full
+hashes decrease from 170 to four workload-boundary hashes, in addition to model
+loading checks. Timed throughput includes both timed-workload boundary hashes.
+Loading/warmup/file writes remain outside the reported timing. Actual GPU speed
+must be measured; CPU hash-call tests are not a T4 throughput benchmark.
+
+`python scripts/recover_pilot3_profile.py --config PREPARED --output-root ROOT`
+archives only a matching failed profile with zero completed/saved candidates,
+along with previous real-model diagnostics. It refuses a frozen execution,
+completed candidates, NPZ payloads or a currently locked run. It verifies the
+archived files byte-for-byte by hash and leaves preparation/adapters unchanged.
+Rerun Colab section 7 under the new code identity, then section 8. The notebook
+monitor displays current chunk/checkpoint/hash stages rather than only `0/5`.

@@ -324,3 +324,55 @@ def test_summary_rejects_nonfinite_values_and_reports_empty_views():
     zeros[0, 0, 0] = float('nan')
     with pytest.raises(ValueError, match='nonfinite'):
         block_summary(zeros, zeros, np.ones((2, 3), dtype=bool))
+
+
+@pytest.mark.parametrize('mutation', [None, 'inplace', 'data'])
+def test_profile_integrity_scope_hashes_boundaries_and_rejects_base_edits(tmp_path, mutation, monkeypatch):
+    torch = pytest.importorskip('torch')
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+    from peft import LoraConfig, get_peft_model
+    from pilot_eval.activation_engine import ActivationEngine, InstrumentFailure
+    from pilot_eval.activation_prepare import PROJECTIONS
+    from pilot_eval.sft_backend import frozen_weight_hash
+    torch.set_num_threads(1)
+    model = get_peft_model(Qwen2ForCausalLM(Qwen2Config(vocab_size=16, hidden_size=4,
+        intermediate_size=8, num_hidden_layers=2, num_attention_heads=1,
+        num_key_value_heads=1, pad_token_id=0, attn_implementation='eager')),
+        LoraConfig(r=1, lora_alpha=1, lora_dropout=0, target_modules=PROJECTIONS,
+                   task_type='CAUSAL_LM'))
+    checkpoint = tmp_path / 'adapter'
+    model.save_pretrained(checkpoint)
+    engine = ActivationEngine(model=model, expected_layers=2,
+                              expected_base_hash=frozen_weight_hash(model))
+    calls = []
+    original = engine.base_hash
+    def counted():
+        calls.append(1)
+        return original()
+    monkeypatch.setattr(engine, 'base_hash', counted)
+    rows = [dict(id='one', input_ids=[1, 2], attention_mask=[1, 1], masks={
+        'question': [True, False], 'solution': [False, True], 'user': [False, False]})]
+    parameter = next(p for n, p in model.named_parameters() if 'lora_' not in n)
+    try:
+        if mutation:
+            with pytest.raises(InstrumentFailure, match='frozen-base'):
+                with engine.integrity_scope():
+                    reference = engine.capture_reference(rows)
+                    engine.measure(checkpoint, reference, step=0)
+                    with torch.no_grad():
+                        (parameter.data if mutation == 'data' else parameter).add_(1)
+                    if mutation == 'inplace':
+                        engine.measure(checkpoint, reference, step=0)
+        else:
+            with engine.integrity_scope():
+                reference = engine.capture_reference(rows)
+                first = engine.measure(checkpoint, reference, step=0)
+                second = engine.measure(checkpoint, reference, step=0)
+            assert len(calls) == 2
+            for key in first['arrays']:
+                np.testing.assert_array_equal(first['arrays'][key], second['arrays'][key])
+            # Outside the bounded scope the original per-measurement checks remain.
+            engine.measure(checkpoint, reference, step=0)
+            assert len(calls) == 4
+    finally:
+        engine.close()

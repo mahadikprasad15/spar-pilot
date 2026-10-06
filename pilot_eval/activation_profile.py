@@ -1,5 +1,6 @@
 """Profile the validated activation workload and freeze reviewed execution plans."""
 import gc
+from contextlib import nullcontext
 import json
 import re
 import time
@@ -134,9 +135,22 @@ def _check_gate(evidence, config, step):
 
 
 def _workload(config, root, rows, engine, deps, *, timed):
+    # Publish candidate arrays only after both exact boundary hashes pass.
+    scope = engine.integrity_scope() if hasattr(engine, 'integrity_scope') else nullcontext({})
+    with scope as integrity:
+        arrays, evidence, reference_seconds, checkpoint_seconds = _workload_inner(
+            config, root, rows, engine, deps, timed=timed)
+    checkpoint_seconds += integrity.get('hash_seconds', 0.)
+    if evidence and integrity:
+        evidence[0]['workload_integrity'] = dict(integrity)
+    return arrays, evidence, reference_seconds, checkpoint_seconds
+
+
+def _workload_inner(config, root, rows, engine, deps, *, timed):
     collected = {s: {key: [] for key in ARRAYS} for s in STEPS}
     evidence, reference_seconds, checkpoint_seconds = [], 0., 0.
-    for batch in rows:
+    for chunk_index, batch in enumerate(rows):
+        print(f"activation profile: {'timed' if timed else 'warmup'} chunk {chunk_index + 1}/{len(rows)}: reference", flush=True)
         reference = None
         try:
             deps.synchronize()
@@ -152,7 +166,9 @@ def _workload(config, root, rows, engine, deps, *, timed):
                     raise ValueError('source checkpoint changed during profile')
                 deps.synchronize()
                 started = deps.clock()
+                print(f"activation profile: chunk {chunk_index + 1}/{len(rows)} checkpoint {step}: start", flush=True)
                 measured = engine.measure(checkpoint, reference, step=step)
+                print(f"activation profile: chunk {chunk_index + 1}/{len(rows)} checkpoint {step}: complete", flush=True)
                 deps.synchronize()
                 checkpoint_seconds += deps.clock() - started
                 _check_gate(measured['validation'], config, step)
@@ -192,6 +208,7 @@ def profile_activation(config_path, output_root, *, dependencies=None):
                 'example_ids': [r['id'] for r in selected], 'inputs_sha256': _hash(selected),
                 'selection': 'longest-eight-per-corpus-length-descending-id-tiebreak',
                 'batch_sizes': BATCHES, 'agreement': AGREEMENT,
+                'integrity_policy': 'workload-boundary-sha256-and-measurement-version-guards',
                 'validation_identity': diagnostic['identity'], 'schema_version': 1,
                 'views': VIEWS, 'projections': PROJECTIONS, 'checkpoint_steps': STEPS}
     directory = root / config['run_path'] / 'profile'
@@ -214,6 +231,7 @@ def profile_activation(config_path, output_root, *, dependencies=None):
                     candidate = {s: _load_arrays(target / f'step-{s}.npz') for s in STEPS} if result['status'] != 'oom' else None
                 else:
                     try:
+                        print(f'activation profile: batch {batch}: loading model', flush=True)
                         deps.cleanup()
                         engine = deps.activation_engine(config, root)
                         if engine.base_hash() != config['source_evidence']['base_sha256']:
@@ -237,7 +255,7 @@ def profile_activation(config_path, output_root, *, dependencies=None):
                                   'input_tokens_per_second': sum(len(r['input_ids']) for r in selected) / elapsed,
                                   'examples_per_second': len(selected) / elapsed,
                                   'memory': memory,
-                                  'timing_scope': 'one-reference-plus-five-validated-checkpoints-per-batch; excludes load, warmup and file writes',
+                                  'timing_scope': 'one-reference-plus-five-validated-checkpoints-per-batch plus exact workload boundary hashes; excludes load, warmup and file writes',
                                   'validation': evidence}
                         target.mkdir(parents=True, exist_ok=True)
                         for step in STEPS:

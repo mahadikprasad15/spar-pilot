@@ -28,6 +28,7 @@ class ActivationEngine:
         self.validation_limit = validation_limit
         self._closed = False
         self.profile_timings = False
+        self._integrity_snapshot = None
         self._initial_adapter = model.active_adapters[0]
         self._initial_training = model.training
         self._initial_grad_flags = {name: p.requires_grad for name, p in model.named_parameters()}
@@ -68,6 +69,52 @@ class ActivationEngine:
 
     def base_hash(self):
         return frozen_weight_hash(self.model)
+
+    def _progress(self, stage):
+        if self.profile_timings:
+            print(f'activation instrument: {stage}', flush=True)
+
+    def _base_versions(self):
+        return {name: (id(p), p.data_ptr(), tuple(p.shape), p.dtype, p.device, p._version)
+                for name, p in self.model.named_parameters() if 'lora_' not in name}
+
+    def _verify_base(self, stage):
+        if self._integrity_snapshot is not None:
+            if self._base_versions() != self._integrity_snapshot:
+                raise InstrumentFailure(f'frozen-base parameter identity/version changed {stage}')
+        else:
+            self._progress(f'base hash start: {stage}')
+            hash_started = time.perf_counter()
+            if self.base_hash() != self.expected_base_hash:
+                raise InstrumentFailure(f'frozen-base hash changed {stage}')
+            self._progress(f'base hash complete: {stage}; {time.perf_counter() - hash_started:.2f}s')
+
+    @contextmanager
+    def integrity_scope(self):
+        """Exact hashes around a bounded workload; no payload may publish inside it.
+
+        Parameter identity/version guards also run at each measurement boundary.
+        Final hashing catches .data edits which bypass PyTorch version counters.
+        """
+        if self._integrity_snapshot is not None:
+            raise InstrumentFailure('nested frozen-base integrity scopes are forbidden')
+        evidence = {'policy': 'workload-boundary-sha256-and-measurement-version-guards',
+                    'hash_seconds': 0.}
+        started = time.perf_counter()
+        self._verify_base('before workload')
+        evidence['hash_seconds'] += time.perf_counter() - started
+        self._integrity_snapshot = self._base_versions()
+        try:
+            yield evidence
+            if self._base_versions() != self._integrity_snapshot:
+                raise InstrumentFailure('frozen-base parameter identity/version changed during workload')
+            # Clear scope so this is an exact SHA256, not a version-only check.
+            self._integrity_snapshot = None
+            started = time.perf_counter()
+            self._verify_base('after workload')
+            evidence['hash_seconds'] += time.perf_counter() - started
+        finally:
+            self._integrity_snapshot = None
 
     def _check_finite(self, *values):
         if any(not self.torch.isfinite(value).all().item() for value in values):
@@ -198,14 +245,17 @@ class ActivationEngine:
         torch = self.torch
         started = self._profile_clock()
         rank1_seconds = 0.
+        self._progress(f'checkpoint {step}: switch')
         self._switch(checkpoint)
+        if self._integrity_snapshot is not None:
+            self._verify_base('after checkpoint switch')
+        self._progress(f'checkpoint {step}: disabled reference check')
         repeated = self.capture_reference(reference['rows'])
         invariant = all(torch.equal(reference['blocks'][i], repeated['blocks'][i]) for i in reference['blocks'])
         del repeated
         if not invariant:
             raise InstrumentFailure('disabled-adapter reference changed after checkpoint switch')
-        if self.base_hash() != self.expected_base_hash:
-            raise InstrumentFailure('frozen-base hash changed after checkpoint switch')
+        self._verify_base('after disabled reference check')
         before_forward = self._profile_clock()
         pre_validation_seconds = before_forward - started
         arrays, diagnostics = {}, []
@@ -305,13 +355,14 @@ class ActivationEngine:
                                   (module.lora_B['default'], 'register_forward_hook', branch_hook),
                                   (module, 'register_forward_hook', module_hook)])
         forward_started = self._profile_clock()
+        self._progress(f'checkpoint {step}: adapted forward and reductions')
         with self._hooks(registrations):
             self._forward(reference['inputs'])
         forward_finished = self._profile_clock()
         if len(seen_blocks) != layers or len(seen_modules) != layers * 7:
             raise InstrumentFailure('incomplete hook coverage')
-        if self.base_hash() != self.expected_base_hash:
-            raise InstrumentFailure('frozen-base hash changed during measurement')
+        self._verify_base('during measurement')
+        self._progress(f'checkpoint {step}: complete')
         finished = self._profile_clock()
         return {'arrays': arrays, 'timing': {
                 'validation_seconds': pre_validation_seconds + rank1_seconds + finished - forward_finished,

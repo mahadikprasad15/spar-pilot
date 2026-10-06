@@ -27,7 +27,8 @@ def test_notebook_is_runnable_and_uses_shared_workflow():
     assert '/content/spar-pilot2' not in text and 'SPAR/pilot1' not in text
     assert list(code) == ['setup', 'install', 'environment', 'helpers', 'prepare', 'audit',
                           'validate', 'profile', 'review', 'freeze', 'measure', 'verify', 'report', 'read', 'recovery']
-    assert 'c547501' in code['setup']
+    import re
+    assert re.search(r"HARNESS_COMMIT = ['\"][0-9a-f]{40}['\"]", code['setup'])
     assert 'activation-report' in code['report']
     assert 'activation-measure' in code['measure']
     assert 'BENCHMARK_REVIEWED' in code['freeze']
