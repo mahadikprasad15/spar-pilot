@@ -89,7 +89,7 @@ def comparison_metrics(reference, candidate, *, resolution=None):
                 unresolved['directions'] += int((~defined).sum())
                 unresolved['direction_comparisons'] += int(defined.sum())
                 cosine = np.divide((a*b).sum(axis=-1), an*bn, out=np.ones_like(an), where=defined)
-                retain(name + '_direction', np.where(defined, 1-np.clip(cosine, -1, 1), 0))
+                retain(name + '_direction', np.where(defined & (error != 0), 1-np.clip(cosine, -1, 1), 0))
                 # Alternative normalization by norm of the mean baseline vector.
                 if field == 'delta_sum':
                     av = np.linalg.norm(expanded_a['block_base_sum'], axis=-1)
@@ -124,6 +124,10 @@ def fit_rule(metrics, *, margin):
 def check_agreement(reference, candidate, rule):
     if rule.get('protocol') != PROTOCOL or rule.get('margin') != 3:
         raise ValueError('unsupported calibrated rule')
+    if (set(rule['envelope']) != set(rule['thresholds']) or any(
+            not np.isfinite(v) or v < 0 or rule['thresholds'][k] != 3*v
+            for k,v in rule['envelope'].items())):
+        raise ValueError('thresholds must equal the frozen 3x envelope')
     metrics = comparison_metrics(reference, candidate, resolution=rule['resolution'])
     if set(metrics['errors']) != set(rule['thresholds']):
         raise ValueError('calibrated metric schema mismatch')
@@ -174,7 +178,16 @@ def _plan(path, root, runtime=None):
             or plan['inputs_sha256'] != config['items_sha256']
             or (runtime is not None and plan['runtime'] != runtime)):
         raise ValueError('calibration identity/runtime mismatch')
+    if (set(plan['cohorts']) != {'calibration','validation'} or plan['variants'] != VARIANTS
+            or plan['checkpoint_steps'] != STEPS or plan['seed'] != config['seed']):
+        raise ValueError('calibration protocol schema mismatch')
     all_ids = sum(plan['cohorts'].values(), [])
+    by_id = {r['id']:r for r in rows}
+    if any(i not in by_id for i in all_ids):
+        raise ValueError('unknown calibration input')
+    if any(sum(by_id[i]['corpus']==corpus for i in ids)!=8
+           for ids in plan['cohorts'].values() for corpus in ['gsm8k','fineweb']):
+        raise ValueError('calibration cohort balance mismatch')
     if (any(len(ids)!=16 for ids in plan['cohorts'].values()) or len(set(all_ids))!=32
             or set(all_ids)&set(plan['excluded_profile_ids'])):
         raise ValueError('calibration and validation cohorts must be independent')
@@ -325,7 +338,9 @@ def validate_rule(path, output_root, *, dependencies=None):
     if not rule_path.exists(): raise ValueError('freeze reviewed calibration rule before validation')
     rule=json.loads(rule_path.read_text())
     if rule['plan_sha256']!=_hash(plan): raise ValueError('frozen rule identity mismatch')
-    _, calibration=_verify_phase(plan,root,'calibration')
+    calibration_directory, calibration=_verify_phase(plan,root,'calibration')
+    if rule['calibration_complete_sha256'] != file_hash(calibration_directory/'complete.json'):
+        raise ValueError('calibration evidence identity mismatch')
     _collect(path,root,'validation',dependencies or HFProfileDependencies())
     directory,result=_verify_phase(plan,root,'validation')
     target=root/plan['run_path']/'validated'

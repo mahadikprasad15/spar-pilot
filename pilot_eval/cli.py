@@ -68,6 +68,16 @@ def main(argv=None, *, dependencies=None):
     activation_validate.add_argument('--batch-size', type=int, default=2)
     activation_profile = commands.add_parser('activation-profile', help='profile validated fixed activation workloads')
     activation_profile.add_argument('--config', type=Path, required=True)
+    activation_profile.add_argument('--calibration', type=Path)
+    activation_validate.add_argument('--namespace', choices=['agreement-v2'])
+    calibration_commands=[]
+    for name in ['activation-calibration-prepare','activation-calibrate','activation-calibration-freeze','activation-calibration-validate']:
+        command=commands.add_parser(name, help='versioned empirical numerical agreement calibration')
+        command.add_argument('--config',type=Path,required=True)
+        command.add_argument('--output-root',type=Path,default=Path('artifacts'))
+        if name.endswith('prepare'): command.add_argument('--name',required=True)
+        if name.endswith('freeze'): command.add_argument('--review-notes',required=True)
+        calibration_commands.append(command)
     activation_freeze = commands.add_parser('activation-freeze', help='freeze an explicitly reviewed passing batch plan')
     activation_freeze.add_argument('--config', type=Path, required=True)
     activation_freeze.add_argument('--profile', type=Path, required=True)
@@ -85,7 +95,17 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'activation-report':
+        if args.command in ['activation-calibration-prepare','activation-calibrate','activation-calibration-freeze','activation-calibration-validate']:
+            from pilot_eval.activation_calibration import prepare_calibration, collect_calibration, freeze_rule, validate_rule
+            if args.command.endswith('prepare'):
+                print(prepare_calibration(args.config,args.output_root,name=args.name,dependencies=dependencies))
+            elif args.command=='activation-calibrate':
+                print(json.dumps(collect_calibration(args.config,args.output_root,dependencies=dependencies)))
+            elif args.command.endswith('freeze'):
+                print(freeze_rule(args.config,args.output_root,review_notes=args.review_notes))
+            else:
+                print(json.dumps(validate_rule(args.config,args.output_root,dependencies=dependencies),indent=2))
+        elif args.command == 'activation-report':
             from pilot_eval.activation_report import report_activation
             result = report_activation(args.config, args.output_root, name=args.name)
             print(json.dumps({'report_complete': result['report_complete'], 'name': result['name']}))
@@ -96,7 +116,7 @@ def main(argv=None, *, dependencies=None):
             print(json.dumps({key: value for key, value in result.items() if key != 'example_ids'}))
         elif args.command == 'activation-profile':
             from pilot_eval.activation_profile import profile_activation
-            result = profile_activation(args.config, args.output_root, dependencies=dependencies)
+            result = profile_activation(args.config, args.output_root, dependencies=dependencies, calibration=args.calibration)
             print(json.dumps({'profile_path': result['profile_path'],
                 'provisional_fastest_batch': result['provisional_fastest_batch'],
                 'measurements': [{k: v for k, v in row.items() if k != 'validation'}
@@ -108,7 +128,7 @@ def main(argv=None, *, dependencies=None):
         elif args.command == 'activation-validate':
             from pilot_eval.activation_workflow import validate_activation
             print(json.dumps(validate_activation(args.config, args.output_root,
-                batch_size=args.batch_size, dependencies=dependencies), indent=2))
+                batch_size=args.batch_size, dependencies=dependencies, namespace=args.namespace), indent=2))
         elif args.command == 'activation-prepare':
             from pilot_eval.activation_prepare import prepare_activation
             print(prepare_activation(args.source_config, args.output_root, args.name,

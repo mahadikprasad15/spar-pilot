@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from pilot_eval.activation_prepare import load_prepared, STEPS, VIEWS, PROJECTIONS
-from pilot_eval.activation_profile import BATCHES, AGREEMENT, _relative, _verified, _check_gate
+from pilot_eval.activation_profile import BATCHES, AGREEMENT, _relative, _verified, _check_gate, _profile_agreement
 from pilot_eval.activation_workflow import HFActivationDependencies, _save_arrays, _verify_complete
 from pilot_eval.run import _write_json, _write_state
 from pilot_eval.training import file_hash, run_lock
@@ -37,7 +37,7 @@ def load_execution(config_path, output_root):
             or execution['state'] != 'frozen' or execution['checkpoint_steps'] != STEPS
             or execution['views'] != VIEWS or execution['projections'] != PROJECTIONS
             or execution['precision'] != 'float32' or execution['reduction_precision'] != 'float64'
-            or execution['rank1_thresholds'] != THRESHOLDS or execution['agreement'] != AGREEMENT
+            or execution['rank1_thresholds'] != THRESHOLDS
             or execution['prepared_sha256'] != _hash(prepared)
             or execution['inputs_sha256'] != prepared['items_sha256']
             or not execution['review']['notes'].strip()
@@ -62,11 +62,13 @@ def load_execution(config_path, output_root):
     result = _verified(profile, identity, ['config.json', 'results.json'] + [
         f'batch-{b}/{p}' for b in BATCHES for p in ['complete.json', 'results.json']])
     if (identity['prepared_sha256'] != _hash(prepared) or identity['runtime'] != execution['runtime']
-            or identity['agreement'] != AGREEMENT
+            or identity['agreement'] != execution['agreement']
+            or identity.get('calibration_path') != execution.get('calibration_path')
             or not any(r['batch_size'] == batch_size and r['status'] == 'passed' for r in result['measurements'])):
         raise ValueError('production profile/runtime or passing-candidate mismatch')
-    diagnostic_dir = root / prepared['run_path'] / 'validation' / (
-        'diagnostic-' + _hash(identity['validation_identity']['example_ids'])[:12])
+    _profile_agreement(identity, root, prepared)
+    diagnostic_dir = (_relative(identity['validation_path'], root) if 'validation_path' in identity else
+        root / prepared['run_path'] / 'validation' / ('diagnostic-' + _hash(identity['validation_identity']['example_ids'])[:12]))
     if file_hash(diagnostic_dir / 'complete.json') != execution['validation_complete_sha256']:
         raise ValueError('frozen diagnostic marker hash mismatch')
     if not _verify_complete(diagnostic_dir, identity['validation_identity'])['all_gates_passed']:

@@ -88,7 +88,10 @@ def _load_arrays(path):
     return arrays
 
 
-def _agreement(reference, candidate):
+def _agreement(reference, candidate, rule=None):
+    if rule is not None:
+        from pilot_eval.activation_calibration import check_agreement
+        return check_agreement(reference, candidate, rule)
     failures = []
     for step in STEPS:
         for key in sorted(ARRAYS):
@@ -190,12 +193,30 @@ def _workload_inner(config, root, rows, engine, deps, *, timed):
     return arrays, evidence, reference_seconds, checkpoint_seconds
 
 
-def profile_activation(config_path, output_root, *, dependencies=None):
+def _profile_agreement(identity, root, config):
+    if 'calibration_path' not in identity:
+        if identity['agreement'] != AGREEMENT:
+            raise ValueError('unsupported profile agreement identity')
+        return None
+    from pilot_eval.activation_calibration import load_validated_rule
+    validated = load_validated_rule(root / identity['calibration_path'], root,
+                                   prepared=config, runtime=identity['runtime'])
+    if validated['rule'] != identity['agreement']:
+        raise ValueError('profile calibrated rule mismatch')
+    return validated['rule']
+
+
+def profile_activation(config_path, output_root, *, dependencies=None, calibration=None):
     root = Path(output_root).resolve()
     config, rows = load_prepared(config_path, root)
     deps = dependencies or HFProfileDependencies()
     runtime = deps.runtime()
-    diagnostic = validate_activation(config_path, root, dependencies=deps)
+    validated = None
+    if calibration is not None:
+        from pilot_eval.activation_calibration import load_validated_rule
+        validated = load_validated_rule(calibration, root, prepared=config, runtime=runtime)
+    diagnostic = validate_activation(config_path, root, dependencies=deps,
+                                     namespace='agreement-v2' if validated else None)
     if not diagnostic['all_gates_passed'] or diagnostic['identity']['runtime'] != runtime:
         raise ValueError('profile requires validated matching runtime')
     selected = []
@@ -211,7 +232,11 @@ def profile_activation(config_path, output_root, *, dependencies=None):
                 'integrity_policy': 'workload-boundary-sha256-and-measurement-version-guards',
                 'validation_identity': diagnostic['identity'], 'schema_version': 1,
                 'views': VIEWS, 'projections': PROJECTIONS, 'checkpoint_steps': STEPS}
-    directory = root / config['run_path'] / 'profile'
+    if validated:
+        identity['agreement'] = validated['rule']
+        identity['calibration_path'] = str(_relative(calibration, root).relative_to(root))
+        identity['validation_path'] = diagnostic['diagnostic_path']
+    directory = root / config['run_path'] / ('profile-v2-' + _hash(identity['agreement'])[:12] if validated else 'profile')
     required = ['config.json', 'results.json']
     for batch in BATCHES:
         required.extend([f'batch-{batch}/complete.json', f'batch-{batch}/results.json'])
@@ -228,7 +253,13 @@ def profile_activation(config_path, output_root, *, dependencies=None):
                 engine = None
                 if (target / 'complete.json').exists():
                     result = _verified(target, candidate_identity, ['results.json'])
-                    candidate = {s: _load_arrays(target / f'step-{s}.npz') for s in STEPS} if result['status'] != 'oom' else None
+                    candidate = {s: _load_arrays(target / f'step-{s}.npz') for s in STEPS} if result['status'] in ['passed', 'numerical-mismatch'] else None
+                elif validated and batch not in validated['validated_batches']:
+                    candidate = None
+                    result = {'batch_size': batch, 'status': 'rejected-calibration',
+                              'reason': 'Independent validation did not authorize this batch size.'}
+                    _write_json(target / 'results.json', result)
+                    _seal(target, candidate_identity, [target / 'results.json'])
                 else:
                     try:
                         print(f'activation profile: batch {batch}: loading model', flush=True)
@@ -247,7 +278,7 @@ def profile_activation(config_path, output_root, *, dependencies=None):
                         if elapsed <= 0 or not np.isfinite(elapsed):
                             raise ValueError('profile timing must be finite and positive')
                         memory = deps.peak_memory()
-                        agreement = _agreement(candidate if batch == 1 else baseline, candidate) if baseline is not None or batch == 1 else {'passed': False, 'reason': 'batch-1-reference-unavailable'}
+                        agreement = _agreement(candidate if batch == 1 else baseline, candidate, validated['rule'] if validated else None) if baseline is not None or batch == 1 else {'passed': False, 'reason': 'batch-1-reference-unavailable'}
                         result = {'batch_size': batch, 'status': 'passed' if agreement['passed'] else 'numerical-mismatch',
                                   'agreement': agreement, 'example_ids': identity['example_ids'],
                                   'seconds': elapsed, 'reference_seconds': reference_time,
@@ -320,9 +351,11 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
     # Re-read numeric evidence instead of trusting the displayed recommendation.
     reference = {s: _load_arrays(directory / 'batch-1' / f'step-{s}.npz') for s in STEPS}
     arrays = {s: _load_arrays(directory / f'batch-{batch_size}' / f'step-{s}.npz') for s in STEPS}
-    if not _agreement(reference, arrays)['passed']:
+    rule = _profile_agreement(identity, root, config)
+    if not _agreement(reference, arrays, rule)['passed']:
         raise ValueError('selected batch disagrees with batch 1')
-    diagnostic_dir = root / config['run_path'] / 'validation' / ('diagnostic-' + _hash(identity['validation_identity']['example_ids'])[:12])
+    diagnostic_dir = (_relative(identity['validation_path'], root) if 'validation_path' in identity else
+        root / config['run_path'] / 'validation' / ('diagnostic-' + _hash(identity['validation_identity']['example_ids'])[:12]))
     diagnostic = _verify_complete(diagnostic_dir, identity['validation_identity'])
     if not diagnostic['all_gates_passed']:
         raise ValueError('instrument diagnostic not passed')
@@ -332,7 +365,7 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
                  'profile_path': str(directory.relative_to(root)),
                  'profile_complete_sha256': file_hash(directory / 'complete.json'),
                  'validation_complete_sha256': file_hash(diagnostic_dir / 'complete.json'),
-                 'runtime': identity['runtime'], 'batch_size': batch_size, 'agreement': AGREEMENT,
+                 'runtime': identity['runtime'], 'batch_size': batch_size, 'agreement': identity['agreement'],
                  'precision': config['dtype'], 'reduction_precision': 'float64',
                  'rank1_thresholds': {'atol': 1e-6, 'rtol': 1e-5, 'rounding_factor': 4},
                  'review': {'notes': review_notes, 'batch_size': batch_size},
@@ -341,6 +374,8 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
                  'batches': [{'index': i // batch_size, 'example_ids': [r['id'] for r in rows[i:i + batch_size]],
                               'inputs_sha256': _hash(rows[i:i + batch_size])}
                              for i in range(0, len(rows), batch_size)]}
+    if 'calibration_path' in identity:
+        execution['calibration_path'] = identity['calibration_path']
     manifest = root / 'plans' / name / 'activation.execution.json'
     with run_lock(manifest.parent):
         _save_frozen(manifest, execution)

@@ -88,7 +88,7 @@ def _verify_complete(directory, identity):
     return json.loads((directory / 'results/results.json').read_text())
 
 
-def validate_activation(config_path, output_root, *, batch_size=2, dependencies=None):
+def validate_activation(config_path, output_root, *, batch_size=2, dependencies=None, namespace=None):
     """Validate one fixed diagnostic batch, never claim full-cohort completion."""
     root = Path(output_root).resolve()
     config, rows = load_prepared(config_path, root)
@@ -108,7 +108,13 @@ def validate_activation(config_path, output_root, *, batch_size=2, dependencies=
                          'block_scalars': ['example', 'view', 'layer'],
                          'module_scalars': ['example', 'view', 'layer', 'projection']},
                 'views': VIEWS, 'projections': PROJECTIONS, 'checkpoint_steps': STEPS}
+    if namespace is not None:
+        if namespace != 'agreement-v2':
+            raise ValueError('unsupported diagnostic namespace')
+        identity['namespace'] = namespace
     directory = root / config['run_path'] / 'validation' / ('diagnostic-' + _hash(identity['example_ids'])[:12])
+    if namespace:
+        directory = root / config['run_path'] / 'validation-v2' / ('diagnostic-' + _hash(identity)[:16])
     with run_lock(directory):
         if (directory / 'complete.json').exists():
             return _verify_complete(directory, identity)
@@ -150,7 +156,7 @@ def validate_activation(config_path, output_root, *, batch_size=2, dependencies=
             result = {'mode': 'diagnostic-only', 'scientific_run_complete': False,
                       'checkpoint_steps': STEPS, 'example_ids': identity['example_ids'],
                       'base_sha256': engine.base_hash(), 'all_gates_passed': True,
-                      'identity': identity}
+                      'identity': identity, 'diagnostic_path': str(directory.relative_to(root))}
             result_path = directory / 'results/results.json'
             _write_json(result_path, result)
             files.append(result_path)

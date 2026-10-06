@@ -7,6 +7,12 @@ import numpy as np
 from pilot_eval.activation_math import derive_measurements
 
 
+def direction_resolution(relative_write, agreement):
+    floor = agreement.get('resolution', {}).get('block_delta_vector')
+    return {'direction_resolution_relative': floor,
+            'direction_resolved': None if floor is None or relative_write is None else bool(relative_write > floor)}
+
+
 def bootstrap_measurement(summary, weighting, draws, *, multiplicities=None):
     """Recompute primary nonlinear ratios; NaN marks undefined replicates only."""
     if weighting not in ('token', 'example'):
@@ -139,6 +145,7 @@ def report_activation(config_path, output_root, *, name):
                                     records.append(dict(step=step, view=view, corpus=corpus, layer=layer,
                                                         projection=projection, kind=kind, weighting=weighting,
                                                         **derived, **interval,
+                                                        **(direction_resolution(derived['relative_write'], execution['agreement']) if kind == 'block' else {}),
                                                         zero_write=derived['relative_write'] == 0,
                                                         undefined_write=derived['relative_write'] is None,
                                                         denominator_diagnostics=_denominators(summary)))
@@ -157,6 +164,7 @@ def report_activation(config_path, output_root, *, name):
                       'limits': ['One training seed; intervals condition on frozen cohorts.',
                                  'FineWeb is a bounded convenience control, not a representative web sample.',
                                  'Contexts and lengths differ across views; fixed gold lengths are not generated lengths.',
+                                 'Direction resolution flags use an empirical engineering envelope, not a statistical confidence bound.',
                                  'Geometry is descriptive, not causal evidence or a layer-placement recommendation.'],
                       'pinned_question': 'Do longer gold solutions dominate token-weighted write profiles, and does equal-example weighting change them?'}
             _write_json(directory / 'results/results.json', result)
@@ -200,7 +208,7 @@ def _write_tables(directory, result, rows):
               'mean_base_norm', 'mean_delta_norm', 'mean_base_vector_norm', 'relative_write_alternative',
               'mean_token_ratio', 'token_count', 'example_count', 'empty_example_count',
               'defined_token_count', 'undefined_token_count', 'ratio_example_count',
-              'defined_replicates', 'undefined_replicates', 'interval_95', 'zero_write', 'undefined_write', 'denominator_diagnostics']
+              'direction_resolved', 'direction_resolution_relative', 'defined_replicates', 'undefined_replicates', 'interval_95', 'zero_write', 'undefined_write', 'denominator_diagnostics']
     with (directory / 'results/measurements.csv').open('w', newline='') as handle:
         writer = csv.DictWriter(handle, fields, extrasaction='ignore')
         writer.writeheader()

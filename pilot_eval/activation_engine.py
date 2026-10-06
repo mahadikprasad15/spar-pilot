@@ -120,11 +120,16 @@ class ActivationEngine:
         if any(not self.torch.isfinite(value).all().item() for value in values):
             raise InstrumentFailure('nonfinite activations or contribution')
 
-    def _batch(self, rows):
+    def _batch(self, rows, *, padded_width=None):
         torch = self.torch
         if not rows or len({row['id'] for row in rows}) != len(rows):
             raise InstrumentFailure('nonempty unique batch required')
         width = max(len(row['input_ids']) for row in rows)
+        if padded_width is not None:
+            if (not isinstance(padded_width, int) or padded_width < width
+                    or padded_width > self.model.config.max_position_embeddings):
+                raise InstrumentFailure('invalid controlled padding width')
+            width = padded_width
         tokens, attention, masks = [], [], {view: [] for view in VIEWS}
         pad = self.model.config.pad_token_id
         if pad is None:
@@ -163,8 +168,8 @@ class ActivationEngine:
         with self.torch.no_grad(), self.torch.autocast(next(self.model.parameters()).device.type, enabled=False):
             self.body(**inputs, use_cache=False, return_dict=True)
 
-    def capture_reference(self, rows):
-        inputs, masks = self._batch(rows)
+    def capture_reference(self, rows, *, padded_width=None):
+        inputs, masks = self._batch(rows, padded_width=padded_width)
         blocks = {}
         registrations = []
         for index, layer in enumerate(self.layers):
@@ -250,7 +255,7 @@ class ActivationEngine:
         if self._integrity_snapshot is not None:
             self._verify_base('after checkpoint switch')
         self._progress(f'checkpoint {step}: disabled reference check')
-        repeated = self.capture_reference(reference['rows'])
+        repeated = self.capture_reference(reference['rows'], padded_width=reference['inputs']['input_ids'].shape[1])
         invariant = all(torch.equal(reference['blocks'][i], repeated['blocks'][i]) for i in reference['blocks'])
         del repeated
         if not invariant:
