@@ -33,17 +33,27 @@ class HFActivationDependencies:
                     cwd=Path(__file__).resolve().parent, text=True).strip(),
                 'precision': 'float32', 'autocast': False, 'tf32': False,
                 'attention': 'eager', 'padding': 'right', 'position_ids': 'attention-cumsum-minus-one',
+                'padding_token_source': 'pinned-tokenizer.pad_token_id',
                 'deterministic_algorithms': True, 'cublas_workspace_config': ':4096:8'}
 
     def activation_engine(self, config, root):
         os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
         import torch
-        from transformers import AutoModelForCausalLM, enable_full_determinism
+        from transformers import AutoModelForCausalLM, AutoTokenizer, enable_full_determinism
         from peft import PeftModel
         from pilot_eval.activation_engine import ActivationEngine
         enable_full_determinism(config['seed'])
+        tokenizer = AutoTokenizer.from_pretrained(config['model'], revision=config['tokenizer_revision'])
+        pad = tokenizer.pad_token_id
+        if not isinstance(pad, int) or isinstance(pad, bool) or pad < 0:
+            raise ValueError('pinned tokenizer requires an explicit valid padding token ID')
         model = AutoModelForCausalLM.from_pretrained(config['model'], revision=config['model_revision'],
             dtype=torch.float32, attn_implementation='eager', device_map={'': 0})
+        if pad >= model.config.vocab_size:
+            raise ValueError('tokenizer padding token ID exceeds model vocabulary')
+        if model.config.pad_token_id not in (None, pad):
+            raise ValueError('model and pinned tokenizer padding token IDs disagree')
+        model.config.pad_token_id = pad
         checkpoint = Path(root) / config['source_evidence']['checkpoints']['0']['path']
         model = PeftModel.from_pretrained(model, checkpoint, is_trainable=False)
         model.config.use_cache = False

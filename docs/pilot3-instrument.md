@@ -50,6 +50,23 @@ Model work is FP32/no-grad/eval, without autocast or TF32; sufficient-summary
 reductions use FP64. Actual input positions and numerical settings are recorded.
 Module and block quantities must not be interpreted as equivalent causal effects.
 
+The loader obtains the padding ID from the source's pinned tokenizer revision
+and supplies it to the model configuration before loading PEFT. Qwen's model
+configuration may omit this ID even though its tokenizer defines it. No EOS
+fallback is used; a missing/invalid tokenizer ID, out-of-vocabulary ID or
+conflicting model ID stops loading. This changes configuration, not weights.
+Runtime evidence identifies the padding policy; checkpoint validation records
+the actual padding ID. Attention and content masks exclude padded positions.
+
+If an older loader failed with `explicit padding token required` before any
+checkpoint measurement, update to the fix commit and run
+`scripts/recover_pilot3_padding.py --config <prepared-config> --output-root <root>`.
+It verifies the prepared inputs and archives only that matching, zero-progress
+failure under `validation/failed-attempts/`, preserving and hashing its files.
+It refuses completed/partial scientific attempts, different failures, changed
+inputs, or recovery after profiling/execution freezing. Retry cell 7 afterward;
+inputs, review, source adapters and training evidence remain unchanged.
+
 ## Evidence and failures
 
 The run's validation directory contains a deterministic diagnostic batch folder:

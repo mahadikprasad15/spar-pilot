@@ -320,6 +320,7 @@ class ActivationEngine:
                 } if self.profile_timings else None, 'validation': {'exact_zero': exact_zero if step == 0 else None,
                 'rank1_passed': True, 'reference_invariant': invariant, 'module_count': len(seen_modules),
                 'base_sha256': self.expected_base_hash, 'sample_limit': self.validation_limit,
+                'pad_token_id': self.model.config.pad_token_id,
                 'block_hooks': [f'model.layers.{index}' for index in range(layers)],
                 'module_hooks': [f"model.layers.{index}.{'self_attn' if projection in PROJECTIONS[:4] else 'mlp'}.{projection}"
                                  for index, projection, _ in self.modules],

@@ -199,6 +199,7 @@ def test_real_qwen_engine_validates_zero_switching_and_all_projection_hooks(tmp_
     _assert_forward_summaries(result['arrays'], modules, blocks, reference)
     assert result['validation']['reference_invariant']
     assert result['validation']['rank1_passed']
+    assert result['validation']['pad_token_id'] == 0
     assert np.count_nonzero(result['arrays']['block_delta_sum']) > 0
     assert result['arrays']['block_delta_sum'].shape == (2, 3, layer_count, 4)
     assert result['arrays']['module_count'].shape == (2, 3, layer_count, 7)
