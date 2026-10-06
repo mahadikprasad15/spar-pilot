@@ -6,12 +6,12 @@ Keep the same GPU and numerical settings through calibration, validation and pro
 
 ## 1. Update code and restore helpers
 
-Set `RECOVERY_COMMIT` to the full commit supplied in the accompanying response.
+`RECOVERY_COMMIT` below pins the complete calibration implementation.
 Paste the following in a new cell. It preserves prepared inputs and v1 evidence.
 
 ```python
 assert not live_children(), 'A previous child is still running; inspect it first.'
-RECOVERY_COMMIT = 'REPLACE_WITH_SUPPLIED_COMMIT'
+RECOVERY_COMMIT = 'c538aba0b88ae6092494821b305e7cf8110be3f2'
 dirty = subprocess.check_output(['git','status','--porcelain'],cwd=REPO_DIR,text=True).strip()
 assert not dirty, 'Preserve local checkout edits before switching code.'
 subprocess.run(['git','fetch','origin',RECOVERY_COMMIT],cwd=REPO_DIR,check=True)
