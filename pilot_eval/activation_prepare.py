@@ -73,9 +73,12 @@ def _source(source_path, root):
     for step, checkpoint in sorted(checkpoints.items()):
         adapter = json.loads((checkpoint / 'adapter_config.json').read_text())
         targets = adapter.get('target_modules')
+        full_targets = {f"model.layers.{layer}.{'self_attn' if p in PROJECTIONS[:4] else 'mlp'}.{p}"
+                        for layer in range(28) for p in PROJECTIONS}
         if (adapter.get('r') != 1 or adapter.get('lora_alpha') != 1
                 or adapter.get('lora_dropout') != 0
-                or (targets != 'all-linear' and set(targets or []) != set(PROJECTIONS))):
+                or (targets != 'all-linear' and set(targets or []) not in
+                    (set(PROJECTIONS), full_targets))):
             raise ValueError('source adapter does not match rank-1 all-projection protocol')
         evidence['checkpoints'][str(step)] = {
             'path': str(checkpoint.relative_to(root)),

@@ -110,3 +110,37 @@ def test_prepared_source_contract_is_not_a_full_execution_authorization(tmp_path
     marker_path.write_text(json.dumps(marker))
     assert main(['grpo-check-ready', '--config', str(path), '--output-root', str(tmp_path)]) == 1
     assert 'frozen' in capsys.readouterr().err
+
+
+def test_actual_sft_full_projection_names_are_accepted_without_loosening_targets(tmp_path):
+    """The SFT engine passes full module names to PEFT, not seven suffixes."""
+    from pilot_eval.training import seal_checkpoint
+    sft = completed_source(tmp_path)
+    config = json.loads(sft.read_text())
+    directory = training_directory(tmp_path, config)
+    targets = [f'model.layers.{i}.{group}.{p}' for i in range(28)
+               for group, names in [('self_attn', ['q_proj', 'k_proj', 'v_proj', 'o_proj']),
+                                    ('mlp', ['gate_proj', 'up_proj', 'down_proj'])]
+               for p in names]
+    for step in [0, 8, 16, 32, 64]:
+        checkpoint = directory / 'checkpoints' / f'checkpoint-{step}'
+        adapter_path = checkpoint / 'adapter_config.json'
+        adapter = json.loads(adapter_path.read_text())
+        adapter['target_modules'] = targets
+        adapter_path.write_text(json.dumps(adapter))
+        seal_checkpoint(checkpoint, step)
+    (directory / 'inputs').mkdir(exist_ok=True)
+    (directory / 'inputs/order.json').write_text(json.dumps([f'gsm8k:train:{i}' for i in config['training_indices']]))
+    assert main(['activation-prepare', '--source-config', str(sft), '--name', 'full-targets',
+                 '--output-root', str(tmp_path)], dependencies=ActivationData()) == 0
+    measured = tmp_path / 'plans/full-targets/activation.prepared.json'
+    assert main(['grpo-prepare', '--sft-config', str(sft), '--measurement-config', str(measured),
+                 '--name', 'grpo-full', '--output-root', str(tmp_path)]) == 0
+    checkpoint = directory / 'checkpoints/checkpoint-64'
+    adapter_path = checkpoint / 'adapter_config.json'
+    adapter = json.loads(adapter_path.read_text())
+    adapter['target_modules'] = targets[:-1] + ['lm_head']
+    adapter_path.write_text(json.dumps(adapter))
+    seal_checkpoint(checkpoint, 64)
+    assert main(['grpo-prepare', '--sft-config', str(sft), '--measurement-config', str(measured),
+                 '--name', 'grpo-wrong', '--output-root', str(tmp_path)]) == 1
