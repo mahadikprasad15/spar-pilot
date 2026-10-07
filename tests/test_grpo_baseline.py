@@ -138,3 +138,14 @@ def test_inconsistent_cap_metadata_cannot_seal_a_batch(tmp_path):
     assert command(tmp_path, path, settings, deps) == 1
     config = json.loads((tmp_path / 'plans/sampling/baseline.config.json').read_text())
     assert not list((tmp_path / config['run_path']).glob('batches/*.complete.json'))
+
+
+def test_cached_runtime_evidence_is_verified_before_reuse(tmp_path):
+    path, settings = prepared(tmp_path)
+    deps = Boundary()
+    assert command(tmp_path, path, settings, deps) == 0
+    config = json.loads((tmp_path / 'plans/sampling/baseline.config.json').read_text())
+    runtime = tmp_path / config['run_path'] / 'meta/runtime.json'
+    runtime.write_text('{}')
+    assert command(tmp_path, path, settings, deps) == 1
+    assert deps.loads == 1

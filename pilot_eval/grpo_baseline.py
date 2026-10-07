@@ -112,7 +112,8 @@ def sample_baseline(config_path, settings_path, output_root, name, dependencies=
                 missing.append(index)
                 continue
             seal = json.loads(marker.read_text())
-            if seal != {'sha256': file_hash(shard), 'config_sha256': _hash(config)}:
+            if seal != {'sha256': file_hash(shard), 'config_sha256': _hash(config),
+                        'runtime_sha256': file_hash(directory / 'meta/runtime.json')}:
                 raise ValueError('sampling shard/config hash mismatch')
             saved = json.loads(shard.read_text())
             expected = [f'{i}:draw:{d}' for i in batch['ids'] for d in range(8)]
@@ -123,6 +124,7 @@ def sample_baseline(config_path, settings_path, output_root, name, dependencies=
             _write_state(directory, 'running', len(config['batches']) - len(missing), len(config['batches']))
             if missing:
                 dependencies = dependencies or HFSamplingDependencies()
+                print('sampling: loading pinned untuned FP32 model', flush=True)
                 sampler = dependencies.load_sampler(plan)
                 _save_frozen(directory / 'meta/runtime.json', sampler.runtime())
             for index in missing:
@@ -138,7 +140,8 @@ def sample_baseline(config_path, settings_path, output_root, name, dependencies=
                     raise ValueError('sample stop metadata disagrees with frozen cap')
                 shard = directory / 'batches' / f'{index:04d}.json'
                 _write_json(shard, saved)
-                _write_json(shard.with_suffix('.complete.json'), {'sha256': file_hash(shard), 'config_sha256': _hash(config)})
+                _write_json(shard.with_suffix('.complete.json'), {'sha256': file_hash(shard), 'config_sha256': _hash(config),
+                        'runtime_sha256': file_hash(directory / 'meta/runtime.json')})
                 print(f'sampling: completed batch {index + 1}/{len(config["batches"])}', flush=True)
                 _write_state(directory, 'running', len(config['batches']) - len(missing) + missing.index(index) + 1, len(config['batches']))
             for index in range(len(config['batches'])):
@@ -199,7 +202,9 @@ class HFSampler:
                     deterministic_algorithms=self.torch.are_deterministic_algorithms_enabled(),
                     device=self.torch.cuda.get_device_name(0),
                     versions={k: importlib.metadata.version(k) for k in PINS}, tf32=False,
-                    attention_implementation='eager')
+                    attention_implementation='eager',
+                    pad_token_id=self.backend.tokenizer.pad_token_id,
+                    eos_token_id=self.backend.tokenizer.eos_token_id)
     def sample(self, rows, settings, seed):
         from transformers import set_seed
         set_seed(seed)
