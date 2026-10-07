@@ -129,3 +129,12 @@ def test_saved_rewards_are_bound_to_scorer_implementation(tmp_path):
     assert len(config['implementation_sha256']['sampling']) == 64
     assert config['batches'][0]['seed'] == 42
     assert config['batches'][1]['seed'] == 43
+
+
+def test_inconsistent_cap_metadata_cannot_seal_a_batch(tmp_path):
+    path, settings = prepared(tmp_path)
+    deps = Boundary()
+    deps.sampler.sample = lambda rows, settings, seed: [dict(text=r['gold'], token_ids=[7], stop_reason='cap') for r in rows for _ in range(8)]
+    assert command(tmp_path, path, settings, deps) == 1
+    config = json.loads((tmp_path / 'plans/sampling/baseline.config.json').read_text())
+    assert not list((tmp_path / config['run_path']).glob('batches/*.complete.json'))

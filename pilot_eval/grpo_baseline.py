@@ -65,6 +65,11 @@ def _summary(records, settings):
     # If censored draws could occupy the top one percent, p99 cannot justify a final cap.
     censored = caps > 0 and caps >= len(records) * .01
     return dict(total=len(records), groups=groups, cap_count=caps, cap_fraction=caps / len(records),
+                mean_tokens=sum(lengths) / len(lengths),
+                strict_invalid_count=sum(r['strict']['status'] == 'invalid' for r in records),
+                flexible_invalid_count=sum(r['flexible']['status'] == 'invalid' for r in records),
+                all_correct_groups=sum(g['correct_count'] == 8 for g in groups),
+                all_incorrect_groups=sum(g['correct_count'] == 0 for g in groups),
                 strict_accuracy=sum(r['strict']['correct'] for r in records) / len(records),
                 flexible_accuracy=sum(r['reward'] for r in records) / len(records),
                 dead_group_fraction=sum(g['correct_count'] in [0, 8] for g in groups) / len(groups),
@@ -127,8 +132,10 @@ def sample_baseline(config_path, settings_path, output_root, name, dependencies=
                 if len(generated) != len(selected) * 8:
                     raise ValueError('sampling backend returned wrong completion count')
                 saved = [_score(row, generated[n * 8 + d], d) for n, row in enumerate(selected) for d in range(8)]
-                if any(r['token_count'] > settings['max_new_tokens'] for r in saved):
-                    raise ValueError('sample length exceeds frozen cap')
+                limit = settings['max_new_tokens']
+                if any((r['capped'] and r['token_count'] != limit)
+                       or (not r['capped'] and r['token_count'] >= limit) for r in saved):
+                    raise ValueError('sample stop metadata disagrees with frozen cap')
                 shard = directory / 'batches' / f'{index:04d}.json'
                 _write_json(shard, saved)
                 _write_json(shard.with_suffix('.complete.json'), {'sha256': file_hash(shard), 'config_sha256': _hash(config)})
