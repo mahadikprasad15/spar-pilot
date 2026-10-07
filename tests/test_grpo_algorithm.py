@@ -38,7 +38,7 @@ def tiny():
     model = Qwen2ForCausalLM(Qwen2Config(vocab_size=2, hidden_size=16, intermediate_size=32,
         num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
         max_position_embeddings=32, attention_dropout=0, tie_word_embeddings=False,
-        pad_token_id=0, bos_token_id=0, eos_token_id=None, attn_implementation='eager'))
+        pad_token_id=None, bos_token_id=0, eos_token_id=None, attn_implementation='eager'))
     model = get_peft_model(model, LoraConfig(r=1, lora_alpha=1, lora_dropout=0,
         target_modules=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'],
         task_type='CAUSAL_LM'))
@@ -59,6 +59,7 @@ def test_real_trl_loss_matches_independent_token_window_and_microbatch_gradients
     window = GRPOWindow(model, tokenizer, output_dir=tmp_path, microbatch_groups=1)
     loss = window.backward(prompts, completions, rewards, capped=[False] * 64)
     actual = {n: p.grad.clone() for n, p in model.named_parameters() if p.requires_grad}
+    assert any(torch.count_nonzero(g) for g in actual.values()), 'gradient comparison needs a nonzero witness'
     model.zero_grad(set_to_none=True)
     # Independent direct per-sequence differentiable reference, no window helpers.
     terms = []
@@ -84,3 +85,26 @@ def test_real_trl_loss_matches_independent_token_window_and_microbatch_gradients
     assert whole.resolved_args['generation_batch_size'] == 64
     assert whole.resolved_args['num_generations'] == 8
     assert whole.resolved_args['loss_type'] == 'dapo'
+
+
+def test_dead_groups_have_zero_policy_gradient_but_adam_momentum_can_move(tmp_path):
+    torch = torch_stack()
+    from pilot_eval.grpo_algorithm import GRPOWindow, gradient_consistency
+    model, tokenizer = tiny()
+    window = GRPOWindow(model, tokenizer, output_dir=tmp_path, microbatch_groups=8)
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=.01, weight_decay=0)
+    completions = [[d % 2] for d in range(64)]
+    window.backward([[0]] * 8, completions, [d % 2 for d in range(64)], capped=[False] * 64)
+    previous = window.flat_gradient()
+    assert previous.norm() > 0
+    assert gradient_consistency(None, previous)['reason'] == 'first_step'
+    assert gradient_consistency(previous, previous)['cosine'] == pytest.approx(1)
+    optimizer.step(); optimizer.zero_grad(set_to_none=True)
+    before = {n:p.clone().detach() for n,p in model.named_parameters() if p.requires_grad}
+    window.backward([[0]] * 8, completions, [1] * 64, capped=[True] * 64)
+    assert window.advantages == [0] * 64 and window.dead_group_fraction == 1
+    current = window.flat_gradient()
+    assert torch.count_nonzero(current) == 0
+    assert gradient_consistency(previous, current)['reason'] == 'zero_gradient'
+    optimizer.step()
+    assert any(not torch.equal(before[n], p) for n,p in model.named_parameters() if p.requires_grad)

@@ -6,7 +6,7 @@ loading the scientific model.
 
 **Blocked by:** 01 — Verify source evidence and prepare the GRPO matching audit.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Resolve the exact pinned trainer API and expose every relevant trainer
       argument, with eight prompts/eight draws and one fresh rollout window
@@ -43,3 +43,22 @@ loading the scientific model.
   and independent accumulation-window gradient check.
 - October 7 amendment: learning controls and consistency statistic are now
   explicitly specified; they are implementation checks, not statistical claims.
+
+- October 7 implementation: group/sample-standardization, pinned real TRL DAPO
+  whole-window loss, independent differentiable adapter gradients and memory
+  microbatch equivalence verified on CPU. Dead-group policy gradients are zero;
+  existing Adam momentum can still move parameters. The initial one-token
+  fixture used a zero padding embedding; construction was corrected without
+  changing the task/optimizer/criterion. Original failed evidence is preserved.
+- Learning acceptance remains FAILED, not resolved. Both seeds/signs fail the
+  approved 0.2 reward-change criterion. Diagnosis: the random frozen two-token
+  readout bounds expected reward to [0.3731, 0.6269] at seed 42 and
+  [0.3928, 0.6072] at seed 43. This is inadequate expected learning headroom,
+  not evidence that the GRPO policy gradient is reversed or broken.
+- Asked for approval of a versioned toy-fixture correction: fixed unit output
+  direction orthogonal to the initial prompt state (initial reward 0.5), with
+  a wider attainable range; preserve the binary task, all 20-step/two-seed
+  criterion, learning rate and old evidence. No correction acceptance run is
+  authorized until that reply. Command/notebook control handoff is not complete.
+- Evidence: artifacts/runs/diagnostics/pilot4-ticket03-zero-embedding-failure/
+  and artifacts/runs/diagnostics/pilot4-ticket03-learning-failure/.
