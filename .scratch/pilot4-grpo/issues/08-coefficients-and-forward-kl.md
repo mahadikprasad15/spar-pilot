@@ -13,7 +13,8 @@ distributional matching, for GRPO and the existing SFT checkpoints.
 - [ ] Save per-token input coefficients for every intended adapted module with
       IDs, positions, views, factor/scaling hashes and numerical provenance.
 - [ ] Calculate full-vocabulary KL(tuned || untuned) at identical fixed
-      prediction contexts in common measurement precision, using bounded
+      prediction contexts in the approved common FP32 measurement precision,
+      using bounded
       chunked memory and independently checked shift/mask alignment.
 - [ ] Demonstrate zero KL for identical distributions and correct finite
       positive values on known unequal distributions; independently verify

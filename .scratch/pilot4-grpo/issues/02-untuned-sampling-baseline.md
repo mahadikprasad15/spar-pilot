@@ -16,6 +16,9 @@ evidence for resolving the full-run length cap.
       status, strict/flexible extraction and reward for every completion.
 - [ ] Import the selected repository scorer and verify strict-correct implies
       flexible-correct; never copy a last-number rule into the reward function.
+- [ ] Apply the explicit reward-zero rule for every capped completion, even
+      with a numeric answer, and display its potential shorter-answer incentive
+      alongside cap fractions and censored percentiles.
 - [ ] Produce length percentiles, capped/censored counts, per-group correct
       counts, dead-group fraction and strict/flexible reward summaries.
 - [ ] Refuse to justify a final cap from a percentile censored at the pilot

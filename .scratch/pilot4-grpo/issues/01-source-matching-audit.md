@@ -15,9 +15,9 @@ scientific model run. The command and guided notebook show the same audit.
       optimizer and adapter settings, and fixed measurement-sequence identities.
 - [ ] Save a versioned matching audit and preparation manifest under the chosen
       artifact root; repeated preparation verifies/reuses them.
-- [ ] Display the FP32-versus-BF16 discrepancy, historical-versus-measured
-      baseline distinction and unresolved reward version without silently
-      selecting a scientific value.
+- [ ] Record the approved FP32 choice for both arms and the superseded BF16
+      source text, verifying actual base/adapter dtypes. Display the historical-
+      versus-measured baseline distinction and unresolved reward version.
 - [ ] Represent pending settings explicitly and reject attempts to freeze/run
       an unresolved plan. Preserve source-derived known values and rationales.
 - [ ] Add offline public-workflow tests for coherent preparation, source
@@ -28,3 +28,5 @@ scientific model run. The command and guided notebook show the same audit.
 
 - October 7, 2026: approved as ticket 1 of the nine-ticket plan. Parent: Pilot 4
   rank-1 GRPO specification. No old pilot configuration is modified.
+- October 7 amendment: the precision decision is closed by user approval of
+  FP32; source/runtime verification remains required, not another precision vote.

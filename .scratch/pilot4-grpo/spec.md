@@ -92,6 +92,8 @@ these gates without running an unresolved experiment.
     verified GPU-release point so a dead process cannot waste my session.
 28. As a maintainer, I want CPU tests without model downloads and immutable
     source artifacts so new work does not break or overwrite earlier pilots.
+29. As a researcher, I want a weight-norm-matched random adapter measured on
+    the same inputs so learned directions have an empirical control reference.
 
 ## Implementation Decisions
 
@@ -102,10 +104,11 @@ these gates without running an unresolved experiment.
   Pilot 3's already-frozen token IDs, masks, documents and position rules;
   do not independently select another FineWeb slice or rebuild a supposedly
   identical cohort from current Hub data.
-- The implemented SFT protocol uses FP32, not BF16. The supplied design uses
-  BF16 without quantization for GRPO. Record this discrepancy in a matching
-  audit and require an explicit precision decision before scientific execution.
-  Do not silently change either arm or label a BF16/FP32 pair objective-only.
+- FP32 without quantization is approved for both arms, including base and
+  adapter weights. Record that the initial supplied design's BF16 text was
+  superseded by the user's October 7 amendment; the precision gate is closed.
+  Verify actual source and runtime dtypes rather than assuming the written
+  choice guarantees a match. Any different precision is a new protocol variant.
 - The historical 0.640 accuracy is contextual. Checkpoint-zero correctness is
   token-identical equivalence to a freshly measured untuned baseline under the
   same current precision, prompts, batching and decoding, not achievement of
@@ -130,18 +133,28 @@ these gates without running an unresolved experiment.
   verifies the exact trainer behavior and freezes every relevant config field.
   Any required version change creates a separate resolved environment; it does
   not rewrite earlier pilots' dependency or runtime records.
-- Remaining run prerequisites include the precision/scorer decisions, exact
+- Remaining run prerequisites include scorer confirmation, exact
   loss configuration, baseline-subset selection, pilot sampling length limit,
   the rule for deriving the final limit above the observed 99th percentile,
-  resolved generation filters, monitor actions and statistical method, and the
+  resolved generation filters, monitor actions, and the
   dated preregistered margin/predictions. Existing input identities must also
-  be available and verified. Missing values block freeze/full execution.
+  be available and verified. Precision, behavioural bootstrap method,
+  gradient-consistency definition and learning-control criteria are resolved
+  by the amendment below; do not present them as unanswered decisions.
+  Missing remaining values block freeze/full execution.
 
 ### Reward, sampling and GRPO training
 
 - Optimize a binary reward from the existing flexible scoring function.
   Extract the numeric prediction without gold access, then compare with gold.
-  Return zero for invalid/capped responses. Record strict extraction and
+  Return zero for invalid responses. Capped responses explicitly receive
+  reward zero, even when a numeric answer appears before truncation: the
+  completion is unfinished and may lack its final answer. This conservative
+  rule can push toward shorter answers. Choosing the final cap above the
+  observed baseline 99th percentile reduces initial censoring, but does not
+  guarantee low censoring as training changes the policy. Log cap fractions
+  throughout training/evaluation and apply the frozen validity-monitor policy.
+  Record strict extraction and
   correctness on every completion independently of its optimization reward.
   Enforce strict-correct implies flexible-correct for the chosen version.
 - Use group size eight, temperature 1.0, reward standardization within prompt
@@ -190,8 +203,13 @@ these gates without running an unresolved experiment.
   length, stop/cap status, both extraction results, reward and advantage.
 - Log loss, learning rate, strict/flexible mean reward, dead-group fraction,
   mean/90th-percentile completion lengths, cap fraction, pre-clip gradient
-  norm, adapter norm and the chosen gradient-consistency statistic each step.
-  Zero-gradient cosines are undefined with coverage, not arbitrary zeros.
+  norm, adapter norm and gradient consistency each step. Gradient consistency
+  is the cosine between consecutive optimizer steps' flattened pre-clip
+  adapter gradients across all trainable parameters, in a fixed saved parameter
+  order, after the full accumulation window and before clipping. The first
+  step and pairs with either gradient zero are undefined, with coverage and
+  reasons. Capture the preceding gradient with sealed checkpoint state so
+  this diagnostic remains continuous after checkpoint-boundary recovery.
 - Nonfinite reward/loss/gradient stops execution. The design proposes cap-rate
   above about 2%, dead groups above about 80%, and length changes above 50% in
   eight steps as monitors. Save these as proposals until their exact policy is
@@ -206,10 +224,16 @@ these gates without running an unresolved experiment.
   applicable, code identity, libraries and all resolved trainer arguments.
 - Publish adapter checkpoints at 0, 8, 16, 32 and 64 with required optimizer,
   scheduler, RNG, trainer and data-order state. Verify manifests before resume.
-  Resume must reproduce group membership, rollout position and diagnostic
-  logging without duplicating committed completions. Any regenerated work
-  after an interruption is explicitly separated from committed records.
-- Lock runs; write payloads atomically and completion markers last; reject
+  Training resumes only from the latest sealed checkpoint. Restore its state
+  and redo later optimizer steps; mid-window continuation is out of scope.
+  Rollouts/logs after that boundary belong to an incomplete attempt: preserve
+  them as diagnostics and exclude them from the final scientific record.
+  Checkpoint sealing binds rollout/log progress so the accepted history has
+  one record per intended step/prompt/draw; exact partial-rollout replay is
+  unnecessary. Recovery must reproduce future work from restored state.
+  The largest checkpoint gap is 32 steps, so the possible redo cost is explicit.
+- Reuse existing run locks, atomic payload writers and completion-marker
+  helpers; do not build new persistence infrastructure for this pilot. Reject
   incompatible invocations without modifying existing successful evidence.
   Progress means verified work, not just process existence. Detect process
   exit, including zombies, and report the actual error instead of indefinitely
@@ -245,10 +269,18 @@ these gates without running an unresolved experiment.
   95% interval is below the preregistered margin. Ten percentage points is
   proposed, not approved. Failure to pass may be inconclusive; it is not alone
   proof of harm. Report the interval and point estimate regardless of label.
-- Specify the paired interval method and decoding-uncertainty treatment before
-  execution. Resample complete item records with their draws as appropriate;
-  never count correlated draws as independent problems. Preserve exact seeds,
-  draw indices and defined coverage. One training seed limits generalization.
+- The approved behavioural interval method is a paired nonparametric bootstrap
+  over the 150 held-out items, with 10,000 resamples and bootstrap seed 42.
+  Each sampled ID carries both checkpoints' complete records, one draw per
+  checkpoint for greedy and all eight for sampled evaluation. Recompute the
+  drop, checkpoint zero minus 64, and take its 2.5th and 97.5th percentiles.
+  Use the same method for greedy and sampled; preserve resampling indices.
+  Checkpoint trajectory comparisons use the same item-bootstrap procedure
+  against zero. This does not change Pilot 3's existing activation bootstrap.
+  Do not count correlated draws as independent problems or infer training-seed
+  uncertainty from item resampling. Report that the procedure uses observed
+  draw sets and does not isolate repeated-decoding uncertainty on the exact
+  fixed cohort. One training seed limits generalization.
 
 ### Internal measurements and SFT comparison
 
@@ -264,7 +296,7 @@ these gates without running an unresolved experiment.
   Add a verified GRPO source adapter behind the same workflow responsibilities;
   do not bypass validation or recast GRPO as an SFT config. Numerical
   calibration remains bound to model, precision, runtime and batch identity;
-  a new BF16 workflow cannot inherit FP32 agreement evidence unchanged.
+  matching FP32 alone does not authorize incompatible calibration reuse.
 - Extend measurement to save signed per-token rank-1 input coefficients and
   forward KL(tuned || untuned) over the full vocabulary at matched fixed
   prediction contexts. Save token positions, masks, LoRA scaling/factor hashes
@@ -288,6 +320,21 @@ these gates without running an unresolved experiment.
   mean-vector cosines where precision and identity permit. Flag unresolved or
   zero directions. The proposed 0.05 isotropic cosine reference is contextual,
   not a validated empirical noise floor for anisotropic model writes.
+- Add one random rank-1 adapter as a random-intervention reference, not an
+  estimated null distribution, significance threshold or numerical noise floor.
+  In each of the 196 modules draw independent random unit directions for the
+  input/output factors using a separate fixed control RNG with seed 42; save
+  construction method, order, factors and seed before measurements. Match each
+  module's effective weight-update Frobenius norm to the verified GRPO step-64
+  adapter, including its alpha/r scaling: the norm is scaling times the product
+  of the two factor norms. A zero target norm gives a zero random update.
+- Measure this random adapter with the same frozen sequences, views, numerical
+  settings and validated instrument. Report its activation-write magnitudes
+  and per-layer signed mean-write cosines against SFT and GRPO, under both
+  weightings, with undefined/direction-resolution coverage. Weight-norm
+  matching does not imply activation-norm matching. One realization cannot
+  estimate a 95th-percentile null; existing numerical calibration retains its
+  separate role. Additional random realizations are deferred.
 - Existing SFT logs may lack the requested gradient-consistency statistic.
   Report it unavailable; do not reconstruct it from norms. Different consistency
   is descriptive and cannot by itself establish an Adam-based causal explanation.
@@ -315,10 +362,21 @@ these gates without running an unresolved experiment.
   for dead groups, the direct chosen policy-loss gradient, accumulation-window
   token weighting and padding invariance at justified numerical scales. Positive
   toy learning and flipped-advantage negative controls exercise the trainer.
-  Define their criterion before testing; "about 20 steps" is not an exact bound.
-- Test resume across interruption with rollouts and random state, including
-  no duplicate IDs, identical future groups, diagnostics continuity and
-  completed-run reuse. Test failure before final integrity sealing leaves no
+  Run 20 optimizer steps for each control at two saved seeds, 42 and 43.
+  In both seeds the positive control must increase mean rollout reward over
+  steps 16-20 versus steps 1-5 by at least 0.2; the negative control must
+  decrease it by at least 0.2. Each seed's controls start from the same toy
+  model/policy and use the same reward definition/settings apart from advantage
+  sign. Construct a bounded learnable toy task whose initial expected reward
+  is near the middle of its range, leaving room for both changes. Freeze its
+  initialization, reward, generation and optimization settings before the
+  acceptance runs. Do not tune thresholds/settings after observing a failure;
+  diagnose it. These controls check implementation, not a statistical guarantee.
+- Test interruption after a sealed checkpoint and during a subsequent window:
+  recover from the sealed boundary, exclude/preserve the incomplete attempt,
+  and verify accepted rollout/log IDs, future groups, RNG and gradient-cosine
+  continuity plus completed-run reuse. No mid-window resume requirement.
+  Test failure before final integrity sealing leaves no
   apparently complete scientific unit. CPU orchestration tests need no download.
 - Real target-GPU checks are separately saved evidence: two-step runs twice,
   frozen base, initial zero equivalence, rewards/rollouts reproducibility,
@@ -328,6 +386,11 @@ these gates without running an unresolved experiment.
   mapping/sign/direction negative controls, position alignment, chunk-size
   agreement and bounded-memory tests. Report generation is CPU-only and rejects
   missing or incompatible scientific artifacts rather than inventing summaries.
+- Random-control tests verify 196-module mapping, unit directions, per-module
+  effective norm matching, zero-target handling, seed reproducibility, unchanged
+  trained source files and the same instrument gates. Reporting must expose
+  realized activation magnitudes, unresolved directions and its one-realization
+  limitation rather than turn a control cosine into a significance threshold.
 - A full controlled workflow test traverses all stages, interrupts/resumes and
   produces the paired report. A guided notebook contract test verifies stage
   ordering, pinned code availability, subprocess termination handling, progress
@@ -345,6 +408,8 @@ these gates without running an unresolved experiment.
   claiming the current one-seed geometry establishes a mechanism.
 - Overwriting old scorer versions, configs, reports, calibration evidence or
   dependency pins; broad package restructuring.
+- Mid-window scientific training resume, new locking/persistence frameworks,
+  or an empirical direction-null distribution estimated from a single adapter.
 - Sending the Adam discussion or any message to the mentor automatically.
 
 ## Further Notes
@@ -353,6 +418,8 @@ these gates without running an unresolved experiment.
   2026. Its simulation numbers, expected times/prices and historical aggregate
   scores are motivating statements, not verified results of this repository.
   Source SHA256: 0b59c6dc05363de557a4e74a2fd6fd6c0968e7ecc42c4ce0e0dde7e4ec6f049b.
+  The retained source still says BF16; the user's approved October 7 amendment
+  supersedes that text with FP32. Preserve both provenance and amendment.
 - Specification synthesis uses the implemented SFT completion loss and FP32
   config, approved flexible-v3 scorer contract, Pilot 3 fixed-input/integrity
   decisions, and the TRL 0.26.2 trainer/config source. Preserve a source-to-spec
@@ -360,7 +427,9 @@ these gates without running an unresolved experiment.
 - Intended inference workload is 1,024 baseline + 256 two-step reproducibility
   rollouts + 4,096 training + 750 greedy + 2,400 sampled = 8,526 generations,
   before any additional fresh zero-baseline checks or censored-length extensions.
-  Activation passes, KL and supplemental SFT measurements are additional work.
+  Activation passes, KL, supplemental SFT measurements and the one random
+  adapter's forward-only measurement are additional work. Checkpoint recovery
+  can redo incomplete work and therefore increase actual generation counts.
 - Decisions awaiting evidence/preregistration are legitimate stage gates. The
   spec is ready for implementing those gates, not authorization to silently
   choose their values or launch a full experiment.
@@ -372,6 +441,15 @@ these gates without running an unresolved experiment.
   tests with controlled dependencies and tiny real-model gradient checks.
 - October 7, 2026: user approved all nine proposed ticket titles, deliveries
   and blocking edges; published as separate ready-for-agent local issues.
+- October 7, 2026 amendment: user approved the reviewed critique's simplifications
+  and clarifications: FP32 for both arms; checkpoint-boundary-only training
+  recovery using existing infrastructure; 10,000 paired item bootstrap draws;
+  consecutive pre-clip gradient cosine; two-seed positive/negative criteria
+  with an attainable predeclared toy task; explicit capped-response zero reward;
+  and one weight-norm-matched random-adapter control rather than a noise floor.
+  Seed 42 follows the existing analysis convention; the toy pair is 42/43 and
+  control randomness uses its own isolated generator. Existing pilot evidence
+  and old acceptance thresholds remain unchanged.
 - Baseline verification for this planning change: CPU/offline pytest completed
   with 194 passed, 19 skipped and 4 warnings in 405.60 seconds. Model-dependent
   coverage was incomplete: this shell's Torch installation could not import

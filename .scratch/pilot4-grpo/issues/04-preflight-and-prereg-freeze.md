@@ -9,9 +9,10 @@ determinism, cost and preregistration evidence.
 
 **Status:** ready-for-agent
 
-- [ ] Require explicit resolutions for precision, scorer, loss, final cap,
-      generation policy, monitor actions, interval method and gate margin;
-      show provenance for each resolved value.
+- [ ] Verify approved FP32, 10,000-resample paired item bootstrap (seed 42),
+      consecutive pre-clip gradient cosine and the two-seed learning controls;
+      require remaining scorer/loss/final-cap/generation-policy/monitor/margin
+      resolutions and show provenance for every value.
 - [ ] Save two disposable two-step runs on the target GPU with controlled RNG,
       compare their declared reward/rollout/state evidence, and check finite
       loss/gradients, zero initialization and frozen weights.
@@ -21,7 +22,8 @@ determinism, cost and preregistration evidence.
       including hashing, transfer and saving overhead; make memory batch
       settings compatible with the approved algorithmic batch arithmetic.
 - [ ] Present measured timings/memory and projected stage workloads without
-      treating document price/time estimates as guarantees.
+      treating the superseded BF16 document price/time estimates as FP32
+      guarantees; include redo cost of checkpoint-only training recovery.
 - [ ] Freeze ordered groups, numerical/runtime settings, final cap, algorithm,
       scorer and a user-authored dated preregistration with source hashes.
 - [ ] Reject an unresolved, changed or unreviewed full-run request without

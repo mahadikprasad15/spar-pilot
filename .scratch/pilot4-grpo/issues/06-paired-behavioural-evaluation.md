@@ -20,8 +20,13 @@ cohort and report behavioural changes under the two approved decoding modes.
 - [ ] Compute the preregistered paired interval for zero-minus-final greedy
       accuracy and distinguish passing non-inferiority, demonstrated harm and
       inconclusive evidence without equating a failed gate to damage.
+- [ ] Use 10,000 paired item-bootstrap resamples, seed 42, for greedy and
+      sampled drops: each selected problem carries both checkpoints' complete
+      draw records; report the 2.5th/97.5th percentiles and save resampling IDs.
 - [ ] Explain sampled-decoding uncertainty and shared-seed limits; preserve
-      resampling identities and the single-training-seed limitation.
+      resampling identities and the single-training-seed limitation. The item
+      bootstrap does not isolate repeated-decoding uncertainty on this exact
+      cohort and is not a training-seed interval.
 - [ ] Offline tests verify pairing, scorer identity, exact known intervals,
       missing draws, corruption, completed reuse and CPU-only report generation.
 - [ ] Guided notebook stages display the outcomes and evidence rather than

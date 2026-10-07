@@ -21,6 +21,18 @@ mean vectors without changing the measurement inputs.
       membership and save verified resumable shards with final hash sealing.
 - [ ] Produce CPU-only checkpoint reports and vectors with source identity,
       intervals and direction-resolution evidence.
+- [ ] Save one random rank-1 control using independent unit input/output
+      directions in all 196 modules and an isolated seed-42 RNG. Match each
+      module's effective update Frobenius norm to GRPO step 64, including
+      alpha/r scaling; zero target norms yield zero updates.
+- [ ] Measure the control on the identical frozen inputs with the same
+      instrument/settings, saving its realized activation magnitudes and
+      per-layer signed cosines against SFT/GRPO mean writes for both weightings.
+      Reuse verified SFT vectors when compatible; expose unresolved directions.
+- [ ] Verify control module mapping, unit-direction/norm reconstruction,
+      seed reproducibility, zero targets, untouched source adapters and normal
+      instrument gates. This is one random-intervention reference, not an
+      estimated null distribution or numerical calibration substitute.
 - [ ] Tests cover controlled full workflow, source adaptation, mismatched token
       hashes, interrupted shards, numerical failures and unchanged old pilots.
 - [ ] Notebook instructions explain forward-only work and provide a verified
@@ -30,3 +42,5 @@ mean vectors without changing the measurement inputs.
 
 - October 7, 2026: approved as ticket 7. Behavioural generation and fixed-token
   measurement are separate products and can run in separate GPU sessions.
+- October 7 amendment: the one random control is additional forward-only work
+  in this ticket; it does not add a training arm or a tenth ticket.
