@@ -6,23 +6,23 @@ scientific model run. The command and guided notebook show the same audit.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Verify the selected source configs, completion/checkpoint manifests,
+- [x] Verify the selected source configs, completion/checkpoint manifests,
       cohort identities and ordered 512 training/150 evaluation IDs without
       downloading a model; preserve every source artifact.
-- [ ] Reuse existing model/tokenizer/dataset pins, actual prompt template,
+- [x] Reuse existing model/tokenizer/dataset pins, actual prompt template,
       optimizer and adapter settings, and fixed measurement-sequence identities.
-- [ ] Save a versioned matching audit and preparation manifest under the chosen
+- [x] Save a versioned matching audit and preparation manifest under the chosen
       artifact root; repeated preparation verifies/reuses them.
-- [ ] Record the approved FP32 choice for both arms and the superseded BF16
+- [x] Record the approved FP32 choice for both arms and the superseded BF16
       source text, verifying actual base/adapter dtypes. Display the historical-
       versus-measured baseline distinction and unresolved reward version.
-- [ ] Represent pending settings explicitly and reject attempts to freeze/run
+- [x] Represent pending settings explicitly and reject attempts to freeze/run
       an unresolved plan. Preserve source-derived known values and rationales.
-- [ ] Add offline public-workflow tests for coherent preparation, source
+- [x] Add offline public-workflow tests for coherent preparation, source
       corruption, wrong cohorts, missing evidence and incompatible reuse.
-- [ ] Supply a notebook stage explaining the audit and concrete next action.
+- [x] Supply a notebook stage explaining the audit and concrete next action.
 
 ## Comments
 
@@ -32,3 +32,22 @@ scientific model run. The command and guided notebook show the same audit.
   FP32; source/runtime verification remains required, not another precision vote.
 - October 7 implementation: claimed; public preparation/audit commands are
   tested against real source artifacts with controlled offline fixtures.
+
+## Answer
+
+Implemented CPU-only grpo-prepare, grpo-audit and grpo-check-ready through
+the public workflow. Sources, saved optimizer prompt order, fixed measurement
+tokens/masks and checkpoint manifests are verified without model access. The
+guided Pilot 4 notebook includes the preparation and audit stages; later
+scientific stages are explicitly not implemented yet.
+
+Red/green evidence includes preparation, failure-state persistence, source
+order preservation, execution-freeze rejection, notebook command execution
+and exact full-name projection compatibility (rejecting lm_head). SFT memory
+microbatches are retained as source evidence, not copied into GRPO's completion
+batch settings; the plan states 8 prompts and 64 completions per update.
+The final affected offline suite passed 27 tests in 26.58 seconds.
+This is fixture evidence, not validation of the user's Drive or target GPU.
+
+Diagnostic results live under the canonical ignored artifact tree; source
+artifact bytes are preserved and incompatible prepared plans are rejected.
