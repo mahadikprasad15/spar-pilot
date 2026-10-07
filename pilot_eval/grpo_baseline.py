@@ -24,7 +24,9 @@ def _settings(value, training):
     for key in ['seed', 'groups_per_batch', 'max_new_tokens', 'top_k']:
         if type(value[key]) is not int or value[key] < (1 if key in ['groups_per_batch', 'max_new_tokens'] else 0):
             raise ValueError('invalid baseline integer setting: ' + key)
-    if value['groups_per_batch'] > 128 or value['temperature'] != 1.0 or not 0 < value['top_p'] <= 1:
+    if (value['groups_per_batch'] > 128
+            or type(value['temperature']) not in [int, float] or value['temperature'] != 1.0
+            or type(value['top_p']) not in [int, float] or not 0 < value['top_p'] <= 1):
         raise ValueError('invalid sampling temperature/filter/batching')
     return value
 
@@ -81,10 +83,12 @@ def sample_baseline(config_path, settings_path, output_root, name, dependencies=
     settings = _settings(json.loads(Path(settings_path).read_text()), training)
     by_id = {row['id']: row for row in training}
     rows = [by_id[i] for i in settings['subset_ids']]
+    from pilot_eval import scoring
+    implementation = {'sampling': file_hash(Path(__file__)), 'scorer': file_hash(Path(scoring.__file__))}
     directory = root / 'runs/pilot-4' / plan['model'].replace('/', '--') / 'sampling-baseline' / safe_name(name)
     config = dict(protocol_version='pilot4-sampling-baseline-v1', model=plan['model'],
                   model_revision=plan['model_revision'], tokenizer_revision=plan['tokenizer_revision'],
-                  dtype='float32', adapter=None, source_path=str(source_path.relative_to(root)),
+                  dtype='float32', adapter=None, implementation_sha256=implementation, source_path=str(source_path.relative_to(root)),
                   source_sha256=file_hash(source_path), settings=settings, group_size=8,
                   decoding=dict(do_sample=True, num_beams=1, repetition_penalty=1.0,
                                 no_repeat_ngram_size=0, **{k: settings[k] for k in ['temperature', 'top_p', 'top_k', 'max_new_tokens']}),
@@ -159,10 +163,17 @@ class HFSamplingDependencies:
 class HFSampler:
     """One pinned FP32 untuned model; explicit full sampling policy and batch seeds."""
     def __init__(self, plan):
-        from pilot_eval.sft_backend import HFTrainingEngine
+        import os
+        import importlib.metadata
+        from pilot_eval.sft_backend import PINS
         from pilot_eval.backend import load_hf_backend
+        os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
         import torch
-        HFTrainingEngine.runtime(plan)
+        versions = {k: importlib.metadata.version(k) for k in PINS}
+        if any(versions[k].split('+')[0] != v for k, v in PINS.items()):
+            raise ValueError('sampling requires the pinned Pilot 4 dependencies')
+        if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
+            raise ValueError('sampling requires exactly one CUDA GPU')
         self.torch = torch
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
@@ -174,13 +185,21 @@ class HFSampler:
     def runtime(self):
         import importlib.metadata
         from pilot_eval.sft_backend import PINS
-        return dict(dtype='float32', device=self.torch.cuda.get_device_name(0),
+        import sys
+        return dict(dtype='float32', python=sys.version, cuda=self.torch.version.cuda,
+                    compute_capability=list(self.torch.cuda.get_device_capability(0)),
+                    cublas_workspace_config=__import__('os').environ['CUBLAS_WORKSPACE_CONFIG'],
+                    deterministic_algorithms=self.torch.are_deterministic_algorithms_enabled(),
+                    device=self.torch.cuda.get_device_name(0),
                     versions={k: importlib.metadata.version(k) for k in PINS}, tf32=False,
                     attention_implementation='eager')
     def sample(self, rows, settings, seed):
         from transformers import set_seed
         set_seed(seed)
         tokenizer = self.backend.tokenizer
+        for row in rows:
+            if tokenizer.encode(row['prompt'], add_special_tokens=False) != row['input_ids'][:row['prompt_tokens']]:
+                raise ValueError('sampling tokenizer/prompt IDs differ from saved training inputs')
         inputs = tokenizer([r['prompt'] for r in rows for _ in range(8)], return_tensors='pt', padding=True,
                            add_special_tokens=False).to(self.backend.model.device)
         with self.torch.inference_mode():
@@ -195,7 +214,7 @@ class HFSampler:
             raw = row[inputs['input_ids'].shape[1]:].tolist()
             end = next((i for i, t in enumerate(raw) if t in eos), None)
             tokens = raw if end is None else raw[:end]
-            results.append(dict(text=tokenizer.decode(tokens, skip_special_tokens=True), token_ids=tokens,
+            results.append(dict(text=tokenizer.decode(tokens, skip_special_tokens=True), token_ids=tokens, generated_token_ids=raw if end is None else raw[:end + 1],
                                 stop_reason='cap' if end is None else 'eos'))
         return results
     def close(self):

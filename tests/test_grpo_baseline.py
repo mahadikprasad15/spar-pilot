@@ -63,3 +63,69 @@ def test_sampling_saves_1024_draws_and_reuses_completed_run(tmp_path):
     assert command(tmp_path, path, settings, deps) == 0
     assert deps.loads == 1 and deps.sampler.calls == 64
     assert (directory / 'results/responses.jsonl').read_bytes() == saved
+
+
+def test_interrupted_sampling_resumes_groups_and_preserves_settings(tmp_path, capsys):
+    path, settings = prepared(tmp_path)
+    deps = Boundary()
+    deps.sampler.fail_at = 3
+    assert command(tmp_path, path, settings, deps) == 1
+    config = json.loads((tmp_path / 'plans/sampling/baseline.config.json').read_text())
+    directory = tmp_path / config['run_path']
+    protected = {p: p.read_bytes() for p in (directory / 'batches').glob('*')}
+    assert json.loads((directory / 'meta/status.json').read_text())['state'] == 'failed'
+    deps.sampler.fail_at = None
+    assert command(tmp_path, path, settings, deps) == 0
+    assert deps.sampler.calls == 65  # 64 successful batches plus the interrupted call.
+    assert all(p.read_bytes() == b for p, b in protected.items())
+    changed = json.loads(settings.read_text()); changed['top_p'] = .9
+    settings.write_text(json.dumps(changed))
+    assert command(tmp_path, path, settings, deps) == 1
+    assert deps.sampler.calls == 65
+    assert 'mismatch' in capsys.readouterr().err
+
+
+def test_capped_and_ambiguous_answers_have_zero_reward_and_censored_p99(tmp_path):
+    path, settings = prepared(tmp_path)
+    deps = Boundary()
+    def sample(rows, settings, seed):
+        return [dict(text=row['gold'] if d < 4 else 'Final answer: 72 apples and 5 pears',
+                     token_ids=[7] * (4 if d < 4 else 2), stop_reason='cap' if d < 4 else 'eos')
+                for row in rows for d in range(8)]
+    deps.sampler.sample = sample
+    assert command(tmp_path, path, settings, deps) == 0
+    config = json.loads((tmp_path / 'plans/sampling/baseline.config.json').read_text())
+    directory = tmp_path / config['run_path']
+    summary = json.loads((directory / 'results/results.json').read_text())
+    assert summary['cap_count'] == 512 and summary['flexible_accuracy'] == 0
+    assert summary['p99_censored'] is True and summary['final_cap_evidence_eligible'] is False
+    assert summary['final_cap'] is None
+    records = [json.loads(line) for line in (directory / 'results/responses.jsonl').read_text().splitlines()]
+    assert all(r['reward'] == 0 and not r['flexible']['correct'] for r in records)
+
+
+def test_settings_and_saved_shards_reject_mismatch_before_model_loading(tmp_path):
+    path, settings = prepared(tmp_path)
+    value = json.loads(settings.read_text()); value['scorer'] = 'gsm8k-flexible-v2'
+    settings.write_text(json.dumps(value))
+    deps = Boundary()
+    assert command(tmp_path, path, settings, deps) == 1
+    assert deps.loads == 0
+    value['scorer'] = 'gsm8k-flexible-v3'; settings.write_text(json.dumps(value))
+    assert command(tmp_path, path, settings, deps) == 0
+    config = json.loads((tmp_path / 'plans/sampling/baseline.config.json').read_text())
+    shard = tmp_path / config['run_path'] / 'batches/0000.json'
+    shard.write_text('[]')
+    assert command(tmp_path, path, settings, deps) == 1
+    assert deps.loads == 1
+
+
+def test_saved_rewards_are_bound_to_scorer_implementation(tmp_path):
+    path, settings = prepared(tmp_path)
+    deps = Boundary()
+    assert command(tmp_path, path, settings, deps) == 0
+    config = json.loads((tmp_path / 'plans/sampling/baseline.config.json').read_text())
+    assert len(config['implementation_sha256']['scorer']) == 64
+    assert len(config['implementation_sha256']['sampling']) == 64
+    assert config['batches'][0]['seed'] == 42
+    assert config['batches'][1]['seed'] == 43
