@@ -85,3 +85,28 @@ def test_grpo_matches_actual_saved_prompt_order_and_detects_changed_order(tmp_pa
     order_path.write_text(json.dumps(saved_order[1:] + saved_order[:1]))
     assert main(args) == 1
     assert all(p.read_bytes() == content for p, content in protected.items())
+
+
+def test_prepared_source_contract_is_not_a_full_execution_authorization(tmp_path, capsys):
+    """A preparation marker cannot authorize training by filling placeholders."""
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+    sft, measurement = sources(tmp_path)
+    args = ['grpo-prepare', '--sft-config', str(sft), '--measurement-config', str(measurement),
+            '--name', 'not-frozen', '--output-root', str(tmp_path)]
+    assert main(args) == 0
+    path = tmp_path / 'plans/not-frozen/grpo.prepared.json'
+    plan = json.loads(path.read_text())
+    for entry in plan['pending'].values():
+        entry['value'] = 'filled-but-not-reviewed'
+    path.write_text(json.dumps(plan))
+    run_manifest = tmp_path / plan['run_path'] / 'meta/run_manifest.json'
+    run_manifest.write_text(json.dumps(plan))
+    marker_path = path.parent / 'prepare-complete.json'
+    marker = json.loads(marker_path.read_text())
+    marker['config_sha256'] = _hash(plan)
+    marker['files'][str(path.relative_to(tmp_path))] = file_hash(path)
+    marker['files'][str(run_manifest.relative_to(tmp_path))] = file_hash(run_manifest)
+    marker_path.write_text(json.dumps(marker))
+    assert main(['grpo-check-ready', '--config', str(path), '--output-root', str(tmp_path)]) == 1
+    assert 'frozen' in capsys.readouterr().err

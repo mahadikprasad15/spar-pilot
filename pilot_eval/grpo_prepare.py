@@ -204,4 +204,5 @@ def require_grpo_ready(config_path, output_root):
     pending = [key for key, value in config['pending'].items() if value['value'] is None]
     if pending:
         raise ValueError('GRPO full execution is not ready; unresolved: ' + ', '.join(pending))
-    return config
+    raise ValueError('GRPO execution requires a frozen protocol and reviewed preregistration, '
+                     'not a preparation marker')
