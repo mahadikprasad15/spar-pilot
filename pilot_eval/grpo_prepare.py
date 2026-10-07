@@ -98,7 +98,11 @@ def prepare_grpo(sft_config, measurement_config, output_root, name):
                     or config['sources']['measurement']['path'] != str(measurement_path.relative_to(root))):
                 raise ValueError('GRPO source options differ; use a new plan name')
             return path
-        sft, training, evaluation, measured = _sources(root, sft_path, measurement_path)
+        try:
+            sft, training, evaluation, measured = _sources(root, sft_path, measurement_path)
+        except (ValueError, OSError) as exc:
+            _write_state(plan_dir, 'failed', 0, 1, str(exc))
+            raise
         run_dir = root / 'runs/pilot-4' / sft['model'].replace('/', '--') / \
             'gsm8k/train-512-seed-42/rank1-float32' / name / 'preparation'
         audit = run_dir / 'results/matching-audit.md'
@@ -147,6 +151,7 @@ def prepare_grpo(sft_config, measurement_config, output_root, name):
                 temporary.write_text(text)
                 temporary.replace(audit)
             _write_state(run_dir, 'prepared', 1, 1)
+            _write_state(plan_dir, 'prepared', 1, 1)
             payloads = [path, audit, run_dir / 'meta/run_manifest.json']
             _write_json(plan_dir / 'prepare-complete.json', {
                 'config_sha256': _hash(config),

@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from pilot_eval.cli import main
 from test_activation_prepare import ActivationData, completed_source
 
@@ -43,3 +45,19 @@ def test_public_grpo_preparation_reuses_sources_and_reports_pending_choices(tmp_
     assert main(['grpo-audit', '--config', str(path), '--output-root', str(tmp_path)]) == 0
     assert 'reward_scorer' in capsys.readouterr().out
     assert main(['grpo-check-ready', '--config', str(path), '--output-root', str(tmp_path)]) == 1
+
+
+def test_preparation_failure_records_source_error_without_complete_marker(tmp_path, capsys):
+    sft, measurement = sources(tmp_path)
+    measured = json.loads(measurement.read_text())
+    checkpoint = tmp_path / measured['source_evidence']['checkpoints']['64']['path']
+    (checkpoint / 'adapter_model.safetensors').write_text('corrupt')
+    args = ['grpo-prepare', '--sft-config', str(sft), '--measurement-config', str(measurement),
+            '--name', 'bad-source', '--output-root', str(tmp_path)]
+    assert main(args) == 1
+    directory = tmp_path / 'plans/bad-source'
+    assert not (directory / 'prepare-complete.json').exists()
+    status = json.loads((directory / 'meta/status.json').read_text())
+    assert status['state'] == 'failed'
+    assert 'checkpoint' in status['error']
+    assert 'checkpoint' in capsys.readouterr().err
