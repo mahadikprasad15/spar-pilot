@@ -6,11 +6,16 @@ from pathlib import Path
 import pytest
 
 from pilot_eval.cli import main
+from pilot_eval.training import training_directory
 from test_activation_prepare import ActivationData, completed_source
 
 
 def sources(root):
     sft = completed_source(root)
+    config = json.loads(sft.read_text())
+    order_path = training_directory(root, config) / 'inputs/order.json'
+    order_path.parent.mkdir(parents=True, exist_ok=True)
+    order_path.write_text(json.dumps([f'gsm8k:train:{i}' for i in config['training_indices']]))
     assert main(['activation-prepare', '--source-config', str(sft), '--name', 'fixed-inputs',
                  '--output-root', str(root)], dependencies=ActivationData()) == 0
     return sft, root / 'plans/fixed-inputs/activation.prepared.json'
@@ -61,3 +66,22 @@ def test_preparation_failure_records_source_error_without_complete_marker(tmp_pa
     assert status['state'] == 'failed'
     assert 'checkpoint' in status['error']
     assert 'checkpoint' in capsys.readouterr().err
+
+
+def test_grpo_matches_actual_saved_prompt_order_and_detects_changed_order(tmp_path):
+    sft, measurement = sources(tmp_path)
+    config = json.loads(sft.read_text())
+    order_path = training_directory(tmp_path, config) / 'inputs/order.json'
+    saved_order = list(reversed(json.loads(order_path.read_text())))
+    order_path.write_text(json.dumps(saved_order))
+    args = ['grpo-prepare', '--sft-config', str(sft), '--measurement-config', str(measurement),
+            '--name', 'order', '--output-root', str(tmp_path)]
+    assert main(args) == 0
+    path = tmp_path / 'plans/order/grpo.prepared.json'
+    plan = json.loads(path.read_text())
+    assert plan['optimizer_prompt_order'] == saved_order
+    assert plan['optimizer_prompt_order'] != [f'gsm8k:train:{i}' for i in config['training_indices']]
+    protected = {p: p.read_bytes() for p in path.parent.rglob('*') if p.is_file()}
+    order_path.write_text(json.dumps(saved_order[1:] + saved_order[:1]))
+    assert main(args) == 1
+    assert all(p.read_bytes() == content for p, content in protected.items())

@@ -9,7 +9,7 @@ from pathlib import Path
 from pilot_eval.activation_prepare import load_prepared
 from pilot_eval.run import _write_json, _write_state
 from pilot_eval.sft import load_sft, safe_name
-from pilot_eval.training import file_hash, run_lock
+from pilot_eval.training import file_hash, run_lock, training_directory
 from pilot_eval.workflow import _hash, _save_frozen
 
 
@@ -42,7 +42,11 @@ def _sources(root, sft_path, measurement_path):
     if set(' '.join(row['question'].split()) for row in training) & set(
             ' '.join(row['question'].split()) for row in gsm):
         raise ValueError('training/evaluation question overlap')
-    return sft, training, evaluation, measured
+    order = json.loads((training_directory(root, sft) / 'inputs/order.json').read_text())
+    if (not isinstance(order, list) or len(order) != 512
+            or set(order) != {row['id'] for row in training}):
+        raise ValueError('saved SFT optimizer prompt order is incomplete or duplicated')
+    return sft, training, evaluation, measured, order
 
 
 def _pending():
@@ -68,6 +72,7 @@ def _audit(config):
              '|---|---|---|---|',
              '| Precision | FP32 | FP32, unquantized | approved; earlier BF16 text superseded |',
              '| Training cohort | 512 saved problems | same ordered IDs and contents | verified |',
+             '| Optimizer prompt order | saved SFT execution order | same order, no reshuffle | verified |',
              '| Evaluation cohort | 150 held-out problems | same ordered IDs and contents | verified |',
              '| Fixed measurement inputs | 150 GSM8K + 150 FineWeb | same tokens and masks | verified |',
              '| Adapter | rank 1, alpha 1, 196 projections | same | source verified |',
@@ -99,7 +104,7 @@ def prepare_grpo(sft_config, measurement_config, output_root, name):
                 raise ValueError('GRPO source options differ; use a new plan name')
             return path
         try:
-            sft, training, evaluation, measured = _sources(root, sft_path, measurement_path)
+            sft, training, evaluation, measured, order = _sources(root, sft_path, measurement_path)
         except (ValueError, OSError) as exc:
             _write_state(plan_dir, 'failed', 0, 1, str(exc))
             raise
@@ -116,8 +121,12 @@ def prepare_grpo(sft_config, measurement_config, output_root, name):
             'checkpoint_steps': sft['checkpoint_steps'],
             'sources': {'sft': {'path': str(sft_path.relative_to(root)), 'sha256': file_hash(sft_path)},
                         'measurement': {'path': str(measurement_path.relative_to(root)),
-                                        'sha256': file_hash(measurement_path)}},
+                                        'sha256': file_hash(measurement_path)},
+                        'optimizer_order': {
+                            'path': str((training_directory(root, sft) / 'inputs/order.json').relative_to(root)),
+                            'sha256': file_hash(training_directory(root, sft) / 'inputs/order.json')}},
             'training_indices': sft['training_indices'],
+            'optimizer_prompt_order': order,
             'training_items_path': sft['training_items_path'],
             'training_items_sha256': sft['training_items_sha256'],
             'evaluation_items_path': sft['evaluation_items_path'],
@@ -179,9 +188,10 @@ def load_grpo_prepared(config_path, output_root):
     for source in config['sources'].values():
         if file_hash(_within(root, source['path'])) != source['sha256']:
             raise ValueError('GRPO source config hash mismatch')
-    sft, training, evaluation, measured = _sources(
+    sft, training, evaluation, measured, order = _sources(
         root, config['sources']['sft']['path'], config['sources']['measurement']['path'])
-    if (config['training_items_sha256'] != sft['training_items_sha256']
+    if (config['optimizer_prompt_order'] != order
+            or config['training_items_sha256'] != sft['training_items_sha256']
             or config['evaluation_items_sha256'] != sft['evaluation_items_sha256']
             or config['measurement_items_sha256'] != measured['items_sha256']):
         raise ValueError('GRPO cohort hashes differ from sources')
