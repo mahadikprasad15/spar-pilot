@@ -364,7 +364,7 @@ these gates without running an unresolved experiment.
   toy learning and flipped-advantage negative controls exercise the trainer.
   Run 20 optimizer steps for each control at two saved seeds, 42 and 43.
   In both seeds the positive control must increase mean rollout reward over
-  steps 16-20 versus steps 1-5 by at least 0.2; the negative control must
+  steps 16-20 versus the untouched pre-training expected reward by at least 0.2; the negative control must
   decrease it by at least 0.2. Each seed's controls start from the same toy
   model/policy and use the same reward definition/settings apart from advantage
   sign. Construct a bounded learnable toy task whose initial expected reward
@@ -454,3 +454,15 @@ these gates without running an unresolved experiment.
   with 194 passed, 19 skipped and 4 warnings in 405.60 seconds. Model-dependent
   coverage was incomplete: this shell's Torch installation could not import
   because its libtorch_cpu library was missing. No real GPU result is inferred.
+
+
+### October 7 learning-control baseline amendment
+
+User approved version 3: compare late-window rollout reward (steps 16-20)
+against exact expected reward of the untouched binary policy, evaluated before
+any optimizer update. In this two-token task expected reward equals probability
+of token 1, so no sampled baseline estimate is needed. The 0.2 threshold,
+seeds 42/43, 20 steps, optimizer and v2 readout stay fixed. Version 2 failed
+its early-window rule because substantial learning occurred within steps 1-5;
+its saved outcomes remain failed. This change is a disclosed post-diagnosis
+engineering test revision, not a scientific experiment or retrospective pass.

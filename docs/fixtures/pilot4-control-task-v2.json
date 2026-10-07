@@ -1,0 +1,67 @@
+{
+  "protocol": "pilot4-tiny-controls-v2",
+  "task": "one complete binary action: token 1 rewarded, token 0 unrewarded",
+  "horizon": 1,
+  "termination": "bounded task horizon is a completed answer, not GSM8K truncation",
+  "vocab_size": 2,
+  "hidden_size": 16,
+  "intermediate_size": 32,
+  "layers": 1,
+  "heads": 2,
+  "rank": 1,
+  "alpha": 1,
+  "dropout": 0,
+  "target_modules": [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj"
+  ],
+  "prompt_tokens": [
+    0
+  ],
+  "prompts_per_window": 8,
+  "draws_per_prompt": 8,
+  "steps": 20,
+  "seeds": [
+    42,
+    43
+  ],
+  "initial_reward_probability_range": [
+    0.35,
+    0.65
+  ],
+  "learning_rate": 0.05,
+  "optimizer": "AdamW",
+  "betas": [
+    0.9,
+    0.999
+  ],
+  "epsilon": 1e-08,
+  "weight_decay": 0,
+  "clip_norm": 1,
+  "microbatch_groups": 8,
+  "temperature": 1,
+  "top_p": 1,
+  "top_k": 0,
+  "criterion": {
+    "early_steps": [
+      1,
+      5
+    ],
+    "late_steps": [
+      16,
+      20
+    ],
+    "minimum_change": 0.2
+  },
+  "note": "Toy optimizer rate is deliberately distinct from scientific 1e-4. Paired controls differ only in advantage sign. Freeze this file before acceptance runs; do not tune after failures.",
+  "readout": {
+    "construction": "unit original row difference projected orthogonal to initial normalized prompt hidden state; rows bad=-u/2, good=+u/2",
+    "frozen": true,
+    "initial_good_probability": 0.5
+  }
+}

@@ -41,7 +41,7 @@ has insufficient headroom for the intended learning demonstration. Sample
 noise can exceed these bounds in observed reward, so this is an expected
 policy-probability limitation, not a hard bound on sample means.
 
-Requested correction, pending user approval: a separately versioned fixed
+User-approved correction: a separately versioned fixed
 unit output direction orthogonal to the initial prompt hidden state. Opposite
 output rows ±u/2 start with equal logits and permit a much wider probability
 range. Keep the original binary task, seeds, 20 steps, learning rate and 0.2
@@ -50,3 +50,29 @@ any acceptance run. Do not tune it after viewing its outcome.
 
 The learning gate remains required and must not be skipped or relabelled green.
 The GRPO control command/notebook handoff remains pending this decision.
+
+
+## Version 2 fixture outcome
+
+The user approved the versioned fixed-readout correction. The original fixture
+remains in `docs/fixtures/pilot4-control-task.json`; the corrected fixture is
+`docs/fixtures/pilot4-control-task-v2.json`. The public tiny-model check passes:
+both seeds start at 50% success, with a unit frozen output-row difference.
+The unchanged two-seed learning acceptance still fails. No criterion, learning
+rate, seed, or step count was changed after this outcome. Full failed evidence
+is retained at `artifacts/runs/diagnostics/pilot4-ticket03-learning-v2-failure`.
+Ticket 03 remains incomplete; further diagnosis is required before proceeding.
+
+
+## Version 3 learning gate: passed
+
+User approved comparing late-window reward against the untouched initial
+policy. Exact expected reward is available for this two-token task, so the
+baseline is evaluated before the first update without sampling noise. The
+20-point requirement and all training settings remain unchanged. Both controls
+in both seeds passed. The affected pinned CPU suite ran 21 tests successfully
+with one PEFT save warning, in 34.48 seconds; no model download was performed.
+Evidence: `artifacts/runs/diagnostics/pilot4-ticket03-learning-v3-passed`.
+Earlier v1/v2 failures remain failed. These tests validate implementation on a
+toy task; they do not establish scientific GSM8K performance or GPU readiness.
+Public CLI/notebook handoff remains pending, so ticket 03 is not yet complete.

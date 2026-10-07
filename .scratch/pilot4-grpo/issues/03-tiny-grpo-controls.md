@@ -62,3 +62,10 @@ loading the scientific model.
   authorized until that reply. Command/notebook control handoff is not complete.
 - Evidence: artifacts/runs/diagnostics/pilot4-ticket03-zero-embedding-failure/
   and artifacts/runs/diagnostics/pilot4-ticket03-learning-failure/.
+
+- User subsequently approved v2 frozen readout correction and v3 untouched
+  pre-training comparison. V2 construction passed but its learning window
+  saturated too early and failed. V3 preserves the 0.2 requirement and passed
+  both signs at seeds 42/43. The affected real pinned CPU suite: 21 passed,
+  1 warning, 34.48 seconds. Canonical evidence retained for each version.
+  CLI/notebook handoff remains incomplete; ticket status remains claimed.
