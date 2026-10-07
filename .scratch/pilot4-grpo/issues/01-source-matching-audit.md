@@ -6,7 +6,7 @@ scientific model run. The command and guided notebook show the same audit.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Verify the selected source configs, completion/checkpoint manifests,
       cohort identities and ordered 512 training/150 evaluation IDs without
@@ -30,3 +30,5 @@ scientific model run. The command and guided notebook show the same audit.
   rank-1 GRPO specification. No old pilot configuration is modified.
 - October 7 amendment: the precision decision is closed by user approval of
   FP32; source/runtime verification remains required, not another precision vote.
+- October 7 implementation: claimed; public preparation/audit commands are
+  tested against real source artifacts with controlled offline fixtures.

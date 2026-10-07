@@ -43,6 +43,16 @@ def main(argv=None, *, dependencies=None):
     sft_prepare.add_argument('--name', required=True)
     sft_prepare.add_argument('--hardware', choices=['T4', 'L4'], default='T4')
     sft_prepare.add_argument('--evaluation-batch-size', type=int, choices=[1, 2, 4, 8], default=1)
+    grpo_prepare = commands.add_parser('grpo-prepare', help='verify Pilot 4 sources and expose pending settings; CPU only')
+    grpo_prepare.add_argument('--sft-config', type=Path, required=True)
+    grpo_prepare.add_argument('--measurement-config', type=Path, required=True)
+    grpo_prepare.add_argument('--name', required=True)
+    grpo_audit = commands.add_parser('grpo-audit', help='reverify and display the Pilot 4 source audit')
+    grpo_audit.add_argument('--config', type=Path, required=True)
+    grpo_ready = commands.add_parser('grpo-check-ready', help='reject unresolved Pilot 4 execution settings')
+    grpo_ready.add_argument('--config', type=Path, required=True)
+    for command in (grpo_prepare, grpo_audit, grpo_ready):
+        command.add_argument('--output-root', type=Path, default=Path('artifacts'))
     sft_train = commands.add_parser('sft-train', help='preflight or resume Pilot 2 training')
     sft_train.add_argument('--config', type=Path, required=True)
     sft_train.add_argument('--preflight-only', action='store_true')
@@ -98,7 +108,18 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command in ['activation-calibration-prepare','activation-calibrate','activation-calibration-freeze','activation-calibration-validate']:
+        if args.command == 'grpo-prepare':
+            from pilot_eval.grpo_prepare import prepare_grpo
+            print(prepare_grpo(args.sft_config, args.measurement_config, args.output_root, args.name))
+        elif args.command in ['grpo-audit', 'grpo-check-ready']:
+            from pilot_eval.grpo_prepare import load_grpo_prepared, require_grpo_ready
+            if args.command == 'grpo-check-ready':
+                require_grpo_ready(args.config, args.output_root)
+                print('GRPO plan has no unresolved choices.')
+            else:
+                config, *_ = load_grpo_prepared(args.config, args.output_root)
+                print((args.output_root / config['audit_path']).read_text())
+        elif args.command in ['activation-calibration-prepare','activation-calibrate','activation-calibration-freeze','activation-calibration-validate']:
             from pilot_eval.activation_calibration import prepare_calibration, collect_calibration, freeze_rule, validate_rule
             if args.command.endswith('prepare'):
                 print(prepare_calibration(args.config,args.output_root,name=args.name,dependencies=dependencies))
