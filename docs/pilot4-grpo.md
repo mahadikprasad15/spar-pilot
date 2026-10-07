@@ -104,3 +104,30 @@ predict all future training lengths; monitor policy is frozen later.
 The baseline workflow and notebook command are tested with controlled CPU
 generation. This does not establish real-model speed, memory fit or GPU
 correctness; those require the later target-GPU preflight.
+
+
+## Offline implementation validation (ticket 03)
+
+Run with the isolated pinned model-library environment (CPU is sufficient):
+
+```sh
+HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 python -m pilot_eval grpo-controls \
+  --name tiny-grpo-controls-v3 --output-root artifacts
+```
+
+Notebook section 8 runs this same public command. No scientific model is
+loaded and no Hub model download occurs. The command executes independent
+loss/adapter-gradient and microbatch checks, then the two-seed positive and
+negative learning controls. Expected: `passed: true`, algorithm evidence and
+four passing control records. It saves configs, trainer arguments, dependency
+versions, all sampled toy responses, step logs, initial/final adapters, frozen
+base hashes and a completion marker under
+`runs/diagnostics/pilot-4/tiny-grpo-controls-v3/`. Reruns verify sealed hashes;
+changed implementation/config requires a new name and corrupted evidence
+stops reuse. Failed runs remain failed without a completion marker.
+
+Version 3 compares late reward with the untouched policy's exact expectation,
+not a window that already contains learning. The earlier failed protocols
+remain preserved; see ADR 0010. Passing is implementation evidence only.
+GPU preflight and a resolved scientific protocol/preregistration remain gates
+before full GRPO training. These changes are local until explicitly pushed.

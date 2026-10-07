@@ -47,6 +47,9 @@ def main(argv=None, *, dependencies=None):
     grpo_prepare.add_argument('--sft-config', type=Path, required=True)
     grpo_prepare.add_argument('--measurement-config', type=Path, required=True)
     grpo_prepare.add_argument('--name', required=True)
+    grpo_controls = commands.add_parser('grpo-controls', help='CPU-only independent algorithm checks and tiny real-model learning controls')
+    grpo_controls.add_argument('--name', required=True)
+    grpo_controls.add_argument('--output-root', type=Path, default=Path('artifacts'))
     grpo_baseline = commands.add_parser('grpo-baseline', help='sample/resume the explicit untuned 128x8 training baseline')
     grpo_baseline.add_argument('--config', type=Path, required=True)
     grpo_baseline.add_argument('--settings', type=Path, required=True)
@@ -113,7 +116,10 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'grpo-baseline':
+        if args.command == 'grpo-controls':
+            from pilot_eval.grpo_controls import run_controls
+            print(json.dumps(run_controls(args.output_root, args.name), indent=2))
+        elif args.command == 'grpo-baseline':
             from pilot_eval.grpo_baseline import sample_baseline
             print(json.dumps(sample_baseline(args.config, args.settings, args.output_root, args.name, dependencies), indent=2))
         elif args.command == 'grpo-prepare':

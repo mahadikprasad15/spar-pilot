@@ -56,3 +56,27 @@ def test_guided_sampling_cell_runs_the_public_baseline(tmp_path):
     exec(stages['baseline'], scope)
     assert scope['BASELINE_SUMMARY']['total'] == 1024
     assert scope['BASELINE_SUMMARY']['final_cap'] is None
+
+
+def test_guided_controls_run_real_public_command(tmp_path):
+    from test_grpo_algorithm import torch_stack
+    torch = torch_stack()
+    torch.set_num_threads(1)
+    notebook_path = Path(__file__).resolve().parents[1] / 'notebooks/pilot-4-colab.ipynb'
+    notebook = json.loads(notebook_path.read_text())
+    stages = {c['metadata']['stage']: ''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code'}
+    assert 'controls' in stages
+    class Commands:
+        @staticmethod
+        def run(args, *, cwd, check):
+            assert main(args[3:]) == 0
+    scope = dict(ARTIFACT_ROOT=tmp_path, REPO_DIR=notebook_path.parents[1],
+                 subprocess=Commands, sys=sys, json=json, Path=Path)
+    exec(stages['controls'], scope)
+    assert scope['CONTROL_RESULTS']['passed']
+    assert scope['CONTROL_RESULTS']['algorithm_checks']['passed']
+    assert scope['CONTROL_RESULTS']['scientific_training_steps'] == 0
+    assert (scope['CONTROL_DIR'] / 'complete.json').exists()
+    exec(stages['controls'], scope)
+    (scope['CONTROL_DIR'] / 'algorithm/results.json').write_text('{}')
+    assert main(['grpo-controls', '--name', 'tiny-grpo-controls-v3', '--output-root', str(tmp_path)]) == 1

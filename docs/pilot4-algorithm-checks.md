@@ -76,3 +76,12 @@ Evidence: `artifacts/runs/diagnostics/pilot4-ticket03-learning-v3-passed`.
 Earlier v1/v2 failures remain failed. These tests validate implementation on a
 toy task; they do not establish scientific GSM8K performance or GPU readiness.
 Public CLI/notebook handoff remains pending, so ticket 03 is not yet complete.
+
+
+## Public handoff complete
+
+`grpo-controls` and notebook section 8 now run independent algorithm checks
+and the learning controls together, persist evidence, and seal success only
+after all gates pass. The notebook/CLI test verifies both reuse and refusal
+of tampered evidence. Final affected suite: 22 passed, 2 save warnings in
+33.47 seconds. Ticket 03 is resolved; target-GPU preflight is still pending.

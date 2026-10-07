@@ -129,12 +129,13 @@ def _learning_run(directory, task, seed, sign):
 def run_controls(output_root, name):
     """Freeze task/config before the four acceptance runs; reuse verified results."""
     from pilot_eval.sft_backend import PINS
-    from pilot_eval import grpo_algorithm
+    from pilot_eval import grpo_algorithm, grpo_checks
     root = Path(output_root).resolve()
     directory = root / 'runs/diagnostics/pilot-4' / safe_name(name)
     task = json.loads(TASK_PATH.read_text())
     config = dict(scope='disposable-control-only', task=task, task_sha256=file_hash(TASK_PATH),
                   algorithm_sha256=file_hash(Path(grpo_algorithm.__file__)),
+                  checks_sha256=file_hash(Path(grpo_checks.__file__)),
                   controls_sha256=file_hash(Path(__file__)), dependencies=PINS, device='cpu',
                   acceptance='both signs in both seeds; no settings/criterion retuning after failure')
     with run_lock(directory):
@@ -156,6 +157,9 @@ def run_controls(output_root, name):
             _write_state(directory, 'running', 0, 4)
             runs = []
             with isolated_rng():
+                print('controls: independent loss and gradient checks', flush=True)
+                algorithm_checks = grpo_checks.validate_algorithm(task, directory / 'algorithm')
+                _write_json(directory / 'algorithm/results.json', algorithm_checks)
                 for seed in task['seeds']:
                     for sign in [1, -1]:
                         print(f'controls: seed {seed}, advantage sign {sign}', flush=True)
@@ -164,7 +168,7 @@ def run_controls(output_root, name):
                         runs.append(_learning_run(unit, task, seed, sign))
                         _write_state(directory, 'running', len(runs), 4)
             result = dict(passed=all(r['passed'] for r in runs), runs=runs, scope=config['scope'],
-                          scientific_training_steps=0,
+                          scientific_training_steps=0, algorithm_checks=algorithm_checks,
                           compatibility='Pinned TRL DAPO via GRPOTrainer.compute_loss; direct summed backward, no second accumulation scaling.')
             _write_json(directory / 'results/results.json', result)
             if not result['passed']:

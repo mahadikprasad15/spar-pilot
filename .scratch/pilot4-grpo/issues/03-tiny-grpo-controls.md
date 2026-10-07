@@ -6,34 +6,34 @@ loading the scientific model.
 
 **Blocked by:** 01 — Verify source evidence and prepare the GRPO matching audit.
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Resolve the exact pinned trainer API and expose every relevant trainer
+- [x] Resolve the exact pinned trainer API and expose every relevant trainer
       argument, with eight prompts/eight draws and one fresh rollout window
       per optimizer step independent of memory microbatching.
-- [ ] Verify the selected whole-window completion-token loss using an
+- [x] Verify the selected whole-window completion-token loss using an
       independent differentiable calculation on unequal-length examples;
       compare adapter gradients across microbatch/accumulation configurations.
-- [ ] Verify group-standardization convention/stabilizer, zero-sum advantages,
+- [x] Verify group-standardization convention/stabilizer, zero-sum advantages,
       zero policy gradients for all-dead groups, padding masks and cap handling.
-- [ ] Distinguish a zero gradient from zero Adam parameter movement when
+- [x] Distinguish a zero gradient from zero Adam parameter movement when
       previous momentum exists; preserve diagnostic correctness.
-- [ ] Build offline tiny real Transformers/PEFT positive-learning and
+- [x] Build offline tiny real Transformers/PEFT positive-learning and
       flipped-advantage negative controls: two seeds (42/43), 20 steps each.
       In both seeds the steps 16-20 mean reward must rise by at least 0.2 versus
-      steps 1-5 for the positive control and fall by at least 0.2 for the negative.
-- [ ] Freeze an attainable toy task and initial policy with expected reward
+      untouched pre-training expected reward (approved v3 amendment) for the positive control and fall by at least 0.2 for the negative.
+- [x] Freeze an attainable toy task and initial policy with expected reward
       near the middle of its range before acceptance runs; paired controls
       share settings except advantage sign. Diagnose failures without tuning
       the frozen criterion or task after observing outcomes.
-- [ ] Verify consecutive-step flattened pre-clip gradient cosine after full
+- [x] Verify consecutive-step flattened pre-clip gradient cosine after full
       accumulation, with stable parameter order; first-step and zero-gradient
       comparisons are undefined with reasons/coverage.
-- [ ] Verify that only intended adapter parameters train and that smoke/control
+- [x] Verify that only intended adapter parameters train and that smoke/control
       state cannot become scientific steps or consume scientific RNG/order.
-- [ ] Save resolved dependency/algorithm evidence and a compatibility decision;
+- [x] Save resolved dependency/algorithm evidence and a compatibility decision;
       no upgrade rewrites previous pilots' environments or evidence.
-- [ ] Make the controls runnable and explained from the command/notebook
+- [x] Make the controls runnable and explained from the command/notebook
       boundary without model downloads or GPU requirements.
 
 ## Comments
@@ -69,3 +69,16 @@ loading the scientific model.
   both signs at seeds 42/43. The affected real pinned CPU suite: 21 passed,
   1 warning, 34.48 seconds. Canonical evidence retained for each version.
   CLI/notebook handoff remains incomplete; ticket status remains claimed.
+
+
+## Answer
+
+Resolved: public `grpo-controls` executes independent real TRL loss/gradient,
+microbatch, cap/dead-group and Adam checks, followed by both learning signs at
+two seeds. Guided notebook section 8 runs the same command and shows saved
+evidence. Full affected pinned CPU suite: 22 passed, 2 PEFT save warnings,
+33.47 seconds; no model download. Reuse and corrupted-evidence rejection were
+tested through the notebook/CLI seam. Artifacts:
+`artifacts/runs/diagnostics/pilot4-ticket03-public-validation-passed/`.
+Scientific GPU preflight and full-run settings remain ticket 04; no scientific
+training was performed. Earlier failed controls remain preserved and failed.
