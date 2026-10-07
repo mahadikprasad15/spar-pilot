@@ -47,6 +47,11 @@ def main(argv=None, *, dependencies=None):
     grpo_prepare.add_argument('--sft-config', type=Path, required=True)
     grpo_prepare.add_argument('--measurement-config', type=Path, required=True)
     grpo_prepare.add_argument('--name', required=True)
+    grpo_baseline = commands.add_parser('grpo-baseline', help='sample/resume the explicit untuned 128x8 training baseline')
+    grpo_baseline.add_argument('--config', type=Path, required=True)
+    grpo_baseline.add_argument('--settings', type=Path, required=True)
+    grpo_baseline.add_argument('--name', required=True)
+    grpo_baseline.add_argument('--output-root', type=Path, default=Path('artifacts'))
     grpo_audit = commands.add_parser('grpo-audit', help='reverify and display the Pilot 4 source audit')
     grpo_audit.add_argument('--config', type=Path, required=True)
     grpo_ready = commands.add_parser('grpo-check-ready', help='reject unresolved Pilot 4 execution settings')
@@ -108,7 +113,10 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'grpo-prepare':
+        if args.command == 'grpo-baseline':
+            from pilot_eval.grpo_baseline import sample_baseline
+            print(json.dumps(sample_baseline(args.config, args.settings, args.output_root, args.name, dependencies), indent=2))
+        elif args.command == 'grpo-prepare':
             from pilot_eval.grpo_prepare import prepare_grpo
             print(prepare_grpo(args.sft_config, args.measurement_config, args.output_root, args.name))
         elif args.command in ['grpo-audit', 'grpo-check-ready']:
