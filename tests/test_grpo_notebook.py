@@ -36,3 +36,23 @@ def test_guided_notebook_preparation_and_audit_use_public_commands(tmp_path):
     assert scope['PLAN']['dtype'] == 'float32'
     assert scope['PLAN']['pending']['gate_margin']['value'] is None
     assert all(not cell.get('outputs') for cell in notebook['cells'] if cell['cell_type'] == 'code')
+
+
+def test_guided_sampling_cell_runs_the_public_baseline(tmp_path):
+    from test_grpo_baseline import prepared, Boundary
+    path, settings = prepared(tmp_path)
+    notebook_path = Path(__file__).resolve().parents[1] / 'notebooks/pilot-4-colab.ipynb'
+    notebook = json.loads(notebook_path.read_text())
+    stages = {c['metadata']['stage']: ''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code'}
+    assert 'baseline' in stages
+    deps = Boundary()
+    class Commands:
+        @staticmethod
+        def run(args, *, cwd, check):
+            assert main(args[3:], dependencies=deps) == 0
+    scope = dict(SAMPLING_SETTINGS_PATH=settings, PREPARED_PATH=path, ARTIFACT_ROOT=tmp_path,
+                 BASELINE_NAME='notebook-sampling', REPO_DIR=notebook_path.parents[1],
+                 subprocess=Commands, sys=sys, json=json, Path=Path)
+    exec(stages['baseline'], scope)
+    assert scope['BASELINE_SUMMARY']['total'] == 1024
+    assert scope['BASELINE_SUMMARY']['final_cap'] is None
