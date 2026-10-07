@@ -57,6 +57,7 @@ def _pending():
         'pilot_generation': (None, 'Freeze baseline sampling limit, filters and batch policy.'),
         'final_completion_limit': (None, 'Derive from uncensored baseline lengths above the 99th percentile.'),
         'monitor_policy': (None, 'Freeze stop/pause/validity actions for caps, dead groups and length changes.'),
+        'training_memory_batching': (None, 'Profile microbatch/accumulation while preserving 8 prompts and 64 completions per update.'),
         'gate_margin': (0.10, 'Record the user-chosen non-inferiority margin in preregistration.'),
         'preregistration': (None, 'Dated predictions must precede scientific training.'),
     }
@@ -117,7 +118,9 @@ def prepare_grpo(sft_config, measurement_config, output_root, name):
             'model': sft['model'], 'model_revision': sft['model_revision'],
             'tokenizer_revision': sft['tokenizer_revision'], 'dtype': 'float32',
             'seed': sft['seed'], 'quantization': None, 'full_determinism': True,
-            'adapter': sft['adapter'], 'optimizer': sft['optimizer'],
+            'adapter': sft['adapter'], 'source_optimizer': sft['optimizer'],
+            'optimizer': {key: value for key, value in sft['optimizer'].items()
+                          if key not in ['microbatch', 'gradient_accumulation_steps']},
             'checkpoint_steps': sft['checkpoint_steps'],
             'sources': {'sft': {'path': str(sft_path.relative_to(root)), 'sha256': file_hash(sft_path)},
                         'measurement': {'path': str(measurement_path.relative_to(root)),
@@ -137,7 +140,8 @@ def prepare_grpo(sft_config, measurement_config, output_root, name):
             'source_prompt_contract': {key: sft['source_config'][key] for key in
                 ['prompt_template', 'chat_template_sha256', 'dataset_path', 'dataset_config',
                  'dataset_revision', 'decoding', 'attention_implementation']},
-            'approved': {'group_size': 8, 'prompts_per_optimizer_step': 8, 'temperature': 1.0,
+            'approved': {'group_size': 8, 'prompts_per_optimizer_step': 8,
+                         'completions_per_optimizer_step': 64, 'temperature': 1.0,
                          'beta': 0.0, 'num_iterations': 1, 'scale_rewards': 'group',
                          'generation_backend': 'hf', 'capped_reward': 0,
                          'bootstrap': {'method': 'paired-item-percentile', 'draws': 10000,

@@ -144,3 +144,17 @@ def test_actual_sft_full_projection_names_are_accepted_without_loosening_targets
     seal_checkpoint(checkpoint, 64)
     assert main(['grpo-prepare', '--sft-config', str(sft), '--measurement-config', str(measured),
                  '--name', 'grpo-wrong', '--output-root', str(tmp_path)]) == 1
+
+
+def test_sft_memory_batches_do_not_become_grpo_completion_batches(tmp_path):
+    sft, measurement = sources(tmp_path)
+    assert main(['grpo-prepare', '--sft-config', str(sft), '--measurement-config', str(measurement),
+                 '--name', 'batch-counts', '--output-root', str(tmp_path)]) == 0
+    plan = json.loads((tmp_path / 'plans/batch-counts/grpo.prepared.json').read_text())
+    assert plan['source_optimizer']['microbatch'] == 1
+    assert plan['source_optimizer']['gradient_accumulation_steps'] == 8
+    assert 'microbatch' not in plan['optimizer']
+    assert 'gradient_accumulation_steps' not in plan['optimizer']
+    assert plan['approved']['prompts_per_optimizer_step'] == 8
+    assert plan['approved']['completions_per_optimizer_step'] == 64
+    assert plan['pending']['training_memory_batching']['value'] is None
