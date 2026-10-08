@@ -59,6 +59,13 @@ def main(argv=None, *, dependencies=None):
     grpo_freeze.add_argument('--review', type=Path, required=True)
     grpo_freeze.add_argument('--name', required=True)
     grpo_freeze.add_argument('--output-root', type=Path, default=Path('artifacts'))
+    for name in ['grpo-train','grpo-verify-training']:
+        command=commands.add_parser(name,help='run/recover or verify the sealed scientific GRPO arm')
+        command.add_argument('--config',type=Path,required=True)
+        command.add_argument('--output-root',type=Path,default=Path('artifacts'))
+        if name=='grpo-train':
+            command.add_argument('--name',required=True)
+            command.add_argument('--length-change-definition',choices=['step-lag-8'],required=True)
     grpo_controls = commands.add_parser('grpo-controls', help='CPU-only independent algorithm checks and tiny real-model learning controls')
     grpo_controls.add_argument('--name', required=True)
     grpo_controls.add_argument('--output-root', type=Path, default=Path('artifacts'))
@@ -128,7 +135,12 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'grpo-preflight':
+        if args.command in ['grpo-train','grpo-verify-training']:
+            from pilot_eval.grpo_training import run_grpo,verify_training
+            result=(run_grpo(args.config,args.output_root,args.name,length_change_definition=args.length_change_definition,dependencies=dependencies)
+                    if args.command=='grpo-train' else verify_training(args.config,args.output_root))
+            print(json.dumps(result,indent=2))
+        elif args.command == 'grpo-preflight':
             from pilot_eval.grpo_preflight import collect_preflight
             print(json.dumps(collect_preflight(args.config,args.baseline_config,args.controls_name,args.settings,args.output_root,args.name,dependencies),indent=2))
         elif args.command == 'grpo-freeze':

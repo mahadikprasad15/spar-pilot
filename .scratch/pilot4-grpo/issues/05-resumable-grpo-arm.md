@@ -5,7 +5,7 @@ diagnostics and scientifically resumable checkpoints durably saved.
 
 **Blocked by:** 04 — Preflight the target GPU and freeze the resolved protocol.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Execute 64 optimizer steps covering the exact 512 training prompts once,
       eight prompts/eight completions per step; prove totals and group identity.
@@ -39,3 +39,7 @@ diagnostics and scientifically resumable checkpoints durably saved.
 - October 7 amendment: checkpoints are the sole training recovery boundaries.
   Up to nearly 32 steps can require redo; incomplete attempts are diagnostic
   evidence rather than additional scientific completions.
+
+- October 8: user approved length-change monitor as absolute fractional change
+  in current step mean tokens versus step n−8; starts at step 9. A zero previous
+  mean is undefined. The training manifest explicitly records this definition.
