@@ -48,7 +48,8 @@ def tiny():
     return model, tokenizer
 
 
-def test_real_trl_loss_matches_independent_token_window_and_microbatch_gradients(tmp_path):
+@pytest.mark.parametrize('checkpointing', [False, True])
+def test_real_trl_loss_matches_independent_token_window_and_microbatch_gradients(tmp_path, checkpointing):
     torch = torch_stack()
     torch.set_num_threads(1)
     from pilot_eval.grpo_algorithm import GRPOWindow
@@ -56,7 +57,7 @@ def test_real_trl_loss_matches_independent_token_window_and_microbatch_gradients
     prompts = [[0]] * 8
     completions = [[d % 2] * (1 + d % 3) for d in range(64)]
     rewards = [float(d % 2) for d in range(64)]
-    window = GRPOWindow(model, tokenizer, output_dir=tmp_path, microbatch_groups=1)
+    window = GRPOWindow(model, tokenizer, output_dir=tmp_path, microbatch_groups=1, gradient_checkpointing=checkpointing)
     loss = window.backward(prompts, completions, rewards, capped=[False] * 64)
     actual = {n: p.grad.clone() for n, p in model.named_parameters() if p.requires_grad}
     assert any(torch.count_nonzero(g) for g in actual.values()), 'gradient comparison needs a nonzero witness'
@@ -77,7 +78,7 @@ def test_real_trl_loss_matches_independent_token_window_and_microbatch_gradients
         if p.requires_grad:
             torch.testing.assert_close(actual[n], p.grad, atol=1e-6, rtol=1e-4)
     model.zero_grad(set_to_none=True)
-    whole = GRPOWindow(model, tokenizer, output_dir=tmp_path / 'whole', microbatch_groups=8)
+    whole = GRPOWindow(model, tokenizer, output_dir=tmp_path / 'whole', microbatch_groups=8, gradient_checkpointing=checkpointing)
     whole.backward(prompts, completions, rewards, capped=[False] * 64)
     for n, p in model.named_parameters():
         if p.requires_grad:

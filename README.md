@@ -1,5 +1,14 @@
 # SPAR evaluation and fine-tuning pilots
 
+## Pilot 4: rank-1 GRPO arm
+
+The [Pilot 4 notebook](notebooks/pilot-4-colab.ipynb) implements source matching,
+untuned sampling, tiny-model validation, GPU preflight and reviewed protocol
+freeze. The scientific trainer and comparison stages are still pending.
+See the [workflow guide](docs/pilot4-grpo.md) and
+[first-principles preflight companion](docs/pilot4-preflight-concepts.md).
+This work is local until pushed; real GPU acceptance must run in Colab.
+
 ## Pilot 3: fixed-token activation measurements
 
 [Open the Pilot 3 notebook in Colab](https://colab.research.google.com/github/mahadikprasad15/spar-pilot/blob/main/notebooks/pilot-3-colab.ipynb)

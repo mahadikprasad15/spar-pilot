@@ -22,7 +22,7 @@ class GRPOWindow:
     Uses the actual pinned GRPOTrainer.compute_loss. It owns no generation,
     optimizer or data order; callers supply a fresh rollout and step exactly once.
     """
-    def __init__(self, model, tokenizer, *, output_dir, microbatch_groups, seed=42, completion_limit=512):
+    def __init__(self, model, tokenizer, *, output_dir, microbatch_groups, seed=42, completion_limit=512, gradient_checkpointing=False):
         import importlib.metadata
         from trl import GRPOConfig, GRPOTrainer
         from datasets import Dataset
@@ -43,7 +43,8 @@ class GRPOWindow:
             epsilon=.2, epsilon_high=.2, delta=None, importance_sampling_level='token',
             top_entropy_quantile=1.0, mask_truncated_completions=False,
             use_vllm=False, use_liger_kernel=False, disable_dropout=True,
-            max_completion_length=completion_limit, gradient_checkpointing=False,
+            max_completion_length=completion_limit, gradient_checkpointing=gradient_checkpointing,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
             learning_rate=1e-4, adam_beta1=.9, adam_beta2=.999, adam_epsilon=1e-8,
             weight_decay=0, lr_scheduler_type='constant', warmup_steps=0,
             max_grad_norm=1.0, max_steps=64, report_to=[], save_strategy='no',
@@ -51,6 +52,9 @@ class GRPOWindow:
         self.trainer = GRPOTrainer(model=model, processing_class=tokenizer, args=args,
             train_dataset=Dataset.from_dict({'prompt': ['bad'] * 8}),
             reward_funcs=lambda completions, **kwargs: [0.0] * len(completions))
+        if gradient_checkpointing:
+            model.enable_input_require_grads()
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
         self.resolved_args = args.to_dict()
         self.trainer.current_gradient_accumulation_steps = args.gradient_accumulation_steps
         self.pad_id = tokenizer.pad_token_id

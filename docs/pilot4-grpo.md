@@ -131,3 +131,59 @@ not a window that already contains learning. The earlier failed protocols
 remain preserved; see ADR 0010. Passing is implementation evidence only.
 GPU preflight and a resolved scientific protocol/preregistration remain gates
 before full GRPO training. These changes are local until explicitly pushed.
+
+## GPU preflight and reviewed protocol (ticket 04)
+
+Notebook sections 9–12 expose the explicit settings, public preflight command,
+evidence review and protocol freeze. See the
+[conceptual companion](pilot4-preflight-concepts.md) for diagrams and rationale.
+
+```sh
+python -m pilot_eval grpo-preflight \
+  --config <root>/plans/<prepared>/grpo.prepared.json \
+  --baseline-config <root>/plans/<baseline>/baseline.config.json \
+  --controls-name <verified-controls> --settings <explicit-settings.json> \
+  --name <preflight-name> --output-root <root>
+python -m pilot_eval grpo-freeze \
+  --config <root>/plans/<preflight-name>/grpo.preflight.json \
+  --review <user-review.json> --name <frozen-name> --output-root <root>
+python -m pilot_eval grpo-check-ready \
+  --config <root>/plans/<frozen-name>/grpo.frozen.json --output-root <root>
+```
+
+The settings explicitly confirm flexible-v3/DAPO and specify a positive token
+margin above ceil(baseline p99), generation/backward group batches, evaluation
+batch, gradient checkpointing, diagnostic seed and minimum free GPU memory.
+Sampling filters must match the baseline. There are no silent scientific
+defaults. A censored p99 needs a named baseline extension first.
+
+The real backend loads the pinned FP32 Qwen model once, checks 196 intended
+projections and zero initialization, compares untuned/zero-adapter greedy
+tokens on all 150 items, then runs two identical disposable two-step trials.
+Losses, gradients, draws and final state must repeat exactly; base hashes must
+stay unchanged. A forced full-cap probe with 64 continuations from the longest
+eight training prompts measures generation/backward memory. Artificial rewards
+in this probe exercise gradients; it is not scientific training.
+
+Preflight evidence lives in `runs/pilot-4/<model>/preflight/<name>/`, with
+runtime/config, zero outputs, two trials (responses, adapter, optimizer/RNG
+state), synthetic capacity responses, timings and sealed completion metadata.
+Verified diagnostic units are reused after interruption. An incomplete unit
+is redone. This differs from scientific training recovery at sealed checkpoint
+boundaries only. A failed gate never becomes a passing result through review.
+
+Timings cover diagnostic hash/transfer/save overhead. Reports project training,
+greedy/sampled behavioral evaluation and worst checkpoint redo costs; later
+activation measurement/KL costs remain unmeasured. Projections depend on future
+response lengths and are not runtime guarantees.
+
+The review requires an explicit non-inferiority margin, cap/dead-group/length
+monitor thresholds and actions (`flag`, `pause`, `stop`), notes and a user-authored
+timezone-aware dated prediction/falsifier. Freeze verifies source/evidence hashes
+and persists these choices plus ordered groups and runtime settings. It does not
+start scientific training. Changes require a named new variant.
+
+Implementation tests exercise the public commands with controlled GPU evidence
+and the real generation/training backend with a tiny locally constructed Qwen
+model on CPU. They do not establish actual Qwen GPU capacity, performance or
+Drive access. Run the notebook preflight on the intended GPU before freezing.

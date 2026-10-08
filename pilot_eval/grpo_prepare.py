@@ -204,6 +204,9 @@ def load_grpo_prepared(config_path, output_root):
 
 def require_grpo_ready(config_path, output_root):
     """Fail clearly on pending choices; no scientific backend is invoked."""
+    if json.loads(Path(config_path).read_text()).get('protocol_version') == 'pilot4-frozen-v1':
+        from pilot_eval.grpo_preflight import load_frozen
+        return load_frozen(config_path, output_root)
     config, *_ = load_grpo_prepared(config_path, output_root)
     pending = [key for key, value in config['pending'].items() if value['value'] is None]
     if pending:

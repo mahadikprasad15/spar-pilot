@@ -47,6 +47,18 @@ def main(argv=None, *, dependencies=None):
     grpo_prepare.add_argument('--sft-config', type=Path, required=True)
     grpo_prepare.add_argument('--measurement-config', type=Path, required=True)
     grpo_prepare.add_argument('--name', required=True)
+    grpo_preflight = commands.add_parser('grpo-preflight', help='collect disposable GPU evidence for an explicitly configured Pilot 4 plan')
+    grpo_preflight.add_argument('--config', type=Path, required=True)
+    grpo_preflight.add_argument('--baseline-config', type=Path, required=True)
+    grpo_preflight.add_argument('--controls-name', required=True)
+    grpo_preflight.add_argument('--settings', type=Path, required=True)
+    grpo_preflight.add_argument('--name', required=True)
+    grpo_preflight.add_argument('--output-root', type=Path, default=Path('artifacts'))
+    grpo_freeze = commands.add_parser('grpo-freeze', help='freeze reviewed GPU evidence and dated preregistration')
+    grpo_freeze.add_argument('--config', type=Path, required=True)
+    grpo_freeze.add_argument('--review', type=Path, required=True)
+    grpo_freeze.add_argument('--name', required=True)
+    grpo_freeze.add_argument('--output-root', type=Path, default=Path('artifacts'))
     grpo_controls = commands.add_parser('grpo-controls', help='CPU-only independent algorithm checks and tiny real-model learning controls')
     grpo_controls.add_argument('--name', required=True)
     grpo_controls.add_argument('--output-root', type=Path, default=Path('artifacts'))
@@ -116,7 +128,13 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command == 'grpo-controls':
+        if args.command == 'grpo-preflight':
+            from pilot_eval.grpo_preflight import collect_preflight
+            print(json.dumps(collect_preflight(args.config,args.baseline_config,args.controls_name,args.settings,args.output_root,args.name,dependencies),indent=2))
+        elif args.command == 'grpo-freeze':
+            from pilot_eval.grpo_preflight import freeze_protocol
+            print(freeze_protocol(args.config,args.review,args.output_root,args.name))
+        elif args.command == 'grpo-controls':
             from pilot_eval.grpo_controls import run_controls
             print(json.dumps(run_controls(args.output_root, args.name), indent=2))
         elif args.command == 'grpo-baseline':
