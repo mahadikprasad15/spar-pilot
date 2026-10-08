@@ -170,7 +170,7 @@ def load_prepared(config_path, output_root):
     if not path.is_relative_to(root):
         raise ValueError('prepared configuration must be within the artifact root')
     config = json.loads(path.read_text())
-    if config.get('protocol_version') != 'pilot3-write-v1':
+    if config.get('protocol_version') not in ('pilot3-write-v1', 'pilot4-writes-v1'):
         raise ValueError('unsupported activation protocol')
     marker = json.loads((path.parent / 'prepare-complete.json').read_text())
     if marker['config_sha256'] != _hash(config):
@@ -184,7 +184,15 @@ def load_prepared(config_path, output_root):
         if not payload.is_relative_to(root) or file_hash(payload) != digest:
             raise ValueError('prepared artifact hash mismatch')
     source_path = root / config['source_config_path']
-    _, _, evidence = _source(source_path, root)
+    if config.get('protocol_version') == 'pilot4-writes-v1':
+        from pilot_eval.grpo_writes import source_evidence
+        evidence, original, original_rows = source_evidence(config['source_contract'], root)
+        if (config['source_input_config_sha256'] != _hash(original)
+                or config['items_path'] != original['items_path']
+                or config['items_sha256'] != original['items_sha256']):
+            raise ValueError('GRPO fixed input identity changed')
+    else:
+        _, _, evidence = _source(source_path, root)
     if evidence != config['source_evidence']:
         raise ValueError('source evidence differs from frozen preparation')
     rows = read_artifact(root, config['items_path'])

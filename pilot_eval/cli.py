@@ -43,6 +43,11 @@ def main(argv=None, *, dependencies=None):
     sft_prepare.add_argument('--name', required=True)
     sft_prepare.add_argument('--hardware', choices=['T4', 'L4'], default='T4')
     sft_prepare.add_argument('--evaluation-batch-size', type=int, choices=[1, 2, 4, 8], default=1)
+    writes = commands.add_parser('grpo-writes-prepare', help='bind verified GRPO checkpoints to exact Pilot 3 inputs')
+    writes.add_argument('--config', type=Path, required=True)
+    writes.add_argument('--measurement-config', type=Path, required=True)
+    writes.add_argument('--name', required=True)
+    writes.add_argument('--output-root', type=Path, default=Path('artifacts'))
     grpo_prepare = commands.add_parser('grpo-prepare', help='verify Pilot 4 sources and expose pending settings; CPU only')
     grpo_prepare.add_argument('--sft-config', type=Path, required=True)
     grpo_prepare.add_argument('--measurement-config', type=Path, required=True)
@@ -140,7 +145,10 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command=='grpo-evaluate':
+        if args.command=='grpo-writes-prepare':
+            from pilot_eval.grpo_writes import prepare_grpo_writes
+            print(prepare_grpo_writes(args.config,args.measurement_config,args.output_root,args.name))
+        elif args.command=='grpo-evaluate':
             from pilot_eval.grpo_evaluation import evaluate_grpo
             print(json.dumps(evaluate_grpo(args.config,args.output_root,args.name,dependencies=dependencies),indent=2))
         elif args.command=='grpo-behaviour-report':
