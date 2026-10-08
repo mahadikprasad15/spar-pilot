@@ -7,7 +7,7 @@ import re
 
 import numpy as np
 
-from pilot_eval.activation_prepare import load_prepared, STEPS, VIEWS
+from pilot_eval.activation_prepare import load_prepared, measurement_steps, STEPS, VIEWS
 from pilot_eval.activation_profile import (ARRAYS, BATCHES, HFProfileDependencies,
     _relative, _seal, _verified, _load_arrays, _check_gate)
 from pilot_eval.activation_workflow import _save_arrays
@@ -163,7 +163,7 @@ def prepare_calibration(config_path, output_root, *, name, dependencies=None):
     plan = {'protocol': PROTOCOL, 'prepared_path': str(_relative(config_path, root).relative_to(root)),
             'prepared_sha256': _hash(config), 'inputs_sha256': config['items_sha256'],
             'runtime': runtime, 'cohorts': cohorts, 'excluded_profile_ids': excluded,
-            'margin': 3, 'seed': config['seed'], 'variants': VARIANTS, 'checkpoint_steps': STEPS,
+            'margin': 3, 'seed': config['seed'], 'variants': VARIANTS, 'checkpoint_steps': measurement_steps(config),
             'run_path': config['run_path'] + '/calibration/' + name}
     path = root / 'plans' / name / 'activation.calibration.json'
     with run_lock(path.parent):
@@ -179,7 +179,7 @@ def _plan(path, root, runtime=None):
             or (runtime is not None and plan['runtime'] != runtime)):
         raise ValueError('calibration identity/runtime mismatch')
     if (set(plan['cohorts']) != {'calibration','validation'} or plan['variants'] != VARIANTS
-            or plan['checkpoint_steps'] != STEPS or plan['seed'] != config['seed']):
+            or plan['checkpoint_steps'] != measurement_steps(config) or plan['seed'] != config['seed']):
         raise ValueError('calibration protocol schema mismatch')
     all_ids = sum(plan['cohorts'].values(), [])
     by_id = {r['id']:r for r in rows}
@@ -218,7 +218,7 @@ def _collect(path, root, phase, deps):
                         if engine is None:
                             engine = deps.activation_engine(config, root)
                         scope = engine.integrity_scope() if hasattr(engine,'integrity_scope') else nullcontext({})
-                        collected = {s:{k:[] for k in ARRAYS} for s in STEPS}
+                        collected = {s:{k:[] for k in ARRAYS} for s in plan['checkpoint_steps']}
                         with scope:
                             for start in range(0,len(selected),batch):
                                 chunk = selected[start:start+batch]
@@ -228,7 +228,7 @@ def _collect(path, root, phase, deps):
                                 else:
                                     reference = engine.capture_reference(chunk)
                                 try:
-                                    for step in STEPS:
+                                    for step in plan['checkpoint_steps']:
                                         print(f'activation calibration: {phase} {variant} checkpoint {step}', flush=True)
                                         source = config['source_evidence']['checkpoints'][str(step)]
                                         checkpoint = root/source['path']
@@ -247,7 +247,7 @@ def _collect(path, root, phase, deps):
                                 finally:
                                     if hasattr(engine,'release_reference'): engine.release_reference(reference)
                                     del reference
-                        for step in STEPS:
+                        for step in plan['checkpoint_steps']:
                             _save_arrays(target/f'step-{step}.npz', {k:np.concatenate(v) for k,v in collected[step].items()})
                         record = {'variant':variant,'status':'completed','example_ids':plan['cohorts'][phase]}
                     except Exception as exc:
@@ -280,8 +280,8 @@ def collect_calibration(path, output_root, *, dependencies=None):
     return _collect(path,Path(output_root).resolve(),'calibration',dependencies or HFProfileDependencies())
 
 
-def _arrays(directory, variant):
-    return {step:_load_arrays(directory/variant/f'step-{step}.npz') for step in STEPS}
+def _arrays(directory, variant, steps=STEPS):
+    return {step:_load_arrays(directory/variant/f'step-{step}.npz') for step in steps}
 
 
 def _verify_phase(plan, root, phase):
@@ -295,12 +295,12 @@ def freeze_rule(path, output_root, *, review_notes):
     if not review_notes.strip(): raise ValueError('review notes required')
     plan,_,_=_plan(path,root)
     directory,result=_verify_phase(plan,root,'calibration')
-    reference=_arrays(directory,'batch-1')
+    reference=_arrays(directory,'batch-1',plan['checkpoint_steps'])
     candidates=[r['variant'] for r in result['records'] if r['status']=='completed' and r['variant']!='batch-1']
-    raw=[comparison_metrics(reference,_arrays(directory,v)) for v in candidates]
+    raw=[comparison_metrics(reference,_arrays(directory,v,plan['checkpoint_steps'])) for v in candidates]
     rule=fit_rule(raw,margin=plan['margin'])
     # Refit directional envelope using only directions above measured resolution.
-    filtered=[comparison_metrics(reference,_arrays(directory,v),resolution=rule['resolution']) for v in candidates]
+    filtered=[comparison_metrics(reference,_arrays(directory,v,plan['checkpoint_steps']),resolution=rule['resolution']) for v in candidates]
     refined=fit_rule(filtered,margin=plan['margin'])
     refined['resolution']=rule['resolution']
     refined.update(plan_sha256=_hash(plan),review_notes=review_notes,
@@ -314,7 +314,7 @@ def _negative_controls(reference, rule):
     controls={}
     for label in ['wrong-sign','wrong-scale']:
         corrupted={s:{k:v.copy() for k,v in data.items()} for s,data in reference.items()}
-        for step in STEPS:
+        for step in reference:
             if step==0: continue
             for key in ['block_delta_sum','block_delta_norm_sum','module_delta_norm_sum','module_ratio_sum']:
                 if label=='wrong-sign':
@@ -323,7 +323,7 @@ def _negative_controls(reference, rule):
         controls[label]=not check_agreement(reference,corrupted,rule)['passed']
     # Deliberate token/module mapping corruption must fail the exact count gate.
     bad={s:{k:v.copy() for k,v in data.items()} for s,data in reference.items()}
-    bad[8]['block_count'][0,0,0]+=1
+    bad[next(s for s in reference if s != 0)]['block_count'][0,0,0]+=1
     try: comparison_metrics(reference,bad)
     except ValueError: controls['wrong-mapping']=True
     else: controls['wrong-mapping']=False
@@ -352,9 +352,9 @@ def validate_rule(path, output_root, *, dependencies=None):
         _save_frozen(target/'config.json',identity)
         agreements, controls = {}, {}
         try:
-            reference=_arrays(directory,'batch-1')
+            reference=_arrays(directory,'batch-1',plan['checkpoint_steps'])
             controls=_negative_controls(reference,rule)
-            agreements={r['variant']:check_agreement(reference,_arrays(directory,r['variant']),rule)
+            agreements={r['variant']:check_agreement(reference,_arrays(directory,r['variant'],plan['checkpoint_steps']),rule)
                         for r in result['records'] if r['status']=='completed'}
             for required in ['repeat-1','padded-1']:
                 if required not in agreements or not agreements[required]['passed']:

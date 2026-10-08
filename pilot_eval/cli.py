@@ -43,6 +43,15 @@ def main(argv=None, *, dependencies=None):
     sft_prepare.add_argument('--name', required=True)
     sft_prepare.add_argument('--hardware', choices=['T4', 'L4'], default='T4')
     sft_prepare.add_argument('--evaluation-batch-size', type=int, choices=[1, 2, 4, 8], default=1)
+    write_report = commands.add_parser('grpo-writes-report', help='CPU comparison of verified SFT, GRPO and random mean writes')
+    for field in ['grpo-report', 'control-report', 'sft-report']:
+        write_report.add_argument('--' + field, type=Path, required=True)
+    write_report.add_argument('--name', required=True)
+    write_report.add_argument('--output-root', type=Path, default=Path('artifacts'))
+    control = commands.add_parser('grpo-writes-control', help='save one norm-matched random control with exact fixed inputs')
+    control.add_argument('--config', type=Path, required=True)
+    control.add_argument('--name', required=True)
+    control.add_argument('--output-root', type=Path, default=Path('artifacts'))
     writes = commands.add_parser('grpo-writes-prepare', help='bind verified GRPO checkpoints to exact Pilot 3 inputs')
     writes.add_argument('--config', type=Path, required=True)
     writes.add_argument('--measurement-config', type=Path, required=True)
@@ -145,7 +154,14 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command=='grpo-writes-prepare':
+        if args.command=='grpo-writes-report':
+            from pilot_eval.grpo_write_report import report_grpo_writes
+            result = report_grpo_writes(args.grpo_report,args.control_report,args.sft_report,args.output_root,args.name)
+            print(json.dumps({k:result[k] for k in ['report_complete','defined_cosines','total_cosines','random_realizations']},indent=2))
+        elif args.command=='grpo-writes-control':
+            from pilot_eval.grpo_writes import prepare_random_writes
+            print(prepare_random_writes(args.config,args.output_root,args.name))
+        elif args.command=='grpo-writes-prepare':
             from pilot_eval.grpo_writes import prepare_grpo_writes
             print(prepare_grpo_writes(args.config,args.measurement_config,args.output_root,args.name))
         elif args.command=='grpo-evaluate':

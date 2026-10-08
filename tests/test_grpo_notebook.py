@@ -160,3 +160,21 @@ def test_guided_behavioural_evaluation_and_cpu_report_use_public_workflow(tmp_pa
     exec(stages['report-behaviour'],scope)
     assert scope['BEHAVIOUR_RESULTS']['drops']['greedy']['drop']==1.
     assert (scope['BEHAVIOUR_REPORT_DIR']/'complete.json').exists()
+
+
+def test_ticket7_notebook_exposes_separate_forward_work_and_verified_gpu_release():
+    notebook=json.loads((Path(__file__).resolve().parents[1]/'notebooks/pilot-4-colab.ipynb').read_text())
+    stages={c['metadata']['stage']:''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code'}
+    expected=['writes-prepare','writes-calibration-prepare','writes-calibrate','writes-calibration-freeze',
+              'writes-calibration-validate','writes-profile','writes-freeze','writes-measure','writes-verify',
+              'writes-report','writes-compare']
+    assert all(s in stages for s in expected)
+    assert [s for s in stages if s in expected]==expected
+    assert 'grpo-writes-control' in stages['writes-prepare']
+    assert 'activation-verify' in stages['writes-verify']
+    assert 'grpo-writes-report' in stages['writes-compare']
+    assert 'WRITE_PROFILE_REVIEWED' in stages['writes-freeze']
+    assert 'SFT_WRITE_REPORT' in stages['writes-compare']
+    for source in stages.values():ast.parse(source)
+    text='\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='markdown')
+    assert 'forward-only' in text and 'one random' in text.lower()

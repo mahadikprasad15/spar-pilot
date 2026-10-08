@@ -5,7 +5,6 @@ from pathlib import Path
 from pilot_eval.activation_prepare import load_prepared, STEPS, PROJECTIONS, _preparation_status
 from pilot_eval.grpo_evaluation import _source
 from pilot_eval.grpo_prepare import _within
-from pilot_eval.grpo_training import verify_training
 from pilot_eval.run import _write_json
 from pilot_eval.sft import safe_name
 from pilot_eval.training import file_hash, run_lock
@@ -14,6 +13,9 @@ from pilot_eval.workflow import _hash, _save_frozen
 
 def source_evidence(contract, root):
     """Reverify the real GRPO history and checkpoint inventory without a model."""
+    if contract.get("kind") == "random-rank1-control":
+        return _control_evidence(contract, root)
+    if contract.get("kind") != "grpo": raise ValueError("unsupported write source contract")
     path = _within(root, contract['training_path'])
     training, frozen, plan, items, checkpoints = _source(path, root)
     original_path = _within(root, contract['measurement_path'])
@@ -26,7 +28,7 @@ def source_evidence(contract, root):
             or training['prompt_template']['chat_template_sha256'] != original['chat_template_sha256']
             or [(r['id'],r['gold']) for r in rows if r['corpus']=='gsm8k'] != [(r['id'],r['gold']) for r in items]):
         raise ValueError('GRPO and fixed measurement source identities differ')
-    integrity = verify_training(path, root)['base_integrity']
+    integrity = json.loads((root/training['run_path']/'results/results.json').read_text())['base_integrity']
     base = original['source_evidence']['base_sha256']
     if integrity != dict(base_before=base,base_after=base,base_unchanged=True):
         raise ValueError('GRPO frozen-base hash differs from fixed measurement source')
@@ -52,10 +54,10 @@ def prepare_grpo_writes(training_path, measurement_path, output_root, name):
     name = safe_name(name)
     contract = dict(kind='grpo',training_path=str(_within(root,training_path).relative_to(root)),
                     measurement_path=str(_within(root,measurement_path).relative_to(root)))
-    evidence, original, rows = source_evidence(contract, root)
     plan = root/'plans'/name
     path = plan/'activation.prepared.json'
     with run_lock(plan), _preparation_status(plan):
+        evidence, original, rows = source_evidence(contract, root)
         if (plan/'prepare-complete.json').exists():
             config,_ = load_prepared(path,root)
             if config['source_contract'] != contract: raise ValueError('GRPO measurement plan differs; use a new name')
@@ -77,4 +79,55 @@ def prepare_grpo_writes(training_path, measurement_path, output_root, name):
         _write_json(plan/'prepare-complete.json',dict(config_sha256=_hash(config),
             files={str(p.relative_to(root)):file_hash(p) for p in files}))
         print(f'GRPO fixed inputs prepared: {len(rows)}; {path}',flush=True)
+        return path
+
+
+def _control_evidence(contract, root):
+    parent_path=_within(root,contract['parent_prepared_path'])
+    parent,rows=load_prepared(parent_path,root)
+    if parent['source_contract']['kind']!='grpo': raise ValueError('random control requires verified GRPO source')
+    checkpoint=_within(root,parent['source_evidence']['checkpoints']['64']['path'])
+    control=_within(root,contract['control_path'])
+    if not (control/'complete.json').exists(): raise ValueError('random control is not sealed')
+    from pilot_eval.grpo_random_control import construct_control
+    construct_control(checkpoint,control)  # Existing seal required: verification only.
+    evidence={**parent['source_evidence'],'checkpoints':{
+        '0':parent['source_evidence']['checkpoints']['0'],
+        '64':dict(path=str(control.relative_to(root)),complete_sha256=file_hash(control/'complete.json'),
+                  adapter_sha256=file_hash(control/'adapter_model.safetensors'))},
+        'control_complete_sha256':file_hash(control/'complete.json')}
+    return evidence,parent,rows
+
+
+def prepare_random_writes(prepared_path, output_root, name):
+    root=Path(output_root).resolve();name=safe_name(name)
+    parent_path=_within(root,prepared_path)
+    parent,rows=load_prepared(parent_path,root)
+    if parent['source_contract']['kind']!='grpo': raise ValueError('control parent must be GRPO writes')
+    plan=root/'plans'/name;path=plan/'activation.prepared.json'
+    run=root/'runs/pilot-4'/parent['model'].replace('/','--')/'random-fixed-writes'/name
+    control=run/'control-adapter'
+    contract=dict(kind='random-rank1-control',parent_prepared_path=str(parent_path.relative_to(root)),
+                  control_path=str(control.relative_to(root)))
+    with run_lock(plan),_preparation_status(plan):
+        if (plan/'prepare-complete.json').exists():
+            config,_=load_prepared(path,root)
+            if config['source_contract']!=contract: raise ValueError('random control plan changed')
+            return path
+        from pilot_eval.grpo_random_control import construct_control
+        construct_control(root/parent['source_evidence']['checkpoints']['64']['path'],control)
+        evidence,_,_=_control_evidence(contract,root)
+        audit=run/'results/input-audit.md'
+        config={**parent,'run_id':name,'checkpoint_steps':[0,64],'source_contract':contract,
+                'source_input_config_sha256':_hash(parent),'source_evidence':evidence,
+                'audit_path':str(audit.relative_to(root)),'run_path':str(run.relative_to(root)),
+                'variant_labels':{'0':'verified GRPO zero adapter','64':'random control matched to GRPO step 64'},
+                'control_note':'One random intervention, not a null distribution; weight norm is not activation norm.'}
+        _save_frozen(path,config);_save_frozen(run/'meta/run_manifest.json',config)
+        audit.parent.mkdir(parents=True,exist_ok=True)
+        audit.write_text('# Random intervention fixed-input audit\n\n'+config['control_note']+'\n'
+                         'Requires fresh validation, numerical calibration and profiling. No training or generation.\n')
+        files=[path,audit,run/'meta/run_manifest.json',root/config['items_path'],control/'complete.json']
+        _write_json(plan/'prepare-complete.json',dict(config_sha256=_hash(config),
+            files={str(p.relative_to(root)):file_hash(p) for p in files}))
         return path

@@ -64,7 +64,7 @@ def report_activation(config_path, output_root, *, name):
     """Require verified complete evidence, then save an immutable scientific report."""
     import re
     from pilot_eval.activation_measurement import load_execution, verify_measurement, iter_measurement_batches
-    from pilot_eval.activation_prepare import STEPS, VIEWS, PROJECTIONS
+    from pilot_eval.activation_prepare import measurement_steps, VIEWS, PROJECTIONS
     from pilot_eval.activation_workflow import _save_arrays
     from pilot_eval.training import file_hash, run_lock
     from pilot_eval.run import _write_json, _write_state
@@ -75,6 +75,7 @@ def report_activation(config_path, output_root, *, name):
         raise ValueError('invalid report name')
     source = verify_measurement(config_path, root)
     execution, prepared, rows = load_execution(config_path, root)
+    steps = measurement_steps(prepared)
     source_dir = root / execution['run_path']
     from importlib.metadata import version
     identity = {'report_implementation': {filename: file_hash(Path(__file__).with_name(filename))
@@ -105,7 +106,7 @@ def report_activation(config_path, output_root, *, name):
             if set(marker['files']) != required:
                 raise ValueError('report completion payload inventory mismatch')
             return json.loads((directory / 'results/results.json').read_text())
-        _write_state(directory, 'running', 0, len(STEPS))
+        _write_state(directory, 'running', 0, len(steps))
         try:
             rng = np.random.default_rng(42)
             cohorts = {corpus: [i for i, row in enumerate(rows) if row['corpus'] == corpus]
@@ -115,7 +116,7 @@ def report_activation(config_path, output_root, *, name):
                        for c, values in draws.items()}
             _save_arrays(directory / 'results/bootstrap-draws.npz', draws)
             records, vectors, replicates, diagnostics = [], {}, {}, []
-            for step in STEPS:
+            for step in steps:
                 chunks = list(iter_measurement_batches(config_path, root, step=step))
                 arrays = {key: np.concatenate([chunk['arrays'][key] for chunk in chunks])
                           for key in chunks[0]['arrays']}
@@ -150,7 +151,7 @@ def report_activation(config_path, output_root, *, name):
                                                         undefined_write=derived['relative_write'] is None,
                                                         denominator_diagnostics=_denominators(summary)))
                 del arrays
-                _write_state(directory, 'running', STEPS.index(step) + 1, len(STEPS))
+                _write_state(directory, 'running', steps.index(step) + 1, len(steps))
             _save_arrays(directory / 'results/mean-vectors.npz', vectors)
             # Undefined values are explicit masks in finite NPZ payloads.
             _save_arrays(directory / 'results/bootstrap-primary.npz', {
@@ -158,6 +159,7 @@ def report_activation(config_path, output_root, *, name):
                 for suffix, value in [('defined-', np.isfinite(values).astype(float)),
                                       ('value-', np.nan_to_num(values))]})
             result = {'schema_version': 1, 'report_complete': True, 'name': name,
+                      'checkpoint_steps': steps, 'variant_labels': prepared.get('variant_labels', {}),
                       'source_run': execution['run_path'], 'source_completion': source,
                       'provenance': identity, 'measurements': records,
                       'bootstrap_cohort_ids': {c: [rows[i]['id'] for i in ids] for c, ids in cohorts.items()},
@@ -167,12 +169,14 @@ def report_activation(config_path, output_root, *, name):
                                  'Direction resolution flags use an empirical engineering envelope, not a statistical confidence bound.',
                                  'Geometry is descriptive, not causal evidence or a layer-placement recommendation.'],
                       'pinned_question': 'Do longer gold solutions dominate token-weighted write profiles, and does equal-example weighting change them?'}
+            if prepared.get('control_note'):
+                result['limits'].append(prepared['control_note'])
             _write_json(directory / 'results/results.json', result)
             with (directory / 'results/validation.jsonl').open('w') as handle:
                 for item in diagnostics:
                     handle.write(json.dumps(item) + '\n')
             validation_summary = []
-            for step in STEPS:
+            for step in steps:
                 for view in VIEWS:
                     evidence = [r for r in diagnostics if r['step'] == step and r['view'] == view]
                     coordinates = sum(r['coordinate_count'] for r in evidence)
@@ -195,10 +199,10 @@ def report_activation(config_path, output_root, *, name):
                      and p.relative_to(directory).parts[0] in ['results', 'plots']] + [directory / 'config.json']
             _write_json(marker_path, {'identity_sha256': _hash(identity),
                                      'files': {str(p.relative_to(directory)): file_hash(p) for p in files}})
-            _write_state(directory, 'completed', len(STEPS), len(STEPS))
+            _write_state(directory, 'completed', len(steps), len(steps))
             return result
         except Exception as error:
-            _write_state(directory, 'failed', 0, len(STEPS), str(error))
+            _write_state(directory, 'failed', 0, len(steps), str(error))
             raise
 
 
@@ -216,6 +220,8 @@ def _write_tables(directory, result, rows):
     lengths = {view: [sum(r['masks'][view]) for r in rows if any(r['masks'][view])] for view in ['question', 'solution', 'user']}
     _write = ['# ' + result['name'], '', 'Complete verified forward-only measurements; no answer generation or scoring.', '',
               result['pinned_question'], '', '## Interpretation limits', ''] + ['- ' + text for text in result['limits']]
+    if result.get('variant_labels'):
+        _write += ['', '## Intervention labels', ''] + [f"- {key}: {label}" for key, label in result['variant_labels'].items()]
     _write += ['', '## Reconstruction', '', 'Primary block: norm of mean delta / mean baseline norm. Primary module: mean direct norm / mean ordinary norm.',
                'Token and equal-example weights are applied to both terms. Secondary module ratios condition on defined tokens.',
                '2,000 paired example bootstrap replicates, seed 42; percentile intervals use defined replicates only. Undefined values remain null.',

@@ -12,6 +12,7 @@ def plot_report(directory, result):
     folder = directory / 'plots'
     folder.mkdir(parents=True, exist_ok=True)
     records = result['measurements']
+    STEPS = result.get('checkpoint_steps', STEPS)
     palette = ['#6c757d', '#467ba3', '#55a089', '#bf924d', '#a76b91']
     plt.rcParams.update({'font.size': 9, 'axes.spines.top': False,
                          'axes.spines.right': False, 'figure.facecolor': '#fafbfc'})
@@ -33,7 +34,7 @@ def plot_report(directory, result):
                          and r['weighting'] == weighting and r['step'] == step]
                 y = [np.nan if r['relative_write'] is None else r['relative_write'] for r in cells]
                 bounds = np.array([r['interval_95'] or [np.nan, np.nan] for r in cells])
-                axis.plot(range(28), y, color=color, label=f'Step {step}')
+                axis.plot(range(28), y, color=color, label=result.get('variant_labels', {}).get(str(step), f'Step {step}'))
                 axis.fill_between(range(28), bounds[:, 0], bounds[:, 1], color=color, alpha=.13)
             axis.set_title(f'{view} · {weighting} weighting')
             axis.set_ylabel('Norm(mean Δh) / mean norm(h)')
@@ -50,7 +51,7 @@ def plot_report(directory, result):
     # Zero-only evidence still gets a nondegenerate drawing range; recorded max stays zero.
     vmax = maximum if maximum > 0 else 1.
     for weighting in ['token', 'example']:
-        fig, axes = plt.subplots(3, 5, figsize=(16, 15), sharey=True)
+        fig, axes = plt.subplots(3, len(STEPS), figsize=(3.2 * len(STEPS), 15), sharey=True)
         for row, view in enumerate(VIEWS):
             for column, step in enumerate(STEPS):
                 axis = axes[row, column]
@@ -62,7 +63,7 @@ def plot_report(directory, result):
                 cmap = plt.get_cmap('Blues').copy()
                 cmap.set_bad('#d9dde3')
                 drawing = axis.imshow(grid, aspect='auto', vmin=0, vmax=vmax, cmap=cmap, interpolation='nearest')
-                axis.set_title(f'{view} · step {step}')
+                axis.set_title(f"{view} · {result.get('variant_labels', {}).get(str(step), 'step ' + str(step))}", fontsize=8)
                 axis.set_xticks(range(7), [p.removesuffix('_proj') for p in PROJECTIONS], rotation=45)
                 axis.set_yticks([0, 7, 14, 21, 27])
                 if column == 0:

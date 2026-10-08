@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pilot_eval.activation_prepare import load_prepared, STEPS, VIEWS, PROJECTIONS
+from pilot_eval.activation_prepare import load_prepared, measurement_steps, STEPS, VIEWS, PROJECTIONS
 from pilot_eval.activation_profile import BATCHES, AGREEMENT, _relative, _verified, _check_gate, _profile_agreement
 from pilot_eval.activation_workflow import HFActivationDependencies, _save_arrays, _verify_complete
 from pilot_eval.run import _write_json, _write_state
@@ -35,7 +35,7 @@ def load_execution(config_path, output_root):
     batch_size = execution['batch_size']
     if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name)
             or batch_size not in BATCHES or execution['schema_version'] != 1
-            or execution['state'] != 'frozen' or execution['checkpoint_steps'] != STEPS
+            or execution['state'] != 'frozen' or execution['checkpoint_steps'] != measurement_steps(prepared)
             or execution['views'] != VIEWS or execution['projections'] != PROJECTIONS
             or execution['precision'] != 'float32' or execution['reduction_precision'] != 'float64'
             or execution['rank1_thresholds'] != THRESHOLDS
@@ -228,7 +228,7 @@ def _scan(directory, execution, prepared, rows, *, require_complete=False):
                 name = 'baseline_' + k
                 totals[name] = totals.get(name, np.zeros(v.shape[1:], dtype=np.float64)) + v.sum(axis=0)
             files.extend(folder / 'baseline' / p for p in ['complete.json', 'metadata.json', 'summaries.npz'])
-        for step in STEPS:
+        for step in measurement_steps(prepared):
             shard = folder / 'checkpoints' / f'step-{step}'
             if not (shard / 'complete.json').exists():
                 if require_complete:
@@ -297,7 +297,7 @@ def authorize_measurement_recovery(config_path, output_root, *, review_notes, de
                   'publication':'new batch payloads published only after final boundary hash',
                   'numerical_changes':None}
         _save_frozen(directory/'meta/production-recovery.json',record)
-        print(f"activation measurement: recovery verified {len(completed)}/{len(execution['batches'])*len(STEPS)} saved units; preserved",flush=True)
+        print(f"activation measurement: recovery verified {len(completed)}/{len(execution['batches'])*len(measurement_steps(prepared))} saved units; preserved",flush=True)
         return record
 
 
@@ -344,7 +344,7 @@ def measure_activation(config_path, output_root, *, dependencies=None):
     execution, prepared, rows = load_execution(config_path, root)
     directory = root / execution['run_path']
     deps = dependencies or HFActivationDependencies()
-    total = len(execution['batches']) * len(STEPS)
+    total = len(execution['batches']) * len(measurement_steps(prepared))
     with run_lock(directory):
         engine, reference, completed = None, None, set()
         stage, current = 'verify-runtime', None
@@ -361,7 +361,7 @@ def measure_activation(config_path, output_root, *, dependencies=None):
             _save_frozen(directory / 'meta/run_manifest.json', manifest)
             if (directory / 'complete.json').exists():
                 result = verify_measurement(config_path, root)
-                completed = {(b['index'], s) for b in execution['batches'] for s in STEPS}
+                completed = {(b['index'], s) for b in execution['batches'] for s in measurement_steps(prepared)}
                 _progress(directory, 'completed', completed, total)
                 return result
             stage = 'verify-existing-shards'
@@ -369,7 +369,7 @@ def measure_activation(config_path, output_root, *, dependencies=None):
             _progress(directory, 'running', completed, total)
             by_id = {r['id']: r for r in rows}
             for batch in execution['batches']:
-                pending = [step for step in STEPS if (batch['index'], step) not in completed]
+                pending = [step for step in measurement_steps(prepared) if (batch['index'], step) not in completed]
                 if not pending:
                     continue
                 current = {'batch_index': batch['index'], 'step': None}
@@ -454,7 +454,7 @@ def measure_activation(config_path, output_root, *, dependencies=None):
                       'execution_sha256': _hash(execution), 'example_count': len(rows),
                       'example_ids': [r['id'] for r in rows], 'corpus_counts': dict(Counter(r['corpus'] for r in rows)),
                       'completed_combinations': len(completed), 'batch_count': len(execution['batches']),
-                      'checkpoint_steps': STEPS, 'views': VIEWS,
+                      'checkpoint_steps': measurement_steps(prepared), 'views': VIEWS,
                       'base_sha256': prepared['source_evidence']['base_sha256'],
                       'aggregate_arrays': 'results/aggregate-sums.npz',
                       'summary_scope': 'sufficient sums; interpretation, weighting and intervals belong to CPU report',
@@ -516,10 +516,10 @@ def iter_measurement_batches(config_path, output_root, *, step):
     Reporting calls verify_measurement first for whole-run completeness. Each
     yielded shard is independently checked again, including sampled validation.
     """
-    if step not in STEPS:
-        raise ValueError('unknown checkpoint step')
     root = Path(output_root).resolve()
     execution, prepared, rows = load_execution(config_path, root)
+    if step not in measurement_steps(prepared):
+        raise ValueError('unknown measurement variant')
     directory = root / execution['run_path']
     by_id = {row['id']: row for row in rows}
     for batch in execution['batches']:

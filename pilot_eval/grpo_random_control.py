@@ -69,6 +69,8 @@ def construct_control(source, destination):
     marker=destination/'complete.json'
     if marker.exists():
         saved=json.loads(marker.read_text())
+        if set(saved['files']) != {'adapter_config.json','adapter_model.safetensors','construction.json'}:
+            raise ValueError('random control seal omits required payloads')
         if saved['identity']!=identity: raise ValueError('random control source identity changed')
         for name,digest in saved['files'].items():
             if file_hash(destination/name)!=digest: raise ValueError('random control payload changed')
@@ -85,7 +87,8 @@ def construct_control(source, destination):
         realized=float(np.linalg.norm(a.astype(np.float64))*np.linalg.norm(b.astype(np.float64)))
         if (not np.isclose(np.linalg.norm(a.astype(np.float64)),1.,atol=1e-6,rtol=1e-5)
                 or not np.isclose(realized,row['target_norm'],atol=1e-6,rtol=1e-5)
-                or (row['target_norm']==0 and np.count_nonzero(b))):
+                or (row['target_norm']==0 and np.count_nonzero(b))
+                or (row['target_norm']>0 and realized==0)):
             raise ValueError('random control norm/unit-direction reconstruction failed')
     if (file_hash(source/'adapter_config.json')!=identity['source_config_sha256']
             or file_hash(source/'adapter_model.safetensors')!=identity['source_adapter_sha256']):

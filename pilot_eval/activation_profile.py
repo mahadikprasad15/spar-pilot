@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pilot_eval.activation_prepare import load_prepared, STEPS, VIEWS, PROJECTIONS
+from pilot_eval.activation_prepare import load_prepared, measurement_steps, STEPS, VIEWS, PROJECTIONS
 from pilot_eval.activation_math import derive_measurements
 from pilot_eval.activation_workflow import (
     HFActivationDependencies, validate_activation, _save_arrays, _verify_complete,
@@ -93,7 +93,7 @@ def _agreement(reference, candidate, rule=None):
         from pilot_eval.activation_calibration import check_agreement
         return check_agreement(reference, candidate, rule)
     failures = []
-    for step in STEPS:
+    for step in reference:
         for key in sorted(ARRAYS):
             a, b = reference[step][key], candidate[step][key]
             if a.shape != b.shape:
@@ -150,7 +150,8 @@ def _workload(config, root, rows, engine, deps, *, timed):
 
 
 def _workload_inner(config, root, rows, engine, deps, *, timed):
-    collected = {s: {key: [] for key in ARRAYS} for s in STEPS}
+    steps = measurement_steps(config)
+    collected = {s: {key: [] for key in ARRAYS} for s in steps}
     evidence, reference_seconds, checkpoint_seconds = [], 0., 0.
     for chunk_index, batch in enumerate(rows):
         print(f"activation profile: {'timed' if timed else 'warmup'} chunk {chunk_index + 1}/{len(rows)}: reference", flush=True)
@@ -161,7 +162,7 @@ def _workload_inner(config, root, rows, engine, deps, *, timed):
             reference = engine.capture_reference(batch)
             deps.synchronize()
             reference_seconds += deps.clock() - started
-            for step in STEPS:
+            for step in steps:
                 source = config['source_evidence']['checkpoints'][str(step)]
                 checkpoint = root / source['path']
                 if (file_hash(checkpoint / 'adapter_model.safetensors') != source['adapter_sha256']
@@ -209,6 +210,7 @@ def _profile_agreement(identity, root, config):
 def profile_activation(config_path, output_root, *, dependencies=None, calibration=None):
     root = Path(output_root).resolve()
     config, rows = load_prepared(config_path, root)
+    steps = measurement_steps(config)
     deps = dependencies or HFProfileDependencies()
     runtime = deps.runtime()
     validated = None
@@ -231,7 +233,7 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                 'batch_sizes': BATCHES, 'agreement': AGREEMENT,
                 'integrity_policy': 'workload-boundary-sha256-and-measurement-version-guards',
                 'validation_identity': diagnostic['identity'], 'schema_version': 1,
-                'views': VIEWS, 'projections': PROJECTIONS, 'checkpoint_steps': STEPS}
+                'views': VIEWS, 'projections': PROJECTIONS, 'checkpoint_steps': steps}
     if validated:
         identity['agreement'] = validated['rule']
         identity['calibration_path'] = str(_relative(calibration, root).relative_to(root))
@@ -253,7 +255,7 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                 engine = None
                 if (target / 'complete.json').exists():
                     result = _verified(target, candidate_identity, ['results.json'])
-                    candidate = {s: _load_arrays(target / f'step-{s}.npz') for s in STEPS} if result['status'] in ['passed', 'numerical-mismatch'] else None
+                    candidate = {s: _load_arrays(target / f'step-{s}.npz') for s in steps} if result['status'] in ['passed', 'numerical-mismatch'] else None
                 elif validated and batch not in validated['validated_batches']:
                     candidate = None
                     result = {'batch_size': batch, 'status': 'rejected-calibration',
@@ -286,10 +288,10 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                                   'input_tokens_per_second': sum(len(r['input_ids']) for r in selected) / elapsed,
                                   'examples_per_second': len(selected) / elapsed,
                                   'memory': memory,
-                                  'timing_scope': 'one-reference-plus-five-validated-checkpoints-per-batch plus exact workload boundary hashes; excludes load, warmup and file writes',
+                                  'timing_scope': 'one-reference-plus-declared-validated-variants-per-batch plus exact workload boundary hashes; excludes load, warmup and file writes',
                                   'validation': evidence}
                         target.mkdir(parents=True, exist_ok=True)
-                        for step in STEPS:
+                        for step in steps:
                             _save_arrays(target / f'step-{step}.npz', candidate[step])
                     except Exception as exc:
                         if not deps.is_oom(exc):
@@ -303,7 +305,7 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                         del engine
                         deps.cleanup()
                     _write_json(target / 'results.json', result)
-                    payloads = [target / 'results.json'] + ([target / f'step-{s}.npz' for s in STEPS] if candidate is not None else [])
+                    payloads = [target / 'results.json'] + ([target / f'step-{s}.npz' for s in steps] if candidate is not None else [])
                     _seal(target, candidate_identity, payloads)
                 if result['status'] == 'numerical-mismatch':
                     raise ValueError('profile summary agreement failed; inspect saved candidate evidence')
@@ -335,6 +337,7 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
     """CPU-only explicit review; production will verify the saved runtime again."""
     root = Path(output_root).resolve()
     config, rows = load_prepared(config_path, root)
+    steps = measurement_steps(config)
     if name == config['run_id']:
         raise ValueError('production execution needs a distinct name from input preparation')
     if not review_notes.strip() or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name):
@@ -349,8 +352,8 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
     if candidate is None or candidate['status'] != 'passed':
         raise ValueError('only a reviewed passing profile candidate can be frozen')
     # Re-read numeric evidence instead of trusting the displayed recommendation.
-    reference = {s: _load_arrays(directory / 'batch-1' / f'step-{s}.npz') for s in STEPS}
-    arrays = {s: _load_arrays(directory / f'batch-{batch_size}' / f'step-{s}.npz') for s in STEPS}
+    reference = {s: _load_arrays(directory / 'batch-1' / f'step-{s}.npz') for s in steps}
+    arrays = {s: _load_arrays(directory / f'batch-{batch_size}' / f'step-{s}.npz') for s in steps}
     rule = _profile_agreement(identity, root, config)
     if not _agreement(reference, arrays, rule)['passed']:
         raise ValueError('selected batch disagrees with batch 1')
@@ -369,7 +372,7 @@ def freeze_execution(config_path, output_root, *, profile, batch_size, name, rev
                  'precision': config['dtype'], 'reduction_precision': 'float64',
                  'rank1_thresholds': {'atol': 1e-6, 'rtol': 1e-5, 'rounding_factor': 4},
                  'review': {'notes': review_notes, 'batch_size': batch_size},
-                 'checkpoint_steps': STEPS, 'views': VIEWS, 'projections': PROJECTIONS,
+                 'checkpoint_steps': steps, 'views': VIEWS, 'projections': PROJECTIONS,
                  'run_path': str(Path(config['run_path']).parent / name),
                  'batches': [{'index': i // batch_size, 'example_ids': [r['id'] for r in rows[i:i + batch_size]],
                               'inputs_sha256': _hash(rows[i:i + batch_size])}

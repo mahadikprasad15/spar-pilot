@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pilot_eval.activation_prepare import load_prepared, STEPS, VIEWS, PROJECTIONS
+from pilot_eval.activation_prepare import load_prepared, measurement_steps, STEPS, VIEWS, PROJECTIONS
 from pilot_eval.run import _write_json, _write_state
 from pilot_eval.training import run_lock, file_hash
 from pilot_eval.workflow import _hash, _save_frozen
@@ -78,7 +78,7 @@ def _verify_complete(directory, identity):
     if marker['identity'] != identity:
         raise ValueError('diagnostic identity/runtime mismatch; use a separately named plan')
     required = {'config.json', 'results/results.json'} | {
-        f'checkpoints/step-{step}/{name}' for step in STEPS for name in ['summaries.npz', 'validation.json']}
+        f'checkpoints/step-{step}/{name}' for step in identity['checkpoint_steps'] for name in ['summaries.npz', 'validation.json']}
     if not required.issubset(marker['files']):
         raise ValueError('diagnostic completion marker omits required evidence')
     for relative, digest in marker['files'].items():
@@ -92,6 +92,7 @@ def validate_activation(config_path, output_root, *, batch_size=2, dependencies=
     """Validate one fixed diagnostic batch, never claim full-cohort completion."""
     root = Path(output_root).resolve()
     config, rows = load_prepared(config_path, root)
+    steps = measurement_steps(config)
     if batch_size < 1 or batch_size > len(rows):
         raise ValueError('invalid diagnostic batch size')
     selected = []
@@ -107,7 +108,7 @@ def validate_activation(config_path, output_root, *, batch_size=2, dependencies=
                 'axes': {'block_vectors': ['example', 'view', 'layer', 'hidden'],
                          'block_scalars': ['example', 'view', 'layer'],
                          'module_scalars': ['example', 'view', 'layer', 'projection']},
-                'views': VIEWS, 'projections': PROJECTIONS, 'checkpoint_steps': STEPS}
+                'views': VIEWS, 'projections': PROJECTIONS, 'checkpoint_steps': steps}
     if namespace is not None:
         if namespace != 'agreement-v2':
             raise ValueError('unsupported diagnostic namespace')
@@ -122,14 +123,14 @@ def validate_activation(config_path, output_root, *, batch_size=2, dependencies=
         engine = None
         completed, stage = 0, 'load-model'
         try:
-            _write_state(directory, 'running', completed, 5)
+            _write_state(directory, 'running', completed, len(steps))
             engine = dependencies.activation_engine(config, root)
             if engine.base_hash() != config['source_evidence']['base_sha256']:
                 raise ValueError('loaded base identity mismatch')
             stage = 'capture-reference'
             reference = engine.capture_reference(selected)
             files = [directory / 'config.json']
-            for step in STEPS:
+            for step in steps:
                 stage = f'checkpoint-{step}'
                 source = config['source_evidence']['checkpoints'][str(step)]
                 checkpoint = root / source['path']
@@ -150,11 +151,11 @@ def validate_activation(config_path, output_root, *, batch_size=2, dependencies=
                 _write_json(evidence_path, evidence)
                 files.extend([payload, evidence_path])
                 completed += 1
-                _write_state(directory, 'running', completed, 5)
+                _write_state(directory, 'running', completed, len(steps))
             if engine.base_hash() != config['source_evidence']['base_sha256']:
                 raise ValueError('frozen base changed during diagnostic')
             result = {'mode': 'diagnostic-only', 'scientific_run_complete': False,
-                      'checkpoint_steps': STEPS, 'example_ids': identity['example_ids'],
+                      'checkpoint_steps': steps, 'example_ids': identity['example_ids'],
                       'base_sha256': engine.base_hash(), 'all_gates_passed': True,
                       'identity': identity, 'diagnostic_path': str(directory.relative_to(root))}
             result_path = directory / 'results/results.json'
@@ -162,10 +163,10 @@ def validate_activation(config_path, output_root, *, batch_size=2, dependencies=
             files.append(result_path)
             _write_json(directory / 'complete.json', {'identity': identity,
                 'files': {str(path.relative_to(directory)): file_hash(path) for path in files}})
-            _write_state(directory, 'completed', 5, 5)
+            _write_state(directory, 'completed', len(steps), len(steps))
             return result
         except BaseException as exc:
-            _write_state(directory, 'failed', completed, 5, str(exc))
+            _write_state(directory, 'failed', completed, len(steps), str(exc))
             errors = directory / 'logs/errors.jsonl'
             errors.parent.mkdir(parents=True, exist_ok=True)
             with errors.open('a') as stream:

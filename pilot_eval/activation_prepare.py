@@ -195,6 +195,7 @@ def load_prepared(config_path, output_root):
         _, _, evidence = _source(source_path, root)
     if evidence != config['source_evidence']:
         raise ValueError('source evidence differs from frozen preparation')
+    measurement_steps(config)
     rows = read_artifact(root, config['items_path'])
     if _hash(rows) != config['items_sha256']:
         raise ValueError('prepared input hash mismatch')
@@ -309,3 +310,11 @@ def prepare_activation(source_config, output_root, name, *, dependencies=None,
             'files': {str(p.relative_to(root)): file_hash(p) for p in files}})
         print(f'prepared: {len(rows)} fixed inputs; audit: {audit}', flush=True)
         return path
+
+
+def measurement_steps(config):
+    """Explicit product inventory: five learned checkpoints or zero plus one control."""
+    expected = [0, 64] if config.get('source_contract', {}).get('kind') == 'random-rank1-control' else STEPS
+    if config.get('checkpoint_steps') != expected or set(config['source_evidence']['checkpoints']) != {str(s) for s in expected}:
+        raise ValueError('unsupported activation checkpoint product inventory')
+    return list(expected)
