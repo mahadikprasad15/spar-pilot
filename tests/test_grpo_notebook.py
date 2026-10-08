@@ -105,3 +105,40 @@ def test_guided_preflight_and_freeze_run_public_commands(tmp_path):
     assert scope['PREFLIGHT_RESULTS']['passed']
     exec(stages['freeze'],scope)
     assert scope['FROZEN']['state']=='frozen'
+
+
+def test_guided_training_and_verification_use_public_workflow(tmp_path):
+    from test_grpo_training import frozen,Dependencies
+    path=frozen(tmp_path);deps=Dependencies()
+    notebook_path=Path(__file__).resolve().parents[1]/'notebooks/pilot-4-colab.ipynb'
+    notebook=json.loads(notebook_path.read_text())
+    stages={c['metadata']['stage']:''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code'}
+    assert {'train','verify-training'}<=stages.keys()
+    class Commands:
+        @staticmethod
+        def run(args,*,cwd,check):
+            from types import SimpleNamespace
+            result=main(args[4:],dependencies=deps);assert result==0
+            return SimpleNamespace(returncode=result)
+    scope=dict(FROZEN_PATH=path,ARTIFACT_ROOT=tmp_path,PLAN_NAME='notebook',REPO_DIR=notebook_path.parents[1],
+        subprocess=Commands,sys=sys,json=json,Path=Path)
+    exec(stages['train'],scope);exec(stages['verify-training'],scope)
+    assert scope['TRAINING_RESULTS']['accepted_completions']==4096
+
+
+def test_guided_training_records_dead_child_instead_of_stale_running(tmp_path):
+    import pytest
+    from types import SimpleNamespace
+    notebook_path=Path(__file__).resolve().parents[1]/'notebooks/pilot-4-colab.ipynb'
+    stages={c['metadata']['stage']:''.join(c['source']) for c in json.loads(notebook_path.read_text())['cells'] if c['cell_type']=='code'}
+    directory=tmp_path/'runs/controlled';(directory/'meta').mkdir(parents=True)
+    plan=tmp_path/'plans/notebook-arm-v1';plan.mkdir(parents=True)
+    (plan/'grpo.training.json').write_text(json.dumps(dict(run_path='runs/controlled')))
+    (directory/'meta/status.json').write_text(json.dumps(dict(state='running',completed=11,total=64)))
+    class Commands:
+        @staticmethod
+        def run(*args,**kwargs):return SimpleNamespace(returncode=-9)
+    scope=dict(FROZEN_PATH=tmp_path/'unused',ARTIFACT_ROOT=tmp_path,PLAN_NAME='notebook',REPO_DIR=notebook_path.parents[1],
+        subprocess=Commands,sys=sys,json=json,Path=Path)
+    with pytest.raises(RuntimeError,match='exit code -9'):exec(stages['train'],scope)
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='failed'

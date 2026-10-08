@@ -2,6 +2,7 @@
 import json
 import math
 import time
+from collections import Counter
 from pathlib import Path
 
 from pilot_eval.grpo_preflight import load_frozen, _finite
@@ -21,8 +22,20 @@ def _implementation():
         ('engine',grpo_train_engine),('algorithm',grpo_algorithm),('scorer',scoring)]}
 
 
+
+def _verified_checkpoints(directory):
+    checkpoints=verified_checkpoints(directory)
+    for step,path in checkpoints.items():
+        marker=json.loads((path/'complete.json').read_text())
+        if not {'history.json','data-order.json','prior-gradient.pt'}.issubset(marker['files']):
+            raise ValueError('checkpoint omits GRPO recovery state')
+    return checkpoints
+
+
 def _history(root, checkpoint, groups):
     history=json.loads((checkpoint/'history.json').read_text())
+    manifest=json.loads((checkpoint/'complete.json').read_text())
+    if not {'history.json','data-order.json','prior-gradient.pt'}.issubset(manifest['files']):raise ValueError('checkpoint omits GRPO recovery state')
     if len(history)!=int(checkpoint.name.split('-')[-1]):raise ValueError('checkpoint accepted-history count mismatch')
     records=[];logs=[]
     for step,unit in enumerate(history,1):
@@ -63,19 +76,25 @@ def _seal(directory, step, engine, history, groups):
     return destination
 
 
-def verify_training(path, root):
+def verify_training(path, root, *, marker=None):
     root=Path(root).resolve();path=_within(root,path);config=json.loads(path.read_text())
     if config['implementation']!=_implementation():raise ValueError('training implementation changed')
     frozen=root/config['frozen_path']
     if file_hash(frozen)!=config['frozen_sha256']:raise ValueError('frozen training protocol changed')
     load_frozen(frozen,root)
-    directory=_within(root,config['run_path']);marker=json.loads((directory/'complete.json').read_text())
+    directory=_within(root,config['run_path'])
+    if json.loads((directory/'config.json').read_text())!=config:raise ValueError('run config differs from training plan')
+    if marker is None:marker=json.loads((directory/'complete.json').read_text())
+    if not {'config.json','results/results.json','results/responses.jsonl','results/steps.jsonl'}.issubset(marker['files']):raise ValueError('incomplete training seal')
     if marker['config_sha256']!=_hash(config):raise ValueError('training config changed')
     for rel,digest in marker['files'].items():
         if file_hash(_within(root,directory/rel))!=digest:raise ValueError('training result seal changed')
-    checkpoints=verified_checkpoints(directory)
+    checkpoints=_verified_checkpoints(directory)
     if sorted(checkpoints)!=CHECKPOINTS:raise ValueError('complete training requires all five checkpoints')
-    _,records,logs=_history(root,checkpoints[64],config['optimizer_groups'])
+    history,records,logs=_history(root,checkpoints[64],config['optimizer_groups'])
+    for step,checkpoint in checkpoints.items():
+        if json.loads((checkpoint/'history.json').read_text())!=history[:step]:raise ValueError('checkpoint history prefixes disagree')
+        if json.loads((checkpoint/'data-order.json').read_text())!=dict(optimizer_groups=config['optimizer_groups'],next_step=step+1):raise ValueError('checkpoint order/cursor mismatch')
     if len(records)!=4096 or len(logs)!=64 or len({r['draw_id'] for r in records})!=4096:raise ValueError('incomplete scientific training history')
     result=json.loads((directory/'results/results.json').read_text())
     if not result['base_integrity']['base_unchanged']:raise ValueError('frozen base integrity failed')
@@ -101,11 +120,12 @@ def run_grpo(config_path,root,name,*,length_change_definition,dependencies=None)
         _save_frozen(directory/'config.json',config);_save_frozen(target,config)
         _save_frozen(directory/'meta/run_manifest.json',dict(config_path=str(target.relative_to(root)),run_path=config['run_path'],checkpoints=CHECKPOINTS))
         if (directory/'complete.json').exists():return verify_training(target,root)
-        checkpoints=verified_checkpoints(directory)
+        checkpoints=_verified_checkpoints(directory)
         if any(n not in CHECKPOINTS for n in checkpoints):raise ValueError('unexpected scientific checkpoint boundary')
         last=max(checkpoints,default=0)
         history,records,logs=_history(root,checkpoints[last],groups) if checkpoints else ([],[],[])
         # Old attempts stay on disk; only sealed history above is accepted.
+        attempt_started=time.perf_counter();sealed_step=last
         attempt=directory/'attempts'/f'{len(list((directory/"attempts").glob("attempt-*"))):04d}'
         attempt=attempt.with_name('attempt-'+attempt.name);attempt.mkdir(parents=True,exist_ok=False)
         _write_json(attempt/'meta.json',dict(resumed_from=last,excluded_after_step=last))
@@ -138,33 +158,42 @@ def run_grpo(config_path,root,name,*,length_change_definition,dependencies=None)
                 history.append(dict(path=str(unit.relative_to(root)),sha256=file_hash(unit)));records.extend(draws);logs.append(log)
                 action=next((e['action'] for e in events if e['action']=='stop'),None) or next((e['action'] for e in events if e['action']=='pause'),None)
                 if action:
-                    _write_json(attempt/'monitor-stop.json',dict(step=step,action=action,events=events,last_sealed_step=max(verified_checkpoints(directory))))
+                    _write_json(attempt/'monitor-stop.json',dict(step=step,action=action,events=events,last_sealed_step=sealed_step))
                     raise MonitorStop(action,f'monitor {action} at step {step}; inspection required; resume only from last sealed checkpoint')
                 if step in CHECKPOINTS:
                     integrity=engine.check_integrity()
                     if not integrity['base_unchanged']:raise ValueError('frozen base changed at checkpoint boundary')
-                    _seal(directory,step,engine,history,groups)
+                    begin=time.perf_counter();_seal(directory,step,engine,history,groups);sealed_step=step
+                    _write_json(attempt/f'checkpoint-{step}-timing.json',dict(seconds=time.perf_counter()-begin))
                 _write_state(directory,'running',step,64)
-                print(f'GRPO step {step}/64; prompts {step*8}/512; draws {step*64}/4096; sealed {max(verified_checkpoints(directory))}; seconds {time.perf_counter()-started:.2f}',flush=True)
+                print(f'GRPO step {step}/64; prompts {step*8}/512; draws {step*64}/4096; sealed {sealed_step}; seconds {time.perf_counter()-started:.2f}',flush=True)
             integrity=engine.check_integrity()
             if not integrity['base_unchanged']:raise ValueError('final frozen base integrity failed')
             # Reconstruct the authoritative record from checkpoint 64 before publishing.
             _,records,logs=_history(root,directory/'checkpoints/checkpoint-64',groups)
             result=dict(optimizer_steps=64,training_prompts=512,accepted_completions=len(records),checkpoints=CHECKPOINTS,
                 base_integrity=integrity,attempt_count=len(list((directory/'attempts').glob('attempt-*'))),
-                accepted_window_seconds=sum(x['seconds'] for x in logs),length_change_definition=length_change_definition)
+                accepted_window_seconds=sum(x['seconds'] for x in logs),length_change_definition=length_change_definition,
+                current_attempt_seconds=time.perf_counter()-attempt_started,
+                gradient_consistency_coverage=dict(defined=sum(x['gradient_consistency']['defined'] for x in logs),total=64,
+                    undefined_reasons=dict(Counter(x['gradient_consistency']['reason'] for x in logs if not x['gradient_consistency']['defined']))),
+                validity_flags=[dict(step=x['step'],**event) for x in logs for event in x['monitor_events']],
+                timing_note='Attempt time includes loading, generation, backward, transfer, hashes and checkpoint saving through final history verification; window time excludes checkpoint overhead.')
             _write_json(directory/'results/results.json',result)
             for filename,values in [('responses.jsonl',records),('steps.jsonl',logs)]:
                 destination=directory/'results'/filename;temporary=destination.with_suffix('.tmp')
                 temporary.write_text(''.join(json.dumps(r,sort_keys=True)+'\n' for r in values));temporary.replace(destination)
             files={str(p.relative_to(directory)):file_hash(p) for p in (directory/'results').glob('*') if p.is_file()}
-            _write_json(directory/'complete.json',dict(config_sha256=_hash(config),files=files))
-            verify_training(target,root);_write_state(directory,'completed',64,64)
+            files['config.json']=file_hash(directory/'config.json')
+            marker=dict(config_sha256=_hash(config),files=files)
+            verify_training(target,root,marker=marker)
+            _write_json(directory/'complete.json',marker);_write_state(directory,'completed',64,64)
             return result
         except BaseException as exc:
-            _write_state(directory,exc.state if isinstance(exc,MonitorStop) else 'failed',max(verified_checkpoints(directory),default=0),64,str(exc))
+            _write_state(directory,exc.state if isinstance(exc,MonitorStop) else 'failed',max(_verified_checkpoints(directory),default=0),64,str(exc))
             raise
         finally:
+            _write_json(attempt/'elapsed.json',dict(seconds=time.perf_counter()-attempt_started))
             if engine is not None:engine.close()
 
 

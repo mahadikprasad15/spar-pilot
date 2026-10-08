@@ -4,7 +4,8 @@
 
 The [Pilot 4 notebook](notebooks/pilot-4-colab.ipynb) implements source matching,
 untuned sampling, tiny-model validation, GPU preflight and reviewed protocol
-freeze. The scientific trainer and comparison stages are still pending.
+freeze, plus the scientific trainer and checkpoint recovery. Evaluation and
+comparison stages are still pending.
 See the [workflow guide](docs/pilot4-grpo.md) and
 [first-principles preflight companion](docs/pilot4-preflight-concepts.md).
 This work is local until pushed; real GPU acceptance must run in Colab.

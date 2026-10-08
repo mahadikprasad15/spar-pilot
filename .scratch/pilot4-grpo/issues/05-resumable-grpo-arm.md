@@ -5,31 +5,31 @@ diagnostics and scientifically resumable checkpoints durably saved.
 
 **Blocked by:** 04 — Preflight the target GPU and freeze the resolved protocol.
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Execute 64 optimizer steps covering the exact 512 training prompts once,
+- [x] Execute 64 optimizer steps covering the exact 512 training prompts once,
       eight prompts/eight completions per step; prove totals and group identity.
-- [ ] Save all 4,096 committed completions with text/token IDs, prompt/group/draw
+- [x] Save all 4,096 committed completions with text/token IDs, prompt/group/draw
       identity, cap status, strict/flexible scoring, reward and advantage.
-- [ ] Log loss, reward, dead groups, length mean/90th percentile, cap fraction,
+- [x] Log loss, reward, dead groups, length mean/90th percentile, cap fraction,
       learning rate, pre-clip gradient norm, consecutive flattened pre-clip
       gradient cosine and adapter norm per step; represent undefined first-step
       or zero-gradient comparisons with reasons and coverage.
-- [ ] Seal checkpoints at 0/8/16/32/64 with optimizer, scheduler, RNG, trainer,
+- [x] Seal checkpoints at 0/8/16/32/64 with optimizer, scheduler, RNG, trainer,
       data-order and prior-gradient diagnostic state, binding accepted rollout/
       log history to each sealed boundary using existing checkpoint helpers.
-- [ ] Recover training only from the latest sealed checkpoint. Preserve/exclude
+- [x] Recover training only from the latest sealed checkpoint. Preserve/exclude
       later incomplete-attempt records, restore state and redo subsequent steps.
       Demonstrate future group/RNG equivalence and gradient-cosine continuity;
       no mid-window continuation or partial-rollout recovery is required.
-- [ ] Apply approved stop/pause/validity-monitor policies and save explicit
+- [x] Apply approved stop/pause/validity-monitor policies and save explicit
       failure evidence; a dead child process cannot appear indefinitely active.
-- [ ] Publish successful units only after final integrity-boundary checks;
+- [x] Publish successful units only after final integrity-boundary checks;
       measure overhead and avoid per-projection full-model hashes.
-- [ ] Offline workflow tests exercise interruption, corruption, incompatible
+- [x] Offline workflow tests exercise interruption, corruption, incompatible
       settings, existing locking, accepted-history IDs and completed-run reuse.
       Reuse existing atomic writes/sealing; build no new persistence framework.
-- [ ] Notebook progress reports optimizer steps, prompts, completions and
+- [x] Notebook progress reports optimizer steps, prompts, completions and
       verified resume position with an explanation of each counter.
 
 ## Comments
@@ -43,3 +43,13 @@ diagnostics and scientifically resumable checkpoints durably saved.
 - October 8: user approved length-change monitor as absolute fractional change
   in current step mean tokens versus step n−8; starts at step 9. A zero previous
   mean is undefined. The training manifest explicitly records this definition.
+
+- October 8 implementation: public grpo-train/grpo-verify-training, real FP32
+  LoRA engine, checkpoints 0/8/16/32/64, accepted-history reconstruction,
+  frozen monitor actions and notebook sections 13–14. Reuses prior persistence
+  helpers; hashes at integrity boundaries, not per projection/window.
+- Verification: 43 affected offline tests passed without skips, including
+  nonzero tiny real-model gradients and exact next-update optimizer/RNG/cosine
+  recovery. Additional notebook child-exit handling was tested after a failing
+  stale-status case. Actual scientific Qwen GPU training is not run locally;
+  full-run authorization still requires frozen, passing target-GPU preflight.

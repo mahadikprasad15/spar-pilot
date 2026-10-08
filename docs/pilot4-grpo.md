@@ -187,3 +187,66 @@ Implementation tests exercise the public commands with controlled GPU evidence
 and the real generation/training backend with a tiny locally constructed Qwen
 model on CPU. They do not establish actual Qwen GPU capacity, performance or
 Drive access. Run the notebook preflight on the intended GPU before freezing.
+
+
+## Scientific training and sealed recovery (ticket 05)
+
+Notebook sections 13–14 call the same public workflow as the CLI:
+
+```sh
+python -u -m pilot_eval grpo-train \
+  --config <root>/plans/<frozen>/grpo.frozen.json \
+  --name <arm-name> --length-change-definition step-lag-8 --output-root <root>
+python -u -m pilot_eval grpo-verify-training \
+  --config <root>/plans/<arm-name>/grpo.training.json --output-root <root>
+```
+
+The implementation loads a fresh pinned FP32 model and rank-1 adapter, checks
+runtime identity against preflight, and consumes the ordered 512 problems in
+64 windows of eight prompts/eight draws. HF generation consumes the scientific
+Torch RNG continuously; it is not reseeded each update. Whole-group memory
+batches and the validated DAPO denominator are preserved. Only LoRA parameters
+train, with source AdamW/constant schedule/clipping settings.
+
+Each draw records prompt/source/group/draw identity, raw tokens through EOS,
+counted tokens excluding EOS/batch padding, text, stop/cap status, both scores,
+reward and advantage. Step logs include reward/formatting, loss, LR, length
+mean/p90, caps/dead groups, pre-clip gradient norm/cosine, concatenated A/B factor
+norm and actual parameter movement. Factor norm is not effective-write norm.
+Undefined gradient comparisons retain reasons. The user-approved length rule
+is absolute fractional change in current mean tokens versus step n−8, starting
+at step 9; a zero prior mean is undefined.
+
+Artifacts live under `runs/pilot-4/<model>/gsm8k/train-512-seed-42/rank1-float32/<name>/`.
+`attempts/` preserves atomic per-window records, failures and elapsed/checkpoint
+timings. Checkpoints 0/8/16/32/64 seal the adapter, optimizer, scheduler, all RNG
+state, trainer position, prior flattened gradient, ordered groups and a hashed
+accepted-history manifest. Each completion marker is written last. Reuse the
+existing lock, atomic-writer pattern and checkpoint seal helpers; no new
+persistence framework is introduced.
+
+Restart restores only the latest verified checkpoint and excludes later attempt
+records from scientific history. Up to 32 steps may need redo. The complete
+record is reconstructed from checkpoint 64 and saved as `results/responses.jsonl`
+(4,096 draws), `results/steps.jsonl` (64 updates) and `results/results.json`.
+Completed reuse and CPU verification recheck all five checkpoints and accepted
+history without loading a model. Preserve checkpoint-referenced attempt files.
+
+Frozen monitor actions flag, pause or stop the run; nonfinite/integrity errors
+stop. Pause/stop does not silently approve continuation: inspect evidence,
+and a changed monitor policy requires a new reviewed execution. Repeating the
+same policy can reproduce the same monitor stop. The notebook waits for its
+actual child exit rather than interpreting a PID/stale status as success.
+
+Base hashes are checked at integrity boundaries rather than every projection
+or every update. Reported attempt time includes loading, transfers, generation,
+backward, hashing and checkpoint saving through final history verification;
+window-only timing excludes checkpoint overhead. Runtime is measured, not
+inferred from earlier pilot speed.
+
+CPU tests cover the complete controlled workflow, checkpoint-boundary restart,
+accepted-history exclusion, corruption, locking, changed settings, monitors,
+nonfinite failures and completed reuse. A tiny real Transformers/PEFT/TRL model
+has nonzero learning gradients and reproduces the next draws, gradient cosine
+and adapter parameters after optimizer/RNG restoration. This is implementation
+evidence; actual scientific Qwen/GPU training remains unrun locally.
