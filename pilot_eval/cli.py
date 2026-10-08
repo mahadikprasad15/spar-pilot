@@ -59,6 +59,11 @@ def main(argv=None, *, dependencies=None):
     grpo_freeze.add_argument('--review', type=Path, required=True)
     grpo_freeze.add_argument('--name', required=True)
     grpo_freeze.add_argument('--output-root', type=Path, default=Path('artifacts'))
+    for name in ['grpo-evaluate','grpo-behaviour-report']:
+        command=commands.add_parser(name,help='evaluate verified GRPO checkpoints or report paired held-out behaviour')
+        command.add_argument('--config',type=Path,required=True)
+        command.add_argument('--name',required=True)
+        command.add_argument('--output-root',type=Path,default=Path('artifacts'))
     for name in ['grpo-train','grpo-verify-training']:
         command=commands.add_parser(name,help='run/recover or verify the sealed scientific GRPO arm')
         command.add_argument('--config',type=Path,required=True)
@@ -135,7 +140,13 @@ def main(argv=None, *, dependencies=None):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     args = parser.parse_args(argv)
     try:
-        if args.command in ['grpo-train','grpo-verify-training']:
+        if args.command=='grpo-evaluate':
+            from pilot_eval.grpo_evaluation import evaluate_grpo
+            print(json.dumps(evaluate_grpo(args.config,args.output_root,args.name,dependencies=dependencies),indent=2))
+        elif args.command=='grpo-behaviour-report':
+            from pilot_eval.grpo_behaviour_report import report_grpo_behaviour
+            print(json.dumps(report_grpo_behaviour(args.config,args.output_root,args.name),indent=2))
+        elif args.command in ['grpo-train','grpo-verify-training']:
             from pilot_eval.grpo_training import run_grpo,verify_training
             result=(run_grpo(args.config,args.output_root,args.name,length_change_definition=args.length_change_definition,dependencies=dependencies)
                     if args.command=='grpo-train' else verify_training(args.config,args.output_root))
