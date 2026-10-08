@@ -23,7 +23,9 @@ class HFTokenDependencies(HFProfileDependencies):
     def token_engine(self,prepared,root,settings):
         from pilot_eval.token_measurement_engine import TokenMeasurementEngine
         return TokenMeasurementEngine(self.activation_engine(prepared,root),
-            context_chunk=settings['context_chunk'],workspace_bytes=settings['workspace_bytes'])
+            context_chunk=settings['context_chunk'],workspace_bytes=settings['workspace_bytes'],
+            checkpoint_hashes={str((Path(root)/e['path']).resolve()):e['adapter_sha256']
+                               for e in prepared['source_evidence']['checkpoints'].values()})
 
 
 def _sources(sources,root):
@@ -83,6 +85,10 @@ def _load(path,root):
     if any(file_hash(root/p)!=config['source_hashes'][a] for a,p in config['sources'].items()):
         raise ValueError('supplement source config hash changed')
     products=_sources(config['sources'],root)
+    safe_name(config['run_id'])
+    canonical=str(Path('runs/pilot-4')/products['sft'][1]['model'].replace('/','--')/'supplemental-tokens'/config['run_id'])
+    if config['run_path']!=canonical:raise ValueError('supplement run path is not canonical')
+    _relative(root/config['run_path'],root)
     source=products['sft']
     if (config['batches']!=source[0]['batches'] or config['batch_size']!=source[0]['batch_size']
             or config['inputs_sha256']!=source[1]['items_sha256'] or config['runtime']!=source[0]['runtime']):
@@ -227,6 +233,7 @@ def profile_tokens(config_path,output_root,*,dependencies=None):
                 estimated_array_bytes=int(sum(r['saved_array_bytes']/r['examples']*300 for r in measurements)/groups),
                 estimate_note='Each checkpoint/arm averaged across declared diagnostic groups; production includes sealing/I/O and can differ.',
                 agreement=AGREEMENT)
+            _sources(config['sources'],root)  # Recheck source evidence before publication.
             _write_json(directory/'results.json',result)
             _seal(directory,identity,paths+[directory/'results.json'])
             _write_state(directory,'completed',total,total)
@@ -339,6 +346,7 @@ def measure_tokens(config_path,output_root,*,dependencies=None):
                     _write_state(directory,'running',len(done),len(units))
                 finally:
                     if reference is not None:engine.release_reference(reference)
+            _sources(config['sources'],root)  # Long workloads cannot seal stale sources.
             result=dict(measurement_complete=True,completed_units=len(done),total_units=len(units),
                         inputs_sha256=config['inputs_sha256'],protocol=PROTOCOL)
             _write_json(directory/'results/results.json',result)

@@ -251,3 +251,19 @@ def test_wrong_signed_coefficient_is_detected_independently(tmp_path):
             with engine.integrity_scope():engine.measure(tmp_path/'trained',rows,step=64)
     finally:
         handle.remove();engine.close()
+
+
+def test_valid_adapter_replacement_is_rejected_against_frozen_source_hash(tmp_path):
+    from pilot_eval.token_measurement_engine import TokenMeasurementEngine
+    from pilot_eval.training import file_hash
+    _,instrument,rows=tiny_instrument(tmp_path)
+    original=file_hash(tmp_path/'trained/adapter_model.safetensors')
+    # Both files are valid rank-1 checkpoints. Shape/finite checks alone would
+    # accept the wrong checkpoint; the frozen source identity must stop it.
+    engine=TokenMeasurementEngine(instrument,context_chunk=2,workspace_bytes=1_000_000,
+        checkpoint_hashes={str((tmp_path/'trained').resolve()):original})
+    (tmp_path/'trained/adapter_model.safetensors').write_bytes((tmp_path/'zero/adapter_model.safetensors').read_bytes())
+    try:
+        with pytest.raises(ValueError,match='checkpoint source hash'):
+            with engine.integrity_scope():engine.measure(tmp_path/'trained',rows,step=64)
+    finally:engine.close()

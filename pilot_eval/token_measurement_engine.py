@@ -1,6 +1,8 @@
 """Additive rank-1 token capture and bounded, full-vocabulary paired output KL."""
 from contextlib import nullcontext
 import hashlib
+from pathlib import Path
+from pilot_eval.training import file_hash
 import numpy as np
 from pilot_eval.activation_prepare import VIEWS
 from pilot_eval.token_measurement_math import prediction_positions
@@ -8,7 +10,7 @@ from pilot_eval.token_measurement_math import prediction_positions
 
 class TokenMeasurementEngine:
     """Reuse a validated instrument; do not retain full-sequence vocabulary logits."""
-    def __init__(self,instrument,*,context_chunk,workspace_bytes):
+    def __init__(self,instrument,*,context_chunk,workspace_bytes,checkpoint_hashes=None):
         if (not isinstance(context_chunk,int) or isinstance(context_chunk,bool) or context_chunk<1
                 or not isinstance(workspace_bytes,int) or workspace_bytes<1):
             raise ValueError('invalid output-head chunk/workspace budget')
@@ -16,6 +18,7 @@ class TokenMeasurementEngine:
         self.torch=instrument.torch
         self.context_chunk=context_chunk
         self.workspace_bytes=workspace_bytes
+        self.checkpoint_hashes=checkpoint_hashes
 
     def integrity_scope(self):return self.instrument.integrity_scope()
     def close(self):self.instrument.close()
@@ -29,6 +32,12 @@ class TokenMeasurementEngine:
         if result.shape[:2]!=inputs['input_ids'].shape:raise ValueError('final hidden/input shape mismatch')
         return result
 
+    def _source_hash(self,checkpoint):
+        if self.checkpoint_hashes is None:return
+        key=str(Path(checkpoint).resolve())
+        if key not in self.checkpoint_hashes or file_hash(Path(checkpoint)/'adapter_model.safetensors')!=self.checkpoint_hashes[key]:
+            raise ValueError('supplement checkpoint source hash differs from frozen evidence')
+
     def reference(self,rows):
         inputs,_=self.instrument._batch(rows)
         return dict(inputs=inputs,hidden=self._hidden(inputs,disabled=True))
@@ -38,6 +47,7 @@ class TokenMeasurementEngine:
 
     def measure(self,checkpoint,rows,*,step,context_chunk=None,reference=None):
         engine=self.instrument;torch=self.torch
+        self._source_hash(checkpoint)
         head=engine.model.get_output_embeddings()
         vocabulary=head.weight.shape[0]
         # Conservative live-output workspace: paired FP32 logits, FP64 logs,
@@ -137,6 +147,7 @@ class TokenMeasurementEngine:
                 del p,q,lp,lq,kl
         if step==0 and np.count_nonzero(values):raise ValueError('identical checkpoint distributions have nonzero KL')
         engine._verify_base('after supplemental measurement')
+        self._source_hash(checkpoint)
         return dict(arrays=dict(coefficients=coefficients,kl=values),metadata=dict(
             example_ids=[r['id'] for r in rows],coefficient_positions=coefficients_positions,
             predictions=predictions,modules=modules,step=step,
