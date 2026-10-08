@@ -29,13 +29,22 @@ class TokenMeasurementEngine:
         if result.shape[:2]!=inputs['input_ids'].shape:raise ValueError('final hidden/input shape mismatch')
         return result
 
-    def measure(self,checkpoint,rows,*,step):
+    def reference(self,rows):
+        inputs,_=self.instrument._batch(rows)
+        return dict(inputs=inputs,hidden=self._hidden(inputs,disabled=True))
+
+    def release_reference(self,reference):
+        reference.clear()
+
+    def measure(self,checkpoint,rows,*,step,context_chunk=None,reference=None):
         engine=self.instrument;torch=self.torch
         head=engine.model.get_output_embeddings()
         vocabulary=head.weight.shape[0]
         # Conservative live-output workspace: paired FP32 logits, FP64 logs,
         # exponent/difference/reduction temporaries and selected FP32 hidden rows.
-        workspace=self.context_chunk*(96*vocabulary+8*head.weight.shape[1])
+        chunk=self.context_chunk if context_chunk is None else context_chunk
+        if type(chunk)!=int or chunk<1:raise ValueError("invalid comparison context chunk")
+        workspace=chunk*(96*vocabulary+8*head.weight.shape[1])
         if workspace>self.workspace_bytes:raise ValueError('declared output-head workspace budget exceeded before allocation')
         inputs,masks=engine._batch(rows)
         coefficients_positions=[]
@@ -46,10 +55,15 @@ class TokenMeasurementEngine:
                 if views:coefficients_positions.append(dict(example=example,position=position,view=views[0],
                                                              token_id=row['input_ids'][position]))
         predictions=prediction_positions(rows)
-        reference=self._hidden(inputs,disabled=True)
+        if reference is None:
+            baseline=self._hidden(inputs,disabled=True)
+        else:
+            if set(reference['inputs'])!=set(inputs) or any(not torch.equal(reference['inputs'][k],inputs[k]) for k in inputs):
+                raise ValueError('supplement cached reference/input alignment mismatch')
+            baseline=reference['hidden']
         engine._switch(checkpoint)
         repeated=self._hidden(inputs,disabled=True)
-        if not torch.equal(reference,repeated):raise ValueError('disabled-adapter final reference changed after switch')
+        if not torch.equal(baseline,repeated):raise ValueError('disabled-adapter final reference changed after switch')
         del repeated
         engine._verify_base('during supplemental measurement')
         coefficients=np.empty((len(coefficients_positions),len(engine.modules)),dtype=np.float32)
@@ -100,14 +114,14 @@ class TokenMeasurementEngine:
                                   (module,'register_forward_hook',module_hook)])
         adapted=self._hidden(inputs,registrations=registrations)
         if len(seen)!=len(engine.modules):raise ValueError('missing supplemental projection hooks')
-        if step==0 and not torch.equal(reference,adapted):raise ValueError('zero checkpoint changes final hidden states')
+        if step==0 and not torch.equal(baseline,adapted):raise ValueError('zero checkpoint changes final hidden states')
         values=np.empty(len(predictions),dtype=np.float64);max_logit_contexts=0
         with torch.no_grad(),torch.autocast(head.weight.device.type,enabled=False):
-            for start in range(0,len(predictions),self.context_chunk):
-                positions=predictions[start:start+self.context_chunk]
+            for start in range(0,len(predictions),chunk):
+                positions=predictions[start:start+chunk]
                 b=[p['example'] for p in positions];t=[p['context'] for p in positions]
                 # Output head sees only this bounded context chunk, never [B,T,V].
-                p,q=head(adapted[b,t]),head(reference[b,t])
+                p,q=head(adapted[b,t]),head(baseline[b,t])
                 if p.shape!=(len(positions),vocabulary) or q.shape!=p.shape or p.dtype!=torch.float32:
                     raise ValueError('paired output-head vocabulary/precision mismatch')
                 engine._check_finite(p,q)
@@ -132,7 +146,7 @@ class TokenMeasurementEngine:
             validation=dict(rank1_passed=True,reference_invariant=True,
                 zero_contribution=zero_contribution if step==0 else None,
                 module_count=len(seen),rank1_max_fraction=max_fraction,
-                context_chunk=self.context_chunk,max_logit_contexts=max_logit_contexts,
+                context_chunk=chunk,max_logit_contexts=max_logit_contexts,
                 declared_workspace_bytes=self.workspace_bytes,bounded_workspace_estimate=workspace,
                 rank1_thresholds=dict(atol=1e-6,rtol=1e-5),
                 kl_negative_policy='preserve residual; fail below analytic FP64 bound'))

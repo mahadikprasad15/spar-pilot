@@ -152,9 +152,38 @@ def main(argv=None, *, dependencies=None):
     activation_report.add_argument('--name', required=True)
     for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_recover, activation_measure, activation_verify, activation_report):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
+    token_prepare = commands.add_parser('tokens-prepare', help='freeze supplemental SFT/GRPO coefficient and KL inputs')
+    token_prepare.add_argument('--sft-execution', type=Path, required=True)
+    token_prepare.add_argument('--grpo-execution', type=Path, required=True)
+    token_prepare.add_argument('--name', required=True)
+    token_prepare.add_argument('--context-chunk', type=int, required=True)
+    token_prepare.add_argument('--workspace-mib', type=int, required=True)
+    token_prepare.add_argument('--output-root', type=Path, default=Path('artifacts'))
+    for name in ['tokens-profile','tokens-freeze','tokens-measure','tokens-verify','tokens-report']:
+        token = commands.add_parser(name, help='supplemental fixed-token coefficient/KL '+name.split('-')[1])
+        token.add_argument('--config', type=Path, required=True)
+        token.add_argument('--output-root', type=Path, default=Path('artifacts'))
+        if name=='tokens-freeze': token.add_argument('--review-notes', required=True)
+        if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command=='grpo-writes-report':
+        if args.command.startswith('tokens-'):
+            from pilot_eval.token_measurement_workflow import (prepare_tokens,profile_tokens,freeze_tokens,
+                measure_tokens,verify_tokens,report_tokens)
+            if args.command=='tokens-prepare':
+                print(prepare_tokens(args.sft_execution,args.grpo_execution,args.output_root,args.name,
+                    context_chunk=args.context_chunk,workspace_bytes=args.workspace_mib*2**20))
+            elif args.command=='tokens-profile':
+                result=profile_tokens(args.config,args.output_root,dependencies=dependencies)
+                print(json.dumps({k:result[k] for k in ['profile_passed','estimated_main_forward_seconds',
+                    'estimated_array_bytes','total_wall_seconds','estimate_note']},indent=2))
+            elif args.command=='tokens-freeze':print(freeze_tokens(args.config,args.output_root,review_notes=args.review_notes))
+            elif args.command=='tokens-measure':print(json.dumps(measure_tokens(args.config,args.output_root,dependencies=dependencies),indent=2))
+            elif args.command=='tokens-verify':print(json.dumps(verify_tokens(args.config,args.output_root),indent=2))
+            else:
+                result=report_tokens(args.config,args.output_root,args.name)
+                print(json.dumps(dict(report_complete=result['report_complete'],kl_trajectory=result['kl_trajectory']),indent=2))
+        elif args.command=='grpo-writes-report':
             from pilot_eval.grpo_write_report import report_grpo_writes
             result = report_grpo_writes(args.grpo_report,args.control_report,args.sft_report,args.output_root,args.name)
             print(json.dumps({k:result[k] for k in ['report_complete','defined_cosines','total_cosines','random_realizations']},indent=2))

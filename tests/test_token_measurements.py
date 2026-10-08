@@ -108,3 +108,114 @@ def test_supplement_rejects_workspace_before_output_head_allocation(tmp_path):
         with pytest.raises(ValueError,match='workspace'):
             engine.measure(tmp_path/'trained',rows,step=64)
     finally:engine.close()
+
+
+def make_supplement_sources(root):
+    import json
+    from test_grpo_writes import source
+    from pilot_eval.grpo_writes import prepare_grpo_writes
+    from pilot_eval.activation_profile import profile_activation, freeze_execution
+    from test_activation_measurement import MeasurementDependencies
+    training=source(root)
+    train=json.loads(training.read_text());frozen=json.loads((root/train['frozen_path']).read_text())
+    plan=json.loads((root/frozen['source_path']).read_text())
+    sft_prepared=root/plan['sources']['measurement']['path']
+    grpo_prepared=prepare_grpo_writes(training,sft_prepared,root,'grpo-inputs')
+    outputs=[]
+    for label,path in [('sft',sft_prepared),('grpo',grpo_prepared)]:
+        profile=profile_activation(path,root,dependencies=MeasurementDependencies())
+        outputs.append(freeze_execution(path,root,profile=profile['profile_path'],batch_size=16,
+                       name=label+'-execution',review_notes='Reviewed fixture source.'))
+    return outputs
+
+
+class ControlledTokens:
+    """Controlled model boundary; saved-workflow code remains real."""
+    def __init__(self,deps,settings):
+        assert deps.live_engines==0, 'two full models would coexist'
+        deps.live_engines+=1
+        self.deps=deps;self.settings=settings
+    def integrity_scope(self):
+        from contextlib import nullcontext
+        self.deps.integrity_scopes+=1
+        return nullcontext({'base_unchanged':True})
+    def close(self):
+        self.deps.closed+=1
+        self.deps.live_engines-=1
+    def reference(self,rows):return {}
+    def release_reference(self,reference):reference.clear()
+    def measure(self,checkpoint,rows,*,step,context_chunk=None,reference=None):
+        from pilot_eval.activation_prepare import PROJECTIONS,VIEWS
+        from pilot_eval.token_measurement_math import prediction_positions
+        self.deps.calls.append((tuple(r['id'] for r in rows),step))
+        if len(self.deps.calls)==self.deps.fail_at:raise KeyboardInterrupt('controlled interruption')
+        positions=[dict(example=i,position=t,view=v,token_id=row['input_ids'][t])
+                   for i,row in enumerate(rows) for t in range(len(row['input_ids']))
+                   for v in VIEWS if row['masks'][v][t]]
+        predicted=prediction_positions(rows)
+        modules=[dict(layer=i,projection=p,A_sha256='a'*64,B_sha256='b'*64,
+                      scale=1.,A_norm=1.,B_norm=float(step)) for i in range(28) for p in PROJECTIONS]
+        return dict(arrays=dict(coefficients=np.ones((len(positions),196),np.float32),
+                               kl=np.full(len(predicted),step/1000,np.float64)),
+                    metadata=dict(example_ids=[r['id'] for r in rows],coefficient_positions=positions,
+                        predictions=predicted,modules=modules,step=step,
+                        coefficient_convention='raw-Ax-adapted-input',kl_direction='tuned||untuned',
+                        kl_units='nats',logit_precision='float32',reduction_precision='float64'),
+                    validation=dict(rank1_passed=True,reference_invariant=True,module_count=196,
+                                    zero_contribution=True if step==0 else None,rank1_max_fraction=0.,
+                                    max_logit_contexts=min(context_chunk or self.settings['context_chunk'],len(predicted)),
+                                    bounded_workspace_estimate=100))
+
+
+class TokenDependencies:
+    def __init__(self,fail_at=None):
+        self.fail_at=fail_at;self.calls=[];self.closed=0;self.live_engines=0;self.integrity_scopes=0
+    def runtime(self):
+        from test_activation_measurement import MeasurementDependencies
+        return MeasurementDependencies().runtime()
+    def token_engine(self,prepared,root,settings):return ControlledTokens(self,settings)
+    def synchronize(self):pass
+    def peak_memory(self):return {'allocated_bytes':0,'reserved_bytes':0}
+    def reset_peak_memory(self):pass
+
+
+def test_public_supplement_workflow_freezes_profiles_resumes_and_reports_without_touching_sources(tmp_path):
+    import json
+    from pilot_eval.token_measurement_workflow import prepare_tokens,profile_tokens,freeze_tokens,measure_tokens,verify_tokens,report_tokens
+    sft,grpo=make_supplement_sources(tmp_path)
+    before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    prepared=prepare_tokens(sft,grpo,tmp_path,'tokens',context_chunk=8,workspace_bytes=1_000_000)
+    deps=TokenDependencies()
+    profile_tokens(prepared,tmp_path,dependencies=deps)
+    execution=freeze_tokens(prepared,tmp_path,review_notes='Reviewed supplemental cost and new checks.')
+    with pytest.raises(KeyboardInterrupt,match='controlled'):
+        measure_tokens(execution,tmp_path,dependencies=TokenDependencies(fail_at=8))
+    run=tmp_path/json.loads(execution.read_text())['run_path']
+    assert not (run/'complete.json').exists()
+    resumed=TokenDependencies()
+    result=measure_tokens(execution,tmp_path,dependencies=resumed)
+    # 19 frozen batches × 5 checkpoints × 2 arms; one sealed batch survives.
+    assert result['completed_units']==190
+    assert resumed.integrity_scopes==37
+    assert resumed.live_engines==0
+    assert len(resumed.calls)==185
+    assert verify_tokens(execution,tmp_path)['completed_units']==190
+    assert measure_tokens(execution,tmp_path,dependencies=resumed)==result
+    assert len(resumed.calls)==185
+    report=report_tokens(execution,tmp_path,'token-report')
+    assert report['report_complete'] and len(report['kl_trajectory'])==30
+    assert next(r for r in report['kl_trajectory'] if r['arm']=='grpo' and r['step']==64 and r['view']=='solution')['token_mean']==pytest.approx(.064)
+    assert all(p.read_bytes()==data for p,data in before.items())
+    corrupt=next(run.glob('shards/*/*/arrays.npz'))
+    corrupt.write_bytes(b'corrupted')
+    with pytest.raises(ValueError,match='hash'):
+        verify_tokens(execution,tmp_path)
+
+
+def test_supplement_commands_are_exposed_without_importing_gpu_libraries(capsys):
+    from pilot_eval.cli import main
+    with pytest.raises(SystemExit) as result:main(['--help'])
+    assert result.value.code==0
+    help_text=capsys.readouterr().out
+    assert all(name in help_text for name in ['tokens-prepare','tokens-profile','tokens-freeze',
+                                              'tokens-measure','tokens-verify','tokens-report'])
