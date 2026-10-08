@@ -114,3 +114,58 @@ def test_bad_inference_cannot_publish_complete_evaluation(tmp_path,failure):
     assert evaluate(tmp_path,source(tmp_path),BadDependencies())==1
     config=json.loads((tmp_path/'plans/behaviour/grpo.evaluation.json').read_text())
     assert not (tmp_path/config['run_path']/'complete.json').exists()
+
+
+def test_real_checkpoint_inference_is_batched_and_seed_reproducible_without_download(tmp_path):
+    from test_grpo_algorithm import torch_stack
+    torch=torch_stack();torch.set_num_threads(1);torch.manual_seed(5)
+    from transformers import Qwen2Config,Qwen2ForCausalLM,PreTrainedTokenizerFast
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from types import SimpleNamespace
+    import hashlib
+    from pilot_eval.grpo_eval_engine import EvaluationEngine
+    from pilot_eval.sft import adapter_settings
+    model=Qwen2ForCausalLM(Qwen2Config(vocab_size=3,hidden_size=16,intermediate_size=32,num_hidden_layers=28,
+        num_attention_heads=2,num_key_value_heads=2,pad_token_id=0,bos_token_id=0,eos_token_id=2,
+        attention_dropout=0,tie_word_embeddings=False,attn_implementation='eager'))
+    core=Tokenizer(WordLevel({'0':0,'1':1,'end':2},unk_token='0'));core.pre_tokenizer=Whitespace()
+    tokenizer=PreTrainedTokenizerFast(tokenizer_object=core,pad_token='0',unk_token='0',eos_token='end')
+    tokenizer.padding_side='left';tokenizer.chat_template='tiny-test-template'
+    plan=dict(seed=42,adapter=adapter_settings(),source_prompt_contract=dict(
+        chat_template_sha256=hashlib.sha256(tokenizer.chat_template.encode()).hexdigest()))
+    settings=dict(evaluation_batch_size=2,generation_groups=2,completion_limit=3,top_p=1.,top_k=0,gradient_checkpointing=False)
+    sampler=SimpleNamespace(backend=SimpleNamespace(model=model,tokenizer=tokenizer),close=lambda:None)
+    engine=EvaluationEngine(plan,settings,tmp_path,sampler=sampler)
+    checkpoint=tmp_path/'zero';engine.model.save_pretrained(checkpoint);engine.select_checkpoint(checkpoint,0)
+    rows=[dict(prompt='0',prompt_tokens=1),dict(prompt='0 0',prompt_tokens=2)]
+    policy=dict(mode='sampled',draws=8,batch_size=2)
+    first=engine.generate(rows,policy,42);second=engine.generate(rows,policy,42)
+    assert len(first)==16 and first==second
+    assert len(engine.generate(rows,dict(mode='greedy',draws=1,batch_size=2),42))==2
+    assert engine.check_integrity()['base_unchanged']
+    engine.close()
+
+
+def test_failed_noninferiority_gate_is_not_automatically_harm_beyond_margin(tmp_path):
+    class PartialEngine(Engine):
+        def __init__(self,deps): super().__init__(deps);self.final_greedy_count=0
+        def generate(self,rows,policy,seed):
+            outputs=[]
+            for row in rows:
+                wrong=self.step==64 and policy['mode']=='greedy' and self.final_greedy_count<15
+                if self.step==64 and policy['mode']=='greedy': self.final_greedy_count+=1
+                for _ in range(policy['draws']):
+                    outputs.append(dict(text='#### -999999' if wrong else row['gold'],token_ids=[7],
+                                        generated_token_ids=[7,1],stop_reason='eos'))
+            return outputs
+    class PartialDependencies(Dependencies):
+        def load_evaluation(self,*args): return PartialEngine(self)
+    assert evaluate(tmp_path,source(tmp_path),PartialDependencies())==0
+    assert report(tmp_path)==0
+    result=json.loads((tmp_path/'reports/paired/results/results.json').read_text())
+    greedy=result['drops']['greedy']
+    assert greedy['drop']==pytest.approx(.1)
+    assert greedy['outcome']=='inconclusive' and greedy['evidence_of_positive_decline']
+    assert 0<greedy['interval_95'][0]<.1<greedy['interval_95'][1]

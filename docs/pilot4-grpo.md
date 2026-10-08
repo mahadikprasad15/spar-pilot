@@ -250,3 +250,61 @@ nonfinite failures and completed reuse. A tiny real Transformers/PEFT/TRL model
 has nonzero learning gradients and reproduces the next draws, gradient cosine
 and adapter parameters after optimizer/RNG restoration. This is implementation
 evidence; actual scientific Qwen/GPU training remains unrun locally.
+
+## Ticket 6: held-out greedy and sampled behaviour
+
+After `grpo-verify-training` passes, evaluate the sealed arm:
+
+```bash
+python -u -m pilot_eval grpo-evaluate \
+  --config artifacts/plans/<arm>/grpo.training.json \
+  --name <behaviour> --output-root artifacts
+python -u -m pilot_eval grpo-behaviour-report \
+  --config artifacts/plans/<behaviour>/grpo.evaluation.json \
+  --name <paired-report> --output-root artifacts
+```
+
+Notebook sections 15–16 call these public commands. Inference loads one pinned
+FP32 model, then switches the five verified adapter checkpoints. It generates
+750 greedy responses (150 × five checkpoints) and 2,400 sampled responses
+(150 × eight draws × checkpoints 0/64). Existing SFT outputs are not rerun.
+The final reviewed cap and filters come from the frozen preflight. Greedy
+batch size is `evaluation_batch_size`; sampled batches use `generation_groups`
+questions, each replicated eight times. Batch membership, policies and seed
+`42 + ordered batch index` are saved before inference. Checkpoints share that
+seed schedule; this does not guarantee identical sampled continuations.
+
+Each batch saves raw/countable token IDs, response text, stable item/draw IDs,
+strict and flexible-v3 decisions, capped reward zero, ending/cap flags, seed
+and adapter identity. Full base-weight hashes run at checkpoint switches and
+final completion, rather than once per batch. Runtime must match the frozen
+preflight. Resume verifies sealed batches and regenerates only missing batches;
+an interruption may redo its unsealed batch. Changed source/code/runtime,
+missing draws, corrupt seals or incompatible settings stop the run. Completion
+is published only after the saved response matrix verifies.
+
+Artifacts:
+
+- `plans/<behaviour>/grpo.evaluation.json`: frozen inference configuration.
+- `runs/pilot-4/<model>/behaviour/<behaviour>/`: batch shards/seals, runtime,
+  status, all 3,150 responses and completion seal.
+- `reports/<paired-report>/results/`: JSON results, Markdown report,
+  `paired-items.jsonl`, and the 10,000 × 150 `bootstrap-indices.json` matrix.
+  The results map its integer indices to the exact saved item ID order.
+
+Reporting is CPU-only and verifies source evidence before use. Sampled
+accuracy is mean draw reward per item, then mean across 150 items—not
+pass-at-eight. Every bootstrap resample carries both checkpoint records and
+all eight draws for each selected question. It uses 10,000 resamples, seed 42,
+and the percentile 95% interval. Positive drop means checkpoint zero accuracy
+minus checkpoint 64 accuracy. Non-inferiority passes iff the upper interval
+bound is **strictly below** the explicitly frozen margin. Lower bound above
+the margin supports harm beyond the margin; otherwise a failed gate is
+inconclusive. Evidence of any positive decline is a separate field.
+Intervals condition on the sampled cohort, observed draws and one training
+seed; they do not isolate repeated-decoding uncertainty on the fixed cohort
+or variation across training seeds.
+
+The local implementation tests use controlled complete workflows and a tiny
+real Qwen/PEFT model constructed offline. They are not evidence that the actual
+Qwen checkpoint evaluations have completed in Colab.

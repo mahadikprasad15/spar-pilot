@@ -8,7 +8,7 @@ from pilot_eval.grpo_baseline import _percentile
 from pilot_eval.grpo_prepare import _within
 from pilot_eval.training import file_hash,run_lock
 from pilot_eval.workflow import _save_frozen,_hash
-from pilot_eval.run import _write_json
+from pilot_eval.run import _write_json,_write_state
 from pilot_eval.sft import safe_name
 
 NOTE=('Intervals condition on this evaluation cohort, observed draws and one training seed. '
@@ -42,6 +42,9 @@ def report_grpo_behaviour(path,root,name):
         margin=source['margin'],scorer=source['scorer'],implementation_sha256=file_hash(Path(__file__)),numpy_version=np.__version__)
     with run_lock(directory):
         _save_frozen(directory/'config.json',config)
+        _save_frozen(directory/'meta/run_manifest.json',dict(source_path=config['source_path'],
+            source_sha256=config['source_sha256'],report_path=str(directory.relative_to(root)),
+            bootstrap_resamples=10000,bootstrap_seed=42))
         if (directory/'complete.json').exists():
             marker=json.loads((directory/'complete.json').read_text())
             required={'config.json','results/results.json','results/report.md','results/bootstrap-indices.json','results/paired-items.jsonl'}
@@ -49,6 +52,7 @@ def report_grpo_behaviour(path,root,name):
             for rel,digest in marker['files'].items():
                 if file_hash(_within(root,directory/rel))!=digest: raise ValueError('paired report corrupted')
             return json.loads((directory/'results/results.json').read_text())
+        _write_state(directory,'running',0,7)
         ids=[r['id'] for r in source['items']]
         # Exact saved item order maps bootstrap integers to original stable IDs.
         indices=np.random.default_rng(42).integers(0,150,size=(10000,150))
@@ -105,4 +109,5 @@ def report_grpo_behaviour(path,root,name):
         (directory/'results/paired-items.jsonl').write_text(''.join(json.dumps(r,allow_nan=False)+'\n' for r in paired))
         files={str(p.relative_to(directory)):file_hash(p) for p in [directory/'config.json',*sorted((directory/'results').iterdir())]}
         _write_json(directory/'complete.json',dict(config_sha256=_hash(config),files=files))
+        _write_state(directory,'completed',7,7)
         return result

@@ -118,6 +118,9 @@ def evaluate_grpo(path,root,name,*,dependencies=None):
     engine=None
     with run_lock(directory):
         _save_frozen(directory/'config.json',config);_save_frozen(target,config)
+        _save_frozen(directory/'meta/run_manifest.json',dict(config_path=str(target.relative_to(root)),
+            source_path=config['training_path'],run_path=config['run_path'],responses=3150,
+            batch_count=len(config['units']),policies=config['policies']))
         if (directory/'complete.json').exists():
             verify_evaluation(target,root)
             return json.loads((directory/'results/results.json').read_text())
@@ -127,8 +130,11 @@ def evaluate_grpo(path,root,name,*,dependencies=None):
             if seal.exists(): _read_unit(root,config,unit,digest)
             else: missing.append(unit)
         done=len(config['units'])-len(missing)
+        missing_keys={u['key'] for u in missing}
+        response_count=sum(len(u['ids'])*u['policy']['draws'] for u in config['units'] if u['key'] not in missing_keys)
         try:
             _write_state(directory,'running',done,len(config['units']))
+            print(f'GRPO evaluation resume: {response_count}/3150 responses; {done}/{len(config["units"])} sealed batches',flush=True)
             if missing:
                 from pilot_eval.grpo_eval_engine import EvaluationDependencies
                 engine=(dependencies or EvaluationDependencies()).load_evaluation(plan,config['settings'],directory)
@@ -146,8 +152,8 @@ def evaluate_grpo(path,root,name,*,dependencies=None):
                 shard=directory/'units'/f'{unit["key"]}.json';_write_json(shard,records)
                 _write_json(shard.with_suffix('.complete.json'),dict(sha256=file_hash(shard),config_sha256=digest,
                             runtime_sha256=file_hash(directory/'meta/runtime.json')))
-                done+=1;_write_state(directory,'running',done,len(config['units']))
-                print(f'GRPO evaluation: {unit["key"]}; sealed {done}/{len(config["units"])} batches',flush=True)
+                done+=1;response_count+=len(records);_write_state(directory,'running',done,len(config['units']))
+                print(f'GRPO evaluation: {unit["key"]}; {response_count}/3150 responses; sealed {done}/{len(config["units"])} batches',flush=True)
             if engine is not None and not engine.check_integrity()['base_unchanged']: raise ValueError('evaluation changed frozen base')
             records=[r for unit in config['units'] for r in _read_unit(root,config,unit,digest)]
             destination=directory/'results/responses.jsonl';destination.parent.mkdir(parents=True,exist_ok=True)
