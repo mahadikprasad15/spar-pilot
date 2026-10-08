@@ -3,12 +3,14 @@
 ## Pilot 4: rank-1 GRPO arm
 
 The [Pilot 4 notebook](notebooks/pilot-4-colab.ipynb) implements source matching,
-untuned sampling, tiny-model validation, GPU preflight and reviewed protocol
-freeze, plus the scientific trainer and checkpoint recovery. Evaluation and
-comparison stages are still pending.
-See the [workflow guide](docs/pilot4-grpo.md) and
+untuned sampling, tiny-model validation, GPU preflight, reviewed protocol freeze,
+resumable GRPO training, paired behavioural evaluation and fixed-token writes
+with one norm-matched random intervention (tickets 1–7).
+See the [workflow guide](docs/pilot4-grpo.md),
+[Ticket 7 measurement guide](docs/pilot4-fixed-writes.md) and
 [first-principles preflight companion](docs/pilot4-preflight-concepts.md).
-This work is local until pushed; real GPU acceptance must run in Colab.
+Real Qwen/CUDA acceptance must run in Colab. Ticket 8 coefficients/KL and
+Ticket 9's overall comparison/handoff remain separate work.
 
 ## Pilot 3: fixed-token activation measurements
 
