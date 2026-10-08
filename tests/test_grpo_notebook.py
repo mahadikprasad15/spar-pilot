@@ -187,5 +187,24 @@ def test_notebook_pin_contains_every_ticket7_entrypoint():
     setup=next(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code' and c['metadata']['stage']=='setup')
     commit=re.search(r"HARNESS_COMMIT = '([0-9a-f]{40})'",setup).group(1)
     cli=subprocess.check_output(['git','show',commit+':pilot_eval/cli.py'],cwd=repository,text=True)
-    for command in ['grpo-writes-prepare','grpo-writes-control','grpo-writes-report']:
+    for command in ['grpo-writes-prepare','grpo-writes-control','grpo-writes-report',
+                    'tokens-prepare','tokens-profile','tokens-freeze','tokens-measure','tokens-verify','tokens-report']:
         assert command in cli
+
+
+def test_guided_ticket8_stages_have_profile_review_and_verified_release_boundary():
+    notebook=json.loads((Path(__file__).resolve().parents[1]/'notebooks/pilot-4-colab.ipynb').read_text())
+    stages={c['metadata']['stage']:''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code'}
+    needed=['tokens-prepare','tokens-profile','tokens-freeze','tokens-measure','tokens-verify','tokens-report']
+    assert all(stage in stages for stage in needed)
+    ordered=list(stages)
+    assert [ordered.index(s) for s in needed]==sorted(ordered.index(s) for s in needed)
+    for stage in needed:
+        ast.parse(stages[stage])
+        assert "'"+stage+"'" in stages[stage]
+        assert 'check=True' in stages[stage]
+    assert 'TOKEN_PROFILE_REVIEWED' in stages['tokens-freeze']
+    assert 'tokens.execution.json' in stages['tokens-freeze']
+    assert 'GPU' in stages['tokens-verify']
+    assert 'SFT_TOKEN_EXECUTION' in stages['tokens-prepare']
+    assert '--context-chunk' in stages['tokens-prepare'] and '--workspace-mib' in stages['tokens-prepare']
