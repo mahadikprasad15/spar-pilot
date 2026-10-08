@@ -278,3 +278,21 @@ def test_random_control_cannot_silently_round_a_nonzero_target_to_zero(tmp_path)
     with pytest.raises(ValueError,match='norm'):
         construct_control(source_dir,tmp_path/'control')
     assert not (tmp_path/'control/complete.json').exists()
+
+
+def test_grpo_profile_records_loading_warmup_saving_and_source_verification_cost(tmp_path):
+    training=source(tmp_path)
+    train_config=json.loads(training.read_text())
+    frozen=json.loads((tmp_path/train_config['frozen_path']).read_text())
+    plan=json.loads((tmp_path/frozen['source_path']).read_text())
+    from pilot_eval.grpo_writes import prepare_grpo_writes
+    prepared=prepare_grpo_writes(training,tmp_path/plan['sources']['measurement']['path'],tmp_path,'timed-writes')
+    from pilot_eval.activation_profile import profile_activation
+    from test_activation_measurement import MeasurementDependencies
+    result=profile_activation(prepared,tmp_path,dependencies=MeasurementDependencies())
+    assert result['source_verification_wall_seconds']>=0
+    assert result['profile_wall_seconds']>0
+    for row in result['measurements']:
+        assert row['loading_wall_seconds']>=0 and row['warmup_wall_seconds']>=0
+        assert row['saving_wall_seconds']>=0 and row['candidate_wall_seconds']>0
+        assert row['saved_summary_bytes']>0

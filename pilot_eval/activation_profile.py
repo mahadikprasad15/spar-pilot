@@ -2,6 +2,7 @@
 import gc
 from contextlib import nullcontext
 import json
+import time
 import re
 import time
 from pathlib import Path
@@ -208,9 +209,11 @@ def _profile_agreement(identity, root, config):
 
 
 def profile_activation(config_path, output_root, *, dependencies=None, calibration=None):
+    profile_started = time.perf_counter()
     root = Path(output_root).resolve()
     config, rows = load_prepared(config_path, root)
     steps = measurement_steps(config)
+    source_verification_wall_seconds = time.perf_counter() - profile_started
     deps = dependencies or HFProfileDependencies()
     runtime = deps.runtime()
     validated = None
@@ -260,17 +263,25 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                     candidate = None
                     result = {'batch_size': batch, 'status': 'rejected-calibration',
                               'reason': 'Independent validation did not authorize this batch size.'}
+                    if config.get('protocol_version') == 'pilot4-writes-v1':
+                        result['candidate_wall_seconds'] = time.perf_counter() - candidate_started
+                        result['wall_timing_scope'] = 'load/base verification, warmup, all timed hooks/reductions/boundary hashes, summary saving and model cleanup; excludes final JSON/seal writes'
                     _write_json(target / 'results.json', result)
                     _seal(target, candidate_identity, [target / 'results.json'])
                 else:
+                    candidate_started = time.perf_counter()
                     try:
                         print(f'activation profile: batch {batch}: loading model', flush=True)
                         deps.cleanup()
+                        loading_started = time.perf_counter()
                         engine = deps.activation_engine(config, root)
                         if engine.base_hash() != config['source_evidence']['base_sha256']:
                             raise ValueError('profile loaded base identity mismatch')
-                        # Same longest input batch, complete five-checkpoint workload, outside timing.
+                        loading_wall_seconds = time.perf_counter() - loading_started
+                        warmup_started = time.perf_counter()
+                        # Same longest input batch, complete declared workload, outside synchronized timing.
                         _workload(config, root, [selected[:batch]], engine, deps, timed=False)
+                        warmup_wall_seconds = time.perf_counter() - warmup_started
                         deps.synchronize()
                         deps.reset_peak_memory()
                         chunks = [selected[i:i + batch] for i in range(0, len(selected), batch)]
@@ -290,9 +301,15 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                                   'memory': memory,
                                   'timing_scope': 'one-reference-plus-declared-validated-variants-per-batch plus exact workload boundary hashes; excludes load, warmup and file writes',
                                   'validation': evidence}
+                        saving_started = time.perf_counter()
                         target.mkdir(parents=True, exist_ok=True)
                         for step in steps:
                             _save_arrays(target / f'step-{step}.npz', candidate[step])
+                        if config.get('protocol_version') == 'pilot4-writes-v1':
+                            result.update(loading_wall_seconds=loading_wall_seconds,
+                                warmup_wall_seconds=warmup_wall_seconds,
+                                saving_wall_seconds=time.perf_counter() - saving_started,
+                                saved_summary_bytes=sum((target / f'step-{s}.npz').stat().st_size for s in steps))
                     except Exception as exc:
                         if not deps.is_oom(exc):
                             raise
@@ -304,6 +321,9 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                             engine.close()
                         del engine
                         deps.cleanup()
+                    if config.get('protocol_version') == 'pilot4-writes-v1':
+                        result['candidate_wall_seconds'] = time.perf_counter() - candidate_started
+                        result['wall_timing_scope'] = 'load/base verification, warmup, all timed hooks/reductions/boundary hashes, summary saving and model cleanup; excludes final JSON/seal writes'
                     _write_json(target / 'results.json', result)
                     payloads = [target / 'results.json'] + ([target / f'step-{s}.npz' for s in steps] if candidate is not None else [])
                     _seal(target, candidate_identity, payloads)
@@ -320,6 +340,10 @@ def profile_activation(config_path, output_root, *, dependencies=None, calibrati
                       'example_ids': identity['example_ids'], 'measurements': measurements,
                       'provisional_fastest_batch': min(passed, key=lambda r: r['seconds'])['batch_size'] if passed else None,
                       'profile_path': str(directory.relative_to(root))}
+            if config.get('protocol_version') == 'pilot4-writes-v1':
+                result.update(source_verification_wall_seconds=source_verification_wall_seconds,
+                    profile_wall_seconds=time.perf_counter() - profile_started,
+                    profile_wall_scope='entire invocation through candidate seals, including diagnostics; excludes final profile JSON/seal writes')
             _write_json(directory / 'results.json', result)
             _seal(directory, identity, files + [directory / 'results.json'])
             _write_state(directory, 'completed', len(BATCHES), len(BATCHES))
