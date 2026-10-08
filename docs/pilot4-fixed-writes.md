@@ -104,3 +104,12 @@ checks cover preparation, independent calibration, profiling/freezing, interrupt
 measurement/resume, CPU reports, compatible SFT reuse and corrupt evidence.
 These are implementation checks; real Qwen/CUDA capacity and numerical acceptance
 must pass in Colab before scientific measurements are interpreted.
+
+## Profiling overhead
+
+Pilot 4 profiles record source-verification and total-invocation wall time, plus
+per-candidate loading, warmup, summary saving, bytes written and wall time through
+model cleanup. These complement synchronized instrument throughput/memory.
+Each field states its scope; final JSON/seal writes are excluded from the wall
+record written into those files. The provisional fastest candidate still uses
+the synchronized workload, so inspect overhead before projecting session cost.

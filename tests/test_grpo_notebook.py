@@ -178,3 +178,14 @@ def test_ticket7_notebook_exposes_separate_forward_work_and_verified_gpu_release
     for source in stages.values():ast.parse(source)
     text='\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='markdown')
     assert 'forward-only' in text and 'one random' in text.lower()
+
+
+def test_notebook_pin_contains_every_ticket7_entrypoint():
+    import re,subprocess
+    repository=Path(__file__).resolve().parents[1]
+    notebook=json.loads((repository/'notebooks/pilot-4-colab.ipynb').read_text())
+    setup=next(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code' and c['metadata']['stage']=='setup')
+    commit=re.search(r"HARNESS_COMMIT = '([0-9a-f]{40})'",setup).group(1)
+    cli=subprocess.check_output(['git','show',commit+':pilot_eval/cli.py'],cwd=repository,text=True)
+    for command in ['grpo-writes-prepare','grpo-writes-control','grpo-writes-report']:
+        assert command in cli
