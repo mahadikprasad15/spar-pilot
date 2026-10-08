@@ -142,3 +142,21 @@ def test_guided_training_records_dead_child_instead_of_stale_running(tmp_path):
         subprocess=Commands,sys=sys,json=json,Path=Path)
     with pytest.raises(RuntimeError,match='exit code -9'):exec(stages['train'],scope)
     assert json.loads((directory/'meta/status.json').read_text())['state']=='failed'
+
+
+def test_guided_behavioural_evaluation_and_cpu_report_use_public_workflow(tmp_path):
+    from test_grpo_evaluation import source, Dependencies
+    notebook_path=Path(__file__).resolve().parents[1]/'notebooks/pilot-4-colab.ipynb'
+    stages={c['metadata']['stage']:''.join(c['source']) for c in json.loads(notebook_path.read_text())['cells'] if c['cell_type']=='code'}
+    assert {'evaluate-behaviour','report-behaviour'}<=stages.keys()
+    deps=Dependencies();path=source(tmp_path)
+    class Commands:
+        @staticmethod
+        def run(args,*,cwd,check):
+            assert main(args[4:],dependencies=deps)==0
+    scope=dict(TRAINING_CONFIG_PATH=path,ARTIFACT_ROOT=tmp_path,PLAN_NAME='notebook',REPO_DIR=notebook_path.parents[1],
+        subprocess=Commands,sys=sys,json=json,Path=Path,display=lambda value:None,Markdown=str)
+    exec(stages['evaluate-behaviour'],scope)
+    exec(stages['report-behaviour'],scope)
+    assert scope['BEHAVIOUR_RESULTS']['drops']['greedy']['drop']==1.
+    assert (scope['BEHAVIOUR_REPORT_DIR']/'complete.json').exists()
