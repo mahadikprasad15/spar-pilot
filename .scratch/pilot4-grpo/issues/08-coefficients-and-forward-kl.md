@@ -6,7 +6,7 @@ distributional matching, for GRPO and the existing SFT checkpoints.
 
 **Blocked by:** 07 — Measure GRPO writes on the existing fixed sequences.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Freeze explicit signed coefficient/scaling/factor conventions and
       prediction-position/KL reductions before collecting the new product.
@@ -36,3 +36,8 @@ distributional matching, for GRPO and the existing SFT checkpoints.
 - October 7, 2026: approved as ticket 8. The dependency is implementation and
   validated input/source infrastructure; supplemental forward measurements
   remain separately identifiable from existing write artifacts.
+
+- October 8, 2026: user approved raw signed A·x on adapted module inputs;
+  next-target view membership for KL, excluding target zero/padding/out-of-sequence;
+  raw values plus token/equal-example means; existing public-workflow test seam.
+  Conventions recorded in docs/adr/0008-pilot4-token-coefficients-and-kl.md.

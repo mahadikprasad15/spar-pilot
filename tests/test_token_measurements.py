@@ -28,8 +28,8 @@ def test_next_target_views_and_full_vocabulary_kl_have_known_answers():
     assert cell['tokens']==3 and cell['examples']==2
 
 
-def tiny_instrument(tmp_path):
-    import torch
+def tiny_instrument(tmp_path,layer_count=2):
+    torch=pytest.importorskip('torch',exc_type=ImportError)
     from transformers import Qwen2Config, Qwen2ForCausalLM
     from peft import LoraConfig, get_peft_model
     from pilot_eval.activation_engine import ActivationEngine
@@ -38,7 +38,7 @@ def tiny_instrument(tmp_path):
     torch.set_num_threads(1)
     torch.manual_seed(42)
     model=get_peft_model(Qwen2ForCausalLM(Qwen2Config(vocab_size=16,hidden_size=8,
-        intermediate_size=12,num_hidden_layers=2,num_attention_heads=2,num_key_value_heads=1,
+        intermediate_size=12,num_hidden_layers=layer_count,num_attention_heads=2,num_key_value_heads=1,
         max_position_embeddings=32,pad_token_id=0,attn_implementation='eager')),
         LoraConfig(r=1,lora_alpha=1,lora_dropout=0,target_modules=PROJECTIONS))
     base=frozen_weight_hash(model)
@@ -47,7 +47,7 @@ def tiny_instrument(tmp_path):
         for name,p in model.named_parameters():
             if 'lora_B' in name:p.fill_(.03)
     model.save_pretrained(tmp_path/'trained',save_embedding_layers=False)
-    engine=ActivationEngine(model=model,expected_layers=2,expected_base_hash=base)
+    engine=ActivationEngine(model=model,expected_layers=layer_count,expected_base_hash=base)
     rows=[dict(id='one',input_ids=[1,2,3,4],attention_mask=[1]*4,
                masks={'question':[False,True,False,False],'solution':[False,False,True,True],'user':[False]*4}),
           dict(id='two',input_ids=[1,5,6],attention_mask=[1]*3,
@@ -55,10 +55,11 @@ def tiny_instrument(tmp_path):
     return torch,engine,rows
 
 
-def test_real_supplement_reconstructs_branches_and_matches_independent_full_logits(tmp_path):
+@pytest.mark.parametrize("layer_count",[2,28])
+def test_real_supplement_reconstructs_branches_and_matches_independent_full_logits(tmp_path,layer_count):
     from pilot_eval.token_measurement_engine import TokenMeasurementEngine
     from pilot_eval.token_measurement_math import full_vocabulary_kl
-    torch,instrument,rows=tiny_instrument(tmp_path)
+    torch,instrument,rows=tiny_instrument(tmp_path,layer_count)
     engine=TokenMeasurementEngine(instrument,context_chunk=2,workspace_bytes=1_000_000)
     # A normal full model call is allowed only in this tiny independent oracle.
     tokens=torch.tensor([[1,2,3,4],[1,5,6,0]])
@@ -82,7 +83,7 @@ def test_real_supplement_reconstructs_branches_and_matches_independent_full_logi
         from pilot_eval.activation_profile import AGREEMENT
         # Full-head and chunked-head FP32 matmuls follow the existing policy.
         np.testing.assert_allclose(result['arrays']['kl'],expected,**AGREEMENT)
-        assert result['arrays']['coefficients'].shape==(5,14)
+        assert result['arrays']['coefficients'].shape==(5,7*layer_count)
         for mi,module in enumerate(result['metadata']['modules']):
             x,c,a=seen[module['layer'],module['projection']]
             for ci,position in enumerate(result['metadata']['coefficient_positions']):
@@ -219,3 +220,34 @@ def test_supplement_commands_are_exposed_without_importing_gpu_libraries(capsys)
     help_text=capsys.readouterr().out
     assert all(name in help_text for name in ['tokens-prepare','tokens-profile','tokens-freeze',
                                               'tokens-measure','tokens-verify','tokens-report'])
+
+
+def test_coefficients_rescale_but_distribution_and_branch_do_not(tmp_path):
+    from pilot_eval.token_measurement_engine import TokenMeasurementEngine
+    from pilot_eval.activation_profile import AGREEMENT
+    torch,instrument,rows=tiny_instrument(tmp_path)
+    engine=TokenMeasurementEngine(instrument,context_chunk=2,workspace_bytes=1_000_000)
+    try:
+        with engine.integrity_scope():first=engine.measure(tmp_path/'trained',rows,step=64)
+        with torch.no_grad():
+            for _,_,module in instrument.modules:
+                module.lora_A['default'].weight.mul_(2)
+                module.lora_B['default'].weight.mul_(.5)
+        instrument.model.save_pretrained(tmp_path/'equivalent',save_embedding_layers=False)
+        with engine.integrity_scope():second=engine.measure(tmp_path/'equivalent',rows,step=64,context_chunk=1)
+        np.testing.assert_allclose(second['arrays']['coefficients'],2*first['arrays']['coefficients'],**AGREEMENT)
+        np.testing.assert_allclose(second['arrays']['kl'],first['arrays']['kl'],**AGREEMENT)
+        assert all(b['B_norm']==pytest.approx(a['B_norm']/2) for a,b in zip(first['metadata']['modules'],second['metadata']['modules']))
+    finally:engine.close()
+
+
+def test_wrong_signed_coefficient_is_detected_independently(tmp_path):
+    from pilot_eval.token_measurement_engine import TokenMeasurementEngine
+    _,instrument,rows=tiny_instrument(tmp_path)
+    engine=TokenMeasurementEngine(instrument,context_chunk=2,workspace_bytes=1_000_000)
+    handle=instrument.modules[0][2].lora_A['default'].register_forward_hook(lambda m,args,output:-output)
+    try:
+        with pytest.raises(ValueError,match='signed input coefficient'):
+            with engine.integrity_scope():engine.measure(tmp_path/'trained',rows,step=64)
+    finally:
+        handle.remove();engine.close()

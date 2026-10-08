@@ -46,7 +46,7 @@ def _sources(sources,root):
 
 def _implementation():
     return {name:file_hash(Path(__file__).with_name(name)) for name in
-            ['token_measurement_workflow.py','token_measurement_math.py','token_measurement_engine.py']}
+            ['token_measurement_workflow.py','token_measurement_math.py','token_measurement_engine.py','activation_engine.py']}
 
 
 def prepare_tokens(sft_execution,grpo_execution,output_root,name,*,context_chunk,workspace_bytes):
@@ -67,6 +67,8 @@ def prepare_tokens(sft_execution,grpo_execution,output_root,name,*,context_chunk
     with run_lock(path.parent):
         _save_frozen(path,config)
         _save_frozen(root/config['run_path']/'meta/run_manifest.json',config)
+        if not (root/config['run_path']/'meta/status.json').exists():
+            _write_state(root/config['run_path'],'prepared',0,len(config['batches'])*10)
         print(f'Supplement prepared; existing summaries unchanged; {path}',flush=True)
     return path
 
@@ -146,10 +148,10 @@ def _diagnostics(rows,batch):
     longest=[max((r for r in rows if r['corpus']==c),key=lambda r:len(r['input_ids'])) for c in ['gsm8k','fineweb']]
     chosen={r['id'] for r in longest}
     capacity=longest+[r for r in rows if r['id'] not in chosen][:max(batch-2,0)]
-    capacity=capacity[:batch]
     remaining=[r for r in rows if r['id'] not in {r['id'] for r in capacity}]
     heldout=[next(r for r in remaining if r['corpus']==c) for c in ['gsm8k','fineweb']]
-    return [capacity,heldout[:batch]]
+    return ([capacity[i:i+batch] for i in range(0,len(capacity),batch)]
+            +[heldout[i:i+batch] for i in range(0,len(heldout),batch)])
 
 
 def profile_tokens(config_path,output_root,*,dependencies=None):
@@ -161,12 +163,15 @@ def profile_tokens(config_path,output_root,*,dependencies=None):
     with run_lock(directory):
         if (directory/'complete.json').exists():return _verified(directory,identity,['config.json','results.json'])
         _save_frozen(directory/'config.json',identity)
-        _write_state(directory,'running',0,10)
-        measurements=[]
+        total=sum(len(_diagnostics(product[2],config['batch_size']))*len(STEPS) for product in products.values())
+        _write_state(directory,'running',0,total)
+        measurements=[];paths=[directory/'config.json'];saving_seconds=0.
         try:
             for arm,(_,prepared,rows) in products.items():
                 for group,selected in enumerate(_diagnostics(rows,config['batch_size'])):
+                    loading_started=time.perf_counter()
                     engine=deps.token_engine(prepared,root,config['settings'])
+                    loading_seconds=time.perf_counter()-loading_started
                     deps.reset_peak_memory();group_started=time.perf_counter()
                     try:
                         with engine.integrity_scope():
@@ -176,6 +181,13 @@ def profile_tokens(config_path,output_root,*,dependencies=None):
                                 result=engine.measure(checkpoint,selected,step=step);deps.synchronize()
                                 seconds=time.perf_counter()-t
                                 _check(result,selected,step,config['settings'])
+                                save_started=time.perf_counter()
+                                evidence=directory/f'{arm}-group-{group}-step-{step}'
+                                _save_arrays(evidence/'arrays.npz',result['arrays'])
+                                _write_json(evidence/'metadata.json',result['metadata'])
+                                paths.extend([evidence/'arrays.npz',evidence/'metadata.json'])
+                                save_seconds=time.perf_counter()-save_started
+                                saving_seconds+=save_seconds
                                 reference=_canonical(result)
                                 repeat=engine.measure(checkpoint,selected,step=step)
                                 _check(repeat,selected,step,config['settings'])
@@ -198,25 +210,29 @@ def profile_tokens(config_path,output_root,*,dependencies=None):
                                 measurements.append(dict(arm=arm,group=group,step=step,examples=len(selected),
                                     example_ids=[r['id'] for r in selected],seconds=seconds,**peak,
                                     repeat_errors=repeat_error,batch_errors=batch_error,chunk_errors=chunk_error,
+                                    saving_wall_seconds=save_seconds,loading_wall_seconds=loading_seconds if step==0 else 0.,
                                     validation=result['validation'],saved_array_bytes=sum(v.nbytes for v in result['arrays'].values())))
-                                _write_state(directory,'running',len(measurements),20)
+                                _write_state(directory,'running',len(measurements),total)
                                 print(f'Token profile {arm} group {group} step {step}: {seconds:.2f}s; checks passed',flush=True)
-                    finally:engine.close()
+                    finally:
+                        engine.close()
+                        engine=None
                     measurements[-1]['group_wall_seconds']=time.perf_counter()-group_started
             # Approximate cost from measured example throughput; lengths/hooks/I/O
             # can differ across the full cohort. No runtime promise.
-            estimate=sum(r['seconds']/r['examples']*300 for r in measurements)/2
+            groups=len(_diagnostics(products['sft'][2],config['batch_size']))
+            estimate=sum(r['seconds']/r['examples']*300 for r in measurements)/groups
             result=dict(profile_passed=True,measurements=measurements,runtime=runtime,
-                total_wall_seconds=time.perf_counter()-started,estimated_main_forward_seconds=estimate,
-                estimated_array_bytes=int(sum(r['saved_array_bytes']/r['examples']*300 for r in measurements)/2),
-                estimate_note='Each checkpoint/arm averaged across two diagnostic groups; production includes sealing/I/O and can differ.',
+                total_wall_seconds=time.perf_counter()-started,saving_wall_seconds=saving_seconds,estimated_main_forward_seconds=estimate,
+                estimated_array_bytes=int(sum(r['saved_array_bytes']/r['examples']*300 for r in measurements)/groups),
+                estimate_note='Each checkpoint/arm averaged across declared diagnostic groups; production includes sealing/I/O and can differ.',
                 agreement=AGREEMENT)
             _write_json(directory/'results.json',result)
-            _seal(directory,identity,[directory/'config.json',directory/'results.json'])
-            _write_state(directory,'completed',20,20)
+            _seal(directory,identity,paths+[directory/'results.json'])
+            _write_state(directory,'completed',total,total)
             return result
         except BaseException as exc:
-            _write_state(directory,'failed',len(measurements),20,str(exc));raise
+            _write_state(directory,'failed',len(measurements),total,str(exc));raise
 
 
 def freeze_tokens(config_path,output_root,*,review_notes):
@@ -251,7 +267,7 @@ def _execution(config_path,root):
 
 def _unit(config,arm,batch,step):
     return dict(execution_sha256=_hash(config),arm=arm,batch=batch,step=step,
-                adapter_sha256=config['source_hashes'][arm],kind='token-shard')
+                source_execution_sha256=config['source_hashes'][arm],kind='token-shard')
 
 
 def _read_unit(directory,identity,rows,step,settings):
@@ -295,7 +311,9 @@ def measure_tokens(config_path,output_root,*,dependencies=None):
             for (arm,index),batch_units in groups.items():
                 prepared,rows=batch_units[0][1],batch_units[0][4]
                 if current!=arm:
-                    if engine:engine.close()
+                    if engine:
+                        engine.close()
+                        engine=None
                     engine=deps.token_engine(prepared,root,config['settings']);current=arm
                 pending=[];reference=None
                 try:
@@ -328,7 +346,7 @@ def measure_tokens(config_path,output_root,*,dependencies=None):
             _write_json(directory/'meta/timing.json',dict(attempt_wall_seconds=time.perf_counter()-started,verified_on_entry=on_entry,
                 note='Per-unit timing persists in each shard; this attempt excludes earlier attempts.'))
             identity=dict(execution_sha256=_hash(config))
-            _seal(directory,identity,[directory/'results/results.json',directory/'meta/runtime.json']+
+            _seal(directory,identity,[directory/'results/results.json',directory/'meta/runtime.json',directory/'meta/timing.json',directory/'meta/run_manifest.json']+
                   [path/'complete.json' for *_,path,_ in units])
             _write_state(directory,'completed',len(done),len(units))
             return result
@@ -344,13 +362,15 @@ def measure_tokens(config_path,output_root,*,dependencies=None):
 def verify_tokens(config_path,output_root):
     root=Path(output_root).resolve();config,products=_execution(config_path,root)
     directory=root/config['run_path'];units=list(_units(config,products,root))
-    required=['results/results.json','meta/runtime.json']+[str((p/'complete.json').relative_to(directory)) for *_,p,_ in units]
+    required=['results/results.json','meta/runtime.json','meta/timing.json','meta/run_manifest.json']+[str((p/'complete.json').relative_to(directory)) for *_,p,_ in units]
     # _verified expects results.json; this product uses the canonical results tree.
     marker=json.loads((directory/'complete.json').read_text())
     if marker['identity']!=dict(execution_sha256=_hash(config)) or not set(required).issubset(marker['files']):
         raise ValueError('supplement completion inventory mismatch')
     for relative,digest in marker['files'].items():
         if file_hash(_relative(directory/relative,directory))!=digest:raise ValueError('supplement completion hash mismatch')
+    if not _compatible_runtime(config['profile_runtime'],json.loads((directory/'meta/runtime.json').read_text())):
+        raise ValueError('supplement saved runtime mismatch')
     for _,_,_,step,rows,path,identity in units:_read_unit(path,identity,rows,step,config['settings'])
     result=json.loads((directory/'results/results.json').read_text())
     if result.get('completed_units')!=len(units) or not result.get('measurement_complete'):

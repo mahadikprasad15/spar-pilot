@@ -182,7 +182,7 @@ def main(argv=None, *, dependencies=None):
             elif args.command=='tokens-verify':print(json.dumps(verify_tokens(args.config,args.output_root),indent=2))
             else:
                 result=report_tokens(args.config,args.output_root,args.name)
-                print(json.dumps(dict(report_complete=result['report_complete'],kl_trajectory=result['kl_trajectory']),indent=2))
+                print(json.dumps(dict(report_complete=result['report_complete'],kl_trajectory=[{k:v for k,v in row.items() if k!='per_example'} for row in result['kl_trajectory']]),indent=2))
         elif args.command=='grpo-writes-report':
             from pilot_eval.grpo_write_report import report_grpo_writes
             result = report_grpo_writes(args.grpo_report,args.control_report,args.sft_report,args.output_root,args.name)
