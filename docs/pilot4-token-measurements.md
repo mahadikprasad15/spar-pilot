@@ -72,6 +72,9 @@ old files or mix settings within a run.
 The existing execution verification requires each arm's source, instrument,
 numerical calibration and batch profile to be valid. Ticket 8 adds new checks;
 it does not inherit a successful output-head/coefficients check just from FP32.
+Adapter file hashes are checked against frozen checkpoint evidence before and
+after measurement, and source evidence is reverified before profile/production
+completion publication. A shape-valid replacement cannot pass as the old checkpoint.
 Its profile compares repeat, singleton vs batched, and half-sized context chunks
 at all checkpoints, with a long-example capacity group and a separate group.
 Batch 1 still covers both corpora. Agreement uses the existing fixed
