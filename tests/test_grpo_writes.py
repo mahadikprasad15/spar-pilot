@@ -178,7 +178,16 @@ def test_control_profile_and_resumable_measurement_use_only_zero_and_control(tmp
     assert compared['random_realizations']==1
     assert len(compared['cosines'])==504
     assert all(row['cosine']==pytest.approx(1.) for row in compared['cosines'])
+    trajectory=compared['learned_direction_trajectory']
+    assert len(trajectory)==840
+    assert {row['step'] for row in trajectory}=={0,8,16,32,64}
+    assert all(row['cosine'] is None and row['reason']=='zero_vector' for row in trajectory if row['step']==0)
+    assert all(row['cosine']==pytest.approx(1.) for row in trajectory if row['step']!=0)
     assert main(args)==0
+    from test_grpo_handoff import finish_controlled_handoff
+    finish_controlled_handoff(tmp_path,training,
+        tmp_path/'plans/sft-execution/activation.execution.json',
+        tmp_path/'plans/grpo-execution/activation.execution.json')
     (tmp_path/'reports/control-report/results/mean-vectors.npz').write_bytes(b'corrupt')
     assert main(args)==1
 

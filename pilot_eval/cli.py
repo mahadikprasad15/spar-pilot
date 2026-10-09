@@ -15,6 +15,13 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    final_report = commands.add_parser('grpo-final-report', help='verify sources and publish the paired-arm handoff')
+    final_verify = commands.add_parser('grpo-final-verify', help='CPU-only final report and download inventory verification')
+    final_export = commands.add_parser('grpo-final-export', help='stream verified report and raw inventory into a tar bundle')
+    final_export.add_argument('--archive-name', required=True)
+    for command in (final_report, final_verify, final_export):
+        command.add_argument('--selection', type=Path, required=True)
+        command.add_argument('--name', required=True)
     prepare = commands.add_parser("prepare", help="pin revisions and freeze five baseline cells")
     prepare.add_argument("--plan", required=True, help="unique immutable plan name")
     prepare.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
@@ -150,7 +157,7 @@ def main(argv=None, *, dependencies=None):
     activation_report = commands.add_parser('activation-report', help='CPU scientific report from verified activation summaries')
     activation_report.add_argument('--config', type=Path, required=True)
     activation_report.add_argument('--name', required=True)
-    for command in (prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_recover, activation_measure, activation_verify, activation_report):
+    for command in (final_report, final_verify, final_export, prepare, run, fork, revise, report, rescore, sft_prepare, sft_train, sft_eval, sft_compare, sft_benchmark, score_audit, activation_prepare, activation_audit, activation_validate, activation_profile, activation_freeze, activation_recover, activation_measure, activation_verify, activation_report):
         command.add_argument("--output-root", type=Path, default=Path("artifacts"))
     token_prepare = commands.add_parser('tokens-prepare', help='freeze supplemental SFT/GRPO coefficient and KL inputs')
     token_prepare.add_argument('--sft-execution', type=Path, required=True)
@@ -237,6 +244,16 @@ def main(argv=None, *, dependencies=None):
                 print(freeze_rule(args.config,args.output_root,review_notes=args.review_notes))
             else:
                 print(json.dumps(validate_rule(args.config,args.output_root,dependencies=dependencies),indent=2))
+        elif args.command == 'grpo-final-export':
+            from pilot_eval.grpo_handoff import export_handoff
+            result = export_handoff(args.selection, args.output_root, args.name, args.archive_name)
+            print(json.dumps({key: result[key] for key in ['archive_path','archive_bytes']}))
+        elif args.command in ['grpo-final-report', 'grpo-final-verify']:
+            from pilot_eval.grpo_handoff import report_handoff, verify_handoff
+            operation = report_handoff if args.command == 'grpo-final-report' else verify_handoff
+            result = operation(args.selection, args.output_root, args.name)
+            print(json.dumps({'report_complete': result['report_complete'],
+                              'download_files': len(result['download_inventory'])}))
         elif args.command == 'activation-report':
             from pilot_eval.activation_report import report_activation
             result = report_activation(args.config, args.output_root, name=args.name)

@@ -5,14 +5,14 @@
 The [Pilot 4 notebook](notebooks/pilot-4-colab.ipynb) implements source matching,
 untuned sampling, tiny-model validation, GPU preflight, reviewed protocol freeze,
 resumable GRPO training, paired behavioural evaluation and fixed-token writes
-with one norm-matched random intervention (tickets 1–8).
+with one norm-matched random intervention (tickets 1–9).
 See the [workflow guide](docs/pilot4-grpo.md),
 [Ticket 7 measurement guide](docs/pilot4-fixed-writes.md) and
 [first-principles preflight companion](docs/pilot4-preflight-concepts.md).
 Supplemental signed per-token coefficients and fixed-context KL for both arms are
 implemented; see [Ticket 8 measurement guide](docs/pilot4-token-measurements.md).
 Real Qwen/CUDA acceptance must run in Colab.
-Ticket 9's overall comparison/handoff remain separate work.
+Ticket 9 supplies the verified CPU-only overall comparison, raw-artifact inventory and Colab handoff; real scientific GPU execution remains separate.
 
 ## Pilot 3: fixed-token activation measurements
 
@@ -163,3 +163,10 @@ inside that shared root. See [workspace migration notes](docs/workspace-layout.m
 Flexible v3 is implemented in the scripts and available in **section 12 of the
 Pilot 2 notebook**. For completed runs, run only that CPU section to write the
 corrected report to Drive; no GPU evaluation repeats.
+
+### Pilot 4 final handoff (Ticket 9)
+
+[Final comparison and download guide](docs/pilot4-final-handoff.md) explains the
+CPU-only report, source verification, checkpoint trajectories and separately
+named raw-artifact bundles. Guided Colab sections 34–36 complete the handoff.
+Software tests do not establish real Qwen/CUDA execution or scientific outcomes.
