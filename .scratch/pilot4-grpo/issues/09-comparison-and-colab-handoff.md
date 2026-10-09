@@ -8,7 +8,7 @@ artifact-download workflow.
 07 — Measure GRPO writes on the existing fixed sequences;
 08 — Save per-token coefficients and fixed-context KL for both arms.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Publish paired behavioural/write/KL checkpoint trajectories and signed
       SFT-versus-GRPO vector cosines with exact source/checkpoint/scorer/input

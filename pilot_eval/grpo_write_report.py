@@ -53,7 +53,7 @@ def report_grpo_writes(grpo_report,control_report,sft_report,output_root,name):
                 or not _compatible_runtime(execution['runtime'],reference['runtime'])
                 or execution['batches']!=reference['batches'] or execution['batch_size']!=reference['batch_size']):
             raise ValueError('write comparison requires matching inputs, base, numerical runtime and batch membership')
-    identity=dict(protocol='pilot4-write-comparison-v1',sources={label:dict(path=str(path.relative_to(root)),
+    identity=dict(protocol='pilot4-write-comparison-v2',sources={label:dict(path=str(path.relative_to(root)),
                       complete_sha256=file_hash(path/'complete.json')) for label,path in sources.items()},
                   implementation_sha256=file_hash(Path(__file__)),endpoint=64,
                   weightings=['token','example'],random_realizations=1,inputs_sha256=prepared['items_sha256'])
@@ -91,7 +91,29 @@ def report_grpo_writes(grpo_report,control_report,sft_report,output_root,name):
                                                 first_norm=norms[0],second_norm=norms[1],
                                                 first_resolution=cells[0]['direction_resolution_relative'],
                                                 second_resolution=cells[1]['direction_resolution_relative']))
+            learned_trajectory=[]
+            for step in [0,8,16,32,64]:
+                for view in ['question','solution','user']:
+                    for weighting in ['token','example']:
+                        for layer in range(28):
+                            key=f'{step}-{view}-{layer}-block-{weighting}-mean_delta'
+                            a,b=products['sft'][4][key],products['grpo'][4][key]
+                            if a.shape!=b.shape or a.ndim!=1: raise ValueError('trajectory vector shape mismatch')
+                            norms=[float(np.linalg.norm(v)) for v in [a,b]]
+                            cells=[next(r for r in products[label][0]['measurements']
+                                        if r['kind']=='block' and r['step']==step and r['view']==view
+                                        and r['layer']==layer and r['weighting']==weighting)
+                                   for label in ['sft','grpo']]
+                            reason=('zero_vector' if 0. in norms else
+                                    'no_calibrated_resolution' if any(r['direction_resolved'] is None for r in cells) else
+                                    'below_resolution' if not all(r['direction_resolved'] for r in cells) else None)
+                            learned_trajectory.append(dict(step=step,view=view,layer=layer,weighting=weighting,
+                                cosine=None if reason else float(np.clip(np.dot(a,b)/(norms[0]*norms[1]),-1.,1.)),
+                                defined=reason is None,reason=reason,sft_norm=norms[0],grpo_norm=norms[1],
+                                sft_resolution=cells[0]['direction_resolution_relative'],
+                                grpo_resolution=cells[1]['direction_resolution_relative']))
             result=dict(report_complete=True,random_realizations=1,cosines=cosines,magnitudes=magnitudes,
+                        learned_direction_trajectory=learned_trajectory,
                         identity=identity,defined_cosines=sum(r['defined'] for r in cosines),total_cosines=len(cosines),
                         limits=['One random realization is not a null distribution or significance threshold.',
                                 'Weight-norm matching does not match activation magnitudes.',
@@ -102,6 +124,9 @@ def report_grpo_writes(grpo_report,control_report,sft_report,output_root,name):
             _save_arrays(directory/'results/mean-vectors.npz',vectors)
             with (directory/'results/cosines.csv').open('w',newline='') as stream:
                 writer=csv.DictWriter(stream,fieldnames=list(cosines[0]));writer.writeheader();writer.writerows(cosines)
+            with (directory/'results/learned-direction-trajectory.csv').open('w',newline='') as stream:
+                writer=csv.DictWriter(stream,fieldnames=list(learned_trajectory[0]))
+                writer.writeheader();writer.writerows(learned_trajectory)
             lines=['# '+name,'','## Direction coverage','',f"Defined: {result['defined_cosines']}/{result['total_cosines']}",'',
                    '## Interpretation limits','']+['- '+s for s in result['limits']]
             lines+=['','All three views and both weightings are saved in `cosines.csv`.','',
