@@ -140,7 +140,7 @@ def test_real_preflight_backend_runs_disposable_trials_on_tiny_offline_model(tmp
     from types import SimpleNamespace
     from pilot_eval.grpo_gpu import GPUPreflight
     from pilot_eval.sft import optimizer_settings,adapter_settings
-    import hashlib
+    from pilot_eval.workflow import _hash
     model=Qwen2ForCausalLM(Qwen2Config(vocab_size=2,hidden_size=16,intermediate_size=32,num_hidden_layers=28,
         num_attention_heads=2,num_key_value_heads=2,attention_dropout=0,tie_word_embeddings=False,
         pad_token_id=None,bos_token_id=0,eos_token_id=1,attn_implementation='eager'))
@@ -149,7 +149,7 @@ def test_real_preflight_backend_runs_disposable_trials_on_tiny_offline_model(tmp
     tokenizer.padding_side='left';tokenizer.chat_template='tiny-test-template'
     sampler=SimpleNamespace(backend=SimpleNamespace(model=model,tokenizer=tokenizer),close=lambda:None)
     plan=dict(seed=42,optimizer=optimizer_settings(),adapter=adapter_settings(),
-              source_prompt_contract=dict(chat_template_sha256=hashlib.sha256(tokenizer.chat_template.encode()).hexdigest()))
+              source_prompt_contract=dict(chat_template_sha256=_hash(tokenizer.chat_template)))
     settings=dict(generation_groups=1,backward_groups=1,evaluation_batch_size=2,completion_limit=3,
                   top_p=1.,top_k=0,gradient_checkpointing=True)
     engine=GPUPreflight(plan,settings,tmp_path,sampler=sampler)

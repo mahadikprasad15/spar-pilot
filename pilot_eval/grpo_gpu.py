@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from pilot_eval.run import _write_json
+from pilot_eval.workflow import _hash
 from pilot_eval.grpo_algorithm import GRPOWindow, gradient_consistency
 from pilot_eval.grpo_baseline import HFSampler, _score
 from pilot_eval.sft_backend import frozen_weight_hash
@@ -37,7 +38,7 @@ class GPUPreflight:
         if any(torch.count_nonzero(p) for n,p in self.model.named_parameters() if 'lora_B' in n):raise ValueError('nonzero initial adapter')
         self.initial_base=frozen_weight_hash(self.model)
         self.loading_seconds=time.perf_counter()-loading_start
-        template_hash=hashlib.sha256(self.tokenizer.chat_template.encode()).hexdigest()
+        template_hash=_hash(self.tokenizer.chat_template)
         if template_hash!=plan['source_prompt_contract']['chat_template_sha256']:raise ValueError('chat template identity mismatch')
 
     def runtime(self):
