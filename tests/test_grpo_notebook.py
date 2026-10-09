@@ -188,7 +188,8 @@ def test_notebook_pin_contains_every_ticket7_entrypoint():
     commit=re.search(r"HARNESS_COMMIT = '([0-9a-f]{40})'",setup).group(1)
     cli=subprocess.check_output(['git','show',commit+':pilot_eval/cli.py'],cwd=repository,text=True)
     for command in ['grpo-writes-prepare','grpo-writes-control','grpo-writes-report',
-                    'tokens-prepare','tokens-profile','tokens-freeze','tokens-measure','tokens-verify','tokens-report']:
+                    'tokens-prepare','tokens-profile','tokens-freeze','tokens-measure','tokens-verify','tokens-report',
+                    'grpo-final-report','grpo-final-verify','grpo-final-export']:
         assert command in cli
 
 
@@ -208,3 +209,19 @@ def test_guided_ticket8_stages_have_profile_review_and_verified_release_boundary
     assert 'GPU' in stages['tokens-verify']
     assert 'SFT_TOKEN_EXECUTION' in stages['tokens-prepare']
     assert '--context-chunk' in stages['tokens-prepare'] and '--workspace-mib' in stages['tokens-prepare']
+
+
+def test_final_handoff_notebook_orders_verification_before_release_and_downloads():
+    notebook=json.loads((Path(__file__).resolve().parents[1]/'notebooks/pilot-4-colab.ipynb').read_text())
+    stages={c['metadata']['stage']:''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code'}
+    needed=['final-report','final-verify','final-downloads']
+    assert all(s in stages for s in needed)
+    assert [s for s in stages if s in needed]==needed
+    assert 'grpo-final-report' in stages['final-report']
+    assert 'grpo-final-verify' in stages['final-verify']
+    assert 'grpo-final-export' in stages['final-downloads']
+    for stage in needed:
+        ast.parse(stages[stage]);assert 'check=True' in stages[stage]
+    text='\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='markdown')
+    assert '32 optimizer steps' in text and 'incomplete attempts' in text.lower()
+    assert 'download-inventory.json' in text
