@@ -21,13 +21,16 @@ def test_guided_notebook_preparation_and_audit_use_public_commands(tmp_path):
 
     class Commands:
         @staticmethod
+        def save_selection(value):
+            pass
+        @staticmethod
         def run(args, *, cwd, check):
             assert args[:3] == [sys.executable, '-m', 'pilot_eval']
             assert main(args[3:]) == 0
 
     scope = {'REPO_DIR': notebook_path.parents[1], 'ARTIFACT_ROOT': tmp_path,
              'SFT_CONFIG': sft, 'MEASUREMENT_CONFIG': measurement, 'PLAN_NAME': 'notebook',
-             'subprocess': Commands, 'sys': sys, 'json': json, 'Path': Path}
+             'subprocess': Commands, 'session': Commands, 'sys': sys, 'json': json, 'Path': Path, 'INCLUDE_SFT_WRITES': False}
     exec(stages['prepare'], scope)
     exec(stages['audit'], scope)
     path = tmp_path / 'plans/notebook/grpo.prepared.json'
@@ -48,11 +51,14 @@ def test_guided_sampling_cell_runs_the_public_baseline(tmp_path):
     deps = Boundary()
     class Commands:
         @staticmethod
+        def save_selection(value):
+            pass
+        @staticmethod
         def run(args, *, cwd, check):
             assert main(args[3:], dependencies=deps) == 0
     scope = dict(SAMPLING_SETTINGS_PATH=settings, PREPARED_PATH=path, ARTIFACT_ROOT=tmp_path,
                  BASELINE_NAME='notebook-sampling', REPO_DIR=notebook_path.parents[1],
-                 subprocess=Commands, sys=sys, json=json, Path=Path)
+                 subprocess=Commands,session=Commands, sys=sys, json=json, Path=Path)
     exec(stages['baseline'], scope)
     assert scope['BASELINE_SUMMARY']['total'] == 1024
     assert scope['BASELINE_SUMMARY']['final_cap'] is None
@@ -68,10 +74,13 @@ def test_guided_controls_run_real_public_command(tmp_path):
     assert 'controls' in stages
     class Commands:
         @staticmethod
+        def save_selection(value):
+            pass
+        @staticmethod
         def run(args, *, cwd, check):
             assert main(args[3:]) == 0
     scope = dict(ARTIFACT_ROOT=tmp_path, REPO_DIR=notebook_path.parents[1],
-                 subprocess=Commands, sys=sys, json=json, Path=Path)
+                 subprocess=Commands,session=Commands, sys=sys, json=json, Path=Path)
     exec(stages['controls'], scope)
     assert scope['CONTROL_RESULTS']['passed']
     assert scope['CONTROL_RESULTS']['algorithm_checks']['passed']
@@ -92,6 +101,9 @@ def test_guided_preflight_and_freeze_run_public_commands(tmp_path):
     deps=Dependencies()
     class Commands:
         @staticmethod
+        def save_selection(value):
+            pass
+        @staticmethod
         def run(args, *, cwd, check):
             assert main(args[3:], dependencies=deps)==0
     review=tmp_path/'review.json'
@@ -100,7 +112,7 @@ def test_guided_preflight_and_freeze_run_public_commands(tmp_path):
         monitors={k:dict(threshold=t,action='pause') for k,t in [('cap_fraction',.02),('dead_group_fraction',.8),('length_ratio_change_8_steps',.5)]})))
     scope=dict(PREPARED_PATH=path,BASELINE_CONFIG_PATH=baseline,PREFLIGHT_SETTINGS_PATH=settings,
         CONTROL_NAME='controls',PREFLIGHT_NAME='notebook-flight',FROZEN_NAME='notebook-frozen',REVIEW_PATH=review,
-        ARTIFACT_ROOT=tmp_path,REPO_DIR=notebook_path.parents[1],subprocess=Commands,sys=sys,json=json,Path=Path)
+        ARTIFACT_ROOT=tmp_path,REPO_DIR=notebook_path.parents[1],subprocess=Commands,session=Commands,sys=sys,json=json,Path=Path)
     exec(stages['preflight'],scope)
     assert scope['PREFLIGHT_RESULTS']['passed']
     exec(stages['freeze'],scope)
@@ -116,12 +128,15 @@ def test_guided_training_and_verification_use_public_workflow(tmp_path):
     assert {'train','verify-training'}<=stages.keys()
     class Commands:
         @staticmethod
+        def save_selection(value):
+            pass
+        @staticmethod
         def run(args,*,cwd,check):
             from types import SimpleNamespace
             result=main(args[4:],dependencies=deps);assert result==0
             return SimpleNamespace(returncode=result)
     scope=dict(FROZEN_PATH=path,ARTIFACT_ROOT=tmp_path,PLAN_NAME='notebook',REPO_DIR=notebook_path.parents[1],
-        subprocess=Commands,sys=sys,json=json,Path=Path)
+        subprocess=Commands,session=Commands,sys=sys,json=json,Path=Path)
     exec(stages['train'],scope);exec(stages['verify-training'],scope)
     assert scope['TRAINING_RESULTS']['accepted_completions']==4096
 
@@ -137,9 +152,12 @@ def test_guided_training_records_dead_child_instead_of_stale_running(tmp_path):
     (directory/'meta/status.json').write_text(json.dumps(dict(state='running',completed=11,total=64)))
     class Commands:
         @staticmethod
+        def save_selection(value):
+            pass
+        @staticmethod
         def run(*args,**kwargs):return SimpleNamespace(returncode=-9)
     scope=dict(FROZEN_PATH=tmp_path/'unused',ARTIFACT_ROOT=tmp_path,PLAN_NAME='notebook',REPO_DIR=notebook_path.parents[1],
-        subprocess=Commands,sys=sys,json=json,Path=Path)
+        subprocess=Commands,session=Commands,sys=sys,json=json,Path=Path)
     with pytest.raises(RuntimeError,match='exit code -9'):exec(stages['train'],scope)
     assert json.loads((directory/'meta/status.json').read_text())['state']=='failed'
 
@@ -152,10 +170,13 @@ def test_guided_behavioural_evaluation_and_cpu_report_use_public_workflow(tmp_pa
     deps=Dependencies();path=source(tmp_path)
     class Commands:
         @staticmethod
+        def save_selection(value):
+            pass
+        @staticmethod
         def run(args,*,cwd,check):
             assert main(args[4:],dependencies=deps)==0
     scope=dict(TRAINING_CONFIG_PATH=path,ARTIFACT_ROOT=tmp_path,PLAN_NAME='notebook',REPO_DIR=notebook_path.parents[1],
-        subprocess=Commands,sys=sys,json=json,Path=Path,display=lambda value:None,Markdown=str)
+        subprocess=Commands,session=Commands,sys=sys,json=json,Path=Path,display=lambda value:None,Markdown=str,WRITE_VARIANT='')
     exec(stages['evaluate-behaviour'],scope)
     exec(stages['report-behaviour'],scope)
     assert scope['BEHAVIOUR_RESULTS']['drops']['greedy']['drop']==1.
