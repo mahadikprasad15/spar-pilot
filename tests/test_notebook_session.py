@@ -161,3 +161,20 @@ def test_completed_calibration_and_profile_are_verified_without_gpu_probe(tmp_pa
     assert session.run([sys.executable, '-m', 'pilot_eval', 'activation-profile',
         '--config', str(config), '--calibration', str(calibration),
         '--output-root', str(tmp_path)], check=True).returncode == 0
+
+
+def test_notebook_release_pin_supports_its_resume_interface():
+    import ast
+    import re
+    import subprocess
+    repo = Path(__file__).resolve().parents[1]
+    notebook = json.loads((repo / 'notebooks/pilot-4-colab.ipynb').read_text())
+    setup = next(''.join(c['source']) for c in notebook['cells'] if c.get('metadata', {}).get('stage') == 'setup')
+    commit = re.search(r"HARNESS_COMMIT = '([0-9a-f]{40})'", setup).group(1)
+    module = ast.parse(subprocess.check_output(
+        ['git', 'show', commit + ':pilot_eval/notebook_session.py'], cwd=repo, text=True))
+    session = next(n for n in module.body if isinstance(n, ast.ClassDef) and n.name == 'NotebookSession')
+    methods = {n.name: n for n in session.body if isinstance(n, ast.FunctionDef)}
+    assert {'restore', 'save_selection', 'saved_selection', 'inventory', 'install_environment',
+            'readiness', 'recover_writes', 'write_name', 'run'} <= methods.keys()
+    assert 'extra_write_products' in {a.arg for a in methods['__init__'].args.kwonlyargs}
