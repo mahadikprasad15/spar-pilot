@@ -305,3 +305,37 @@ def test_grpo_profile_records_loading_warmup_saving_and_source_verification_cost
         assert row['loading_wall_seconds']>=0 and row['warmup_wall_seconds']>=0
         assert row['saving_wall_seconds']>=0 and row['candidate_wall_seconds']>0
         assert row['saved_summary_bytes']>0
+
+
+def test_sealed_random_control_survives_last_bit_cpu_norm_drift(tmp_path, monkeypatch):
+    """A fresh CPU reduction may drift while sealed source/control bytes remain identical."""
+    import numpy as np
+    from safetensors.numpy import save_file
+    from pilot_eval.grpo_random_control import construct_control
+    trained = tmp_path / 'trained'
+    trained.mkdir()
+    factors = {}
+    for layer in range(28):
+        for projection in PROJECTIONS:
+            stem = f"base_model.model.model.layers.{layer}.{'self_attn' if projection in PROJECTIONS[:4] else 'mlp'}.{projection}"
+            factors[stem + '.lora_A.weight'] = np.array([[3., 4.]], dtype=np.float32)
+            factors[stem + '.lora_B.weight'] = np.array([[0.], [2.], [-1.]], dtype=np.float32)
+    save_file(factors, str(trained / 'adapter_model.safetensors'))
+    (trained / 'adapter_config.json').write_text(json.dumps(dict(r=1, lora_alpha=1, lora_dropout=0)))
+    control = tmp_path / 'control'
+    original = construct_control(trained, control)
+    before = {p: p.read_bytes() for folder in (trained, control) for p in folder.iterdir()}
+    norm = np.linalg.norm
+
+    def different_cpu_reduction(value, *args, **kwargs):
+        result = norm(value, *args, **kwargs)
+        return np.nextafter(result, np.inf) if result != 0 else result
+
+    monkeypatch.setattr(np.linalg, 'norm', different_cpu_reduction)
+    assert construct_control(trained, control) == original
+    assert all(p.read_bytes() == content for p, content in before.items())
+    # The same recovery must still reject modified source bytes.
+    factors[next(iter(factors))] *= 2
+    save_file(factors, str(trained / 'adapter_model.safetensors'))
+    with pytest.raises(ValueError, match='source identity changed'):
+        construct_control(trained, control)

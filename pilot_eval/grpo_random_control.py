@@ -64,17 +64,36 @@ def construct_control(source, destination):
                   source_config_sha256=file_hash(source/'adapter_config.json'),
                   source_adapter_sha256=file_hash(source/'adapter_model.safetensors'),modules=modules,
                   interpretation='weight-norm-matched random intervention; not a null distribution')
-    arrays,directions=_random_factors(modules)
     destination.mkdir(parents=True,exist_ok=True)
     marker=destination/'complete.json'
     if marker.exists():
         saved=json.loads(marker.read_text())
         if set(saved['files']) != {'adapter_config.json','adapter_model.safetensors','construction.json'}:
             raise ValueError('random control seal omits required payloads')
-        if saved['identity']!=identity: raise ValueError('random control source identity changed')
+        sealed_identity=saved['identity']
+        # Source bytes define identity; FP64 reductions are measurements, not hashes.
+        # Preserve the original construction values across CPU/BLAS last-bit drift.
+        def structural(value):
+            return {**value, 'modules': [
+                {k:v for k,v in row.items() if k!='target_norm'}
+                for row in value['modules']]}
+        if structural(sealed_identity)!=structural(identity):
+            raise ValueError('random control source identity changed')
         for name,digest in saved['files'].items():
             if file_hash(destination/name)!=digest: raise ValueError('random control payload changed')
+        construction=json.loads((destination/'construction.json').read_text())
+        if {k:v for k,v in construction.items() if k!='directions'}!=sealed_identity:
+            raise ValueError('random control construction identity changed')
+        for sealed,current in zip(sealed_identity['modules'],modules):
+            target=sealed['target_norm']
+            if (not np.isfinite(target) or target<0
+                    or (target==0)!=(current['target_norm']==0)
+                    or not np.isclose(target,current['target_norm'],atol=1e-6,rtol=1e-5)):
+                raise ValueError('random control source norm mismatch')
+        identity=sealed_identity
+        arrays,directions=_random_factors(identity['modules'])
     else:
+        arrays,directions=_random_factors(modules)
         # Caller owns the workflow run lock; interrupted, unsealed payloads may be replaced.
         save_file(arrays,str(destination/'adapter_model.safetensors'))
         _save_frozen(destination/'adapter_config.json',config)
