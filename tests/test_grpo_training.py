@@ -105,7 +105,7 @@ def test_real_training_engine_restores_optimizer_rng_and_prior_gradient(tmp_path
         tokenizer.padding_side='left';tokenizer.chat_template='tiny-test-template'
         sampler=SimpleNamespace(backend=SimpleNamespace(model=model,tokenizer=tokenizer),close=lambda:None)
         plan=dict(seed=42,optimizer=optimizer_settings(),adapter=adapter_settings(),
-            source_prompt_contract=dict(chat_template_sha256=hashlib.sha256(tokenizer.chat_template.encode()).hexdigest()))
+            source_prompt_contract=dict(chat_template_sha256=hashlib.sha256(json.dumps(tokenizer.chat_template, ensure_ascii=False).encode()).hexdigest()))
         settings=dict(generation_groups=1,backward_groups=1,evaluation_batch_size=2,completion_limit=3,
             top_p=1.,top_k=0,gradient_checkpointing=True)
         return GRPOTrainingEngine(plan,settings,directory,sampler=sampler)

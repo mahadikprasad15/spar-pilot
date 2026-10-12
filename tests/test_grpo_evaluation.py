@@ -134,7 +134,7 @@ def test_real_checkpoint_inference_is_batched_and_seed_reproducible_without_down
     tokenizer=PreTrainedTokenizerFast(tokenizer_object=core,pad_token='0',unk_token='0',eos_token='end')
     tokenizer.padding_side='left';tokenizer.chat_template='tiny-test-template'
     plan=dict(seed=42,adapter=adapter_settings(),source_prompt_contract=dict(
-        chat_template_sha256=hashlib.sha256(tokenizer.chat_template.encode()).hexdigest()))
+        chat_template_sha256=hashlib.sha256(json.dumps(tokenizer.chat_template, ensure_ascii=False).encode()).hexdigest()))
     settings=dict(evaluation_batch_size=2,generation_groups=2,completion_limit=3,top_p=1.,top_k=0,gradient_checkpointing=False)
     sampler=SimpleNamespace(backend=SimpleNamespace(model=model,tokenizer=tokenizer),close=lambda:None)
     engine=EvaluationEngine(plan,settings,tmp_path,sampler=sampler)
