@@ -132,6 +132,7 @@ class TraceSession:
             raise ValueError('Select all three existing prepared sources: sft, grpo, random.')
         with _writer(self.directory):
             audit = {}
+            identities = []
             for label, row in selected.items():
                 path = Path(row['path'])
                 if not path.is_file():
@@ -143,9 +144,14 @@ class TraceSession:
                 kind = {'grpo': 'grpo', 'random': 'random-rank1-control'}.get(label)
                 if kind and config.get('source_contract', {}).get('kind') != kind:
                     raise ValueError(f'{label} source has the wrong adapter kind.')
+                identities.append(tuple(config.get(key) for key in
+                    ('model', 'model_revision', 'tokenizer_revision', 'dtype'))
+                    + (config['source_evidence']['base_sha256'],))
                 audit[label] = dict(config_sha256=_digest(path), model=config['model'],
                                     checkpoint_steps=config['checkpoint_steps'],
                                     source_evidence=config['source_evidence'])
+            if len(set(identities)) != 1:
+                raise ValueError('Selected model/tokenizer/precision/base source identities differ.')
             _save(self.directory / 'source-audit.json', audit)
         return audit
 

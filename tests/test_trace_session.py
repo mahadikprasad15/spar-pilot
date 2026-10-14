@@ -111,3 +111,24 @@ def test_clean_notebook_uses_public_bootstrap_without_hidden_state():
         if cell['cell_type'] == 'code':
             ast.parse(''.join(cell['source']))
             assert cell['outputs'] == []
+
+
+def test_source_audit_rejects_mixed_model_or_base_identity(tmp_path):
+    import pytest
+    from pilot_eval.trace_session import TraceSession
+    paths = {label: tmp_path / f'{label}.json' for label in ('sft', 'grpo', 'random')}
+    for path in paths.values():
+        path.write_text('{}')
+    def load(path, root):
+        label = path.stem
+        return dict(model='Qwen/Qwen2.5-1.5B-Instruct', model_revision='revision',
+            tokenizer_revision='revision', dtype='float32',
+            protocol_version='pilot3-write-v1' if label == 'sft' else 'pilot4-writes-v1',
+            source_contract={'kind': 'grpo' if label == 'grpo' else 'random-rank1-control'},
+            checkpoint_steps=[0, 64],
+            source_evidence={'base_sha256': 'wrong' if label == 'random' else 'base'})
+    session = TraceSession(tmp_path, tmp_path, 'mixed', source_loader=load)
+    session.select_sources(paths)
+    with pytest.raises(ValueError, match='source identities differ'):
+        session.audit_sources()
+    assert not (session.directory / 'source-audit.json').exists()
