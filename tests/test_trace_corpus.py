@@ -216,3 +216,19 @@ def test_notebook_commands_prepare_and_verify_corpus_in_fresh_cpu_process(tmp_pa
                     '--config', str(path), '--output-root', str(tmp_path)], check=True)
     assert main(args, dependencies=deps) == 0
     assert deps.stream_calls == 1
+
+
+def test_fresh_notebook_restores_selected_corpus_without_tokenizer_access(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus
+    from pilot_eval.trace_session import TraceSession
+    deps = Sources(tmp_path)
+    corpus = prepare_corpus(deps.path, tmp_path, 'raw', review=review(), dependencies=deps)
+    session = TraceSession(tmp_path, tmp_path, 'experiment')
+    session.select_corpus(corpus)
+    fresh = TraceSession(tmp_path, tmp_path, 'experiment').restore()
+    assert fresh['corpus']['path'] == str(corpus)
+    assert fresh['corpus']['counts'] == {'legacy-150': 150, 'new-50': 50}
+    assert fresh['corpus']['state'] == 'saved; verify inputs before capture'
+    corpus.write_text('{}')
+    with pytest.raises(ValueError, match='Selected corpus config changed'):
+        session.restore()

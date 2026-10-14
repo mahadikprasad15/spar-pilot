@@ -116,7 +116,19 @@ class TraceSession:
         sites = [dict(name='embedding-output', normalization='before-blocks')]
         sites.extend(dict(name=f'block-{index}-output', block=index,
                           normalization='before-final-norm') for index in range(28))
+        corpus = {'state': 'missing'}
+        corpus_selection = self.directory / 'corpus-selection.json'
+        if corpus_selection.is_file():
+            pointer = json.loads(corpus_selection.read_text())
+            path = self.artifact(pointer['path'])
+            if not path.is_file():
+                corpus = {'state': 'missing', 'path': str(path)}
+            else:
+                if _digest(path) != pointer['config_sha256']:
+                    raise ValueError('Selected corpus config changed; inspect before reuse.')
+                corpus = dict(state='saved; verify inputs before capture', path=str(path), counts=pointer['counts'])
         return dict(name=self.name, sources=sources, smoke=dict(state=smoke_state),
+                    corpus=corpus,
                     sites=sites, positions={'content': 'relative to counted content tokens',
                                            'absolute': 'index in exact model input'},
                     grading={'schema_version': 1, 'status': 'not-requested'},
@@ -137,6 +149,16 @@ class TraceSession:
             selected[label] = str(self.artifact(path).relative_to(self.root))
         with _writer(self.directory):
             _save(self.directory / 'selection.json', selected)
+        return self.restore()
+
+    def select_corpus(self, path):
+        """Verify a complete corpus, then persist its reference for fresh notebooks."""
+        from pilot_eval.trace_corpus import load_corpus
+        path = self.artifact(path)
+        with _writer(self.directory):
+            config, _ = load_corpus(path, self.root)
+            _save(self.directory / 'corpus-selection.json', dict(
+                path=str(path.relative_to(self.root)), config_sha256=_digest(path), counts=config['counts']))
         return self.restore()
 
     @staticmethod
