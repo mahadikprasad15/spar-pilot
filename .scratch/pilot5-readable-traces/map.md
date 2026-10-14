@@ -37,3 +37,9 @@ See design.md section 10 for unapproved choices and source-qualification prerequ
 - 06 solely owns capture-affecting commitments and primary identity; 03 owns reveal/inference rules within the retained-data family.
 - Required raw report/validation do not depend on optional grading/assistant work.
 - No Pilot 5 implementation or paid execution has started.
+
+## Implementation progress · 2026-10-14
+
+- Ticket 01 claimed: bootstrap restore, source audit, pinned notebook and bounded environment/storage smoke implemented. Ten CPU tests pass.
+- Real Colab smoke/reconnect evidence is still pending; Ticket 01 is not resolved.
+- No Pilot 5 model capture, lens readout, grading or paid GPU execution has been run.

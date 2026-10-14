@@ -11,6 +11,6 @@
     "optional assistant-form script in notebook; separate plan/output; disabled by default",
     "bounded checks for both zero adapters"
   ],
-  "implementation_status": "not started",
-  "validation": "document structure/source extraction checked; pytest unavailable in current Python environment"
+  "implementation_status": "Ticket 01 bootstrap implemented; real Colab smoke pending",
+  "validation": "10 CPU bootstrap tests passed; repository regression rerun in progress"
 }
