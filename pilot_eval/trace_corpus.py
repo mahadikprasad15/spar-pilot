@@ -51,6 +51,26 @@ class PinnedRawTokenizer:
         return {'input_ids': encoded.ids, 'offset_mapping': encoded.offsets}
 
 
+class HFCorpusDependencies:
+    """Pinned data/tokenizer access only. No model or Transformers imports."""
+
+    def load_source(self, path, root):
+        from pilot_eval.activation_prepare import load_prepared
+        return load_prepared(path, root)
+
+    def load_tokenizer(self, model, revision):
+        from huggingface_hub import hf_hub_download
+        print('Corpus: loading pinned tokenizer files (no model weights).', flush=True)
+        return PinnedRawTokenizer(
+            hf_hub_download(model, 'tokenizer.json', revision=revision),
+            hf_hub_download(model, 'tokenizer_config.json', revision=revision))
+
+    def stream_fineweb(self, config, revision):
+        from datasets import load_dataset
+        return load_dataset('HuggingFaceFW/fineweb', config, revision=revision,
+                            split='train', streaming=True)
+
+
 def _inside(root, path):
     path = Path(path)
     path = (path if path.is_absolute() else root / path).resolve()
@@ -134,7 +154,7 @@ def load_corpus(config_path, output_root):
     return config, rows
 
 
-def prepare_corpus(source_config, output_root, name, *, review, dependencies):
+def prepare_corpus(source_config, output_root, name, *, review, dependencies=None):
     """Prepare once; repeated calls verify existing inputs without sampling again."""
     if (review.get('schema_version') != 1 or review.get('reviewed') is not True
             or review.get('procedure') != 'same-pool-disjoint-random-v1'
@@ -155,6 +175,8 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies):
                 raise ValueError('Frozen corpus selection/review changed; use a new named plan.')
             print('Corpus verified and reused; no tokenizer or dataset access.', flush=True)
             return path
+        dependencies = dependencies or HFCorpusDependencies()
+        print('Corpus: verifying existing input source.', flush=True)
         source, original = dependencies.load_source(source_path, root)
         source_rows = _inside(root, source['items_path'])
         if _hash(original) != source['items_sha256']:

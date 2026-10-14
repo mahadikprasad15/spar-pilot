@@ -199,3 +199,20 @@ def test_self_consistent_legacy_text_must_still_be_the_pinned_document_prefix(tm
     deps.path.write_text(json.dumps(deps.config))
     with pytest.raises(ValueError, match='Legacy raw-token mapping changed'):
         prepare_corpus(deps.path, tmp_path, 'wrong-prefix', review=review(), dependencies=deps)
+
+
+def test_notebook_commands_prepare_and_verify_corpus_in_fresh_cpu_process(tmp_path):
+    import subprocess
+    import sys
+    from pilot_eval.cli import main
+    deps = Sources(tmp_path)
+    review_path = tmp_path / 'review.json'
+    review_path.write_text(json.dumps(review()))
+    args = ['traces-corpus-prepare', '--source-config', str(deps.path), '--review', str(review_path),
+            '--name', 'cli-corpus', '--output-root', str(tmp_path)]
+    assert main(args, dependencies=deps) == 0
+    path = tmp_path / 'plans/cli-corpus/traces.corpus.json'
+    subprocess.run([sys.executable, '-m', 'pilot_eval', 'traces-corpus-verify',
+                    '--config', str(path), '--output-root', str(tmp_path)], check=True)
+    assert main(args, dependencies=deps) == 0
+    assert deps.stream_calls == 1

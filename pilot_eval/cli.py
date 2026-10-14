@@ -15,6 +15,14 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    corpus_prepare = commands.add_parser('traces-corpus-prepare', help='CPU preparation of frozen Pilot 5 raw inputs')
+    corpus_prepare.add_argument('--source-config', type=Path, required=True)
+    corpus_prepare.add_argument('--review', type=Path, required=True)
+    corpus_prepare.add_argument('--name', required=True)
+    corpus_prepare.add_argument('--output-root', type=Path, default=Path('artifacts'))
+    corpus_verify = commands.add_parser('traces-corpus-verify', help='verify saved Pilot 5 corpus without downloads')
+    corpus_verify.add_argument('--config', type=Path, required=True)
+    corpus_verify.add_argument('--output-root', type=Path, default=Path('artifacts'))
     final_report = commands.add_parser('grpo-final-report', help='verify sources and publish the paired-arm handoff')
     final_verify = commands.add_parser('grpo-final-verify', help='CPU-only final report and download inventory verification')
     final_export = commands.add_parser('grpo-final-export', help='stream verified report and raw inventory into a tar bundle')
@@ -174,7 +182,17 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('tokens-'):
+        if args.command == 'traces-corpus-prepare':
+            from pilot_eval.trace_corpus import prepare_corpus
+            print(prepare_corpus(args.source_config, args.output_root, args.name,
+                review=json.loads(args.review.read_text()), dependencies=dependencies))
+        elif args.command == 'traces-corpus-verify':
+            from pilot_eval.trace_corpus import load_corpus
+            config, rows = load_corpus(args.config, args.output_root)
+            print(json.dumps({'corpus_complete': True, 'examples': len(rows),
+                'counts': config['counts'], 'content_tokens': config['content_tokens'],
+                'tokenizer': config['tokenizer'], 'selected_new_indices': config['selected_new_indices']}, indent=2))
+        elif args.command.startswith('tokens-'):
             from pilot_eval.token_measurement_workflow import (prepare_tokens,profile_tokens,freeze_tokens,
                 measure_tokens,verify_tokens,report_tokens)
             if args.command=='tokens-prepare':
