@@ -13,7 +13,10 @@ from pilot_eval.sft import safe_name
 from pilot_eval.workflow import _hash,_save_frozen
 from pilot_eval.token_measurement_math import prediction_positions,summarize_kl
 
-PROTOCOL='pilot4-token-measurements-v1'
+PROTOCOL='pilot4-token-measurements-v2'
+COMPARISON_POLICY=dict(coefficient_batch='descriptive-sensitivity',
+    coefficient_repeat='strict-agreement', coefficient_chunk='strict-agreement',
+    kl='strict-agreement', mapping='exact', tolerance=AGREEMENT)
 CONVENTIONS=dict(coefficient='raw-Ax-adapted-input',kl='tuned||untuned',units='nats',
     view='next-target-token',exclude=['target-zero','padding','beyond-saved-sequence'],
     weightings=['token','example'],coefficient_dtype='float32',kl_dtype='float64')
@@ -64,7 +67,8 @@ def prepare_tokens(sft_execution,grpo_execution,output_root,name,*,context_chunk
         conventions=CONVENTIONS,settings=dict(context_chunk=context_chunk,workspace_bytes=workspace_bytes),
         batches=first[0]['batches'],batch_size=first[0]['batch_size'],checkpoint_steps=STEPS,
         inputs_sha256=first[1]['items_sha256'],runtime=first[0]['runtime'],implementation=_implementation(),
-        comparison=AGREEMENT,run_path=str(Path('runs/pilot-4')/first[1]['model'].replace('/','--')/'supplemental-tokens'/name))
+        comparison=AGREEMENT,comparison_policy=COMPARISON_POLICY,
+        run_path=str(Path('runs/pilot-4')/first[1]['model'].replace('/','--')/'supplemental-tokens'/name))
     path=root/'plans'/name/'tokens.prepared.json'
     with run_lock(path.parent):
         _save_frozen(path,config)
@@ -78,7 +82,8 @@ def prepare_tokens(sft_execution,grpo_execution,output_root,name,*,context_chunk
 def _load(path,root):
     path=_relative(path,root);config=json.loads(path.read_text())
     if (config['protocol']!=PROTOCOL or config['conventions']!=CONVENTIONS
-            or config['comparison']!=AGREEMENT or config['implementation']!=_implementation()
+            or config['comparison']!=AGREEMENT or config.get('comparison_policy')!=COMPARISON_POLICY
+            or config['implementation']!=_implementation()
             or config['checkpoint_steps']!=STEPS):raise ValueError('supplement convention/code identity changed; use a new product')
     if path!=root/'plans'/config['run_id']/path.name or path.name not in ['tokens.prepared.json','tokens.execution.json']:
         raise ValueError('supplement plan path mismatch')
@@ -139,14 +144,39 @@ def _canonical(result):
                 prediction_keys=keys(meta['predictions'],'target'),modules=meta['modules'],**result['arrays'])
 
 
-def _agree(reference,candidate):
+def _agree(reference,candidate,*,coefficient_batch_sensitivity=False):
     for key in ['coefficient_keys','prediction_keys','modules']:
         if reference[key]!=candidate[key]:raise ValueError('supplement comparison token/factor mapping differs')
     errors={key:float(np.max(np.abs(reference[key].astype(np.float64)-candidate[key].astype(np.float64)),initial=0))
             for key in ['coefficients','kl']}
-    if any(not np.allclose(reference[key],candidate[key],**AGREEMENT) for key in errors):
+    if any(reference[key].shape!=candidate[key].shape
+           or not np.isfinite(reference[key]).all() or not np.isfinite(candidate[key]).all()
+           for key in errors):
+        raise ValueError('supplement comparison shape/nonfinite mismatch')
+    gated=['kl'] if coefficient_batch_sensitivity else ['coefficients','kl']
+    if any(not np.allclose(reference[key],candidate[key],**AGREEMENT) for key in gated):
         raise ValueError(f'supplement batch/chunk agreement gate failed: {errors}')
     return errors
+
+
+def _coefficient_sensitivity(reference,candidate):
+    """Bounded evidence of batching effects; never a substitute for other gates."""
+    a=reference['coefficients'].astype(np.float64)
+    b=candidate['coefficients'].astype(np.float64)
+    difference=np.abs(a-b)
+    allowance=AGREEMENT['atol']+AGREEMENT['rtol']*np.abs(b)
+    outside=difference>allowance
+    worst=[]
+    for flat in np.argsort((difference/allowance).ravel())[-5:][::-1]:
+        token,module=np.unravel_index(flat,difference.shape)
+        if difference[token,module]==0:continue
+        worst.append(dict(token=reference['coefficient_keys'][token],module=reference['modules'][module],
+            reference=float(a[token,module]),candidate=float(b[token,module]),
+            absolute_difference=float(difference[token,module]),existing_allowance=float(allowance[token,module])))
+    return dict(policy='descriptive-sensitivity',compared_values=int(a.size),
+        outside_existing_agreement=int(outside.sum()),
+        max_absolute_difference=float(difference.max(initial=0)),
+        max_existing_tolerance_fraction=float((difference/allowance).max(initial=0)),worst_cases=worst)
 
 
 def _diagnostics(rows,batch):
@@ -207,7 +237,10 @@ def profile_tokens(config_path,output_root,*,dependencies=None):
                                     prediction_keys=sum((v['prediction_keys'] for v in singles),[]),modules=singles[0]['modules'],
                                     coefficients=np.concatenate([v['coefficients'] for v in singles]),
                                     kl=np.concatenate([v['kl'] for v in singles]))
-                                batch_error=_agree(reference,candidate)
+                                batch_error=_agree(reference,candidate,coefficient_batch_sensitivity=True)
+                                sensitivity=_coefficient_sensitivity(reference,candidate)
+                                _write_json(evidence/'coefficient-batch-sensitivity.json',sensitivity)
+                                paths.append(evidence/'coefficient-batch-sensitivity.json')
                                 alternate=dict(config['settings'],context_chunk=max(1,config['settings']['context_chunk']//2))
                                 changed=engine.measure(checkpoint,selected,step=step,context_chunk=alternate['context_chunk'])
                                 _check(changed,selected,step,alternate)
@@ -216,10 +249,13 @@ def profile_tokens(config_path,output_root,*,dependencies=None):
                                 measurements.append(dict(arm=arm,group=group,step=step,examples=len(selected),
                                     example_ids=[r['id'] for r in selected],seconds=seconds,**peak,
                                     repeat_errors=repeat_error,batch_errors=batch_error,chunk_errors=chunk_error,
+                                    coefficient_batch_sensitivity=sensitivity,
                                     saving_wall_seconds=save_seconds,loading_wall_seconds=loading_seconds if step==0 else 0.,
                                     validation=result['validation'],saved_array_bytes=sum(v.nbytes for v in result['arrays'].values())))
                                 _write_state(directory,'running',len(measurements),total)
-                                print(f'Token profile {arm} group {group} step {step}: {seconds:.2f}s; checks passed',flush=True)
+                                print(f'Token profile {arm} group {group} step {step}: {seconds:.2f}s; checks passed; '
+                                      f"coefficient batch sensitivity: {sensitivity['outside_existing_agreement']}/"
+                                      f"{sensitivity['compared_values']} outside prior agreement",flush=True)
                     finally:
                         engine.close()
                         engine=None
@@ -232,7 +268,7 @@ def profile_tokens(config_path,output_root,*,dependencies=None):
                 total_wall_seconds=time.perf_counter()-started,saving_wall_seconds=saving_seconds,estimated_main_forward_seconds=estimate,
                 estimated_array_bytes=int(sum(r['saved_array_bytes']/r['examples']*300 for r in measurements)/groups),
                 estimate_note='Each checkpoint/arm averaged across declared diagnostic groups; production includes sealing/I/O and can differ.',
-                agreement=AGREEMENT)
+                agreement=AGREEMENT,comparison_policy=COMPARISON_POLICY)
             _sources(config['sources'],root)  # Recheck source evidence before publication.
             _write_json(directory/'results.json',result)
             _seal(directory,identity,paths+[directory/'results.json'])
@@ -424,12 +460,17 @@ def report_tokens(config_path,output_root,name):
                 token_mean=sum(p['sum'] for p in per)/count if count else None,
                 example_mean=sum(p['mean'] for p in per)/len(per) if per else None,
                 undefined_reason=None if count else 'no_target_contexts',per_example=per))
+        profile=json.loads((root/config['run_path']/'profile/results.json').read_text())
+        sensitivity=[dict(arm=r['arm'],group=r['group'],step=r['step'],
+                         **r['coefficient_batch_sensitivity']) for r in profile['measurements']]
         result=dict(report_complete=True,protocol=PROTOCOL,provenance=identity,conventions=CONVENTIONS,
+            comparison_policy=COMPARISON_POLICY,coefficient_batch_sensitivity=sensitivity,
             kl_trajectory=trajectory,coefficient_summaries=coefficient_summary,raw_shards=raw_shards,
             limits=['Coefficients depend on saved factorization and are not standalone invariant write magnitudes.',
                     'KL uses fixed supplied contexts, not unconditional generated-policy distributions.',
                     'Positive KL does not imply loss of capability; no causal mechanism is established.',
-                    'Supplemental forward passes are new evidence; old write summaries remain unchanged.'])
+                    'Supplemental forward passes are new evidence; old write summaries remain unchanged.',
+                    'Raw coefficients are batch-sensitive. Production uses frozen matched membership; cross-batch differences are descriptive, not an invariance guarantee.'])
         _write_json(directory/'results/results.json',result)
         lines=['# Supplemental coefficients and fixed-context KL','',
                '| Arm | Step | View | Tokens | Examples | Token mean KL (nats) | Equal-example mean |',

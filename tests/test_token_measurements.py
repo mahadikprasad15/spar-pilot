@@ -267,3 +267,65 @@ def test_valid_adapter_replacement_is_rejected_against_frozen_source_hash(tmp_pa
         with pytest.raises(ValueError,match='checkpoint source hash'):
             with engine.integrity_scope():engine.measure(tmp_path/'trained',rows,step=64)
     finally:engine.close()
+
+
+class BatchSensitiveTokens(ControlledTokens):
+    """Replay batch-dependent upstream coefficient changes at the model seam."""
+    def measure(self, checkpoint, rows, *, step, context_chunk=None, reference=None):
+        result = super().measure(checkpoint, rows, step=step,
+                                 context_chunk=context_chunk, reference=reference)
+        if len(rows) == 1:
+            result['arrays']['coefficients'] += np.float32(3.325939178466797e-5)
+            if self.deps.defect == 'kl' and step:
+                result['arrays']['kl'] += .001
+            if self.deps.defect == 'mapping':
+                result['metadata']['modules'][0]['A_sha256'] = 'c'*64
+        if self.deps.defect == 'chunk' and context_chunk is not None:
+            result['arrays']['coefficients'] += .001
+        if self.deps.defect == 'repeat' and len(self.deps.calls) == 2:
+            result['arrays']['coefficients'] += .001
+        return result
+
+
+class BatchSensitiveDependencies(TokenDependencies):
+    def __init__(self, defect=None):
+        super().__init__()
+        self.defect = defect
+    def token_engine(self, prepared, root, settings):
+        return BatchSensitiveTokens(self, settings)
+
+
+@pytest.fixture(scope='module')
+def sensitivity_sources(tmp_path_factory):
+    root = tmp_path_factory.mktemp('coefficient-sensitivity')
+    return root, make_supplement_sources(root)
+
+
+def test_public_profile_records_coefficient_batch_sensitivity_without_changing_sources(sensitivity_sources):
+    import json
+    from pilot_eval.token_measurement_workflow import prepare_tokens, profile_tokens, freeze_tokens
+    tmp_path, (sft, grpo) = sensitivity_sources
+    before = {p: p.read_bytes() for p in [sft, grpo]}
+    prepared = prepare_tokens(sft, grpo, tmp_path, 'approved-coefficient-policy',
+                              context_chunk=8, workspace_bytes=1_000_000)
+    result = profile_tokens(prepared, tmp_path, dependencies=BatchSensitiveDependencies())
+    assert result['profile_passed']
+    assert result['comparison_policy']['coefficient_batch'] == 'descriptive-sensitivity'
+    sensitivity = result['measurements'][0]['coefficient_batch_sensitivity']
+    assert sensitivity['outside_existing_agreement'] > 0
+    assert sensitivity['max_absolute_difference'] == pytest.approx(3.325939178466797e-5, abs=1e-7)
+    assert len(sensitivity['worst_cases']) <= 5
+    assert sensitivity['worst_cases'][0]['module']['projection'] in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
+    execution = freeze_tokens(prepared, tmp_path, review_notes='Reviewed batch sensitivity and unchanged gates.')
+    assert json.loads(execution.read_text())['comparison_policy'] == result['comparison_policy']
+    assert all(p.read_bytes() == data for p, data in before.items())
+
+
+@pytest.mark.parametrize('defect', ['repeat', 'chunk', 'kl', 'mapping'])
+def test_public_profile_keeps_repeat_chunk_kl_and_mapping_failures_as_gates(sensitivity_sources, defect):
+    from pilot_eval.token_measurement_workflow import prepare_tokens, profile_tokens
+    tmp_path, (sft, grpo) = sensitivity_sources
+    prepared = prepare_tokens(sft, grpo, tmp_path, 'strict-gates-'+defect,
+                              context_chunk=8, workspace_bytes=1_000_000)
+    with pytest.raises(ValueError, match='agreement|mapping'):
+        profile_tokens(prepared, tmp_path, dependencies=BatchSensitiveDependencies(defect))

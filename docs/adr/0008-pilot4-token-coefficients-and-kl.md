@@ -41,3 +41,9 @@ Compare allowed chunks/batches under existing numerical-policy thresholds,
 and do not widen those thresholds after a failed gate. Supplemental preflight
 freezes reviewed evidence before production. Supplemental comparisons condition
 on supplied contexts and do not estimate unconditional generated-policy KL.
+
+## October 14 coefficient-policy amendment
+
+ADR 0010 supersedes only the cross-batch coefficient acceptance rule. Repeat/chunk,
+KL, reconstruction and integrity gates retain their existing thresholds. New
+supplemental products use the explicit v2 comparison policy and preserve v1 evidence.
