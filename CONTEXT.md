@@ -59,3 +59,27 @@ _Avoid_: Equal-example average
 **Equal-example-weighted measurement**:
 An aggregate in which each example's token-level measurements are averaged before giving every example equal weight.
 _Avoid_: Token-weighted average
+
+**Readable trace**:
+Task-related content recovered by a declared readout from an average adapted-minus-base activation vector on a fixed unrelated-text cohort.
+_Avoid_: Causal mechanism, when only a ranked token list was measured
+
+**Content-relative position**:
+A token's index within the supplied content, distinct from its absolute position inside a chat-formatted model input.
+_Avoid_: Model position, when referring only to content tokens
+
+**Primary trace vector**:
+The predeclared mean activation-change vector used for the main readability claim, with its input form, decoder block, content-position pooling and adapter checkpoint fixed.
+_Avoid_: Best-looking vector, when selected after inspecting readouts
+
+**Lens readout**:
+A ranked token representation produced by a specified mapping from an activation vector to vocabulary scores.
+_Avoid_: Generated response, when the model did not generate text
+
+**Blinded readout bundle**:
+A collection of token lists identified by opaque IDs, with arm, checkpoint and other condition metadata withheld from the grader and retained in a separate mapping.
+_Avoid_: Anonymous results, when the mapping is preserved for later unblinding
+
+**Position-wise mean trace**:
+The average adapted-minus-base activation vector across examples at one declared layer and content-relative position.
+_Avoid_: Per-example token difference, when describing a cohort average

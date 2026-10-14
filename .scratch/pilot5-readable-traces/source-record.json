@@ -1,0 +1,16 @@
+{
+  "source_filename": "Module 8 Pilot Spec Readable Traces of Rank-1 SFT vs GRPO (1).docx",
+  "sha256": "f3e723b65040bf271702278329c81564dd8dd577db0f9e6560ea45b7c3a67376",
+  "received_date": "2026-10-14",
+  "design_status": "draft",
+  "approved_decisions": [
+    "community lens after checks; separate approval for fitting",
+    "pooled positions 0\u20134 primary",
+    "durable retained shards before GPU release",
+    "raw-only main execution",
+    "optional assistant-form script in notebook; separate plan/output; disabled by default",
+    "bounded checks for both zero adapters"
+  ],
+  "implementation_status": "not started",
+  "validation": "document structure/source extraction checked; pytest unavailable in current Python environment"
+}

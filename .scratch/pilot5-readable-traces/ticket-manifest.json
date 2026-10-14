@@ -1,0 +1,112 @@
+{
+  "status": "published",
+  "published_date": "2026-10-14",
+  "approval_basis": "Second supplied review authorizes individual publication after listed corrections; corrections applied.",
+  "test_seam": "public saved-workflow plus independent tiny CPU oracles and separate real-Colab checks",
+  "tickets": [
+    {
+      "number": 1,
+      "title": "Restore a clean session, audit sources and smoke-test Colab",
+      "deps": [],
+      "filename": "01-restore-and-colab-smoke.md"
+    },
+    {
+      "number": 2,
+      "title": "Prepare and freeze the raw corpus",
+      "deps": [
+        1
+      ],
+      "filename": "02-freeze-raw-corpus.md"
+    },
+    {
+      "number": 3,
+      "title": "Freeze vocabulary and inference commitments before outcome reveal",
+      "deps": [
+        2
+      ],
+      "filename": "03-freeze-vocabulary-and-reveal-policy.md"
+    },
+    {
+      "number": 4,
+      "title": "Qualify bounded paired capture and logit-lens mathematics",
+      "deps": [
+        2
+      ],
+      "filename": "04-qualify-paired-capture.md"
+    },
+    {
+      "number": 5,
+      "title": "Inspect and qualify community Jacobian-lens status",
+      "deps": [
+        1
+      ],
+      "filename": "05-qualify-community-lens.md"
+    },
+    {
+      "number": 6,
+      "title": "Profile and freeze the explicit production plan and predictions",
+      "deps": [
+        4,
+        5
+      ],
+      "filename": "06-freeze-capture-budget-and-predictions.md"
+    },
+    {
+      "number": 7,
+      "title": "Capture, resume and durably verify raw evidence",
+      "deps": [
+        6
+      ],
+      "filename": "07-capture-resume-and-durable-release.md"
+    },
+    {
+      "number": 8,
+      "title": "Decode saved means and reveal controlled token lists",
+      "deps": [
+        7,
+        3
+      ],
+      "filename": "08-decode-controlled-readouts.md"
+    },
+    {
+      "number": 9,
+      "title": "Produce automatic relevance and sample-size results",
+      "deps": [
+        8
+      ],
+      "filename": "09-automatic-relevance-and-robustness.md"
+    },
+    {
+      "number": 10,
+      "title": "Prepare blinded grading and add validated grade evidence",
+      "deps": [
+        8
+      ],
+      "filename": "10-blinded-grading-supplement.md"
+    },
+    {
+      "number": 11,
+      "title": "Publish the automatic research report and verified handoff",
+      "deps": [
+        9
+      ],
+      "filename": "11-research-report-and-handoff.md"
+    },
+    {
+      "number": 12,
+      "title": "Add the optional assistant-form script and its isolation check",
+      "deps": [
+        11
+      ],
+      "filename": "12-optional-assistant-extension.md"
+    },
+    {
+      "number": 13,
+      "title": "Validate the completed raw notebook in fresh Colab",
+      "deps": [
+        11
+      ],
+      "filename": "13-fresh-colab-raw-validation.md"
+    }
+  ]
+}
