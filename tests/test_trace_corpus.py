@@ -268,3 +268,13 @@ def test_tokenizer_file_cannot_hide_automatic_truncation(tmp_path):
     config.write_text('{}')
     with pytest.raises(ValueError, match='automatic padding or truncation'):
         PinnedRawTokenizer(tokenizer_file, config)
+
+
+def test_notebook_cpu_dependency_profile_excludes_model_libraries():
+    import tomllib
+    project = tomllib.loads(Path('pyproject.toml').read_text())
+    requirements = project['project']['optional-dependencies'].get('trace-corpus', [])
+    assert 'tokenizers==0.22.1' in requirements
+    assert 'datasets==4.4.1' in requirements
+    assert 'huggingface-hub==0.36.0' in requirements
+    assert not any(package.startswith(('torch', 'transformers', 'peft', 'trl')) for package in requirements)
