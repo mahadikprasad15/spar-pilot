@@ -132,3 +132,16 @@ def test_source_audit_rejects_mixed_model_or_base_identity(tmp_path):
     with pytest.raises(ValueError, match='source identities differ'):
         session.audit_sources()
     assert not (session.directory / 'source-audit.json').exists()
+
+
+def test_interrupted_smoke_can_finish_sealing_without_rewriting_payload(tmp_path):
+    from pilot_eval.trace_session import TraceSession
+    session = TraceSession(tmp_path, tmp_path, 'interrupted',
+                           environment_probe=lambda: {'device': 'fixture'}, process_probe=lambda: [])
+    session.write_smoke()
+    payload = (session.directory / 'smoke.json').read_bytes()
+    (session.directory / 'smoke-seal.json').unlink()
+    assert session.restore()['smoke']['state'] == 'unsealed'
+    session.write_smoke()
+    assert (session.directory / 'smoke.json').read_bytes() == payload
+    assert session.restore()['smoke']['state'] == 'pending-reconnect'

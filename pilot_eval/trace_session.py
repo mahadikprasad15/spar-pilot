@@ -85,11 +85,14 @@ class TraceSession:
         receipt = self.directory / 'reconnect.json'
         smoke_state = 'missing'
         if smoke.exists():
-            seal = json.loads((self.directory / 'smoke-seal.json').read_text())
-            if seal['sha256'] != _digest(smoke):
-                raise ValueError('Durable smoke payload hash mismatch.')
-            smoke_state = 'pending-reconnect'
-            if receipt.exists():
+            seal_path = self.directory / 'smoke-seal.json'
+            smoke_state = 'unsealed'
+            if seal_path.exists():
+                seal = json.loads(seal_path.read_text())
+                if seal['sha256'] != _digest(smoke):
+                    raise ValueError('Durable smoke payload hash mismatch.')
+                smoke_state = 'pending-reconnect'
+            if receipt.exists() and smoke_state != 'unsealed':
                 record = json.loads(receipt.read_text())
                 if record['smoke_sha256'] != _digest(smoke):
                     raise ValueError('Smoke artifact changed after reconnect verification.')
@@ -208,6 +211,11 @@ print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versi
                 previous = json.loads(path.read_text())
                 if previous['runtime'] != runtime:
                     raise ValueError('Smoke runtime changed; use a new smoke experiment name.')
+                seal_path = self.directory / 'smoke-seal.json'
+                if seal_path.exists() and json.loads(seal_path.read_text())['sha256'] != _digest(path):
+                    raise ValueError('Durable smoke payload hash mismatch.')
+                if not seal_path.exists():
+                    _save(seal_path, {'sha256': _digest(path)})
                 return previous
             record = dict(schema_version=1, runtime=runtime, origin_pid=os.getpid(),
                           origin_session=os.environ.get('COLAB_RELEASE_TAG', ''),
