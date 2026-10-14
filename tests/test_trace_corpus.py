@@ -244,3 +244,27 @@ def test_short_stream_cannot_silently_change_the_reviewed_pool(tmp_path):
     with pytest.raises(ValueError, match='pool ended at 210.*2000'):
         prepare_corpus(deps.path, tmp_path, 'short-pool', review=review(), dependencies=deps)
     assert not (tmp_path / 'plans/short-pool/complete.json').exists()
+
+
+def test_selection_uses_reviewed_local_seed_and_keeps_global_rng_unchanged(tmp_path):
+    import random
+    from pilot_eval.trace_corpus import prepare_corpus, load_corpus
+    deps = Sources(tmp_path)
+    original_state = random.getstate()
+    path = prepare_corpus(deps.path, tmp_path, 'seeded', review=review(), dependencies=deps)
+    assert random.getstate() == original_state
+    config, _ = load_corpus(path, tmp_path)
+    assert config['selected_new_indices'][:5] == [163, 201, 204, 211, 215]
+
+
+def test_tokenizer_file_cannot_hide_automatic_truncation(tmp_path):
+    from tokenizers import Tokenizer, models
+    from pilot_eval.trace_corpus import PinnedRawTokenizer
+    engine = Tokenizer(models.WordLevel({'[UNK]': 0}, unk_token='[UNK]'))
+    engine.enable_truncation(2)
+    tokenizer_file = tmp_path / 'truncated-tokenizer.json'
+    engine.save(str(tokenizer_file))
+    config = tmp_path / 'config.json'
+    config.write_text('{}')
+    with pytest.raises(ValueError, match='automatic padding or truncation'):
+        PinnedRawTokenizer(tokenizer_file, config)

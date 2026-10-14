@@ -21,6 +21,8 @@ class PinnedRawTokenizer:
         from tokenizers import Tokenizer
         self.engine = Tokenizer.from_file(str(tokenizer_path))
         token_data = json.loads(Path(tokenizer_path).read_text())
+        if token_data.get('truncation') is not None or token_data.get('padding') is not None:
+            raise ValueError('Pinned raw tokenizer must not contain automatic padding or truncation.')
         config = json.loads(Path(config_path).read_text())
         self.all_special_ids = sorted(token['id'] for token in token_data.get('added_tokens', [])
                                       if token.get('special'))
