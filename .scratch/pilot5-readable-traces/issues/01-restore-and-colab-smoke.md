@@ -24,3 +24,5 @@
 - Smoke interruption between payload and seal is recoverable. Fresh-kernel identity uses a random process token, so container PID reuse does not reject valid reconnection.
 - Real Colab bootstrap smoke remains pending; local fixture results do not establish it. This ticket is not resolved and no production capture is authorized by these tests.
 - Bootstrap writer locks coordinate processes sharing one filesystem lock implementation; they do not claim distributed locking across Colab VMs.
+
+- Existing repository regression after restoring missing local test dependencies: 279 passed, 35 skipped, 0 failed (1013.78 seconds). Ten new bootstrap tests also passed. No acceptance tolerances changed.

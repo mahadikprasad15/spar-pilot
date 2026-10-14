@@ -12,5 +12,5 @@
     "bounded checks for both zero adapters"
   ],
   "implementation_status": "Ticket 01 bootstrap implemented; real Colab smoke pending",
-  "validation": "10 CPU bootstrap tests passed; repository regression rerun in progress"
+  "validation": "10 CPU bootstrap tests passed; existing repository suite 279 passed, 35 skipped; real Colab smoke pending"
 }

@@ -43,3 +43,5 @@ See design.md section 10 for unapproved choices and source-qualification prerequ
 - Ticket 01 claimed: bootstrap restore, source audit, pinned notebook and bounded environment/storage smoke implemented. Ten CPU tests pass.
 - Real Colab smoke/reconnect evidence is still pending; Ticket 01 is not resolved.
 - No Pilot 5 model capture, lens readout, grading or paid GPU execution has been run.
+
+- Bootstrap published to GitHub main with explicit user approval. Repository regression completed: 279 passed, 35 skipped; new bootstrap tests: 10 passed.
