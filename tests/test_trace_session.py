@@ -145,3 +145,12 @@ def test_interrupted_smoke_can_finish_sealing_without_rewriting_payload(tmp_path
     session.write_smoke()
     assert (session.directory / 'smoke.json').read_bytes() == payload
     assert session.restore()['smoke']['state'] == 'pending-reconnect'
+
+
+def test_cpu_bootstrap_declares_adapter_audit_dependency():
+    import tomllib
+    from pathlib import Path
+    project = tomllib.loads(Path('pyproject.toml').read_text())
+    audit = project['project']['optional-dependencies'].get('trace-audit', [])
+    assert any(requirement.startswith('safetensors') for requirement in audit)
+    assert not any(requirement.startswith('torch') for requirement in audit)
