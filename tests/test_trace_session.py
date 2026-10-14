@@ -166,3 +166,17 @@ def test_smoke_persists_measured_progress_without_claiming_cpu_target_validation
     assert status['elapsed_seconds'] >= 0
     assert session.restore()['target_validation'] == 'pending'
     assert (session.directory / 'logs/run.log').read_text().count('\n') == 1
+
+
+def test_reconnect_accepts_new_kernel_even_when_container_reuses_pid(tmp_path):
+    from pilot_eval.trace_session import TraceSession
+    session = TraceSession(tmp_path, tmp_path, 'pid-reuse',
+        environment_probe=lambda: {'device': 'fixture'}, process_probe=lambda: [])
+    smoke = session.write_smoke()
+    script = '''
+import os, sys
+from pilot_eval.trace_session import TraceSession
+os.getpid = lambda: int(sys.argv[2])
+assert TraceSession(sys.argv[1], sys.argv[1], 'pid-reuse').verify_reconnect()['smoke']['state'] == 'completed'
+'''
+    subprocess.run([sys.executable, '-c', script, str(tmp_path), str(smoke['origin_pid'])], check=True)

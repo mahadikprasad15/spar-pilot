@@ -16,6 +16,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+_KERNEL_TOKEN = uuid.uuid4().hex
+
 
 def _digest(path):
     value = hashlib.sha256()
@@ -237,6 +239,7 @@ print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versi
                 self._record(self.restore()['smoke']['state'], time.monotonic() - started)
                 return previous
             record = dict(schema_version=1, runtime=runtime, origin_pid=os.getpid(),
+                          origin_kernel_token=_KERNEL_TOKEN,
                           origin_session=os.environ.get('COLAB_RELEASE_TAG', ''),
                           nonce=uuid.uuid4().hex, elapsed_seconds=time.monotonic() - started,
                           scope='actual imports and durable small-file round trip; no model inference')
@@ -255,7 +258,7 @@ print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versi
             if _digest(path) != seal['sha256']:
                 raise ValueError('Durable smoke payload hash mismatch.')
             record = json.loads(path.read_text())
-            if record['origin_pid'] == os.getpid():
+            if record['origin_kernel_token'] == _KERNEL_TOKEN:
                 raise ValueError('Reconnect in a fresh notebook kernel before verifying storage.')
             receipt = dict(schema_version=1, smoke_sha256=seal['sha256'],
                            restored_pid=os.getpid(), elapsed_seconds=time.monotonic() - started)
