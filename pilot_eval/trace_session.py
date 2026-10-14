@@ -140,7 +140,8 @@ class TraceSession:
                 expected = 'pilot3-write-v1' if label == 'sft' else 'pilot4-writes-v1'
                 if config.get('protocol_version') != expected:
                     raise ValueError(f'{label} source has the wrong protocol.')
-                if label != 'sft' and config.get('source_contract', {}).get('kind') != label:
+                kind = {'grpo': 'grpo', 'random': 'random-rank1-control'}.get(label)
+                if kind and config.get('source_contract', {}).get('kind') != kind:
                     raise ValueError(f'{label} source has the wrong adapter kind.')
                 audit[label] = dict(config_sha256=_digest(path), model=config['model'],
                                     checkpoint_steps=config['checkpoint_steps'],

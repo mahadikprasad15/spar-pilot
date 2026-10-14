@@ -76,3 +76,23 @@ def test_readiness_and_audit_fail_before_inference(tmp_path):
                            environment_probe=lambda: {'device': '40GB'})
     with pytest.raises(ValueError, match='Runtime changed'):
         session.readiness(expected_runtime={'device': '80GB'})
+
+
+def test_explicit_source_audit_preserves_random_control_identity(tmp_path):
+    from pilot_eval.trace_session import TraceSession
+    sources = {}
+    for label, kind in [('sft', None), ('grpo', 'grpo'), ('random', 'random-rank1-control')]:
+        path = tmp_path / f'{label}.json'
+        path.write_text(json.dumps(dict(model='Qwen/Qwen2.5-1.5B-Instruct',
+            protocol_version='pilot3-write-v1' if label == 'sft' else 'pilot4-writes-v1',
+            source_contract={'kind': kind}, checkpoint_steps=[0, 64] if label == 'random' else [0, 8, 16, 32, 64],
+            source_evidence={'base_sha256': 'fixture-base'})))
+        sources[label] = path
+    session = TraceSession(tmp_path, tmp_path, 'audit',
+        source_loader=lambda path, root: json.loads(path.read_text()))
+    session.select_sources(sources)
+    audit = session.audit_sources()
+    assert audit['random']['checkpoint_steps'] == [0, 64]
+    assert session.restore()['sources']['sft']['state'] == 'audited-config; revalidate before capture'
+    sources['sft'].write_text('{}')
+    assert session.restore()['sources']['sft']['state'] == 'pending-audit'
