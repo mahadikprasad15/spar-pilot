@@ -184,6 +184,11 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies=Non
         legacy = [row for row in original if row['corpus'] == 'fineweb']
         if len(legacy) != 150 or len({row['source_index'] for row in legacy}) != 150:
             raise ValueError('Expected exactly 150 distinct legacy FineWeb identities.')
+        if (source['fineweb']['dataset'] != 'HuggingFaceFW/fineweb'
+                or source['fineweb']['source_indices'] != [row['source_index'] for row in legacy]
+                or source['fineweb']['pool_limit'] != 2000
+                or source['fineweb']['content_token_limit'] != 128):
+            raise ValueError('Legacy FineWeb pool or membership differs from the reviewed source.')
         tokenizer = dependencies.load_tokenizer(source['model'], source['tokenizer_revision'])
         legacy_by_index = {row['source_index']: row for row in legacy}
         found, candidates, pool = {}, [], []
@@ -225,6 +230,8 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies=Non
             pool.append(identity)
             if (index + 1) % 250 == 0:
                 print(f'Corpus pool: {index + 1}/{limit}; legacy {len(found)}/150; candidates {len(candidates)}.', flush=True)
+        if len(pool) != limit:
+            raise ValueError(f'Pinned FineWeb pool ended at {len(pool)} documents; expected {limit}.')
         if len(found) != 150:
             raise ValueError('Pinned stream did not recover all legacy documents; no replacements allowed.')
         if len(candidates) < 50:

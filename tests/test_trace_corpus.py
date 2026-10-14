@@ -232,3 +232,15 @@ def test_fresh_notebook_restores_selected_corpus_without_tokenizer_access(tmp_pa
     corpus.write_text('{}')
     with pytest.raises(ValueError, match='Selected corpus config changed'):
         session.restore()
+
+
+def test_short_stream_cannot_silently_change_the_reviewed_pool(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus
+    class Truncated(Sources):
+        def stream_fineweb(self, *args):
+            for index in range(210):
+                yield self.document(index)
+    deps = Truncated(tmp_path)
+    with pytest.raises(ValueError, match='pool ended at 210.*2000'):
+        prepare_corpus(deps.path, tmp_path, 'short-pool', review=review(), dependencies=deps)
+    assert not (tmp_path / 'plans/short-pool/complete.json').exists()
