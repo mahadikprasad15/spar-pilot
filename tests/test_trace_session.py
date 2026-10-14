@@ -96,3 +96,18 @@ def test_explicit_source_audit_preserves_random_control_identity(tmp_path):
     assert session.restore()['sources']['sft']['state'] == 'audited-config; revalidate before capture'
     sources['sft'].write_text('{}')
     assert session.restore()['sources']['sft']['state'] == 'pending-audit'
+
+
+def test_clean_notebook_uses_public_bootstrap_without_hidden_state():
+    import ast
+    from pathlib import Path
+    notebook = json.loads(Path('notebooks/pilot-5-colab.ipynb').read_text())
+    code = '\n'.join(''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code')
+    assert 'TraceSession' in code
+    assert 'write_smoke()' in code and 'verify_reconnect()' in code
+    assert 'audit_sources()' in code
+    assert 'grpo-train' not in code and 'activation-measure' not in code
+    for cell in notebook['cells']:
+        if cell['cell_type'] == 'code':
+            ast.parse(''.join(cell['source']))
+            assert cell['outputs'] == []
