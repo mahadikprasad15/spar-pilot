@@ -1,5 +1,6 @@
 """Frozen raw Pilot 5 inputs. Tokenizer/data access is a CPU-only boundary."""
 import itertools
+import importlib.metadata
 import json
 import random
 from contextlib import contextmanager
@@ -10,6 +11,43 @@ from pilot_eval.run import _write_json, _write_state
 from pilot_eval.sft import safe_name
 from pilot_eval.training import file_hash, run_lock
 from pilot_eval.workflow import _hash, _save_frozen
+
+
+class PinnedRawTokenizer:
+    """Use the pinned tokenizer JSON directly, without importing model libraries."""
+
+    def __init__(self, tokenizer_path, config_path):
+        from tokenizers import Tokenizer
+        self.engine = Tokenizer.from_file(str(tokenizer_path))
+        token_data = json.loads(Path(tokenizer_path).read_text())
+        config = json.loads(Path(config_path).read_text())
+        self.all_special_ids = sorted(token['id'] for token in token_data.get('added_tokens', [])
+                                      if token.get('special'))
+        special = {}
+        for field in ('bos_token', 'eos_token', 'pad_token'):
+            value = config.get(field)
+            value = value.get('content') if isinstance(value, dict) else value
+            token_id = self.engine.token_to_id(value) if value is not None else None
+            if value is not None and (token_id is None or token_id not in self.all_special_ids):
+                raise ValueError(f'Pinned tokenizer {field} disagrees with its special-token IDs.')
+            special[field + '_id'] = token_id
+        self.bos_token_id = special['bos_token_id']
+        self.eos_token_id = special['eos_token_id']
+        self.files = {'tokenizer.json': Path(tokenizer_path), 'tokenizer_config.json': Path(config_path)}
+        self.metadata = dict(backend='tokenizers-json', version=importlib.metadata.version('tokenizers'),
+            configured_add_bos_token=config.get('add_bos_token'), raw_add_special_tokens=False,
+            file_sha256={name: file_hash(path) for name, path in self.files.items()})
+
+    def encode(self, text, add_special_tokens=False):
+        if add_special_tokens:
+            raise ValueError('Raw corpus encoding must use add_special_tokens=False.')
+        return self.engine.encode(text, add_special_tokens=False).ids
+
+    def __call__(self, text, *, add_special_tokens=False, return_offsets_mapping=True):
+        if add_special_tokens or not return_offsets_mapping:
+            raise ValueError('Raw corpus requires explicit offsets and no inserted special tokens.')
+        encoded = self.engine.encode(text, add_special_tokens=False)
+        return {'input_ids': encoded.ids, 'offset_mapping': encoded.offsets}
 
 
 def _inside(root, path):

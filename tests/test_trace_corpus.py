@@ -150,3 +150,24 @@ def test_legacy_mapping_failure_is_saved_and_never_replaced(tmp_path):
     assert status['state'] == 'failed' and status['completed'] == 0
     assert 'fineweb:train:0' in (directory / 'logs/errors.jsonl').read_text()
     assert not (tmp_path / 'plans/bad-map/complete.json').exists()
+
+
+def test_real_tokenizer_file_keeps_bos_configuration_separate_from_raw_inputs(tmp_path):
+    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+    from pilot_eval.trace_corpus import PinnedRawTokenizer, prepare_corpus, load_corpus
+    engine = Tokenizer(models.WordLevel({'[UNK]': 0, '<s>': 1, 'word': 2}, unk_token='[UNK]'))
+    engine.pre_tokenizer = pre_tokenizers.Whitespace()
+    engine.add_special_tokens(['<s>'])
+    engine.post_processor = processors.TemplateProcessing(single='<s> $A', special_tokens=[('<s>', 1)])
+    tokenizer_path = tmp_path / 'tokenizer.json'
+    engine.save(str(tokenizer_path))
+    config_path = tmp_path / 'tokenizer_config.json'
+    config_path.write_text(json.dumps({'bos_token': '<s>', 'add_bos_token': True,
+                                     'eos_token': None, 'pad_token': None}))
+    tokenizer = PinnedRawTokenizer(tokenizer_path, config_path)
+    assert tokenizer.encode('word word') == [2, 2]
+    assert tokenizer('word word', add_special_tokens=False, return_offsets_mapping=True) == {
+        'input_ids': [2, 2], 'offset_mapping': [(0, 4), (5, 9)]}
+    assert tokenizer.bos_token_id == 1
+    assert tokenizer.metadata['configured_add_bos_token'] is True
+    assert tokenizer.metadata['raw_add_special_tokens'] is False
