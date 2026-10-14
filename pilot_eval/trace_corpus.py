@@ -2,6 +2,7 @@
 import itertools
 import json
 import random
+from contextlib import contextmanager
 from pathlib import Path
 
 from pilot_eval.activation_prepare import _tokenize
@@ -30,6 +31,22 @@ def _write_rows(path, rows):
 
 def _read_rows(path):
     return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+@contextmanager
+def _preparing(directory, plan_dir):
+    sealed = (plan_dir / 'complete.json').exists()
+    if not sealed:
+        _write_state(directory, 'running', 0, 200)
+    try:
+        yield
+    except BaseException as exc:
+        if not sealed:
+            _write_state(directory, 'failed', 0, 200, str(exc))
+            with (directory / 'logs/errors.jsonl').open('a') as stream:
+                stream.write(json.dumps({'stage': 'corpus-preparation',
+                    'type': type(exc).__name__, 'error': str(exc)}) + '\n')
+        raise
 
 
 def _raw(tokenizer, text):
@@ -91,7 +108,7 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies):
     directory = root / 'runs' / 'pilot-5' / name / 'corpus'
     plan_dir = root / 'plans' / name
     path = plan_dir / 'traces.corpus.json'
-    with run_lock(plan_dir):
+    with run_lock(plan_dir), _preparing(directory, plan_dir):
         if (plan_dir / 'complete.json').exists():
             config, _ = load_corpus(path, root)
             if config['source_config'] != str(source_path.relative_to(root)) or config['review'] != review:

@@ -134,3 +134,19 @@ def test_missing_sealed_input_is_rejected_even_if_completion_marker_omits_it(tmp
     (tmp_path / config['pool_path']).unlink()
     with pytest.raises(ValueError, match='omits required'):
         load_corpus(path, tmp_path)
+
+
+def test_legacy_mapping_failure_is_saved_and_never_replaced(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus
+    deps = Sources(tmp_path)
+    deps.rows[0]['prefix_token_ids'][0] += 1
+    deps.config['items_sha256'] = digest(deps.rows)
+    (tmp_path / deps.config['items_path']).write_text(json.dumps(deps.rows))
+    deps.path.write_text(json.dumps(deps.config))
+    with pytest.raises(ValueError, match='Legacy raw-token mapping changed: fineweb:train:0'):
+        prepare_corpus(deps.path, tmp_path, 'bad-map', review=review(), dependencies=deps)
+    directory = tmp_path / 'runs/pilot-5/bad-map/corpus'
+    status = json.loads((directory / 'meta/status.json').read_text())
+    assert status['state'] == 'failed' and status['completed'] == 0
+    assert 'fineweb:train:0' in (directory / 'logs/errors.jsonl').read_text()
+    assert not (tmp_path / 'plans/bad-map/complete.json').exists()
