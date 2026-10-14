@@ -329,3 +329,23 @@ def test_new_corpus_counts_do_not_relabel_the_legacy_fineweb_manifest(tmp_path):
     assert config['fineweb']['count'] == 200
     assert config['legacy_fineweb_manifest']['count'] == 150
     assert config['fineweb']['eligible_new_count'] == 1850
+
+
+def test_cpu_data_preparation_verifies_input_seals_without_rehashing_training_state(tmp_path):
+    from pilot_eval.trace_corpus import HFCorpusDependencies
+    deps = Sources(tmp_path)
+    deps.config.update(audit_path='legacy/audit.md', run_path='legacy')
+    (tmp_path / 'legacy/meta').mkdir(parents=True)
+    (tmp_path / 'legacy/audit.md').write_text('Frozen input audit fixture.\n')
+    deps.path.write_text(json.dumps(deps.config))
+    (tmp_path / 'legacy/meta/run_manifest.json').write_text(json.dumps(deps.config))
+    payloads = [deps.path, tmp_path / deps.config['items_path'], tmp_path / 'legacy/audit.md',
+                tmp_path / 'legacy/meta/run_manifest.json']
+    (tmp_path / 'prepare-complete.json').write_text(json.dumps(dict(config_sha256=digest(deps.config),
+        files={str(p.relative_to(tmp_path)): hashlib.sha256(p.read_bytes()).hexdigest() for p in payloads})))
+    config, rows = HFCorpusDependencies().load_source(deps.path, tmp_path)
+    assert config['model'] == 'Qwen/Qwen2.5-1.5B-Instruct'
+    assert len(rows) == 150
+    (tmp_path / 'legacy/audit.md').write_text('corrupt')
+    with pytest.raises(ValueError, match='input source.*hash mismatch'):
+        HFCorpusDependencies().load_source(deps.path, tmp_path)

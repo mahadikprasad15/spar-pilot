@@ -57,8 +57,25 @@ class HFCorpusDependencies:
     """Pinned data/tokenizer access only. No model or Transformers imports."""
 
     def load_source(self, path, root):
-        from pilot_eval.activation_prepare import load_prepared
-        return load_prepared(path, root)
+        root = Path(root).resolve()
+        path = _inside(root, path)
+        config = json.loads(path.read_text())
+        if config.get('protocol_version') != 'pilot3-write-v1':
+            raise ValueError('Raw corpus requires the frozen Pilot 3 input source.')
+        marker = json.loads((path.parent / 'prepare-complete.json').read_text())
+        if marker['config_sha256'] != _hash(config):
+            raise ValueError('input source config hash mismatch')
+        required = {str(path.relative_to(root)), config['items_path'], config['audit_path'],
+                    config['run_path'] + '/meta/run_manifest.json'}
+        if not required.issubset(marker['files']):
+            raise ValueError('input source seal omits required payloads')
+        for relative, expected in marker['files'].items():
+            if file_hash(_inside(root, relative)) != expected:
+                raise ValueError('input source artifact hash mismatch')
+        rows = json.loads(_inside(root, config['items_path']).read_text())
+        if _hash(rows) != config['items_sha256']:
+            raise ValueError('input source items hash mismatch')
+        return config, rows
 
     def load_tokenizer(self, model, revision):
         from huggingface_hub import hf_hub_download
@@ -245,6 +262,9 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies=Non
         _write_rows(items, rows)
         _write_rows(pool_path, pool)
         source_files = {str(p.relative_to(root)): file_hash(p) for p in [source_path, source_rows]}
+        source_seal = source_path.parent / 'prepare-complete.json'
+        if source_seal.exists():
+            source_files[str(source_seal.relative_to(root))] = file_hash(source_seal)
         metadata = dict(getattr(tokenizer, 'metadata', {}),
                         all_special_ids=sorted(tokenizer.all_special_ids),
                         bos_token_id=getattr(tokenizer, 'bos_token_id', None),
