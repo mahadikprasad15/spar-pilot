@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-14",
+  "code_commit": "290f0da491b8f7ce7801a812cf046bd1b93ed8a2",
+  "session_baseline": {
+    "passed": 289,
+    "skipped": 35,
+    "seconds": 962.65
+  },
+  "related_tests": {
+    "passed": 43,
+    "seconds": 23.37,
+    "files": [
+      "tests/test_trace_corpus.py",
+      "tests/test_trace_session.py",
+      "tests/test_workflow.py",
+      "tests/test_notebook_session.py"
+    ]
+  },
+  "real_bootstrap": {
+    "state": "completed",
+    "evidence": "user-reported public validator output",
+    "device": "Tesla T4",
+    "smoke_seconds": 15.660914148,
+    "model_inference": false,
+    "source_audit": {
+      "sft": [
+        0,
+        8,
+        16,
+        32,
+        64
+      ],
+      "grpo": [
+        0,
+        8,
+        16,
+        32,
+        64
+      ],
+      "random": [
+        0,
+        64
+      ]
+    }
+  },
+  "real_corpus": {
+    "state": "pending",
+    "reason": "Pinned dataset/tokenizer production preparation not executed"
+  },
+  "verification_scope": "Sealed corpus/input files; capture must independently qualify adapter sources"
+}

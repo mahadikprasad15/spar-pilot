@@ -1,6 +1,10 @@
 # Pilot 5 bootstrap
 
-The dedicated notebook is `notebooks/pilot-5-colab.ipynb`. This first slice restores sources and checks environment/storage assumptions. It does not run Pilot 5 model inference, capture or readouts.
+The dedicated shared notebook is `notebooks/pilot-5-colab.ipynb`. Cells 1–6 restore sources and check environment/storage assumptions; cells 7–9 prepare the raw corpus on CPU. It does not run Pilot 5 model inference, capture or readouts.
+
+## Current resume point
+
+The user has completed the three source audits, import/storage smoke and fresh-runtime reconnection. Those stages need no repetition to prepare the corpus. In the updated notebook on a fresh CPU runtime, run 1–2, then 7–9. Cell 7 records the approved selection and actual prior exposure; cell 8 downloads pinned tokenizer files and streams the pinned data pool, saving exact inputs; cell 9 verifies their seals. See [corpus workflow](pilot5-corpus.md). Skip 3–6 when restoring this already audited experiment.
 
 ## Minimal Colab validation
 

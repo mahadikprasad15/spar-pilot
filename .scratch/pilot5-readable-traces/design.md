@@ -302,3 +302,7 @@ The added 50 documents are selected without consulting outcomes. Preserve legacy
 Prasad owns outstanding scientific/budget decisions. Lens or budget failure saves evidence, stops paid work and releases safely before asking for fallback approval; no automatic fitting or logit-only primary change. Vocabulary approval pauses learned-list reveal, while otherwise qualified capture can continue. The barrier is an accidental-exposure safeguard, not protection against deliberate artifact access.
 
 The initial notebook bootstrap has a minimal grade status/schema-version contract; detailed grade fields are deferred. Early real Colab import/storage smoke requires actual GPU validation and cannot be declared fully passed using CPU mocks. Readable-code assessment is labelled a reviewer check.
+
+## Corpus implementation decision · 2026-10-14
+
+The user approved the same pinned first-2,000 FineWeb pool, duplicate/legacy exclusion, minimum 128 content tokens, separate local seed 42 and preservation of source order for the added 50. See ADR 0012 for the input verification scope. Real pinned-data preparation remains pending; completed bootstrap evidence does not qualify model capture.

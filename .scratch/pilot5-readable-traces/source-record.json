@@ -9,8 +9,9 @@
     "durable retained shards before GPU release",
     "raw-only main execution",
     "optional assistant-form script in notebook; separate plan/output; disabled by default",
-    "bounded checks for both zero adapters"
+    "bounded checks for both zero adapters",
+    "new 50: same pinned first-2000 FineWeb pool; disjoint document/text identities; >=128 content tokens; local seed 42; source order"
   ],
-  "implementation_status": "Ticket 01 bootstrap implemented; real Colab smoke pending",
-  "validation": "10 CPU bootstrap tests passed; existing repository suite 279 passed, 35 skipped; real Colab smoke pending"
+  "implementation_status": "Ticket 01 resolved from user-reported Colab smoke/reconnect/source audit; Ticket 02 implemented, real pinned-data preparation pending",
+  "validation": "Session regression: 289 passed, 35 skipped; related corpus/bootstrap/workflow: 32 passed. Real Colab bootstrap passed; production corpus pending."
 }

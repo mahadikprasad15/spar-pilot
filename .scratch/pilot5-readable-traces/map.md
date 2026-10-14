@@ -36,12 +36,15 @@ See design.md section 10 for unapproved choices and source-qualification prerequ
 - First frontier: 01, restore/source audit and early Colab smoke.
 - 06 solely owns capture-affecting commitments and primary identity; 03 owns reveal/inference rules within the retained-data family.
 - Required raw report/validation do not depend on optional grading/assistant work.
-- No Pilot 5 implementation or paid execution has started.
+- No Pilot 5 production model capture has started. Bootstrap and corpus implementation are recorded below.
 
 ## Implementation progress · 2026-10-14
 
 - Ticket 01 claimed: bootstrap restore, source audit, pinned notebook and bounded environment/storage smoke implemented. Ten CPU tests pass.
-- Real Colab smoke/reconnect evidence is still pending; Ticket 01 is not resolved.
+- Real Colab smoke/reconnect and all three source audits passed (user-reported public validator outputs). Ticket 01 resolved.
 - No Pilot 5 model capture, lens readout, grading or paid GPU execution has been run.
 
 - Bootstrap published to GitHub main with explicit user approval. Repository regression completed: 279 passed, 35 skipped; new bootstrap tests: 10 passed.
+
+- Ticket 02 implemented with 17 CPU corpus tests; 32 related tests pass. Real pinned-data corpus preparation is pending. Cells 7–9 need CPU only.
+- Approved new-50 selection: same pinned first-2,000 FineWeb pool, disjoint document/text identities, 128-content-token minimum, separate local seed 42, source order. Prior exposure remains explicitly recorded by the reviewer.
