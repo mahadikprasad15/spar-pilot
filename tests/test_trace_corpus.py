@@ -120,3 +120,17 @@ def test_unreviewed_selection_stops_before_source_or_dataset_access(tmp_path):
         prepare_corpus(deps.path, tmp_path, 'unreviewed', review=settings,
                        dependencies=NoAccess.__new__(NoAccess))
     assert not (tmp_path / 'plans/unreviewed').exists()
+
+
+def test_missing_sealed_input_is_rejected_even_if_completion_marker_omits_it(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus, load_corpus
+    deps = Sources(tmp_path)
+    path = prepare_corpus(deps.path, tmp_path, 'sealed', review=review(), dependencies=deps)
+    config = json.loads(path.read_text())
+    marker_path = path.parent / 'complete.json'
+    marker = json.loads(marker_path.read_text())
+    del marker['files'][config['pool_path']]
+    marker_path.write_text(json.dumps(marker))
+    (tmp_path / config['pool_path']).unlink()
+    with pytest.raises(ValueError, match='omits required'):
+        load_corpus(path, tmp_path)

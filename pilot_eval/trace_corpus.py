@@ -63,6 +63,10 @@ def load_corpus(config_path, output_root):
     marker = json.loads((path.parent / 'complete.json').read_text())
     if marker['config_sha256'] != _hash(config):
         raise ValueError('Corpus config hash mismatch.')
+    required = {str(path.relative_to(root)), config['items_path'], config['pool_path'],
+                config['run_path'] + '/meta/run_manifest.json'}
+    if not required.issubset(marker['files']):
+        raise ValueError('Corpus completion marker omits required payloads.')
     for relative, expected in {**marker['files'], **config['source_files']}.items():
         payload = _inside(root, relative)
         if not payload.is_file() or file_hash(payload) != expected:
