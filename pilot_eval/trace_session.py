@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -67,6 +68,19 @@ class TraceSession:
         if not resolved.is_relative_to(self.root):
             raise ValueError('Source must be inside the selected artifact root.')
         return resolved
+
+    def _record(self, state, elapsed):
+        record = dict(schema_version=1, state=state, elapsed_seconds=elapsed,
+                      updated_at=datetime.now(timezone.utc).isoformat())
+        metadata = self.directory / 'meta'
+        logs = self.directory / 'logs'
+        metadata.mkdir(exist_ok=True)
+        logs.mkdir(exist_ok=True)
+        _save(metadata / 'status.json', record)
+        with (logs / 'run.log').open('a') as stream:
+            stream.write(json.dumps(record) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
 
     def restore(self):
         selection = self.directory / 'selection.json'
@@ -177,8 +191,12 @@ import peft
 from trl import GRPOTrainer
 if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
     raise RuntimeError('Select exactly one CUDA GPU, then restore setup.')
+try:
+    colab = importlib.util.find_spec('google.colab') is not None
+except ModuleNotFoundError:
+    colab = False
 print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versions=versions,
-    host_kind='colab' if importlib.util.find_spec('google.colab') else 'other',
+    host_kind='colab' if colab else 'other',
     cuda=torch.version.cuda, device=torch.cuda.get_device_name(0),
     memory_bytes=torch.cuda.get_device_properties(0).total_memory)))
 '''
@@ -216,6 +234,7 @@ print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versi
                     raise ValueError('Durable smoke payload hash mismatch.')
                 if not seal_path.exists():
                     _save(seal_path, {'sha256': _digest(path)})
+                self._record(self.restore()['smoke']['state'], time.monotonic() - started)
                 return previous
             record = dict(schema_version=1, runtime=runtime, origin_pid=os.getpid(),
                           origin_session=os.environ.get('COLAB_RELEASE_TAG', ''),
@@ -225,6 +244,7 @@ print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versi
             if json.loads(path.read_text()) != record:
                 raise ValueError('Durable smoke readback failed.')
             _save(self.directory / 'smoke-seal.json', {'sha256': _digest(path)})
+            self._record('pending-reconnect', time.monotonic() - started)
         return record
 
     def verify_reconnect(self):
@@ -240,4 +260,5 @@ print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versi
             receipt = dict(schema_version=1, smoke_sha256=seal['sha256'],
                            restored_pid=os.getpid(), elapsed_seconds=time.monotonic() - started)
             _save(self.directory / 'reconnect.json', receipt)
+            self._record('completed', time.monotonic() - started)
         return self.restore()

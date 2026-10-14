@@ -154,3 +154,15 @@ def test_cpu_bootstrap_declares_adapter_audit_dependency():
     audit = project['project']['optional-dependencies'].get('trace-audit', [])
     assert any(requirement.startswith('safetensors') for requirement in audit)
     assert not any(requirement.startswith('torch') for requirement in audit)
+
+
+def test_smoke_persists_measured_progress_without_claiming_cpu_target_validation(tmp_path):
+    from pilot_eval.trace_session import TraceSession
+    session = TraceSession(tmp_path, tmp_path, 'records',
+        environment_probe=lambda: {'device': 'fixture'}, process_probe=lambda: [])
+    session.write_smoke()
+    status = json.loads((session.directory / 'meta/status.json').read_text())
+    assert status['state'] == 'pending-reconnect'
+    assert status['elapsed_seconds'] >= 0
+    assert session.restore()['target_validation'] == 'pending'
+    assert (session.directory / 'logs/run.log').read_text().count('\n') == 1
