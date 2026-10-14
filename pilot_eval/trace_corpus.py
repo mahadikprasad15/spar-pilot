@@ -179,8 +179,10 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies):
                 if old['full_document_sha256'] != text_hash or old.get('source_id') != source_id:
                     raise ValueError(f'Legacy document identity changed: {old["id"]}')
                 raw = _raw(tokenizer, old['content'])
-                if raw is None or raw['content_sha256'] != old['content_sha256'] or [
-                        raw['input_ids'][position] for position in raw['content_positions']] != old['prefix_token_ids']:
+                full_raw = _raw(tokenizer, doc['text'])
+                if (raw is None or full_raw is None or full_raw['content'] != old['content']
+                        or raw['content_sha256'] != old['content_sha256'] or [
+                        raw['input_ids'][position] for position in raw['content_positions']] != old['prefix_token_ids']):
                     raise ValueError(f'Legacy raw-token mapping changed: {old["id"]}')
                 found[index] = dict(raw, **identity, id=old['id'], stratum='legacy-150',
                     source_url=old.get('source_url'), prior_exposure=review['prior_exposure'])

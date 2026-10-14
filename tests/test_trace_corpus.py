@@ -186,3 +186,16 @@ def test_tokenizer_files_are_retained_and_sealed_with_corpus(tmp_path):
     retained.write_text('{}')
     with pytest.raises(ValueError, match='hash mismatch'):
         load_corpus(path, tmp_path)
+
+
+def test_self_consistent_legacy_text_must_still_be_the_pinned_document_prefix(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus
+    deps = Sources(tmp_path)
+    deps.rows[0]['content'] = 'z' * 128
+    deps.rows[0]['content_sha256'] = digest('z' * 128)
+    deps.rows[0]['prefix_token_ids'] = deps.tokenizer.encode('z' * 128)
+    deps.config['items_sha256'] = digest(deps.rows)
+    (tmp_path / deps.config['items_path']).write_text(json.dumps(deps.rows))
+    deps.path.write_text(json.dumps(deps.config))
+    with pytest.raises(ValueError, match='Legacy raw-token mapping changed'):
+        prepare_corpus(deps.path, tmp_path, 'wrong-prefix', review=review(), dependencies=deps)
