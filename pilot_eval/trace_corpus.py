@@ -259,7 +259,11 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies=Non
             tokenizer_files[filename] = {'path': str(retained.relative_to(root)), 'sha256': file_hash(retained)}
         config = dict(schema_version=1, protocol_version='pilot5-raw-corpus-v1', status='prepared',
             name=name, form='raw', model=source['model'], model_revision=source['model_revision'],
-            tokenizer_revision=source['tokenizer_revision'], tokenizer=metadata, fineweb=source['fineweb'],
+            tokenizer_revision=source['tokenizer_revision'], tokenizer=metadata,
+            legacy_fineweb_manifest=source['fineweb'],
+            fineweb={**source['fineweb'], 'count': 200, 'eligible_new_count': len(candidates),
+                     'source_indices': [row['source_index'] for row in rows],
+                     'selection': review['procedure'], 'pool_sha256': _hash(pool)},
             tokenizer_files=tokenizer_files,
             source_config=str(source_path.relative_to(root)), source_files=source_files, review=review,
             items_path=str(items.relative_to(root)), items_sha256=_hash(rows),

@@ -278,3 +278,54 @@ def test_notebook_cpu_dependency_profile_excludes_model_libraries():
     assert 'datasets==4.4.1' in requirements
     assert 'huggingface-hub==0.36.0' in requirements
     assert not any(package.startswith(('torch', 'transformers', 'peft', 'trl')) for package in requirements)
+
+
+def test_shared_notebook_exposes_cpu_corpus_stage_and_visible_install_logs():
+    import ast
+    notebook = json.loads(Path('notebooks/pilot-5-colab.ipynb').read_text())
+    cells = [c for c in notebook['cells'] if c['cell_type'] == 'code']
+    code = '\n'.join(''.join(c['source']) for c in cells)
+    assert 'traces-corpus-prepare' in code
+    assert 'traces-corpus-verify' in code
+    assert "'reviewed': False" in code
+    assert 'runner.run' in code
+    assert '[trace-audit,trace-corpus]' in code
+    for cell in cells:
+        ast.parse(''.join(cell['source']))
+        assert cell['outputs'] == []
+
+
+def test_notebook_prepare_and_verify_cells_reuse_complete_corpus(tmp_path):
+    import sys
+    from pilot_eval.notebook_session import NotebookSession
+    from pilot_eval.trace_corpus import prepare_corpus
+    from pilot_eval.trace_session import TraceSession
+    deps = Sources(tmp_path)
+    path = prepare_corpus(deps.path, tmp_path, 'notebook-corpus', review=review(), dependencies=deps)
+    review_path = tmp_path / 'review.json'
+    review_path.write_text(json.dumps(review()))
+    repo = Path.cwd()
+    namespace = dict(sys=sys, Path=Path, ARTIFACT_ROOT=tmp_path,
+        CORPUS_SOURCE=deps.path, CORPUS_REVIEW_PATH=review_path, CORPUS_NAME='notebook-corpus',
+        session=TraceSession(tmp_path, repo, 'notebook-test'),
+        runner=NotebookSession(tmp_path, repo, plan_name='notebook-test'))
+    notebook = json.loads((repo / 'notebooks/pilot-5-colab.ipynb').read_text())
+    for cell in notebook['cells']:
+        source = ''.join(cell['source'])
+        if cell['cell_type'] == 'code' and any(command in source for command in
+                ['traces-corpus-prepare', 'traces-corpus-verify']):
+            exec(compile(source, 'pilot5-notebook-cell', 'exec'), namespace)
+    assert namespace['CORPUS_PATH'] == path
+    assert namespace['session'].restore()['corpus']['counts'] == {'legacy-150': 150, 'new-50': 50}
+    log = tmp_path / 'notebook/operations/notebook-test/traces-corpus-prepare.console.log'
+    assert 'no tokenizer or dataset access' in log.read_text()
+
+
+def test_new_corpus_counts_do_not_relabel_the_legacy_fineweb_manifest(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus, load_corpus
+    deps = Sources(tmp_path)
+    path = prepare_corpus(deps.path, tmp_path, 'counts', review=review(), dependencies=deps)
+    config, _ = load_corpus(path, tmp_path)
+    assert config['fineweb']['count'] == 200
+    assert config['legacy_fineweb_manifest']['count'] == 150
+    assert config['fineweb']['eligible_new_count'] == 1850
