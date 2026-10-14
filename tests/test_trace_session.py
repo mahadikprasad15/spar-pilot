@@ -52,3 +52,27 @@ def test_reconnect_requires_new_session_and_detects_tampering(tmp_path):
     (tmp_path / 'runs/pilot-5/pending/bootstrap/smoke.json').write_text('{}')
     with pytest.raises(ValueError, match='hash mismatch'):
         other.restore()
+
+
+def test_readiness_and_audit_fail_before_inference(tmp_path):
+    import pytest
+    from pilot_eval.trace_session import TraceSession
+
+    probes = []
+    session = TraceSession(tmp_path, tmp_path, 'guards',
+                           process_probe=lambda: [{'pid': 123}],
+                           environment_probe=lambda: probes.append('import'))
+    with pytest.raises(RuntimeError, match='Active experiment child'):
+        session.write_smoke()
+    assert probes == []
+    with pytest.raises(ValueError, match='Ambiguous'):
+        session.select_sources({'sft': ['one', 'two']})
+    source = tmp_path / 'source.json'
+    source.write_text('{}')
+    session.select_sources({'sft': source})
+    with pytest.raises(ValueError, match='Select all three'):
+        session.audit_sources()
+    session = TraceSession(tmp_path, tmp_path, 'runtime', process_probe=lambda: [],
+                           environment_probe=lambda: {'device': '40GB'})
+    with pytest.raises(ValueError, match='Runtime changed'):
+        session.readiness(expected_runtime={'device': '80GB'})

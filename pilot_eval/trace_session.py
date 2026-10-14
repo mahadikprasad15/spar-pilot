@@ -128,8 +128,8 @@ class TraceSession:
 
     def audit_sources(self):
         selected = self.restore()['sources']
-        if not selected:
-            raise ValueError('Select existing prepared source configurations first.')
+        if set(selected) != {'sft', 'grpo', 'random'}:
+            raise ValueError('Select all three existing prepared sources: sft, grpo, random.')
         with _writer(self.directory):
             audit = {}
             for label, row in selected.items():
@@ -137,6 +137,11 @@ class TraceSession:
                 if not path.is_file():
                     raise ValueError(f'Missing {label} source: {path}')
                 config = self.source_loader(path, self.root)
+                expected = 'pilot3-write-v1' if label == 'sft' else 'pilot4-writes-v1'
+                if config.get('protocol_version') != expected:
+                    raise ValueError(f'{label} source has the wrong protocol.')
+                if label != 'sft' and config.get('source_contract', {}).get('kind') != label:
+                    raise ValueError(f'{label} source has the wrong adapter kind.')
                 audit[label] = dict(config_sha256=_digest(path), model=config['model'],
                                     checkpoint_steps=config['checkpoint_steps'],
                                     source_evidence=config['source_evidence'])
