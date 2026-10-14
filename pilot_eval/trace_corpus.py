@@ -3,6 +3,7 @@ import itertools
 import importlib.metadata
 import json
 import random
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -120,6 +121,7 @@ def load_corpus(config_path, output_root):
         raise ValueError('Corpus config hash mismatch.')
     required = {str(path.relative_to(root)), config['items_path'], config['pool_path'],
                 config['run_path'] + '/meta/run_manifest.json'}
+    required.update(row['path'] for row in config['tokenizer_files'].values())
     if not required.issubset(marker['files']):
         raise ValueError('Corpus completion marker omits required payloads.')
     for relative, expected in {**marker['files'], **config['source_files']}.items():
@@ -214,9 +216,18 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies):
                         all_special_ids=sorted(tokenizer.all_special_ids),
                         bos_token_id=getattr(tokenizer, 'bos_token_id', None),
                         eos_token_id=getattr(tokenizer, 'eos_token_id', None), add_special_tokens=False)
+        tokenizer_files = {}
+        for filename, original_path in getattr(tokenizer, 'files', {}).items():
+            if Path(filename).name != filename:
+                raise ValueError('Tokenizer artifact filename must be a basename.')
+            retained = directory / 'inputs/tokenizer' / filename
+            retained.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original_path, retained)
+            tokenizer_files[filename] = {'path': str(retained.relative_to(root)), 'sha256': file_hash(retained)}
         config = dict(schema_version=1, protocol_version='pilot5-raw-corpus-v1', status='prepared',
             name=name, form='raw', model=source['model'], model_revision=source['model_revision'],
             tokenizer_revision=source['tokenizer_revision'], tokenizer=metadata, fineweb=source['fineweb'],
+            tokenizer_files=tokenizer_files,
             source_config=str(source_path.relative_to(root)), source_files=source_files, review=review,
             items_path=str(items.relative_to(root)), items_sha256=_hash(rows),
             pool_path=str(pool_path.relative_to(root)), run_path=str(directory.relative_to(root)),
@@ -224,9 +235,10 @@ def prepare_corpus(source_config, output_root, name, *, review, dependencies):
             selected_new_indices=[row['source_index'] for row in rows[150:]])
         _save_frozen(path, config)
         _save_frozen(directory / 'meta/run_manifest.json', config)
-        _write_state(directory, 'completed', 200, 200)
         payloads = [path, items, pool_path, directory / 'meta/run_manifest.json']
+        payloads.extend(root / row['path'] for row in tokenizer_files.values())
         _write_json(plan_dir / 'complete.json', dict(config_sha256=_hash(config),
             files={str(p.relative_to(root)): file_hash(p) for p in payloads}))
+        _write_state(directory, 'completed', 200, 200)
         print('Corpus prepared: 150 legacy + 50 new; 128 content tokens each. No model inference.', flush=True)
         return path

@@ -171,3 +171,18 @@ def test_real_tokenizer_file_keeps_bos_configuration_separate_from_raw_inputs(tm
     assert tokenizer.bos_token_id == 1
     assert tokenizer.metadata['configured_add_bos_token'] is True
     assert tokenizer.metadata['raw_add_special_tokens'] is False
+
+
+def test_tokenizer_files_are_retained_and_sealed_with_corpus(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus, load_corpus
+    deps = Sources(tmp_path)
+    tokenizer_file = tmp_path / 'fixture-tokenizer.json'
+    tokenizer_file.write_text('{"fixture": true}')
+    deps.tokenizer.files = {'tokenizer.json': tokenizer_file}
+    path = prepare_corpus(deps.path, tmp_path, 'retained', review=review(), dependencies=deps)
+    config, _ = load_corpus(path, tmp_path)
+    retained = tmp_path / config['tokenizer_files']['tokenizer.json']['path']
+    assert retained.read_bytes() == tokenizer_file.read_bytes()
+    retained.write_text('{}')
+    with pytest.raises(ValueError, match='hash mismatch'):
+        load_corpus(path, tmp_path)
