@@ -85,6 +85,9 @@ class TraceSession:
         receipt = self.directory / 'reconnect.json'
         smoke_state = 'missing'
         if smoke.exists():
+            seal = json.loads((self.directory / 'smoke-seal.json').read_text())
+            if seal['sha256'] != _digest(smoke):
+                raise ValueError('Durable smoke payload hash mismatch.')
             smoke_state = 'pending-reconnect'
             if receipt.exists():
                 record = json.loads(receipt.read_text())
@@ -101,7 +104,9 @@ class TraceSession:
                     capabilities={'cohort_position_means': 'all 29 sites',
                                   'example_primary_window': 'all 29 sites, positions 0–4 pooled',
                                   'example_positions': [14, 17, 18, 19, 20, 21]},
-                    target_validation='completed' if smoke_state == 'completed' else 'pending')
+                    target_validation=('completed' if smoke_state == 'completed'
+                        and json.loads(smoke.read_text())['runtime'].get('host_kind') == 'colab'
+                        else 'pending'))
 
     def select_sources(self, sources):
         if not sources or set(sources) - {'sft', 'grpo', 'random'}:
@@ -146,7 +151,7 @@ class TraceSession:
     def inspect_environment(self):
         # A timeout bounds import problems. No weights or tokenizer are downloaded.
         code = '''
-import importlib.metadata, json, platform
+import importlib.metadata, importlib.util, json, platform
 from pilot_eval.sft_backend import PINS
 versions = {key: importlib.metadata.version(key) for key in PINS}
 wrong = [key for key in PINS if versions[key].split('+')[0] != PINS[key]]
@@ -158,6 +163,7 @@ from trl import GRPOTrainer
 if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
     raise RuntimeError('Select exactly one CUDA GPU, then restore setup.')
 print('TRACE_RUNTIME=' + json.dumps(dict(python=platform.python_version(), versions=versions,
+    host_kind='colab' if importlib.util.find_spec('google.colab') else 'other',
     cuda=torch.version.cuda, device=torch.cuda.get_device_name(0),
     memory_bytes=torch.cuda.get_device_properties(0).total_memory)))
 '''
