@@ -106,3 +106,17 @@ def test_prepare_freezes_raw_inputs_and_restores_without_network(tmp_path):
     assert prepare_corpus(deps.path, tmp_path, 'raw-v1', review=review(),
                           dependencies=Offline.__new__(Offline)) == plan_path
     assert all(path.read_bytes() == payload for path, payload in before.items())
+
+
+def test_unreviewed_selection_stops_before_source_or_dataset_access(tmp_path):
+    from pilot_eval.trace_corpus import prepare_corpus
+    deps = Sources(tmp_path)
+    class NoAccess(Sources):
+        def load_source(self, *args):
+            raise AssertionError('review must gate source access')
+    settings = review()
+    settings['reviewed'] = False
+    with pytest.raises(ValueError, match='reviewed'):
+        prepare_corpus(deps.path, tmp_path, 'unreviewed', review=settings,
+                       dependencies=NoAccess.__new__(NoAccess))
+    assert not (tmp_path / 'plans/unreviewed').exists()

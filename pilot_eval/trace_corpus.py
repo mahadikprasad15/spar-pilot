@@ -75,6 +75,12 @@ def load_corpus(config_path, output_root):
 
 def prepare_corpus(source_config, output_root, name, *, review, dependencies):
     """Prepare once; repeated calls verify existing inputs without sampling again."""
+    if (review.get('schema_version') != 1 or review.get('reviewed') is not True
+            or review.get('procedure') != 'same-pool-disjoint-random-v1'
+            or not isinstance(review.get('seed'), int) or isinstance(review.get('seed'), bool)
+            or not str(review.get('notes', '')).strip()
+            or not str(review.get('prior_exposure', '')).strip()):
+        raise ValueError('An explicitly reviewed corpus procedure, seed, notes and exposure record are required.')
     root = Path(output_root).resolve()
     name = safe_name(name)
     source_path = _inside(root, source_config)
