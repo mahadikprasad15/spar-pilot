@@ -55,3 +55,14 @@ def test_step_zero_gate_is_exact_and_rejects_even_small_nonzero_deltas():
     assert check_zero_adapter(np.zeros((2,5,3)))['exact_zero'] is True
     with pytest.raises(ValueError,match='exactly zero'):
         check_zero_adapter(np.full((2,5,3),1e-15))
+
+
+def test_reviewed_scoring_carries_prior_exposure_status(tmp_path):
+    from pilot_eval.trace_scoring import score_vector
+    from pilot_eval.trace_vocabulary import freeze_references,approve_references
+    reference=dict(strings=['total'],word=['total'],format_number=[],scores=[])
+    path=freeze_references(tmp_path/'refs',{key:reference for key in ['ref_questions','ref_gold','ref_grpo']},parameters={},input_files={})
+    (path.parent/'top30.md').write_text('Synthetic preview; not a real reference vocabulary.')
+    approve_references(path,reviewer='fixture',notes='Synthetic gate check.',exposure_status='seen-before-freeze')
+    result=score_vector([1],lambda v:np.array([1.]),TokenInventory({0:'total'}),freeze_path=path)
+    assert result['inference_status']=='exploratory-or-unverified-exposure'

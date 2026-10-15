@@ -28,15 +28,17 @@ def score_vector(vector, readout, inventory, *, references=None, freeze_path=Non
     The production command consumer must also qualify the readout/capture source.
     This low-level function does not establish lens compatibility from a callback.
     """
+    inference_status='synthetic-only'
     if not synthetic:
         if freeze_path is None:raise ValueError('A valid reference freeze is required before scoring.')
         if references is not None:raise ValueError('Production references must come only from the verified freeze.')
-        references=load_references(freeze_path,require_review=True)['references']
+        payload=load_references(freeze_path,require_review=True)
+        references=payload['references'];inference_status=payload['review']['inference_status']
     if not references:raise ValueError('No reference sets supplied.')
     vector=np.asarray(vector,dtype=np.float64)
     if vector.ndim!=1 or not np.isfinite(vector).all():raise ValueError('Vector must be finite and one-dimensional.')
     norm=float(np.linalg.norm(vector))
-    if norm==0:return dict(state='undefined',reason='zero-vector',norm=0.,synthetic=synthetic)
+    if norm==0:return dict(state='undefined',reason='zero-vector',norm=0.,synthetic=synthetic,inference_status=inference_status)
     logits=np.asarray(readout(vector),dtype=np.float64)
     ids=sorted(inventory.decoded)
     if logits.shape!=(len(ids),) or not np.isfinite(logits).all():
@@ -62,7 +64,7 @@ def score_vector(vector, readout, inventory, *, references=None, freeze_path=Non
         values[name]=score
     return dict(state='scored' if count else 'undefined',reason=None if count else 'no-valid-strings',
                 scores=values,strings=strings,list_ids=[row['token_id'] for row in chosen],
-                raw_tokens=chosen,valid_count=count,short_list=count<20,norm=norm,synthetic=synthetic)
+                raw_tokens=chosen,valid_count=count,short_list=count<20,norm=norm,synthetic=synthetic,inference_status=inference_status)
 
 
 def random_vectors(draws, dimension, *, seed=20261015, positions=1, covariance=None):
