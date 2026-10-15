@@ -102,3 +102,50 @@ def ncurves(examples,scorer,*,sizes=(25,50,100,200),draws=200,seed=20261017,stra
             rows.append(dict(n=size,draw=draw,document_ids=selected,counts=dict(Counter(strata[key] for key in selected)),
                              score=_condition(values[chosen],scorer,form),full_cohort=size==len(ids)))
     return rows
+
+
+def run_draws(directory,config,unit_ids,compute,*,chunk_size=25):
+    """Saved-workflow runner for costly null/resampling units; seals whole chunks.
+
+    config must bind the vector, lens, reference and procedure identities at the
+    calling stage. Unsealed chunk work may repeat; sealed rows never recompute.
+    """
+    import json
+    from pathlib import Path
+    from pilot_eval.training import file_hash,run_lock
+    from pilot_eval.workflow import _save_frozen
+    from pilot_eval.run import _write_json,_write_state
+    directory=Path(directory).resolve()
+    if type(chunk_size) is not int or chunk_size<1 or len(set(unit_ids))!=len(unit_ids):
+        raise ValueError('Distinct draw IDs and positive chunk size required.')
+    identity=dict(parameters=config,unit_ids=unit_ids,chunk_size=chunk_size)
+    with run_lock(directory):
+        _save_frozen(directory/'config.json',identity)
+        complete=directory/'complete.json'
+        if complete.exists():
+            for relative,expected in json.loads(complete.read_text())['files'].items():
+                if file_hash(directory/relative)!=expected:raise ValueError('Draw payload hash mismatch.')
+            return json.loads((directory/'results/results.json').read_text())
+        chunks=directory/'chunks';chunks.mkdir(exist_ok=True);rows=[]
+        try:
+            for start in range(0,len(unit_ids),chunk_size):
+                path=chunks/f'{start:06d}.json';seal=path.with_suffix('.seal.json')
+                selected=unit_ids[start:start+chunk_size]
+                if seal.exists():
+                    if file_hash(path)!=json.loads(seal.read_text())['sha256']:
+                        raise ValueError('Draw chunk hash mismatch.')
+                    block=json.loads(path.read_text())
+                    if block['unit_ids']!=selected:raise ValueError('Draw chunk identities changed.')
+                else:
+                    block=dict(unit_ids=selected,rows=[compute(unit) for unit in selected])
+                    _write_json(path,block);_write_json(seal,{'sha256':file_hash(path)})
+                rows.extend(block['rows'])
+                _write_state(directory,'running',len(rows),len(unit_ids))
+                print(f'Resampling: {len(rows)}/{len(unit_ids)} durable units.',flush=True)
+            _write_json(directory/'results/results.json',rows)
+            paths=[directory/'config.json',directory/'results/results.json',*sorted(chunks.glob('*.json'))]
+            _write_json(complete,{'files':{str(p.relative_to(directory)):file_hash(p) for p in paths}})
+            _write_state(directory,'completed',len(rows),len(unit_ids))
+            return rows
+        except BaseException as exc:
+            _write_state(directory,'failed',len(rows),len(unit_ids),str(exc));raise

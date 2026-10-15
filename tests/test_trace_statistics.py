@@ -37,3 +37,21 @@ def test_paired_bootstrap_aligns_ids_and_ncurves_preserve_membership():
     assert all(row['full_cohort'] for row in full)
     with pytest.raises(ValueError,match='document IDs'):
         bootstrap_compare(left,{'c':left['a']},score,draws=2)
+
+
+def test_saved_draw_workflow_resumes_only_sealed_units_and_checks_identity(tmp_path):
+    from pilot_eval.trace_statistics import run_draws
+    seen=[]
+    def compute(unit):
+        seen.append(unit)
+        if unit==3:raise RuntimeError('disconnect')
+        return {'unit':unit,'score':unit/10}
+    with pytest.raises(RuntimeError,match='disconnect'):
+        run_draws(tmp_path/'draws',{'seed':42},list(range(5)),compute,chunk_size=2)
+    again=[]
+    result=run_draws(tmp_path/'draws',{'seed':42},list(range(5)),lambda unit:again.append(unit) or {'unit':unit,'score':unit/10},chunk_size=2)
+    assert again==[2,3,4]
+    assert [r['unit'] for r in result]==[0,1,2,3,4]
+    assert run_draws(tmp_path/'draws',{'seed':42},list(range(5)),None,chunk_size=2)==result
+    with pytest.raises(ValueError,match='mismatch'):
+        run_draws(tmp_path/'draws',{'seed':43},list(range(5)),None,chunk_size=2)
