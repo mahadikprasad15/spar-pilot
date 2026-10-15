@@ -162,6 +162,7 @@ def test_notebook_capture_cells_prepare_restore_and_verify_without_previous_exec
             ast.parse(''.join(cell['source']));assert cell['outputs']==[]
     exec(compile(prepare,'notebook-capture-prepare','exec'),namespace)
     plan=namespace['CAPTURE_DIAGNOSTIC_PATH']
+    assert NotebookSession.saved_selection(tmp_path,'notebook-capture')['CAPTURE_DIAGNOSTIC_NAME']=='notebook-capture-capture-diagnostic-v1'
     run_diagnostic(plan,tmp_path,dependencies=Dependencies(Engine()))
     exec(compile(verify,'notebook-capture-verify','exec'),namespace)
 
