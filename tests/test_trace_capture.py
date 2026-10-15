@@ -122,3 +122,15 @@ def test_storage_sensitivity_rebuilds_primary_vector_for_paired_document_draws()
         assert len(draw['indices'])==2
         assert draw['top_k_overlap']==(0 if set(draw['indices'])=={0,1} else 1)
     assert result==storage_sensitivity(values,lambda v:v,storage_dtype='float16',draws=8,seed=42,top_k=1)
+
+
+def test_zero_adapter_structure_requires_both_arms_and_every_rank_one_projection():
+    import pytest
+    from pilot_eval.trace_capture import check_zero_structure
+    projections=['q_proj','k_proj','v_proj','o_proj','gate_proj','up_proj','down_proj']
+    modules=[dict(block=i,projection=p,adapter=a,a_shape=[1,2],b_shape=[2,1],
+                  scaling=1.,finite=True,b_nonzero=0) for i in range(28) for p in projections for a in ['default','grpo-zero']]
+    assert check_zero_structure(modules)=={'default':196,'grpo-zero':196}
+    with pytest.raises(ValueError,match='coverage'):check_zero_structure(modules[:-1])
+    modules[0]['b_nonzero']=1
+    with pytest.raises(ValueError,match='zero'):check_zero_structure(modules)

@@ -178,6 +178,7 @@ def run_diagnostic(path,output_root,*,dependencies=None):
                     retention=conversion,qualified=False)
                 if condition=='base':
                     evidence['numeric_lens']=getattr(engine,'numeric_lens_evidence',None)
+                    evidence['adapter_structure']=getattr(engine,'adapter_structure',None)
                     if runtime['execution_kind']=='real-cuda' and not evidence['numeric_lens']:
                         raise ValueError('Real diagnostic is missing numeric lens evidence.')
                 folder=directory/'units'/condition

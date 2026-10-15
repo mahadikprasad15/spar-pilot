@@ -158,3 +158,16 @@ def storage_sensitivity(example_positions, readout, *, storage_dtype, draws, see
         records.append(dict(indices=indices.tolist(),**compare(indices)))
     return dict(qualified=False,conversion=conversion,cohort=compare(np.arange(len(original))),
                 bootstrap=dict(unit='whole-document',seed=seed,draws=records),top_k=top_k)
+
+
+def check_zero_structure(modules):
+    """Validate observed rank/scaling/zero metadata for both actual adapter paths."""
+    projections=['q_proj','k_proj','v_proj','o_proj','gate_proj','up_proj','down_proj']
+    expected={(i,p,a) for i in range(28) for p in projections for a in ['default','grpo-zero']}
+    found={(r['block'],r['projection'],r['adapter']) for r in modules}
+    if found!=expected or len(modules)!=len(expected):raise ValueError('Zero-adapter projection coverage mismatch.')
+    for row in modules:
+        if (len(row['a_shape'])!=2 or len(row['b_shape'])!=2 or row['a_shape'][0]!=1 or row['b_shape'][1]!=1
+                or row['scaling']!=1 or not row['finite'] or row['b_nonzero']!=0):
+            raise ValueError(f'Invalid rank-one zero adapter: {row["block"]}/{row["projection"]}/{row["adapter"]}')
+    return {a:196 for a in ['default','grpo-zero']}

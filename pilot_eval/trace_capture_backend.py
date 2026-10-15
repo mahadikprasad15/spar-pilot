@@ -29,9 +29,23 @@ class CaptureEngine:
         if len(body.layers)!=28:raise ValueError('Expected exactly 28 decoder blocks.')
         self.capture_hooks=HookedTraceCapture(self.model.get_input_embeddings(),list(body.layers))
         if any(p.dtype!=torch.float32 for p in self.model.parameters()):raise ValueError('Diagnostic requires FP32 weights.')
-        for name,p in self.model.named_parameters():
-            if 'lora_B' in name and torch.count_nonzero(p).item()!=0:
-                raise ValueError(f'Loaded step-zero adapter has nonzero B: {name}')
+        from pilot_eval.trace_capture import check_zero_structure
+        from pilot_eval.activation_prepare import PROJECTIONS
+        metadata=[]
+        for i,block in enumerate(body.layers):
+            for projection in PROJECTIONS:
+                group=block.self_attn if projection in PROJECTIONS[:4] else block.mlp
+                module=getattr(group,projection)
+                if not hasattr(module,'lora_A') or module.merged:raise ValueError('Missing or merged rank-one adapter module.')
+                for adapter in ['default','grpo-zero']:
+                    if adapter not in module.lora_A or adapter not in module.lora_B:
+                        raise ValueError('Missing zero-adapter projection.')
+                    if getattr(module,'use_dora',{}).get(adapter,False):raise ValueError('DoRA is outside the diagnostic adapter contract.')
+                    A=module.lora_A[adapter].weight;B=module.lora_B[adapter].weight
+                    metadata.append(dict(block=i,projection=projection,adapter=adapter,
+                        a_shape=list(A.shape),b_shape=list(B.shape),scaling=module.scaling[adapter],
+                        finite=bool(torch.isfinite(A).all() and torch.isfinite(B).all()),b_nonzero=int(torch.count_nonzero(B))))
+        self.adapter_structure=check_zero_structure(metadata)
         print('Diagnostic model loaded once; both zero adapters attached.',flush=True)
 
     def integrity(self):
