@@ -42,3 +42,28 @@ def test_reference_workflow_builds_three_frozen_references_and_reuses_completed_
     class NoAccess:
         def __getattr__(self,name):raise AssertionError('Completed preparation must reuse existing inputs.')
     assert prepare_reference_run(corpus,sft,grpo,tmp_path,'reference-test',dependencies=NoAccess())==path
+
+
+def test_public_reference_verify_and_review_commands_work_in_fresh_cpu_process(tmp_path):
+    import subprocess,sys
+    from pilot_eval.trace_reference_workflow import prepare_reference_run
+    from pilot_eval.trace_vocabulary import TokenInventory
+    deps,corpus,sft,grpo=make_sources(tmp_path)
+    class Inventory(TokenInventory):
+        def encode(self,text,add_special_tokens=False):return CharacterTokenizer().encode(text)
+    class Dependencies:
+        def load_inventory(self,config,root):return Inventory({i:chr(i-10) for i in range(42,137)})
+        def stream_fineweb(self,config,revision):
+            for i in range(10000):yield deps.document(i) if i<2000 else {'id':f'doc-{i}','text':f'{i:04d} '+'background '*100}
+    path=prepare_reference_run(corpus,sft,grpo,tmp_path,'cli-reference',dependencies=Dependencies())
+    cmd=[sys.executable,'-m','pilot_eval','traces-reference-verify','--config',str(path),'--output-root',str(tmp_path)]
+    result=subprocess.run(cmd,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr+result.stdout
+    assert json.loads(result.stdout)['reference_review']=='pending'
+    reviewed=subprocess.run([sys.executable,'-m','pilot_eval','traces-reference-review','--config',str(path),
+        '--reviewer','Prasad','--notes','Read the synthetic reference preview.','--exposure-status','unknown',
+        '--output-root',str(tmp_path)],capture_output=True,text=True)
+    assert reviewed.returncode==0,reviewed.stderr+reviewed.stdout
+    assert json.loads(reviewed.stdout)['inference_status']=='exploratory-or-unverified-exposure'
+    result=subprocess.run(cmd,capture_output=True,text=True,check=True)
+    assert json.loads(result.stdout)['reference_review']=='reviewed'

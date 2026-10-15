@@ -15,6 +15,19 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ('prepare','verify','review'):
+        reference=commands.add_parser('traces-reference-'+operation,help='CPU frozen task-reference workflow')
+        reference.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            reference.add_argument('--corpus',type=Path,required=True)
+            reference.add_argument('--sft-config',type=Path,required=True)
+            reference.add_argument('--grpo-config',type=Path,required=True)
+            reference.add_argument('--name',required=True)
+        else:reference.add_argument('--config',type=Path,required=True)
+        if operation=='review':
+            reference.add_argument('--reviewer',required=True)
+            reference.add_argument('--notes',required=True)
+            reference.add_argument('--exposure-status',choices=['not-seen','seen-before-freeze','unknown'],required=True)
     for operation in ('exposure', 'inspect', 'prepare'):
         review = commands.add_parser('traces-review-' + operation, help='CPU prereveal review history')
         review.add_argument('--name', required=True)
@@ -190,7 +203,18 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('traces-review-'):
+        if args.command.startswith('traces-reference-'):
+            from pilot_eval.trace_reference_workflow import prepare_reference_run,verify_reference_run
+            if args.command=='traces-reference-prepare':
+                print(prepare_reference_run(args.corpus,args.sft_config,args.grpo_config,args.output_root,args.name,dependencies=dependencies))
+            elif args.command=='traces-reference-verify':
+                print(json.dumps(verify_reference_run(args.config,args.output_root),indent=2))
+            else:
+                from pilot_eval.trace_corpus import _inside
+                from pilot_eval.trace_vocabulary import approve_references
+                path=_inside(args.output_root.resolve(),args.config)
+                print(json.dumps(approve_references(path,reviewer=args.reviewer,notes=args.notes,exposure_status=args.exposure_status),indent=2))
+        elif args.command.startswith('traces-review-'):
             from pilot_eval.trace_review import record_exposure, inspect_review, prepare_review
             if args.command == 'traces-review-exposure':
                 result = record_exposure(args.output_root, args.name, json.loads(args.event.read_text()))

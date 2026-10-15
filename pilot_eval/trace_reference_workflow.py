@@ -39,9 +39,13 @@ def verify_reference_run(path,output_root):
     for relative,expected in json.loads(complete.read_text())['files'].items():
         if file_hash(_inside(directory,relative))!=expected:raise ValueError('Reference run hash mismatch.')
     payload=load_references(path);config=json.loads((directory/'config.json').read_text())
+    reviewed=(path.parent/'review.json').exists()
+    if reviewed:load_references(path,require_review=True)
     return dict(reference_names=['ref_questions','ref_gold','ref_grpo'],background_tokens=2000000,
                 training_examples=512,grpo_completions=4096,reference_sizes={k:len(v['strings']) for k,v in payload['references'].items()},
-                reveal_allowed=False,reference_review='pending',freeze_path=str(path),procedure=config['procedure'])
+                reveal_allowed=False,reference_review='reviewed' if reviewed else 'pending',
+                reference_gate_passed=reviewed,remaining_gate='qualified capture and readout consumer',
+                freeze_path=str(path),procedure=config['procedure'])
 
 
 def prepare_reference_run(corpus_path,sft_path,grpo_path,output_root,name,*,dependencies=None):
