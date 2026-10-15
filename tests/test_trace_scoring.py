@@ -66,3 +66,24 @@ def test_reviewed_scoring_carries_prior_exposure_status(tmp_path):
     approve_references(path,reviewer='fixture',notes='Synthetic gate check.',exposure_status='seen-before-freeze')
     result=score_vector([1],lambda v:np.array([1.]),TokenInventory({0:'total'}),freeze_path=path)
     assert result['inference_status']=='exploratory-or-unverified-exposure'
+
+
+def test_verified_scoring_session_stops_before_readout_when_a_parent_changes(tmp_path):
+    from pilot_eval.trace_scoring import ScoringSession
+    from pilot_eval.trace_vocabulary import freeze_references,approve_references
+    parent=tmp_path/'source.json';parent.write_text('immutable input')
+    reference=dict(strings=['total'],word=['total'],format_number=[],scores=[])
+    path=freeze_references(tmp_path/'refs',{key:reference for key in ['ref_questions','ref_gold','ref_grpo']},parameters={},input_files={'source':parent})
+    (path.parent/'top30.md').write_text('Synthetic preview.')
+    approve_references(path,reviewer='fixture',notes='Synthetic session guard test.')
+    calls=[]
+    def readout(v):calls.append(1);return np.array([1.])
+    session=ScoringSession(path,readout,TokenInventory({0:'total'}))
+    with pytest.raises(RuntimeError,match='active'):
+        session.score([1])
+    with pytest.raises(ValueError,match='changed|hash'):
+        with session:
+            assert session.score([1])['synthetic'] is False
+            parent.write_text('changed input')
+            session.score([1])
+    assert calls==[1]

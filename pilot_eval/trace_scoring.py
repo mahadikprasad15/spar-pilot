@@ -108,3 +108,42 @@ def check_zero_adapter(delta):
     if not values.size or not np.isfinite(values).all() or np.any(values!=0):
         raise ValueError('Step-0 adapter delta must be finite and exactly zero.')
     return dict(exact_zero=True,shape=list(values.shape),action='skip-undefined-readout')
+
+
+class ScoringSession:
+    """Bounded verification session for repeated scores, not a global hash cache.
+
+    Full byte/parent hashes are checked at entry and exit; inode/size/mtime/ctime
+    guards stop subsequent readouts if any bound payload changes in the session.
+    The caller must separately qualify the real lens and capture dependencies.
+    """
+    def __init__(self,freeze_path,readout,inventory):
+        from pathlib import Path
+        self.path=Path(freeze_path).resolve();self.readout=readout;self.inventory=inventory;self.active=False
+
+    @staticmethod
+    def _version(path):
+        stat=path.stat()
+        return stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns
+
+    def __enter__(self):
+        from pathlib import Path
+        if self.active:raise RuntimeError('Scoring session is already active.')
+        self.payload=load_references(self.path,require_review=True)
+        paths=[self.path,*(self.path.parent/name for name in ('freeze-seal.json','review.json','review-seal.json','top30.md')),
+               *(Path(item['path']) for item in self.payload['inputs'].values())]
+        self.versions={path:self._version(path) for path in paths};self.active=True
+        return self
+
+    def score(self,vector):
+        if not self.active:raise RuntimeError('Scoring requires an active verified session.')
+        for path,version in self.versions.items():
+            if not path.is_file() or self._version(path)!=version:raise ValueError('Scoring parent changed during the verified session.')
+        result=score_vector(vector,self.readout,self.inventory,references=self.payload['references'],synthetic=True)
+        result.update(synthetic=False,inference_status=self.payload['review']['inference_status'])
+        return result
+
+    def __exit__(self,*exc):
+        self.active=False
+        load_references(self.path,require_review=True)
+        return False
