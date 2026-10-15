@@ -134,3 +134,13 @@ def test_zero_adapter_structure_requires_both_arms_and_every_rank_one_projection
     with pytest.raises(ValueError,match='coverage'):check_zero_structure(modules[:-1])
     modules[0]['b_nonzero']=1
     with pytest.raises(ValueError,match='zero'):check_zero_structure(modules)
+
+
+def test_unrepresentable_storage_reports_candidate_failure_without_invalid_json():
+    import json
+    from pilot_eval.trace_capture import retention_evidence
+    result=retention_evidence(np.array([[70000]],dtype=np.float32),storage_dtype='float16')
+    assert result['conversion_finite'] is False and result['qualified'] is False
+    assert result['worst_coordinate']==[0,0]
+    assert result['reason']=='storage-overflow'
+    json.dumps(result,allow_nan=False)

@@ -84,11 +84,15 @@ def retention_evidence(values, *, storage_dtype):
     dtype=np.dtype(storage_dtype)
     if dtype not in (np.dtype('float16'),np.dtype('float32'),np.dtype('float64')):
         raise ValueError('Retained storage must be floating point.')
-    stored=source.astype(dtype)
-    if not np.isfinite(stored).all():raise ValueError('Nonfinite retained conversion.')
+    with np.errstate(over='ignore',invalid='ignore'):stored=source.astype(dtype)
+    if not np.isfinite(stored).all():
+        coordinate=np.argwhere(~np.isfinite(stored))[0].tolist()
+        return dict(qualified=False,conversion_finite=False,reason='storage-overflow',
+                    source_dtype=str(source.dtype),storage_dtype=str(dtype),worst_coordinate=coordinate,
+                    source_value=float(source[tuple(coordinate)]),stored_value_repr=repr(float(stored[tuple(coordinate)])))
     error=np.abs(stored.astype(np.float64)-source.astype(np.float64))
     coordinate=list(np.unravel_index(int(np.argmax(error)),error.shape))
-    return dict(qualified=False,source_dtype=str(source.dtype),storage_dtype=str(dtype),
+    return dict(qualified=False,conversion_finite=True,source_dtype=str(source.dtype),storage_dtype=str(dtype),
                 max_absolute_error=float(error.max()),worst_coordinate=[int(x) for x in coordinate],
                 source_value=float(source[tuple(coordinate)]),stored_value=float(stored[tuple(coordinate)]),
                 error_l2=float(np.linalg.norm(error.ravel())))
@@ -143,6 +147,8 @@ def storage_sensitivity(example_positions, readout, *, storage_dtype, draws, see
     if type(draws) is not int or draws<1 or type(top_k) is not int or top_k<1:
         raise ValueError('Explicit positive draw count and ranking size required.')
     conversion=retention_evidence(values,storage_dtype=storage_dtype)
+    if not conversion['conversion_finite']:
+        return dict(qualified=False,conversion=conversion,cohort=None,bootstrap=None,top_k=top_k)
     original=values.mean(axis=1);stored=values.astype(storage_dtype).astype(np.float64).mean(axis=1)
     def compare(indices):
         a=original[indices].mean(axis=0);b=stored[indices].mean(axis=0)
