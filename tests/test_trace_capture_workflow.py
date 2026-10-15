@@ -140,3 +140,27 @@ def test_notebook_runner_guards_new_gpu_work_and_verifies_complete_run_on_cpu(tm
     def no_probe():raise AssertionError('Complete diagnostic must be verified on CPU')
     runner.environment_probe=no_probe
     assert runner.run(args).returncode==0
+
+
+def test_notebook_capture_cells_prepare_restore_and_verify_without_previous_execution(tmp_path):
+    import ast,sys
+    from pathlib import Path
+    from pilot_eval.notebook_session import NotebookSession
+    from pilot_eval.trace_capture_workflow import run_diagnostic
+    corpus,paths=sources(tmp_path)
+    notebook=json.loads(Path('notebooks/pilot-5-colab.ipynb').read_text())
+    cells=[''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code']
+    prepare=next((s for s in cells if "'traces-capture-prepare'" in s),None)
+    verify=next((s for s in cells if "'traces-capture-verify'" in s),None)
+    assert prepare is not None and verify is not None,'Shared notebook must expose capture workflow'
+    class Session:
+        def restore(self):return dict(corpus=dict(path=str(corpus)),sources={a:dict(path=str(p),state='audited-config') for a,p in paths.items()})
+    namespace=dict(session=Session(),runner=NotebookSession(tmp_path,Path.cwd(),plan_name='notebook-capture'),
+        ARTIFACT_ROOT=tmp_path,EXPERIMENT_NAME='notebook-capture',Path=Path,sys=sys,json=json)
+    for cell in notebook['cells']:
+        if cell['cell_type']=='code':
+            ast.parse(''.join(cell['source']));assert cell['outputs']==[]
+    exec(compile(prepare,'notebook-capture-prepare','exec'),namespace)
+    plan=namespace['CAPTURE_DIAGNOSTIC_PATH']
+    run_diagnostic(plan,tmp_path,dependencies=Dependencies(Engine()))
+    exec(compile(verify,'notebook-capture-verify','exec'),namespace)
