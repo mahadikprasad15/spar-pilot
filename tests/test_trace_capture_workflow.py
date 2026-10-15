@@ -123,3 +123,20 @@ def test_capture_cli_verifies_saved_fixture_in_fresh_cpu_process(tmp_path):
     assert result.returncode==0,result.stdout+result.stderr
     assert json.loads(result.stdout)['diagnostic_complete'] is True
     assert json.loads(result.stdout)['qualified'] is False
+
+
+def test_notebook_runner_guards_new_gpu_work_and_verifies_complete_run_on_cpu(tmp_path):
+    import sys
+    from pathlib import Path
+    from pilot_eval.notebook_session import NotebookSession
+    from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic
+    corpus,paths=sources(tmp_path)
+    plan=prepare_diagnostic(corpus,paths['sft'],paths['grpo'],tmp_path,'runner-capture')
+    runner=NotebookSession(tmp_path,Path.cwd(),environment_probe=lambda:dict(cuda_available=False,gpu_count=0,versions={}))
+    args=[sys.executable,'-m','pilot_eval','traces-capture-diagnose','--config',str(plan),'--output-root',str(tmp_path)]
+    with pytest.raises(RuntimeError,match='Select a GPU runtime'):
+        runner.run(args)
+    run_diagnostic(plan,tmp_path,dependencies=Dependencies(Engine()))
+    def no_probe():raise AssertionError('Complete diagnostic must be verified on CPU')
+    runner.environment_probe=no_probe
+    assert runner.run(args).returncode==0
