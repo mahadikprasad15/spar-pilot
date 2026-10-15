@@ -17,6 +17,8 @@ def prepare_grading(directory,lists,reference_top100,*,salt=None,seed=20261018,s
     if not synthetic:
         if freeze_path is None:raise ValueError('A valid reference freeze is required for learned grading lists.')
         load_references(freeze_path,require_review=True)
+        if len(lists)!=106 or {row.get('condition') for row in lists}!=set(expected_grading_conditions()):
+            raise ValueError('Production grading must contain the approved 106-condition inventory.')
     if not lists or any(not isinstance(row.get('condition'),str) or not row['condition']
             or not 1<=len(row.get('tokens',[]))<=20 or not all(isinstance(t,str) for t in row['tokens']) for row in lists):
         raise ValueError('Declared condition and one to twenty token strings required per list.')
@@ -56,6 +58,16 @@ def prepare_grading(directory,lists,reference_top100,*,salt=None,seed=20261018,s
         paths=[list_path,public/'rubric.md',public/'naming_rubric.md',*private.glob('*.json')]
         _save_frozen(directory/'complete.json',{'files':{str(p.relative_to(directory)):file_hash(p) for p in paths}})
     return directory
+
+
+def expected_grading_conditions():
+    """Opaque in public lists; full identities are retained only in the key."""
+    lenses=('logit','jacobian');positions=[f'position-{i}' for i in range(5)]
+    return ([f'delta/{arm}/{position}/{lens}' for arm in ('sft','grpo','random')
+             for position in [*positions,'pooled'] for lens in lenses]
+            +[f'activation/{arm}/{position}/{lens}' for arm in ('base','sft','grpo')
+              for position in positions for lens in lenses]
+            +[f'null/{draw}/{lens}' for draw in range(20) for lens in lenses])
 
 
 def _package(directory):

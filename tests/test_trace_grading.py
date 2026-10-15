@@ -41,3 +41,12 @@ def test_agreement_hand_cases_and_naming_require_isolated_session(tmp_path):
     result=analyze_naming(package,grades,session_record={'fresh_session':True,'naming_before_relevance':True,'session_id':'fixture','grader':'fixture'})
     assert result['by_condition']['sft']['target_choice_rate']==1
     assert result['nominal_chance']==.125
+
+
+def test_approved_grading_inventory_has_106_unique_conditions():
+    from pilot_eval.trace_grading import expected_grading_conditions
+    conditions=expected_grading_conditions()
+    assert len(conditions)==len(set(conditions))==106
+    assert len([c for c in conditions if c.startswith('null/')])==40
+    assert len([c for c in conditions if c.startswith('delta/')])==36
+    assert len([c for c in conditions if c.startswith('activation/')])==30
