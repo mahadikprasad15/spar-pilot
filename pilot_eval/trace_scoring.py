@@ -63,3 +63,38 @@ def score_vector(vector, readout, inventory, *, references=None, freeze_path=Non
     return dict(state='scored' if count else 'undefined',reason=None if count else 'no-valid-strings',
                 scores=values,strings=strings,list_ids=[row['token_id'] for row in chosen],
                 raw_tokens=chosen,valid_count=count,short_list=count<20,norm=norm,synthetic=synthetic)
+
+
+def random_vectors(draws, dimension, *, seed=20261015, positions=1, covariance=None):
+    """Declared unit-vector null; covariance is supplied only by qualified capture."""
+    if any(type(n) is not int or n<1 for n in (draws,dimension,positions)):
+        raise ValueError('Positive integer draw, dimension and position counts required.')
+    vectors=np.random.default_rng(seed).standard_normal((draws,positions,dimension))
+    if covariance is not None:
+        covariance=np.asarray(covariance,dtype=np.float64)
+        if (covariance.shape!=(dimension,dimension) or not np.isfinite(covariance).all()
+                or not np.array_equal(covariance,covariance.T)):
+            raise ValueError('Invalid qualified covariance shape/symmetry.')
+        values,axes=np.linalg.eigh(covariance)
+        if np.any(values<0) or not np.any(values>0):
+            raise ValueError('Invalid covariance spectrum; no silent PSD repair.')
+        vectors=vectors@(axes*np.sqrt(values)).T
+    norms=np.linalg.norm(vectors,axis=-1,keepdims=True)
+    if np.any(norms==0) or not np.isfinite(norms).all():raise ValueError('Undefined null direction.')
+    return vectors/norms
+
+
+def null_scores(scorer, *, dimension, draws=1000, seed=20261015, positions=1, covariance=None):
+    """Apply the same max-over-positions rule as the secondary learned statistic.
+
+    scorer accepts one vector and returns a name-to-number mapping. Real lens and
+    freeze qualification belongs to the enclosing saved-workflow operation.
+    """
+    vectors=random_vectors(draws,dimension,seed=seed,positions=positions,covariance=covariance)
+    result={}
+    for sample in vectors:
+        values=[scorer(vector) for vector in sample]
+        if any(set(row)!=set(values[0]) for row in values):raise ValueError('Null score names changed.')
+        for name in values[0]:
+            result.setdefault(name,[]).append(float(np.max([row[name] for row in values])))
+    return {name:np.asarray(values,dtype=np.float64) for name,values in result.items()}
