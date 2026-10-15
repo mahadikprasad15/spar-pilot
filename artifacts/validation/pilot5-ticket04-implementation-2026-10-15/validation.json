@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-15",
+  "implementation_commit": "ef3b98269151947c774f56404cf3020187a06180",
+  "state": "implementation-verified-real-cuda-diagnostic-pending",
+  "baseline": {
+    "passed": 336,
+    "skipped": 35,
+    "seconds": 1020.54,
+    "scope": "session-start, before new workflow"
+  },
+  "affected": {
+    "passed": 88,
+    "seconds": 43.52,
+    "scope": "final trace and notebook/workflow regression"
+  },
+  "new_ticket_tests": 15,
+  "real_model_inference": false,
+  "real_cuda_qualification": false,
+  "gpu_acceptance_limits": "pending measured diagnostic review; exact zero remains mandatory",
+  "notebook": {
+    "cpu": [
+      1,
+      2,
+      14
+    ],
+    "gpu": [
+      1,
+      2,
+      4,
+      15,
+      16
+    ],
+    "completed_verify_cpu": [
+      1,
+      2,
+      16
+    ]
+  },
+  "workload": {
+    "documents": 4,
+    "content_positions": 128,
+    "conditions": 3,
+    "sequence_forwards": 12,
+    "sites_per_forward": 29,
+    "auxiliary_base_norm_calls": 1,
+    "head_rows": 32
+  },
+  "log_sha256": {
+    "session-baseline.log": "adb10d2e19e99551be60bd0df108e59c97d9a5c150bfeb64dc87c65c055f87fd",
+    "affected-release.log": "e6a124089e6c73453656ff7b5553952d0c88daac4071bb77921762df536e1696"
+  }
+}

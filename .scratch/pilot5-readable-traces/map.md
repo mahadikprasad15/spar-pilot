@@ -60,3 +60,7 @@ Ticket 02 resolved from user-reported public Colab verification: 200 documents, 
 ## Ticket 03 implementation handoff · 2026-10-15
 
 Approved v1.1/preflight procedure implemented and verified: 73 affected CPU tests. See `TICKET_03_REPORT.md`. Shared notebook cells 10–13 prepare/verify/review references; fresh CPU 1–2 → 10–12, then explicit review 13. Real reference execution and receipt are pending, so Ticket 03 remains claimed. No learned readout, GPU capture or grader result is asserted.
+
+## Ticket 04 implementation handoff · 2026-10-15
+
+Bounded four-document diagnostic and shared notebook 14–16 are implemented with independent CPU oracles and public saved-workflow tests. See `TICKET_04_REPORT.md`. Real CUDA execution and numerical-gate review remain pending; no production capture or qualification is claimed. A6/A7 moments/retention and paired precision-sensitivity utilities are carried forward.
