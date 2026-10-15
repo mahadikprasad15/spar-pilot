@@ -43,6 +43,7 @@ class CaptureEngine:
 
     def capture(self,rows,condition):
         from contextlib import nullcontext
+        from pilot_eval.trace_capture import CaptureFailure
         if condition not in ['base','sft-zero','grpo-zero']:raise ValueError('Unsupported diagnostic condition.')
         if condition!='base':self.model.set_adapter('default' if condition=='sft-zero' else 'grpo-zero')
         context=self.model.disable_adapter() if condition=='base' else nullcontext()
@@ -50,7 +51,11 @@ class CaptureEngine:
         with context,self.torch.inference_mode():
             for i,row in enumerate(rows):
                 inputs={k:self.torch.tensor([row[k]],dtype=self.torch.long,device='cuda:0') for k in ['input_ids','attention_mask','position_ids']}
-                result.append(self.capture_hooks.forward(lambda:self.model(**inputs,use_cache=False,output_hidden_states=False)))
+                try:
+                    result.append(self.capture_hooks.forward(lambda:self.model(**inputs,use_cache=False,output_hidden_states=False)))
+                except CaptureFailure as exc:
+                    exc.diagnostics.update(example_id=row['id'],condition=condition)
+                    raise
                 print(f'Diagnostic {condition}: {i+1}/{len(rows)} documents; 29 sites captured.',flush=True)
         return result
 

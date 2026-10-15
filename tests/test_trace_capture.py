@@ -88,3 +88,20 @@ def test_named_hooks_capture_embedding_and_pre_norm_blocks_and_always_remove_hoo
     assert all(not module.hooks for module in [model.embedding,*model.layers])
     with pytest.raises(RuntimeError):capture.forward(lambda:(_ for _ in ()).throw(RuntimeError('interrupted')))
     assert all(not module.hooks for module in [model.embedding,*model.layers])
+
+
+def test_nonfinite_hook_failure_names_the_site_and_coordinate():
+    import pytest
+    from pilot_eval.trace_capture import HookedTraceCapture,CaptureFailure
+    class Module:
+        def register_forward_hook(self,hook):
+            self.hook=hook
+            class Handle:
+                def remove(inner):self.hook=None
+            return Handle()
+    module=Module();capture=HookedTraceCapture(module,[])
+    def forward():module.hook(module,(),np.array([[[1.,float('nan')]]],dtype=np.float32))
+    with pytest.raises(CaptureFailure) as failure:capture.forward(forward)
+    assert failure.value.diagnostics['site']=='embedding-output'
+    assert failure.value.diagnostics['coordinate']==[0,0,1]
+    assert module.hook is None

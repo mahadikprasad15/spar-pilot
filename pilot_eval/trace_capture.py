@@ -114,8 +114,12 @@ class HookedTraceCapture:
             value=output[0] if isinstance(output,tuple) else output
             if hasattr(value,'detach'):value=value.detach().cpu().numpy()
             value=np.array(value,copy=True)
-            if value.ndim!=3 or not np.isfinite(value).all():
-                raise ValueError(f'Invalid activation at {name}')
+            if value.ndim!=3:
+                raise CaptureFailure(f'Invalid activation shape at {name}',dict(site=name,shape=list(value.shape)))
+            if not np.isfinite(value).all():
+                coordinate=np.argwhere(~np.isfinite(value))[0].tolist()
+                raise CaptureFailure(f'Nonfinite activation at {name}',dict(site=name,coordinate=coordinate,
+                    observed=repr(float(value[tuple(coordinate)])),allowance='finite values required'))
             outputs[name]=value
         try:
             for name,module in self.modules.items():
