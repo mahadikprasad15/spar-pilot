@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import pytest
 
 
@@ -21,6 +22,9 @@ def test_blind_package_is_deterministic_key_is_separate_and_unblind_waits_for_se
     final=analyze_grades(package,a,b,settlement={'reviewed':True,'reviewer':'Prasad','notes':'Reviewed every disagreement.','labels':settlements})
     assert final['state']=='settled' and set(final['by_condition'])=={'sft','grpo'}
     assert final['by_condition']['sft']['settled_relevance']==.5
+    resumed=analyze_grades(package,a,b)
+    assert resumed['state']=='settled'
+    assert (Path(resumed['grade_run_path'])/'grader_claude.jsonl').is_file()
     assert prepare_grading(tmp_path/'a',lists,['total'],salt='fixture-secret',synthetic=True)==package
     with pytest.raises(ValueError,match='IDs'):
         analyze_grades(package,a,a+[a[0]])

@@ -108,27 +108,47 @@ def _labels(rows,grades,field):
 
 def analyze_grades(directory,claude,codex,*,settlement=None):
     directory,rows=_package(directory);a=_labels(rows,claude,'labels');b=_labels(rows,codex,'labels')
-    flat_a=[];flat_b=[];differences=[];per_list={}
-    for row in rows:
-        key=row['list_id'];flat_a.extend(a[key]);flat_b.extend(b[key])
-        per_list[key]=dict(claude_relevance=float(np.mean(a[key])),codex_relevance=float(np.mean(b[key])),
-                           percent_agreement=float(100*np.mean(np.asarray(a[key])==b[key])))
-        differences.extend(dict(list_id=key,index=i,claude=x,codex=y) for i,(x,y) in enumerate(zip(a[key],b[key])) if x!=y)
-    result=dict(state='awaiting-settlement',agreement=agreement(flat_a,flat_b),per_list=per_list,disagreements=differences)
-    if settlement is not None:
-        expected={f"{row['list_id']}:{row['index']}" for row in differences}
-        if (settlement.get('reviewed') is not True or not settlement.get('reviewer','').strip()
-                or not settlement.get('notes','').strip() or set(settlement.get('labels',{}))!=expected
-                or any(type(v) is not int or v not in (0,1) for v in settlement['labels'].values())):
-            raise ValueError('Reviewed settlement must cover every disagreement exactly.')
-        key=json.loads((directory/'grading_key/key.json').read_text());conditions={}
+    identity=dict(claude=a,codex=b,package_sha256=file_hash(directory/'complete.json'))
+    grade_directory=directory/'grade-runs'/_hash(identity)[:16]
+    with run_lock(grade_directory):
+        _save_frozen(grade_directory/'meta/run_manifest.json',identity)
+        if (grade_directory/'complete.json').exists():
+            for name,digest in json.loads((grade_directory/'complete.json').read_text())['files'].items():
+                if file_hash(grade_directory/name)!=digest:raise ValueError('Accepted grade analysis hash mismatch.')
+        for name,values in [('grader_claude',a),('grader_codex',b)]:
+            text=''.join(json.dumps(dict(list_id=key,labels=value),sort_keys=True)+'\n' for key,value in sorted(values.items()))
+            path=grade_directory/(name+'.jsonl')
+            if path.exists() and path.read_text()!=text:raise ValueError('Imported grader data changed.')
+            temporary=path.with_suffix('.tmp');temporary.write_text(text);temporary.replace(path)
+        if settlement is None and (grade_directory/'settlement.json').exists():
+            settlement=json.loads((grade_directory/'settlement.json').read_text())
+        flat_a=[];flat_b=[];differences=[];per_list={}
         for row in rows:
-            list_id=row['list_id'];labels=[settlement['labels'].get(f'{list_id}:{i}',x) for i,x in enumerate(a[list_id])]
-            conditions.setdefault(key[list_id]['condition'],[]).append(float(np.mean(labels)))
-        result.update(state='settled',by_condition={name:dict(settled_relevance=float(np.mean(values)),lists=len(values)) for name,values in conditions.items()},settlement=settlement)
-    _write_json(directory/'analysis/agreement.json',result)
-    _write_json(directory/'analysis/disagreements.json',differences)
-    return result
+            key=row['list_id'];flat_a.extend(a[key]);flat_b.extend(b[key])
+            per_list[key]=dict(claude_relevance=float(np.mean(a[key])),codex_relevance=float(np.mean(b[key])),
+                               percent_agreement=float(100*np.mean(np.asarray(a[key])==b[key])))
+            differences.extend(dict(list_id=key,index=i,claude=x,codex=y) for i,(x,y) in enumerate(zip(a[key],b[key])) if x!=y)
+        result=dict(state='awaiting-settlement',agreement=agreement(flat_a,flat_b),per_list=per_list,disagreements=differences)
+        if settlement is not None:
+            expected={f"{row['list_id']}:{row['index']}" for row in differences}
+            if (settlement.get('reviewed') is not True or not settlement.get('reviewer','').strip()
+                    or not settlement.get('notes','').strip() or set(settlement.get('labels',{}))!=expected
+                    or any(type(v) is not int or v not in (0,1) for v in settlement['labels'].values())):
+                raise ValueError('Reviewed settlement must cover every disagreement exactly.')
+            _save_frozen(grade_directory/'settlement.json',settlement)
+            key=json.loads((directory/'grading_key/key.json').read_text());conditions={}
+            for row in rows:
+                list_id=row['list_id'];labels=[settlement['labels'].get(f'{list_id}:{i}',x) for i,x in enumerate(a[list_id])]
+                conditions.setdefault(key[list_id]['condition'],[]).append(float(np.mean(labels)))
+            result.update(state='settled',by_condition={name:dict(settled_relevance=float(np.mean(values)),lists=len(values)) for name,values in conditions.items()},settlement=settlement)
+        result['grade_run_path']=str(grade_directory)
+        _write_json(grade_directory/'agreement.json',result)
+        _write_json(grade_directory/'disagreements.json',differences)
+        if result['state']=='settled':
+            payloads=[p for p in grade_directory.iterdir() if p.suffix in ('.json','.jsonl') and p.name!='complete.json']
+            payloads.append(grade_directory/'meta/run_manifest.json')
+            _save_frozen(grade_directory/'complete.json',{'files':{str(p.relative_to(grade_directory)):file_hash(p) for p in payloads}})
+        return result
 
 
 def analyze_naming(directory,grades,*,session_record):
