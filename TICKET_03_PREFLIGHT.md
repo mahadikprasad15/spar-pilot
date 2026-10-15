@@ -2,7 +2,7 @@
 
 Prepared 15 October 2026. **Approved by Prasad on 15 October 2026 through the explicit preflight-defaults reply. Phase 2 is authorized.**
 
-Design reviewed: `.scratch/pilot5-readable-traces/ticket03-scoring-design-v1.1.md` (byte-identical copy of supplied v1.1; SHA-256 `1d2bcdfaa1fb4275b384f18eb1a8fd3ce3b65927637bda0468f202f4827d7636`). Amendments A1–A11 override the original sections. All proposals below are pending approval; they are not frozen scientific choices.
+Design reviewed: `.scratch/pilot5-readable-traces/ticket03-scoring-design-v1.1.md` (byte-identical copy of supplied v1.1; SHA-256 `1d2bcdfaa1fb4275b384f18eb1a8fd3ce3b65927637bda0468f202f4827d7636`). Amendments A1–A11 override the original sections. The defaults below were approved in the explicit preflight reply; real reference artifacts still require preparation and review.
 
 ## 1. Ticket 03 verbatim
 

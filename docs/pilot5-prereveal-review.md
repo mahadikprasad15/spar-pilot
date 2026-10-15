@@ -1,36 +1,37 @@
-# Pilot 5 prereveal review
+# Pilot 5 reference and prereveal workflow
 
-Status: partial implementation; scientific choices and real corpus verification pending.
+Status: implementation complete; real CPU reference preparation and review pending.
 
-The corpus fixes which unrelated text is measured. The capture contract fixes what vectors are saved. This review stage fixes how those vectors will be assessed before learned token lists are inspected.
+## Run now
+
+Use a fresh **CPU** notebook runtime. Run **1–2 → 10–12**. Existing smoke, source-audit and 200-document corpus artifacts are reused; skip 3–9. Read the three top-30 reference previews, then fill the review fields and run **13**. Keep exposure history honest: unknown history remains explicitly unverified.
 
 ```mermaid
 flowchart LR
-    C[Verified raw corpus] --> D[Review draft]
-    E[Reviewer exposure history] --> D
-    D --> A[Approve vocabulary and inference rules]
-    A --> F[Freeze rules: later implementation]
-    F --> R[Allow qualified readouts: later implementation]
-    P[Capture contract owns sites and retention] --> A
+  A[512 training questions and gold solutions] --> R[Three enriched references]
+  B[4096 accepted GRPO completions] --> R
+  C[Pinned FineWeb: first 10000 docs] --> D[Exclude measurement docs; select 2M raw tokens]
+  D --> R
+  R --> V[Verify seals and inspect top 30]
+  V --> F[Record reviewer receipt]
+  F --> L[Later qualified capture and lens consumers]
 ```
 
-## Implemented operations
+## What is implemented
 
-- `traces-review-prepare --config <traces.corpus.json> --name <experiment> --output-root <root>` verifies the corpus and creates an immutable empty review draft. It lists six unapproved sections: vocabulary, primary testing, resampling, SNR, robustness and grading. It never grants reveal.
-- `traces-review-exposure --event <event.json> --name <experiment> --output-root <root>` records a named reviewer’s exposure. The same event ID can be reused only with identical content; a correction requires a new event, preserving the original.
-- `traces-review-inspect --name <experiment> --output-root <root>` restores and checks exposure history without importing model libraries. It currently always reports `reveal_allowed: false`; freeze and outcome consumers are not implemented yet.
-- `validate_analysis_requests` rejects unsupported evidence requests. Position-wise cohort means exist at all 29 sites; pooled per-example positions 0–4 exist at all sites; per-example individual-position evidence exists only at blocks 14 and 17–21. These are data-availability checks, not approval of a statistical estimator.
+- `trace_reference_workflow.py`: public prepare/verify orchestration; exact parent identities; canonical procedure plan; saved run status.
+- `trace_vocabulary.py`: normalized counts, informative-prior log odds, three references and sensitivities; immutable freeze/review; resumable background scan.
+- `trace_scoring.py`: unique normalized top-token lists, overlap/soft-rank, null generators and verified scoring sessions.
+- `trace_statistics.py`: paired document bootstrap, declared p-values, Holm correction, SNR, N-curves, stratum checks and resumable draw chunks.
+- `trace_grading.py`: local blinded packages, separate private keys, raw grader-input persistence, agreement and settlement before condition joins. No API calls.
+- `trace_review.py`: earlier exposure history and retained-data capability validation remain available.
 
-Artifacts stay in `artifacts/runs/pilot-5/<experiment>/review/`. The draft binds the verified corpus configuration hash. Exposure records preserve reviewer, experiment, output type, description, observed date or explicit unknown date, and unknown history. They store descriptions, not lens token lists.
+Background scanning seals every 250 source documents. Interrupted unsealed work is repeated; completed chunks are verified and reused. A changed source or procedure is refused under the same identity. No model weights or GPU inference are needed. Real duration has not been benchmarked; network streaming and document lengths determine it.
 
-## Scientific decisions awaiting review
+## Artifact locations
 
-The proposed vocabulary rule has been presented to Prasad but is not approved or implemented: token occurrence counts in the exact 512 SFT gold solutions versus the actual frozen 200-document raw corpus, add-one-smoothed log frequency ratio, special/non-alphanumeric token exclusion, token-ID tie breaking and top 200 membership. Exact normalization support and treatment of unobserved training tokens still need to be stated in the final approved rule. No earlier held-out evaluation answers are substituted for training solutions.
+`artifacts/runs/pilot-5/<experiment>/analysis/ticket03/` stores config, counts, references, preview, seals and status. `artifacts/plans/<experiment>-overlap-v1/overlap.config.json` stores the immutable procedure alias. The notebook uses saved explicit source paths, not a latest-file search.
 
-Null distributions, the primary arm/readout family, correction and threshold, resampling counts/seeds, sample-size analysis, SNR estimator, legacy/new uncertainty interpretation and optional grading settings remain unapproved. Drafts keep them empty. Capture settings and the primary vector must be referenced from their owning capture contract, not redefined by this review module.
+## Scientific boundaries
 
-## Boundaries
-
-A draft is not preregistration completion. A prior exposure record is self-reported history, not proof of blinding. A checksum detects accidental payload changes, not malicious rewriting of the entire history. This supported-operation barrier cannot prevent deliberate direct access to raw files. Later consumers must enforce the frozen review identity before revealing outcomes; those consumers do not exist yet.
-
-No readouts, statistics, grading calls, model inference or GPU qualification have been run by this implementation. The notebook remains at its verified corpus release until this ticket is complete; no repair cells are needed.
+The approved procedure is in `TICKET_03_PREFLIGHT.md`; the implementation evidence is in `TICKET_03_REPORT.md`. Real references and human review are still pending. Real nulls require qualified lenses; covariance-shaped nulls also need qualified base moments. Capture and lens qualification are later tickets. C3 implements the approved bootstrap-tail formula, whose nominal calibration is not established by the tiny synthetic diagnostic. Exposure receipts are self reports, and seals protect accidental changes rather than malicious history replacement. Supported consumers enforce the gate; deliberate file access is outside it.

@@ -56,3 +56,7 @@ Exposure history, verified-corpus review drafts and retained-evidence availabili
 ## Corpus target verification · 2026-10-15
 
 Ticket 02 resolved from user-reported public Colab verification: 200 documents, 150 legacy/50 new, 128 content tokens, no added special tokens, return code 0. Ticket 03's real-corpus dependency is satisfied; vocabulary/statistical approvals remain pending. No new GPU work is required to review those choices.
+
+## Ticket 03 implementation handoff · 2026-10-15
+
+Approved v1.1/preflight procedure implemented and verified: 73 affected CPU tests. See `TICKET_03_REPORT.md`. Shared notebook cells 10–13 prepare/verify/review references; fresh CPU 1–2 → 10–12, then explicit review 13. Real reference execution and receipt are pending, so Ticket 03 remains claimed. No learned readout, GPU capture or grader result is asserted.

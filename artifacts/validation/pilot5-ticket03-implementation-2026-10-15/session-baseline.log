@@ -1,0 +1,14 @@
+..s..........sssssss.sss................................................ [ 20%]
+...ssss..........................................sss..............s..... [ 41%]
+.ss...s...............s.........s..............s........................ [ 62%]
+......................................................sss.....s......... [ 83%]
+........sss..sss..........................................               [100%]
+=============================== warnings summary ===============================
+tests/test_activation_notebook.py: 30 warnings
+tests/test_activation_report.py: 30 warnings
+tests/test_grpo_writes.py: 72 warnings
+  /Users/prasadmahadik/spar/pilot1/pilot_eval/activation_plots.py:64: PendingDeprecationWarning: The set_bad function will be deprecated in a future version. Use cmap.with_extremes(bad=...) or Colormap(bad=...) instead.
+    cmap.set_bad('#d9dde3')
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+311 passed, 35 skipped, 132 warnings in 1033.80s (0:17:13)

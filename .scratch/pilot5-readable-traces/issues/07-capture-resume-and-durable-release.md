@@ -13,3 +13,7 @@
 - [ ] Durable synchronization reuses valid copied units; final verification checks required retained shards, identities and seals before announcing GPU release and waits for child exit.
 - [ ] Show actual phase, condition, completed/sealed units, throughput and estimate; separate hash/sync work from forward progress.
 - [ ] Reuse existing writer locks with one bounded public conflict check and a clear error; no separate broad contention framework is required.
+
+## Approved Ticket 03 data dependency (A6–A7)
+
+Carry per-document block-14 positions 0–4 through durable capture for whole-document bootstrap. For the optional activation-shaped null, capture base block-14 positions 1–127: FP64 Σh and Σhhᵀ plus count 25,400 (200 × 127), bound to source/runtime/site identities. At width 1,536 the second-moment matrix alone is 18 MiB; profile accumulation and transfer costs. Qualification owns numerical allowances. Missing moments mean this secondary null is unavailable; never fabricate covariance evidence or silently repair a failed matrix.

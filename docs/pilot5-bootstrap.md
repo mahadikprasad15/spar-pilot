@@ -4,7 +4,7 @@ The dedicated shared notebook is `notebooks/pilot-5-colab.ipynb`. Cells 1–6 re
 
 ## Current resume point
 
-The user has completed the three source audits, import/storage smoke and fresh-runtime reconnection. Those stages need no repetition to prepare the corpus. In the updated notebook on a fresh CPU runtime, run 1–2, then 7–9. Cell 7 records the approved selection and actual prior exposure; cell 8 downloads pinned tokenizer files and streams the pinned data pool, saving exact inputs; cell 9 verifies their seals. See [corpus workflow](pilot5-corpus.md). Skip 3–6 when restoring this already audited experiment.
+The user has completed the source audits, import/storage smoke, fresh-runtime reconnection and verified 200-document raw corpus. In the updated notebook, use a fresh CPU runtime and run **1–2 → 10–12**, inspect the reference previews, then fill and run **13**. Skip 3–9. See [reference workflow](pilot5-prereveal-review.md). No GPU allocation is needed for this stage.
 
 ## Minimal Colab validation
 

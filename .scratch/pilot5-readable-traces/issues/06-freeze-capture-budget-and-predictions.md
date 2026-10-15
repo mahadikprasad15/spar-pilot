@@ -16,3 +16,7 @@
 - [ ] Lens status is an input. A qualified community lens proceeds; failed qualification follows ticket 5’s predeclared save/stop/release/ask route. Prasad owns the scientific fallback decision. Diagnostic capture does not fabricate Jacobian evidence.
 - [ ] Prasad owns budget/scope approval. An unaffordable profile saves diagnostics, stops paid work before production, allows independent CPU review to continue and presents reductions in a predeclared order: defer optional form/trajectory, reduce secondary readout work, choose a smaller passing batch for memory, then propose separately reviewed corpus/site/retention changes. No automatic scientific reduction or post-failure tolerance retuning.
 - [ ] Review states the next CPU/GPU grouping and exact durable-release boundary; no source-doc timing promise is treated as a measurement.
+
+## Approved Ticket 03 data dependency (A6–A7)
+
+Carry per-document block-14 positions 0–4 through durable capture for whole-document bootstrap. For the optional activation-shaped null, capture base block-14 positions 1–127: FP64 Σh and Σhhᵀ plus count 25,400 (200 × 127), bound to source/runtime/site identities. At width 1,536 the second-moment matrix alone is 18 MiB; profile accumulation and transfer costs. Qualification owns numerical allowances. Missing moments mean this secondary null is unavailable; never fabricate covariance evidence or silently repair a failed matrix.

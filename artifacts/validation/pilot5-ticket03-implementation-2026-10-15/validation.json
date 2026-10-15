@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-15",
+  "implementation_commit": "d7d1d24a67c7fa812113ff99ec5e4112c3478780",
+  "state": "implementation-verified-real-reference-execution-pending",
+  "baseline": {
+    "passed": 311,
+    "skipped": 35,
+    "seconds": 1033.8,
+    "scope": "session-start before new slices"
+  },
+  "affected": {
+    "passed": 73,
+    "seconds": 40.02,
+    "scope": "final affected modules and notebook/workflow regression"
+  },
+  "log_sha256": {
+    "session-baseline.log": "fb78c53402ff2f736d298fa8f56c76d6d5371267c82dec892c658807d28edad3",
+    "affected-release.log": "2b6ab4a3fdea2c8d54de8aa8a38a08488a5c9de9a30cf64738692cc113a1ca88"
+  },
+  "real_reference_run": false,
+  "model_inference": false,
+  "external_grader_calls": false,
+  "notebook_cpu_sequence": [
+    1,
+    2,
+    10,
+    11,
+    12
+  ],
+  "review_cell": 13
+}
