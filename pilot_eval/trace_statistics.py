@@ -99,8 +99,13 @@ def ncurves(examples,scorer,*,sizes=(25,50,100,200),draws=200,seed=20261017,stra
         for draw in range(draws):
             chosen=rng.choice(len(ids),size=size,replace=False)
             selected=[ids[index] for index in chosen]
+            subset=values[chosen]
+            pooled=subset.mean(axis=1) if subset.ndim==3 else subset
             rows.append(dict(n=size,draw=draw,document_ids=selected,counts=dict(Counter(strata[key] for key in selected)),
-                             score=_condition(values[chosen],scorer,form),full_cohort=size==len(ids)))
+                             score=_condition(subset,scorer,form),snr=snr(pooled),
+                             norm=float(np.linalg.norm(pooled.mean(axis=0))),
+                             position_snr=[snr(subset[:,i,:]) for i in range(5)] if subset.ndim==3 else None,
+                             full_cohort=size==len(ids)))
     return rows
 
 

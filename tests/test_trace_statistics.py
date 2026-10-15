@@ -68,3 +68,14 @@ def test_stratum_robustness_keeps_groups_separate_and_uses_size_matched_legacy_d
     assert len(result['matched_legacy_scores'])==8
     assert result['new_score_percentile']==100
     assert all(len(ids)==2 and len(set(ids))==2 and set(ids)<={'0','1','2'} for ids in result['matched_document_ids'])
+
+
+def test_secondary_max_bootstrap_recomputes_positions_and_ncurves_report_snr():
+    from pilot_eval.trace_statistics import bootstrap_scores,ncurves
+    examples={'a':np.array([[1.],[0.],[0.],[0.],[0.]]),'b':np.array([[0.],[0.],[0.],[0.],[3.]])}
+    score=lambda v:float(v[0])
+    result=bootstrap_scores(examples,score,draws=20,seed=7,form='max-five')
+    assert result['observed']==1.5
+    assert set(result['scores'])<={1.,1.5,3.}
+    curves=ncurves({'a':[1.,0.],'b':[3.,0.]},score,sizes=[2],draws=1,strata={'a':'legacy-150','b':'new-50'})
+    assert curves[0]['snr']==2.
