@@ -166,5 +166,16 @@ def analyze_naming(directory,grades,*,session_record):
     result=dict(by_condition={name:dict(target_choice_rate=float(np.mean(values)),lists=len(values)) for name,values in groups.items()},
                 nominal_chance=1/8,session_record=session_record,
                 interpretation='GSM8K target-choice rate; nominal chance alone does not calibrate grader bias, compare null lists too')
-    _write_json(directory/'analysis/naming.json',result)
+    identity=dict(choices=choices,session_record=session_record,package_sha256=file_hash(directory/'complete.json'))
+    target=directory/'naming-runs'/_hash(identity)[:16]
+    result['artifact_path']=str(target)
+    with run_lock(target):
+        _save_frozen(target/'meta/run_manifest.json',identity)
+        text=''.join(json.dumps(dict(list_id=key,choice=value),sort_keys=True)+'\n' for key,value in sorted(choices.items()))
+        path=target/'choices.jsonl'
+        if path.exists() and path.read_text()!=text:raise ValueError('Naming choices changed.')
+        temporary=path.with_suffix('.tmp');temporary.write_text(text);temporary.replace(path)
+        _save_frozen(target/'results.json',result)
+        paths=[path,target/'results.json',target/'meta/run_manifest.json']
+        _save_frozen(target/'complete.json',{'files':{str(p.relative_to(target)):file_hash(p) for p in paths}})
     return result

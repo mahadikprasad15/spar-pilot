@@ -45,6 +45,7 @@ def test_agreement_hand_cases_and_naming_require_isolated_session(tmp_path):
     result=analyze_naming(package,grades,session_record={'fresh_session':True,'naming_before_relevance':True,'session_id':'fixture','grader':'fixture'})
     assert result['by_condition']['sft']['target_choice_rate']==1
     assert result['nominal_chance']==.125
+    assert (Path(result['artifact_path'])/'choices.jsonl').is_file()
 
 
 def test_approved_grading_inventory_has_106_unique_conditions():
