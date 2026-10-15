@@ -55,3 +55,36 @@ def test_retention_report_measures_conversion_without_claiming_qualification():
     assert evidence['source_dtype']=='float64'
     with pytest.raises(ValueError,match='Nonfinite'):
         retention_evidence([float('nan')],storage_dtype='float16')
+
+
+def test_named_hooks_capture_embedding_and_pre_norm_blocks_and_always_remove_hooks():
+    import pytest
+    from pilot_eval.trace_capture import HookedTraceCapture
+    class Module:
+        def __init__(self,operation):self.operation=operation;self.hooks=[]
+        def register_forward_hook(self,hook):
+            self.hooks.append(hook)
+            class Handle:
+                def remove(inner):self.hooks.remove(hook)
+            return Handle()
+        def __call__(self,x):
+            y=self.operation(x)
+            for hook in self.hooks:hook(self,(x,),y)
+            return y
+    class Body:
+        def __init__(self):
+            self.embedding=Module(lambda ids:np.stack([ids,ids*2],axis=-1).astype(np.float32))
+            self.layers=[Module(lambda x,i=i:x+i+1) for i in range(28)]
+        def __call__(self,input_ids):
+            x=self.embedding(input_ids)
+            for block in self.layers:x=block(x)
+            return x*100  # A final norm surrogate must not replace block-27 output.
+    model=Body();capture=HookedTraceCapture(model.embedding,model.layers)
+    result=capture.forward(lambda:model(np.array([[1,2]])))
+    assert len(result)==29
+    np.testing.assert_array_equal(result['embedding-output'],[[[1,2],[2,4]]])
+    np.testing.assert_array_equal(result['block-14-output'],[[[121,122],[122,124]]])
+    np.testing.assert_array_equal(result['block-27-output'],[[[407,408],[408,410]]])
+    assert all(not module.hooks for module in [model.embedding,*model.layers])
+    with pytest.raises(RuntimeError):capture.forward(lambda:(_ for _ in ()).throw(RuntimeError('interrupted')))
+    assert all(not module.hooks for module in [model.embedding,*model.layers])

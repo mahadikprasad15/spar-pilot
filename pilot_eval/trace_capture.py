@@ -86,3 +86,36 @@ def retention_evidence(values, *, storage_dtype):
                 max_absolute_error=float(error.max()),worst_coordinate=[int(x) for x in coordinate],
                 source_value=float(source[tuple(coordinate)]),stored_value=float(stored[tuple(coordinate)]),
                 error_l2=float(np.linalg.norm(error.ravel())))
+
+
+class HookedTraceCapture:
+    """Capture embedding and decoder-block outputs in a single model call.
+
+    Accepts the actual embedding module and ordered decoder blocks. Works with
+    Torch modules or independent CPU hook fixtures; the caller owns inference
+    mode, adapter selection and input construction.
+    """
+    def __init__(self, embedding, blocks):
+        self.modules={'embedding-output':embedding}
+        self.modules.update({f'block-{i}-output':block for i,block in enumerate(blocks)})
+        if len({id(m) for m in self.modules.values()})!=len(self.modules):
+            raise ValueError('Named capture modules must be distinct.')
+
+    def forward(self, call):
+        outputs={};handles=[]
+        def save(name,output):
+            if name in outputs:raise ValueError(f'Capture site fired twice: {name}')
+            value=output[0] if isinstance(output,tuple) else output
+            if hasattr(value,'detach'):value=value.detach().cpu().numpy()
+            value=np.array(value,copy=True)
+            if value.ndim!=3 or not np.isfinite(value).all():
+                raise ValueError(f'Invalid activation at {name}')
+            outputs[name]=value
+        try:
+            for name,module in self.modules.items():
+                handles.append(module.register_forward_hook(lambda m,a,o,name=name:save(name,o)))
+            call()
+            if set(outputs)!=set(self.modules):raise ValueError('Missing named capture sites.')
+            return outputs
+        finally:
+            for handle in handles:handle.remove()
