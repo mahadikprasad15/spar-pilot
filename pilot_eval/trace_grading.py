@@ -16,7 +16,7 @@ def prepare_grading(directory,lists,reference_top100,*,salt=None,seed=20261018,s
     from pilot_eval.trace_vocabulary import load_references
     if not synthetic:
         if freeze_path is None:raise ValueError('A valid reference freeze is required for learned grading lists.')
-        load_references(freeze_path)
+        load_references(freeze_path,require_review=True)
     if not lists or any(not isinstance(row.get('condition'),str) or not row['condition']
             or not 1<=len(row.get('tokens',[]))<=20 or not all(isinstance(t,str) for t in row['tokens']) for row in lists):
         raise ValueError('Declared condition and one to twenty token strings required per list.')

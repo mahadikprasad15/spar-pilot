@@ -31,7 +31,7 @@ def score_vector(vector, readout, inventory, *, references=None, freeze_path=Non
     if not synthetic:
         if freeze_path is None:raise ValueError('A valid reference freeze is required before scoring.')
         if references is not None:raise ValueError('Production references must come only from the verified freeze.')
-        references=load_references(freeze_path)['references']
+        references=load_references(freeze_path,require_review=True)['references']
     if not references:raise ValueError('No reference sets supplied.')
     vector=np.asarray(vector,dtype=np.float64)
     if vector.ndim!=1 or not np.isfinite(vector).all():raise ValueError('Vector must be finite and one-dimensional.')

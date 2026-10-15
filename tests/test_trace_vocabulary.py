@@ -88,3 +88,16 @@ def test_native_inventory_uses_real_tokenizer_decoding_without_model_imports(tmp
     inventory=TokenInventory.from_file(p)
     assert inventory.count(inventory.encode('total total Ａ'))=={'total':2,'a':1}
     assert inventory.normalize(0) is None
+
+
+def test_human_reference_review_binds_freeze_and_top30_before_production_scoring(tmp_path):
+    from pilot_eval.trace_vocabulary import freeze_references, load_references, approve_references
+    path=freeze_references(tmp_path/'refs',{'ref_questions':{},'ref_gold':{},'ref_grpo':{}},parameters={},input_files={})
+    (path.parent/'top30.md').write_text('Reference preview fixture.')
+    with pytest.raises(ValueError,match='review'):
+        load_references(path,require_review=True)
+    approve_references(path,reviewer='Prasad',notes='Read the preview; fixture references only.')
+    assert load_references(path,require_review=True)['protocol']=='pilot5-overlap-v1.1'
+    (path.parent/'top30.md').write_text('Changed preview.')
+    with pytest.raises(ValueError,match='review'):
+        load_references(path,require_review=True)

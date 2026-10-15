@@ -106,7 +106,7 @@ def freeze_references(directory, references, *, parameters, input_files):
     return path
 
 
-def load_references(path):
+def load_references(path, *, require_review=False):
     """Verify a reference freeze before a supported scoring operation."""
     from pilot_eval.training import file_hash
     from pilot_eval.workflow import _hash
@@ -123,7 +123,33 @@ def load_references(path):
         source = Path(item['path'])
         if not source.is_file() or file_hash(source) != item['sha256']:
             raise ValueError('Reference parent hash mismatch.')
+    if require_review:
+        review_path=path.parent/'review.json';review_seal=path.parent/'review-seal.json'
+        if not review_path.is_file() or not review_seal.is_file():
+            raise ValueError('Human reference review is required before learned scoring.')
+        review=json.loads(review_path.read_text())
+        if (file_hash(review_path)!=json.loads(review_seal.read_text())['sha256']
+                or review['freeze_sha256']!=file_hash(path)
+                or review['top30_sha256']!=file_hash(path.parent/'top30.md')):
+            raise ValueError('Reference review identity/hash changed.')
+        payload['review']=review
     return payload
+
+
+def approve_references(path, *, reviewer, notes, exposure_status='unknown'):
+    """Bind human inspection and explicit exposure status; unknown is not confirmatory."""
+    from pilot_eval.training import file_hash,run_lock
+    from pilot_eval.workflow import _save_frozen
+    path=Path(path).resolve();load_references(path)
+    if not reviewer.strip() or not notes.strip() or exposure_status not in {'not-seen','seen-before-freeze','unknown'}:
+        raise ValueError('Named reference review and explicit exposure status required.')
+    receipt=dict(reviewer=reviewer,notes=notes,exposure_status=exposure_status,
+                 inference_status='eligible-for-predeclared-analysis' if exposure_status=='not-seen' else 'exploratory-or-unverified-exposure',
+                 freeze_sha256=file_hash(path),top30_sha256=file_hash(path.parent/'top30.md'))
+    with run_lock(path.parent):
+        _save_frozen(path.parent/'review.json',receipt)
+        _save_frozen(path.parent/'review-seal.json',{'sha256':file_hash(path.parent/'review.json')})
+    return receipt
 
 
 def prepare_background(directory, documents, tokenizer, *, measurement_indices,
