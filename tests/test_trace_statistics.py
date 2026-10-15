@@ -55,3 +55,16 @@ def test_saved_draw_workflow_resumes_only_sealed_units_and_checks_identity(tmp_p
     assert run_draws(tmp_path/'draws',{'seed':42},list(range(5)),None,chunk_size=2)==result
     with pytest.raises(ValueError,match='mismatch'):
         run_draws(tmp_path/'draws',{'seed':43},list(range(5)),None,chunk_size=2)
+
+
+def test_stratum_robustness_keeps_groups_separate_and_uses_size_matched_legacy_draws():
+    from pilot_eval.trace_statistics import stratum_robustness
+    examples={str(i):np.array([float(i),0]) for i in range(5)}
+    strata={str(i):'legacy-150' if i<3 else 'new-50' for i in range(5)}
+    result=stratum_robustness(examples,lambda v:float(v[0]),strata=strata,
+        draws=10,matched_draws=8,matched_size=2)
+    assert result['groups']['legacy-150']['observed']==1
+    assert result['groups']['new-50']['observed']==3.5
+    assert len(result['matched_legacy_scores'])==8
+    assert result['new_score_percentile']==100
+    assert all(len(ids)==2 and len(set(ids))==2 and set(ids)<={'0','1','2'} for ids in result['matched_document_ids'])

@@ -149,3 +149,24 @@ def run_draws(directory,config,unit_ids,compute,*,chunk_size=25):
             return rows
         except BaseException as exc:
             _write_state(directory,'failed',len(rows),len(unit_ids),str(exc));raise
+
+
+def stratum_robustness(examples,scorer,*,strata,draws=2000,matched_draws=1000,
+                       matched_size=50,seed=20261016,matched_seed=20261020,form='pooled'):
+    ids,_=_examples(examples)
+    if set(strata)!=set(ids) or set(strata.values())!={'legacy-150','new-50'}:
+        raise ValueError('Preserve both legacy-150 and new-50 document strata.')
+    groups={group:{key:examples[key] for key in ids if strata[key]==group} for group in ('legacy-150','new-50')}
+    within={group:bootstrap_scores(values,scorer,draws=draws,seed=seed,form=form) for group,values in groups.items()}
+    legacy_ids,legacy=_examples(groups['legacy-150'])
+    if (type(matched_size) is not int or not 1<=matched_size<=len(legacy_ids)
+            or type(matched_draws) is not int or matched_draws<1):raise ValueError('Invalid matched legacy draw request.')
+    rng=np.random.default_rng(matched_seed);scores=[];chosen_ids=[]
+    for _ in range(matched_draws):
+        chosen=rng.choice(len(legacy_ids),size=matched_size,replace=False)
+        scores.append(_condition(legacy[chosen],scorer,form));chosen_ids.append([legacy_ids[i] for i in chosen])
+    new=within['new-50']['observed']
+    percentile=float(100*np.mean(np.asarray(scores)<=new)) if math.isfinite(new) and np.isfinite(scores).all() else math.nan
+    return dict(groups=within,matched_legacy_scores=scores,matched_document_ids=chosen_ids,
+                new_score_percentile=percentile,percentile_rule='upper empirical CDF; ties included',
+                interpretation='robustness only; no exposure-effect inference')
