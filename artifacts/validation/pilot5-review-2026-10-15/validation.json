@@ -15,8 +15,13 @@
     ]
   },
   "session_regression": {
-    "state": "running",
-    "log": "/private/tmp/pilot5-session-2026-10-15.log"
+    "state": "completed",
+    "passed": 306,
+    "skipped": 35,
+    "warnings": 132,
+    "seconds": 1014.75,
+    "scope": "collected before Ticket 03 additions; affected set covers subsequent changes",
+    "log": "session-regression.log"
   },
   "scientific_execution": {
     "corpus": "not confirmed by user",
