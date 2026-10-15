@@ -96,3 +96,19 @@ def test_review_draft_binds_verified_corpus_and_lists_unapproved_choices(tmp_pat
     corpus.write_text('{}')
     with pytest.raises(ValueError):
         prepare_review(corpus, tmp_path, 'review')
+
+
+def test_public_prepare_command_creates_review_without_revealing_outcomes(tmp_path):
+    import json
+    import subprocess
+    import sys
+    from test_trace_corpus import Sources, review
+    from pilot_eval.trace_corpus import prepare_corpus
+    deps = Sources(tmp_path)
+    corpus = prepare_corpus(deps.path, tmp_path, 'corpus', review=review(), dependencies=deps)
+    result = subprocess.run([sys.executable, '-m', 'pilot_eval', 'traces-review-prepare',
+        '--config', str(corpus), '--name', 'review', '--output-root', str(tmp_path)],
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)['reveal_allowed'] is False
+    assert len(json.loads(result.stdout)['missing_choices']) == 6
