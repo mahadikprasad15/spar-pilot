@@ -29,3 +29,29 @@ def test_paired_stream_preserves_content_positions_sites_and_primary_pooling():
     np.testing.assert_array_equal(result['base_moments']['sum'],[60,75])
     np.testing.assert_array_equal(result['base_moments']['outer_sum'],[[450,550],[550,675]])
     assert result['position_delta_sums']['block-14-output'].dtype==np.float64
+
+
+def test_logit_lens_keeps_final_norm_gain_and_has_no_zero_vector_readout():
+    import pytest
+    from pilot_eval.trace_capture import logit_lens
+    # RMS([1, 2]) = sqrt(2.5); norm gains [2, 3] give [2, 6]/sqrt(2.5).
+    matrix=np.array([[1,0],[0,1],[1,-1]])
+    scores=logit_lens([1,2],norm_weight=[2,3],unembedding=matrix,epsilon=0)
+    np.testing.assert_allclose(scores,[1.2649110640673518,3.794733192202055,-2.5298221281347035],atol=1e-14)
+    np.testing.assert_array_equal(np.argsort(scores),np.argsort(logit_lens([7,14],norm_weight=[2,3],unembedding=matrix,epsilon=0)))
+    assert logit_lens([0,0],norm_weight=[2,3],unembedding=matrix,epsilon=0) is None
+    with pytest.raises(ValueError,match='shape'):
+        logit_lens([1,2],norm_weight=[1],unembedding=matrix,epsilon=0)
+
+
+def test_retention_report_measures_conversion_without_claiming_qualification():
+    import pytest
+    from pilot_eval.trace_capture import retention_evidence
+    original=np.array([[1.0001,2.0002],[3.0003,4.0004]],dtype=np.float64)
+    evidence=retention_evidence(original,storage_dtype='float16')
+    assert evidence['qualified'] is False
+    assert evidence['max_absolute_error']==pytest.approx(.0004)
+    assert evidence['worst_coordinate']==[1,1]
+    assert evidence['source_dtype']=='float64'
+    with pytest.raises(ValueError,match='Nonfinite'):
+        retention_evidence([float('nan')],storage_dtype='float16')
