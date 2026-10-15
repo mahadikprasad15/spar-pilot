@@ -42,6 +42,16 @@ def test_reference_workflow_builds_three_frozen_references_and_reuses_completed_
     class NoAccess:
         def __getattr__(self,name):raise AssertionError('Completed preparation must reuse existing inputs.')
     assert prepare_reference_run(corpus,sft,grpo,tmp_path,'reference-test',dependencies=NoAccess())==path
+    # A sealed older builder config must not silently reuse results under changed math code.
+    import pytest
+    config_path=path.parent.parent/'config.json'
+    config=json.loads(config_path.read_text());config['implementation']={'old-builder':'different'}
+    config_path.write_text(json.dumps(config))
+    seal_path=path.parent.parent/'complete.json'
+    seal=json.loads(seal_path.read_text());seal['files']['config.json']=hashlib.sha256(config_path.read_bytes()).hexdigest()
+    seal_path.write_text(json.dumps(seal))
+    with pytest.raises(ValueError,match='implementation changed'):
+        verify_reference_run(path,tmp_path)
 
 
 def test_public_reference_verify_and_review_commands_work_in_fresh_cpu_process(tmp_path):

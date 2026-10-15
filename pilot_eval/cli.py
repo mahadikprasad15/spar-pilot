@@ -213,6 +213,7 @@ def main(argv=None, *, dependencies=None):
                 from pilot_eval.trace_corpus import _inside
                 from pilot_eval.trace_vocabulary import approve_references
                 path=_inside(args.output_root.resolve(),args.config)
+                verify_reference_run(path,args.output_root)
                 print(json.dumps(approve_references(path,reviewer=args.reviewer,notes=args.notes,exposure_status=args.exposure_status),indent=2))
         elif args.command.startswith('traces-review-'):
             from pilot_eval.trace_review import record_exposure, inspect_review, prepare_review

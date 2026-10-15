@@ -10,6 +10,11 @@ from pilot_eval.run import _write_json,_write_state
 from pilot_eval.sft import safe_name
 
 
+def _implementation():
+    directory=Path(__file__).parent
+    return {name:file_hash(directory/name) for name in ('trace_vocabulary.py','trace_reference_workflow.py')}
+
+
 def approved_procedure():
     """Values approved in design v1.1 plus preflight section 6, 15 October 2026."""
     return dict(version='pilot5-overlap-v1.1-preflight',approval='Prasad: approve the preflight defaults, 2026-10-15',
@@ -39,6 +44,8 @@ def verify_reference_run(path,output_root):
     for relative,expected in json.loads(complete.read_text())['files'].items():
         if file_hash(_inside(directory,relative))!=expected:raise ValueError('Reference run hash mismatch.')
     payload=load_references(path);config=json.loads((directory/'config.json').read_text())
+    if config['implementation']!=_implementation():
+        raise ValueError('Reference builder implementation changed; inspect the old execution before reuse.')
     reviewed=(path.parent/'review.json').exists()
     if reviewed:load_references(path,require_review=True)
     return dict(reference_names=['ref_questions','ref_gold','ref_grpo'],background_tokens=2000000,
@@ -80,6 +87,7 @@ def prepare_reference_run(corpus_path,sft_path,grpo_path,output_root,name,*,depe
                  'measurement':_inside(root,corpus['items_path'])}
         parents.update({f'tokenizer-{key}':_inside(root,value['path']) for key,value in corpus['tokenizer_files'].items()})
         config=dict(schema_version=1,procedure=approved_procedure(),source_paths=[str(p.relative_to(root)) for p in (corpus_path,sft_path,grpo_path)],
+                    implementation=_implementation(),
                     parent_hashes={key:file_hash(p) for key,p in parents.items()},prior_exposure=corpus['review']['prior_exposure'],
                     reviewer='Prasad',review_date='2026-10-15',verification_scope='sealed text/input parents; not a full optimizer/checkpoint audit')
         _save_frozen(directory/'config.json',config);_write_state(directory,'running',0,3)
