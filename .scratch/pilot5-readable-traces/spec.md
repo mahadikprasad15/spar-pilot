@@ -166,3 +166,7 @@ The main input form, pooled primary vector, bounded zero checks, community-first
 A source-and-decision map and a more detailed design document accompany this spec. The reference paper and code were inspected, but exact community-lens binary metadata still require verification. The optional assistant implementation is a contextual extension, not a claim that Minder's default extraction requires chat formatting.
 
 Existing-data first looks are exploratory. Freeze primary definitions and the reference vocabulary before learned outcome lists are exposed, including bounded previews; disclose any earlier exposure. Sample-size and SNR analyses depend on retained per-example evidence and must respect its stored precision.
+
+## Ticket 03 approved amendment · 2026-10-15
+
+Use `ticket03-scoring-design-v1.1.md`, with amendments A1–A11 taking precedence, and all section 6 defaults in the approved root `TICKET_03_PREFLIGHT.md`. The primary remains raw/block14/step64/pooled0–4. Matching is normalized-string based; reference questions are primary, gold/GRPO references secondary; background uses a fixed first-10,000 source-document pool and exactly 2M raw tokens. Ticket 03 implements and tests procedures on synthetic vectors; qualified real lens/null/readout results remain later stages. Preserve prior-exposure and supported-operation reveal gates. Real reference preparation can run on CPU, without claiming production activation/lens qualification. Existing capture-owner tickets must carry A6/A7 evidence requirements.

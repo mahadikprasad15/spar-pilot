@@ -1,6 +1,6 @@
 # Ticket 03 preflight
 
-Prepared 15 October 2026. **Awaiting Prasad's approval; no Phase 2 implementation has begun.**
+Prepared 15 October 2026. **Approved by Prasad on 15 October 2026 through the explicit preflight-defaults reply. Phase 2 is authorized.**
 
 Design reviewed: `.scratch/pilot5-readable-traces/ticket03-scoring-design-v1.1.md` (byte-identical copy of supplied v1.1; SHA-256 `1d2bcdfaa1fb4275b384f18eb1a8fd3ce3b65927637bda0468f202f4827d7636`). Amendments A1–A11 override the original sections. All proposals below are pending approval; they are not frozen scientific choices.
 
@@ -168,3 +168,5 @@ Exposure follow-through: no Pilot 5 learned lens outputs have been produced by t
 **Approval boundary:** approve or amend this preflight before Phase 2. This document does not mark Ticket 03 resolved, launch capture, download model/lens weights, score learned activations, call a grader API or publish scientific results.
 
 PREFLIGHT READY — waiting for approval
+
+Approval receipt: “Approve the preflight defaults”. All section 6 defaults are accepted; real-input, lens and capture qualification remain independent gates.
