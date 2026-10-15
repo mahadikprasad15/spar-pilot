@@ -15,6 +15,13 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ('prepare','diagnose','verify'):
+        capture=commands.add_parser('traces-capture-'+operation,help='Bounded Pilot 5 capture instrument diagnostic')
+        capture.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            for field in ('corpus','sft-config','grpo-config'):capture.add_argument('--'+field,type=Path,required=True)
+            capture.add_argument('--name',required=True)
+        else:capture.add_argument('--config',type=Path,required=True)
     for operation in ('prepare','verify','review'):
         reference=commands.add_parser('traces-reference-'+operation,help='CPU frozen task-reference workflow')
         reference.add_argument('--output-root',type=Path,required=True)
@@ -203,7 +210,15 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('traces-reference-'):
+        if args.command.startswith('traces-capture-'):
+            from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic,verify_diagnostic
+            if args.command=='traces-capture-prepare':
+                print(prepare_diagnostic(args.corpus,args.sft_config,args.grpo_config,args.output_root,args.name))
+            else:
+                result=(run_diagnostic(args.config,args.output_root,dependencies=dependencies)
+                        if args.command=='traces-capture-diagnose' else verify_diagnostic(args.config,args.output_root))
+                print(json.dumps(result,indent=2))
+        elif args.command.startswith('traces-reference-'):
             from pilot_eval.trace_reference_workflow import prepare_reference_run,verify_reference_run
             if args.command=='traces-reference-prepare':
                 print(prepare_reference_run(args.corpus,args.sft_config,args.grpo_config,args.output_root,args.name,dependencies=dependencies))

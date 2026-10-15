@@ -110,3 +110,16 @@ def test_changed_plan_is_rejected_before_runtime_or_model_access(tmp_path):
         def runtime(self):raise AssertionError('Changed input must fail before GPU access')
     with pytest.raises(ValueError,match='manifest'):
         run_diagnostic(plan,tmp_path,dependencies=NoAccess())
+
+
+def test_capture_cli_verifies_saved_fixture_in_fresh_cpu_process(tmp_path):
+    import subprocess,sys
+    from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic
+    corpus,paths=sources(tmp_path)
+    plan=prepare_diagnostic(corpus,paths['sft'],paths['grpo'],tmp_path,'cli-capture')
+    run_diagnostic(plan,tmp_path,dependencies=Dependencies(Engine()))
+    result=subprocess.run([sys.executable,'-m','pilot_eval','traces-capture-verify',
+        '--config',str(plan),'--output-root',str(tmp_path)],capture_output=True,text=True)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert json.loads(result.stdout)['diagnostic_complete'] is True
+    assert json.loads(result.stdout)['qualified'] is False
