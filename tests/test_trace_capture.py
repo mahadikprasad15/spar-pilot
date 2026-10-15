@@ -105,3 +105,20 @@ def test_nonfinite_hook_failure_names_the_site_and_coordinate():
     assert failure.value.diagnostics['site']=='embedding-output'
     assert failure.value.diagnostics['coordinate']==[0,0,1]
     assert module.hook is None
+
+
+def test_storage_sensitivity_rebuilds_primary_vector_for_paired_document_draws():
+    from pilot_eval.trace_capture import storage_sensitivity
+    # FP16 rounds these two near-equal components to 1, reversing the top-1
+    # after cohort pooling by the declared ascending-ID tie rule.
+    values=np.repeat(np.array([[[1.0001,0]],[[0,1.0002]]]),5,axis=1)
+    result=storage_sensitivity(values,lambda v:v,storage_dtype='float16',draws=8,seed=42,top_k=1)
+    assert result['qualified'] is False
+    assert result['cohort']['top_k_overlap']==0
+    assert result['cohort']['max_logit_error']>0
+    assert result['bootstrap']['unit']=='whole-document'
+    assert len(result['bootstrap']['draws'])==8
+    for draw in result['bootstrap']['draws']:
+        assert len(draw['indices'])==2
+        assert draw['top_k_overlap']==(0 if set(draw['indices'])=={0,1} else 1)
+    assert result==storage_sensitivity(values,lambda v:v,storage_dtype='float16',draws=8,seed=42,top_k=1)

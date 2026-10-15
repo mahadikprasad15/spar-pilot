@@ -129,3 +129,32 @@ class HookedTraceCapture:
             return outputs
         finally:
             for handle in handles:handle.remove()
+
+
+def storage_sensitivity(example_positions, readout, *, storage_dtype, draws, seed, top_k):
+    """Measure conversion/ranking sensitivity with paired whole-document draws.
+
+    The input is [example, five primary positions, hidden]. No decoded lists are
+    returned, no tolerance is selected, and no capture/lens is qualified here.
+    """
+    values=np.asarray(example_positions,dtype=np.float64)
+    if values.ndim!=3 or values.shape[1]!=5 or not values.shape[0]:
+        raise ValueError('Sensitivity requires per-document positions 0–4.')
+    if type(draws) is not int or draws<1 or type(top_k) is not int or top_k<1:
+        raise ValueError('Explicit positive draw count and ranking size required.')
+    conversion=retention_evidence(values,storage_dtype=storage_dtype)
+    original=values.mean(axis=1);stored=values.astype(storage_dtype).astype(np.float64).mean(axis=1)
+    def compare(indices):
+        a=original[indices].mean(axis=0);b=stored[indices].mean(axis=0)
+        left=np.asarray(readout(a));right=np.asarray(readout(b))
+        if left.ndim!=1 or left.shape!=right.shape or top_k>len(left) or not np.isfinite(left).all() or not np.isfinite(right).all():
+            raise ValueError('Sensitivity readout requires finite equal-sized logit vectors.')
+        ids=np.arange(len(left));x=np.lexsort((ids,-left))[:top_k];y=np.lexsort((ids,-right))[:top_k]
+        return dict(top_k_overlap=len(set(x)&set(y))/top_k,max_logit_error=float(np.abs(left-right).max()),
+                    vector_error_l2=float(np.linalg.norm(a-b)))
+    rng=np.random.default_rng(seed);records=[]
+    for _ in range(draws):
+        indices=rng.integers(0,len(original),size=len(original))
+        records.append(dict(indices=indices.tolist(),**compare(indices)))
+    return dict(qualified=False,conversion=conversion,cohort=compare(np.arange(len(original))),
+                bootstrap=dict(unit='whole-document',seed=seed,draws=records),top_k=top_k)
