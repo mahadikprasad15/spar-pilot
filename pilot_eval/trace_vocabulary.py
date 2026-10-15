@@ -29,6 +29,24 @@ class TokenInventory:
         return dict(Counter(value for token in token_ids
                             if (value := self.normalize(token)) is not None))
 
+    @classmethod
+    def from_file(cls, path):
+        from tokenizers import Tokenizer
+        path=Path(path)
+        data=json.loads(path.read_text())
+        if data.get('padding') is not None or data.get('truncation') is not None:
+            raise ValueError('Pinned tokenizer must not apply automatic padding/truncation.')
+        engine=Tokenizer.from_file(str(path))
+        result=cls({index:engine.decode([index],skip_special_tokens=False)
+                    for index in sorted(set(engine.get_vocab().values()))},
+                   added_ids=[item['id'] for item in data.get('added_tokens',[])])
+        result.engine=engine
+        return result
+
+    def encode(self,text,add_special_tokens=False):
+        if add_special_tokens:raise ValueError('Reference text uses no added special tokens.')
+        return self.engine.encode(text,add_special_tokens=False).ids
+
 
 def log_odds(y_a, y_b, n_a, n_b, alpha0=1000):
     """Specified informative-prior weighted log-odds z, in Python FP64."""

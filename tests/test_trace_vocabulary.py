@@ -75,3 +75,16 @@ def test_background_preparation_is_bounded_exact_and_resumes_sealed_scan_chunks(
     (tmp_path/'background/chunks/000000.json').write_text('{}')
     with pytest.raises(ValueError,match='hash'):
         prepare_background(tmp_path/'background',None,None,**kwargs)
+
+
+def test_native_inventory_uses_real_tokenizer_decoding_without_model_imports(tmp_path):
+    import json
+    from tokenizers import Tokenizer,models,pre_tokenizers,AddedToken
+    from pilot_eval.trace_vocabulary import TokenInventory
+    engine=Tokenizer(models.WordLevel({'[UNK]':0,'total':1,'Ａ':2},unk_token='[UNK]'))
+    engine.pre_tokenizer=pre_tokenizers.Whitespace()
+    engine.add_special_tokens([AddedToken('[UNK]',special=True)])
+    p=tmp_path/'tokenizer.json';engine.save(str(p))
+    inventory=TokenInventory.from_file(p)
+    assert inventory.count(inventory.encode('total total Ａ'))=={'total':2,'a':1}
+    assert inventory.normalize(0) is None
