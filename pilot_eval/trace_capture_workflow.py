@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 import numpy as np
 from pilot_eval.trace_corpus import load_corpus,_inside
-from pilot_eval.trace_capture import summarize_pairs,retention_evidence
+from pilot_eval.trace_capture import summarize_pairs,retention_evidence,CaptureFailure
 from pilot_eval.training import file_hash,run_lock
 from pilot_eval.workflow import _hash,_save_frozen
 from pilot_eval.run import _write_json,_write_state
@@ -176,7 +176,8 @@ def run_diagnostic(path,output_root,*,dependencies=None):
                 folder=directory/'units'/condition
                 _save_arrays(folder/'arrays.npz',arrays);_write_json(folder/'evidence.json',evidence)
                 if condition!='base' and not evidence['exact_zero']:
-                    raise ValueError('Step-zero activation changed; exact coordinates saved in unit evidence.')
+                    raise CaptureFailure('Step-zero activation changed; exact coordinates saved in unit evidence.',
+                        dict(worst=max(comparison,key=lambda r:r['max_absolute_error']),evidence_path=str((folder/'evidence.json').relative_to(root))))
                 identity=dict(config_sha256=_hash(config),runtime=runtime,condition=condition)
                 _write_json(folder/'complete.json',dict(identity=identity,files={name:file_hash(folder/name) for name in ['arrays.npz','evidence.json']}))
                 checks[condition]=evidence
@@ -206,7 +207,7 @@ def run_diagnostic(path,output_root,*,dependencies=None):
         except BaseException as exc:
             _write_state(directory,'failed',completed,3,str(exc))
             errors=directory/'logs/errors.jsonl';errors.parent.mkdir(parents=True,exist_ok=True)
-            with errors.open('a') as f:f.write(json.dumps(dict(condition=condition,error=str(exc),type=type(exc).__name__))+'\n')
+            with errors.open('a') as f:f.write(json.dumps(dict(condition=condition,error=str(exc),type=type(exc).__name__,diagnostics=getattr(exc,'diagnostics',{})))+'\n')
             raise
         finally:
             if engine:engine.close()

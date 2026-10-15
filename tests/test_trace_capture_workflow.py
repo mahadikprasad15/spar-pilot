@@ -79,3 +79,22 @@ def test_public_capture_diagnostic_freezes_four_inputs_and_resumes_sealed_units(
     assert (directory/'units/grpo-zero/evidence.json').is_file()
     (directory/'units/grpo-zero/evidence.json').write_text('{}')
     with pytest.raises(ValueError,match='hash'):verify_diagnostic(plan,tmp_path)
+
+
+def test_failed_zero_check_retains_coordinates_and_never_seals_failed_condition(tmp_path):
+    from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic
+    corpus,paths=sources(tmp_path)
+    plan=prepare_diagnostic(corpus,paths['sft'],paths['grpo'],tmp_path,'failed-zero')
+    engine=Engine(nonzero=True)
+    with pytest.raises(ValueError,match='Step-zero'):
+        run_diagnostic(plan,tmp_path,dependencies=Dependencies(engine))
+    directory=tmp_path/json.loads(plan.read_text())['run_path']
+    evidence=json.loads((directory/'units/sft-zero/evidence.json').read_text())
+    failed=[r for r in evidence['comparisons'] if r['max_absolute_error']>0]
+    assert failed[0]['site']=='block-14-output' and failed[0]['coordinate']==[0,4,1]
+    assert failed[0]['max_absolute_error']==.25 and failed[0]['allowance']==0
+    assert not (directory/'units/sft-zero/complete.json').exists()
+    assert not (directory/'complete.json').exists()
+    errors=[json.loads(line) for line in (directory/'logs/errors.jsonl').read_text().splitlines()]
+    assert errors[-1]['diagnostics']['worst']['coordinate']==[0,4,1]
+    assert engine.closed

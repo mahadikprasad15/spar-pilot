@@ -2,6 +2,12 @@
 import numpy as np
 
 
+class CaptureFailure(ValueError):
+    def __init__(self,message,diagnostics):
+        super().__init__(message)
+        self.diagnostics=diagnostics
+
+
 def summarize_pairs(batches, *, sites, content_tokens=128,
                     retained_sites=('block-14-output','block-17-output','block-18-output',
                                     'block-19-output','block-20-output','block-21-output')):
