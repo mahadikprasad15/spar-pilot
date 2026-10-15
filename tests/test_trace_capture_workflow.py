@@ -66,6 +66,7 @@ def test_public_capture_diagnostic_freezes_four_inputs_and_resumes_sealed_units(
     assert first.closed
     second=Engine();result=run_diagnostic(plan,tmp_path,dependencies=Dependencies(second))
     assert second.calls==['grpo-zero']
+    assert result['newly_sealed_sequence_forwards']==4 and result['reused_sequence_forwards']==8
     assert result['qualified'] is False and result['state']=='awaiting-review'
     assert result['sequence_forwards']==12 and result['sites']==29
     assert result['base_moment_count']==508

@@ -146,9 +146,10 @@ def run_diagnostic(path,output_root,*,dependencies=None):
                 identity=dict(config_sha256=_hash(config),runtime=runtime,condition=condition)
                 existing[condition]=_unit(directory,condition,identity)
             completed=sum(v is not None for v in existing.values())
+            reused=completed;load_seconds=0.
             print(f'Diagnostic: {completed}/3 sealed conditions; missing calls only; no qualification claim.',flush=True)
             if completed<3:
-                engine=deps.engine(config,root)
+                loading=time.monotonic();engine=deps.engine(config,root);load_seconds=time.monotonic()-loading
                 if engine.integrity()!=config['expected_base_hash']:raise ValueError('Frozen base identity mismatch before workload.')
             base=existing['base'][0] if existing['base'] else None;checks={}
             for condition in CONDITIONS:
@@ -156,6 +157,7 @@ def run_diagnostic(path,output_root,*,dependencies=None):
                     checks[condition]=existing[condition][1];continue
                 _write_state(directory,'running',completed,3)
                 started=time.monotonic();captured=engine.capture(config['examples'],condition)
+                capture_seconds=time.monotonic()-started
                 if len(captured)!=4:raise ValueError('Diagnostic capture omitted examples.')
                 arrays={};comparison=[];conversion=[]
                 for i,(row,values) in enumerate(zip(config['examples'],captured)):
@@ -174,7 +176,7 @@ def run_diagnostic(path,output_root,*,dependencies=None):
                         if condition=='base':conversion.append(dict(example_id=row['id'],site=site,**retention_evidence(value,storage_dtype='float16')))
                 if engine.integrity()!=config['expected_base_hash']:raise ValueError('Frozen base identity changed during workload.')
                 evidence=dict(condition=condition,base_unchanged=True,seconds=time.monotonic()-started,
-                    exact_zero=all(r['max_absolute_error']==0 for r in comparison),comparisons=comparison,
+                    capture_seconds=capture_seconds,exact_zero=all(r['max_absolute_error']==0 for r in comparison),comparisons=comparison,
                     retention=conversion,qualified=False)
                 if condition=='base':
                     evidence['numeric_lens']=getattr(engine,'numeric_lens_evidence',None)
@@ -182,7 +184,9 @@ def run_diagnostic(path,output_root,*,dependencies=None):
                     if runtime['execution_kind']=='real-cuda' and not evidence['numeric_lens']:
                         raise ValueError('Real diagnostic is missing numeric lens evidence.')
                 folder=directory/'units'/condition
-                _save_arrays(folder/'arrays.npz',arrays);_write_json(folder/'evidence.json',evidence)
+                saving=time.monotonic();_save_arrays(folder/'arrays.npz',arrays)
+                evidence['array_save_seconds']=time.monotonic()-saving
+                _write_json(folder/'evidence.json',evidence)
                 if condition!='base' and not evidence['exact_zero']:
                     raise CaptureFailure('Step-zero activation changed; exact coordinates saved in unit evidence.',
                         dict(worst=max(comparison,key=lambda r:r['max_absolute_error']),evidence_path=str((folder/'evidence.json').relative_to(root))))
@@ -202,9 +206,11 @@ def run_diagnostic(path,output_root,*,dependencies=None):
             _save_arrays(directory/'results/base-moments.npz',{k:summary['base_moments'][k] for k in ['sum','outer_sum']})
             result=dict(state='awaiting-review',diagnostic_complete=True,qualified=False,
                 execution_kind=runtime['execution_kind'],sequence_forwards=12,model_calls=12,sites=29,
+                newly_sealed_sequence_forwards=(3-reused)*4,reused_sequence_forwards=reused*4,
+                this_attempt_model_load_seconds=load_seconds,
                 base_moment_count=summary['base_moments']['count'],
                 numeric_lens=checks['base'].get('numeric_lens'),
-                checks={k:{field:v[field] for field in ['exact_zero','base_unchanged','seconds']} for k,v in checks.items()},
+                checks={k:{field:v[field] for field in ['exact_zero','base_unchanged','seconds','capture_seconds','array_save_seconds']} for k,v in checks.items()},
                 limits=['Four-document zero check only; no nonzero-adapter sensitivity claim.',
                         'GPU numerical acceptance and nonzero FP16/ranking/bootstrap checks remain pending.'])
             _write_json(directory/'results/results.json',result)
