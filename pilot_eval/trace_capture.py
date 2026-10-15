@@ -1,0 +1,55 @@
+"""Paired readable-trace reductions; no model imports or readout exposure."""
+import numpy as np
+
+
+def summarize_pairs(batches, *, sites, content_tokens=128,
+                    retained_sites=('block-14-output','block-17-output','block-18-output',
+                                    'block-19-output','block-20-output','block-21-output')):
+    """Reduce named-site batches using explicit absolute content-position maps.
+
+    Backends supply base/adapted arrays [examples, input positions, width].
+    Subtraction precedes retention conversion; this operation retains FP64
+    evidence. Storage precision and runtime qualification are separate gates.
+    """
+    sites=list(sites);retained_sites=list(retained_sites)
+    if len(sites)!=len(set(sites)) or not set(retained_sites)<=set(sites):
+        raise ValueError('Named sites must be unique and cover retained sites.')
+    if content_tokens<5:raise ValueError('Primary window requires positions 0–4.')
+    sums={};primary={s:[] for s in sites};baseline={s:[] for s in sites}
+    retained={s:[] for s in retained_sites};ids=[];moments=None
+    for batch in batches:
+        names=batch['example_ids'];maps=batch['content_positions']
+        if len(names)!=len(maps) or len(set(names))!=len(names) or set(ids)&set(names):
+            raise ValueError('Unique example IDs and matching position maps required.')
+        if set(batch['base'])!=set(sites) or set(batch['adapted'])!=set(sites):
+            raise ValueError('Capture sites differ from the declared site inventory.')
+        for site in sites:
+            base=np.asarray(batch['base'][site],dtype=np.float64)
+            adapted=np.asarray(batch['adapted'][site],dtype=np.float64)
+            if base.ndim!=3 or base.shape!=adapted.shape or base.shape[0]!=len(names):
+                raise ValueError('Paired activation shapes differ.')
+            if not np.isfinite(base).all() or not np.isfinite(adapted).all():
+                raise ValueError('Nonfinite captured activation.')
+            if site not in sums:sums[site]=np.zeros((content_tokens,base.shape[2]),dtype=np.float64)
+            if sums[site].shape!=(content_tokens,base.shape[2]):raise ValueError('Hidden width changed.')
+            for row,positions in enumerate(maps):
+                positions=np.asarray(positions)
+                if (positions.shape!=(content_tokens,) or not np.issubdtype(positions.dtype,np.integer)
+                        or np.any(positions<0) or np.any(positions>=base.shape[1])
+                        or np.any(np.diff(positions)<=0)):
+                    raise ValueError('Content position map must be ordered unique integer input positions.')
+                b=base[row,positions];delta=adapted[row,positions]-b
+                sums[site]+=delta
+                primary[site].append(delta[:5].mean(axis=0))
+                baseline[site].append(b[:5].mean(axis=0))
+                if site in retained:retained[site].append(delta)
+                if site=='block-14-output':
+                    h=b[1:]
+                    if moments is None:moments=dict(count=0,sum=np.zeros(b.shape[1]),outer_sum=np.zeros((b.shape[1],b.shape[1])))
+                    moments['count']+=len(h);moments['sum']+=h.sum(axis=0);moments['outer_sum']+=h.T@h
+        ids.extend(names)
+    if not ids:raise ValueError('Capture stream is empty.')
+    return dict(example_ids=ids,position_delta_sums=sums,
+                example_primary_delta={s:np.stack(v) for s,v in primary.items()},
+                example_primary_base={s:np.stack(v) for s,v in baseline.items()},
+                retained_delta={s:np.stack(v) for s,v in retained.items()},base_moments=moments)
