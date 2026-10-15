@@ -38,6 +38,9 @@ def test_reference_workflow_builds_three_frozen_references_and_reuses_completed_
     assert result['background_tokens']==2000000
     assert result['training_examples']==512 and result['grpo_completions']==4096
     assert result['reveal_allowed'] is False
+    manifest=json.loads((path.parent.parent/'meta/run_manifest.json').read_text())
+    assert len(manifest['origin_git_commit'])==40
+    assert set(manifest['implementation'])=={'trace_vocabulary.py','trace_reference_workflow.py'}
     assert (path.parent/'top30.md').is_file()
     class NoAccess:
         def __getattr__(self,name):raise AssertionError('Completed preparation must reuse existing inputs.')
@@ -77,3 +80,31 @@ def test_public_reference_verify_and_review_commands_work_in_fresh_cpu_process(t
     assert json.loads(reviewed.stdout)['inference_status']=='exploratory-or-unverified-exposure'
     result=subprocess.run(cmd,capture_output=True,text=True,check=True)
     assert json.loads(result.stdout)['reference_review']=='reviewed'
+
+
+def test_notebook_reference_cells_use_public_commands_and_reuse_saved_run(tmp_path):
+    import ast,sys
+    from pilot_eval.trace_reference_workflow import prepare_reference_run
+    from pilot_eval.trace_vocabulary import TokenInventory
+    from pilot_eval.notebook_session import NotebookSession
+    notebook=json.loads(Path('notebooks/pilot-5-colab.ipynb').read_text())
+    commands=['traces-reference-prepare','verify_reference_run']
+    code='\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code')
+    assert all(command in code for command in commands)
+    deps,corpus,sft,grpo=make_sources(tmp_path)
+    class Inventory(TokenInventory):
+        def encode(self,text,add_special_tokens=False):return CharacterTokenizer().encode(text)
+    class Dependencies:
+        def load_inventory(self,config,root):return Inventory({i:chr(i-10) for i in range(42,137)})
+        def stream_fineweb(self,config,revision):
+            for i in range(10000):yield deps.document(i) if i<2000 else {'id':f'doc-{i}','text':f'{i:04d} '+'background '*100}
+    path=prepare_reference_run(corpus,sft,grpo,tmp_path,'notebook-reference',dependencies=Dependencies())
+    namespace=dict(sys=sys,Path=Path,json=json,ARTIFACT_ROOT=tmp_path,EXPERIMENT_NAME='notebook-reference',
+        CORPUS_PATH=corpus,SFT_TRAINING_CONFIG=sft,GRPO_TRAINING_CONFIG=grpo,REFERENCE_PATH=path,
+        runner=NotebookSession(tmp_path,Path.cwd(),plan_name='notebook-reference'))
+    for cell in notebook['cells']:
+        if cell['cell_type']!='code':continue
+        source=''.join(cell['source']);ast.parse(source)
+        assert cell['outputs']==[]
+        if any(command in source for command in commands):exec(compile(source,'notebook-reference-cell','exec'),namespace)
+    assert namespace['REFERENCE_SUMMARY']['background_tokens']==2000000

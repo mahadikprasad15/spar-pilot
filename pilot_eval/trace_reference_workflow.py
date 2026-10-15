@@ -1,6 +1,7 @@
 """CPU saved workflow for approved Pilot 5 references; never reads learned deltas."""
 from collections import Counter
 import json
+import subprocess
 from pathlib import Path
 from pilot_eval.trace_corpus import load_corpus,HFCorpusDependencies,_inside
 from pilot_eval.trace_vocabulary import TokenInventory,prepare_background,build_reference,freeze_references,load_references
@@ -90,7 +91,15 @@ def prepare_reference_run(corpus_path,sft_path,grpo_path,output_root,name,*,depe
                     implementation=_implementation(),
                     parent_hashes={key:file_hash(p) for key,p in parents.items()},prior_exposure=corpus['review']['prior_exposure'],
                     reviewer='Prasad',review_date='2026-10-15',verification_scope='sealed text/input parents; not a full optimizer/checkpoint audit')
+        existing=directory/'config.json'
+        if existing.exists():
+            config['origin_git_commit']=json.loads(existing.read_text())['origin_git_commit']
+        else:
+            revision=subprocess.run(['git','rev-parse','HEAD'],cwd=Path(__file__).parent.parent,
+                                    capture_output=True,text=True)
+            config['origin_git_commit']=revision.stdout.strip() if revision.returncode==0 else 'unavailable'
         _save_frozen(directory/'config.json',config);_write_state(directory,'running',0,3)
+        _save_frozen(directory/'meta/run_manifest.json',config)
         try:
             deps=dependencies or ReferenceDependencies()
             inventory=deps.load_inventory(corpus,root)
@@ -129,7 +138,7 @@ def prepare_reference_run(corpus_path,sft_path,grpo_path,output_root,name,*,depe
                     lines.append(f"| {display} | {row['y_a']} | {row['y_b']} | {row['z']:.9g} |")
                 lines.append('')
             (freeze.parent/'top30.md').write_text('\n'.join(lines)+'\n')
-            paths=[directory/'config.json',freeze,freeze.parent/'freeze-seal.json',freeze.parent/'top30.md']
+            paths=[directory/'config.json',directory/'meta/run_manifest.json',freeze,freeze.parent/'freeze-seal.json',freeze.parent/'top30.md']
             _write_json(directory/'complete.json',{'files':{str(p.relative_to(directory)):file_hash(p) for p in paths}})
             _write_state(directory,'awaiting-review',3,3)
             return freeze
