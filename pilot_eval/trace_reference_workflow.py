@@ -85,6 +85,7 @@ def prepare_reference_run(corpus_path,sft_path,grpo_path,output_root,name,*,depe
             bgdir=directory/'background'
             stream=None if (bgdir/'complete.json').exists() else deps.stream_fineweb(corpus['fineweb']['config'],corpus['fineweb']['revision'])
             background=prepare_background(bgdir,stream,inventory,measurement_indices=[r['source_index'] for r in measurement],
+                measurement_sources=[{key:r.get(key) for key in ('source_index','source_id','full_document_sha256')} for r in measurement],
                 tokenizer_identity=dict(revision=corpus['tokenizer_revision'],files=corpus['tokenizer_files'],fineweb=corpus['fineweb']['revision']))
             parents['background']=bgdir/'results/background.json';parents['background_seal']=bgdir/'complete.json'
             counts=Counter()

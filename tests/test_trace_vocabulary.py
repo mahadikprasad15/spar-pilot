@@ -101,3 +101,13 @@ def test_human_reference_review_binds_freeze_and_top30_before_production_scoring
     (path.parent/'top30.md').write_text('Changed preview.')
     with pytest.raises(ValueError,match='review'):
         load_references(path,require_review=True)
+
+
+def test_background_scan_checks_replayed_measurement_identity(tmp_path):
+    from pilot_eval.trace_vocabulary import prepare_background
+    class Tokenizer:
+        def encode(self,text,add_special_tokens=False):return list(range(len(text)))
+    with pytest.raises(ValueError,match='measurement.*identity'):
+        prepare_background(tmp_path/'background',iter([{'id':'doc','text':'a'*80}]),Tokenizer(),
+            measurement_indices=[0],measurement_sources=[{'source_index':0,'source_id':'doc','full_document_sha256':'wrong'}],
+            scan_limit=1,token_target=1,chunk_size=1,seed=0,tokenizer_identity={'fixture':True})

@@ -154,7 +154,7 @@ def approve_references(path, *, reviewer, notes, exposure_status='unknown'):
 
 def prepare_background(directory, documents, tokenizer, *, measurement_indices,
                        tokenizer_identity, scan_limit=10000, token_target=2000000,
-                       seed=20261019, chunk_size=250):
+                       seed=20261019, chunk_size=250, measurement_sources=()):
     """Bounded, resumable source scan and exact raw-token background selection.
 
     On resume the source stream is replayed to the cursor, but sealed chunks are
@@ -172,6 +172,7 @@ def prepare_background(directory, documents, tokenizer, *, measurement_indices,
         raise ValueError('Declare a bounded scan containing every measurement source index.')
     config = dict(schema_version=1, scan_limit=scan_limit, token_target=token_target,
         seed=seed, chunk_size=chunk_size, measurement_indices=sorted(set(measurement_indices)),
+        measurement_sources=list(measurement_sources),
         tokenizer=tokenizer_identity, minimum_raw_tokens=64, maximum_document_tokens=1024,
         deduplication="sha256(' '.join(text.split()).encode('utf-8'))")
     with run_lock(directory):
@@ -206,6 +207,7 @@ def prepare_background(directory, documents, tokenizer, *, measurement_indices,
                 for offset,doc in enumerate(raw):
                     text=doc['text'];ids=tokenizer.encode(text,add_special_tokens=False)
                     block.append(dict(source_index=len(scanned)+offset,source_id=doc.get('id'),
+                        source_content_sha256=_hash(text),
                         full_text_sha256=hashlib.sha256(text.encode()).hexdigest(),
                         normalized_text_sha256=hashlib.sha256(' '.join(text.split()).encode()).hexdigest(),
                         token_ids=ids[:1024],raw_token_count=len(ids)))
@@ -216,6 +218,11 @@ def prepare_background(directory, documents, tokenizer, *, measurement_indices,
                 _write_state(directory,'running',len(scanned),scan_limit)
                 print(f'Background scan: {len(scanned)}/{scan_limit} documents sealed.',flush=True)
             excluded={scanned[i]['normalized_text_sha256'] for i in config['measurement_indices']}
+            for original in measurement_sources:
+                actual=scanned[original['source_index']]
+                if (actual['source_content_sha256']!=original['full_document_sha256']
+                        or actual['source_id']!=original.get('source_id')):
+                    raise ValueError('Replayed measurement source identity mismatch.')
             excluded_ids={scanned[i]['source_id'] for i in config['measurement_indices']
                           if scanned[i]['source_id'] is not None}
             seen=set();eligible=[]
