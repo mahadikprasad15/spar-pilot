@@ -117,3 +117,22 @@ def analyze_grades(directory,claude,codex,*,settlement=None):
     _write_json(directory/'analysis/agreement.json',result)
     _write_json(directory/'analysis/disagreements.json',differences)
     return result
+
+
+def analyze_naming(directory,grades,*,session_record):
+    """Join naming choices only with explicit session-isolation attestation.
+
+    Session history is self-reported, not independently proven by this function.
+    Null-list target-choice rates contextualize the nominal 1/8 reference.
+    """
+    if (session_record.get('fresh_session') is not True or session_record.get('naming_before_relevance') is not True
+            or not session_record.get('session_id') or not session_record.get('grader')):
+        raise ValueError('Naming requires an explicitly isolated fresh session before relevance.')
+    directory,rows=_package(directory);choices=_labels(rows,grades,'choice')
+    key=json.loads((directory/'grading_key/key.json').read_text());groups={}
+    for list_id,value in choices.items():groups.setdefault(key[list_id]['condition'],[]).append(int(value==1))
+    result=dict(by_condition={name:dict(target_choice_rate=float(np.mean(values)),lists=len(values)) for name,values in groups.items()},
+                nominal_chance=1/8,session_record=session_record,
+                interpretation='GSM8K target-choice rate; nominal chance alone does not calibrate grader bias, compare null lists too')
+    _write_json(directory/'analysis/naming.json',result)
+    return result

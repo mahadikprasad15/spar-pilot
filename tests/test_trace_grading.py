@@ -24,3 +24,20 @@ def test_blind_package_is_deterministic_key_is_separate_and_unblind_waits_for_se
     assert prepare_grading(tmp_path/'a',lists,['total'],salt='fixture-secret',synthetic=True)==package
     with pytest.raises(ValueError,match='IDs'):
         analyze_grades(package,a,a+[a[0]])
+
+
+def test_agreement_hand_cases_and_naming_require_isolated_session(tmp_path):
+    import math
+    from pilot_eval.trace_grading import agreement,prepare_grading,analyze_naming
+    assert agreement([0,1,0,1],[0,1,0,1])['kappa']==1
+    assert agreement([0,0,1,1],[0,1,0,1])['kappa']==0
+    assert agreement([0,0],[0,1])['kappa']==0
+    assert math.isnan(agreement([0,0],[0,0])['kappa'])
+    package=prepare_grading(tmp_path/'package',[{'condition':'sft','tokens':[' total']}],['total'],salt='fixture',synthetic=True)
+    row=json.loads((package/'grading/lists.jsonl').read_text().splitlines()[0])
+    grades=[{'list_id':row['list_id'],'choice':1}]
+    with pytest.raises(ValueError,match='isolated'):
+        analyze_naming(package,grades,session_record={'fresh_session':False})
+    result=analyze_naming(package,grades,session_record={'fresh_session':True,'naming_before_relevance':True,'session_id':'fixture','grader':'fixture'})
+    assert result['by_condition']['sft']['target_choice_rate']==1
+    assert result['nominal_chance']==.125
