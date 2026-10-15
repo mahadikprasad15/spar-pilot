@@ -54,3 +54,25 @@ assert not any(name in sys.modules for name in ['torch', 'transformers', 'peft']
         '--name', 'cli-review', '--output-root', str(tmp_path)], capture_output=True, text=True)
     assert result.returncode == 1
     assert 'Exposure record hash mismatch' in result.stdout + result.stderr
+
+
+def test_analysis_review_rejects_requests_outside_retained_evidence():
+    from pilot_eval.trace_review import validate_analysis_requests
+    supported = [
+        dict(evidence='cohort-position-mean', sites=['embedding-output', 'block-27-output'],
+             positions=[0, 127]),
+        dict(evidence='example-primary-window', sites=['block-0-output', 'block-14-output'],
+             positions=[0, 1, 2, 3, 4]),
+        dict(evidence='example-position', sites=['block-14-output', 'block-21-output'],
+             positions=[0, 127]),
+    ]
+    assert validate_analysis_requests(supported) == supported
+    with pytest.raises(ValueError, match='retained per-position'):
+        validate_analysis_requests([dict(evidence='example-position',
+            sites=['block-13-output'], positions=[0])])
+    with pytest.raises(ValueError, match='pooled positions 0'):
+        validate_analysis_requests([dict(evidence='example-primary-window',
+            sites=['block-13-output'], positions=[124, 125, 126, 127])])
+    with pytest.raises(ValueError, match='named site'):
+        validate_analysis_requests([dict(evidence='cohort-position-mean',
+            sites=['block-28-output'], positions=[0])])

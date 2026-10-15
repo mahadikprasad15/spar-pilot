@@ -57,3 +57,36 @@ def inspect_review(output_root, name):
                 learned_lists_exposed=any(event['output_kind'] == 'learned-lens-token-lists'
                                          for event in events),
                 scope='supported operations only; direct file access is outside this barrier')
+
+
+def validate_analysis_requests(requests):
+    """Reject inference requiring data outside the approved retained-data family.
+
+    These are availability checks, not approval of an estimator or primary claim.
+    Capture freeze still owns the actual conditions, precision and primary identity.
+    """
+    if not isinstance(requests, list) or not requests:
+        raise ValueError('Declare at least one analysis evidence request.')
+    sites = {'embedding-output'} | {f'block-{index}-output' for index in range(28)}
+    retained = {f'block-{index}-output' for index in [14, 17, 18, 19, 20, 21]}
+    for request in requests:
+        if not isinstance(request, dict) or set(request) != {'evidence', 'sites', 'positions'}:
+            raise ValueError('Analysis request requires evidence, sites and positions.')
+        selected = request['sites']
+        positions = request['positions']
+        if (not isinstance(selected, list) or not selected
+                or any(not isinstance(site, str) or site not in sites for site in selected)):
+            raise ValueError('Analysis request has an unsupported named site.')
+        if (not isinstance(positions, list) or not positions or
+                any(type(position) is not int or not 0 <= position < 128 for position in positions)
+                or len(set(positions)) != len(positions)):
+            raise ValueError('Declare distinct content-relative positions between 0 and 127.')
+        if request['evidence'] == 'example-primary-window':
+            if positions != [0, 1, 2, 3, 4]:
+                raise ValueError('Per-example all-site evidence has pooled positions 0 through 4 only.')
+        elif request['evidence'] == 'example-position':
+            if not set(selected).issubset(retained):
+                raise ValueError('No retained per-position example evidence at the requested site.')
+        elif request['evidence'] != 'cohort-position-mean':
+            raise ValueError('Unsupported analysis evidence kind.')
+    return requests
