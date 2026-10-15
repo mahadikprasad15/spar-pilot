@@ -97,7 +97,7 @@ def ncurves(examples,scorer,*,sizes=(25,50,100,200),draws=200,seed=20261017,stra
     for size in sizes:
         if type(size) is not int or not 1<=size<=len(ids):raise ValueError('Invalid subset size.')
         for draw in range(draws):
-            chosen=rng.choice(len(ids),size=size,replace=False)
+            chosen=np.sort(rng.choice(len(ids),size=size,replace=False))
             selected=[ids[index] for index in chosen]
             subset=values[chosen]
             pooled=subset.mean(axis=1) if subset.ndim==3 else subset
@@ -168,7 +168,7 @@ def stratum_robustness(examples,scorer,*,strata,draws=2000,matched_draws=1000,
             or type(matched_draws) is not int or matched_draws<1):raise ValueError('Invalid matched legacy draw request.')
     rng=np.random.default_rng(matched_seed);scores=[];chosen_ids=[]
     for _ in range(matched_draws):
-        chosen=rng.choice(len(legacy_ids),size=matched_size,replace=False)
+        chosen=np.sort(rng.choice(len(legacy_ids),size=matched_size,replace=False))
         scores.append(_condition(legacy[chosen],scorer,form));chosen_ids.append([legacy_ids[i] for i in chosen])
     new=within['new-50']['observed']
     percentile=float(100*np.mean(np.asarray(scores)<=new)) if math.isfinite(new) and np.isfinite(scores).all() else math.nan

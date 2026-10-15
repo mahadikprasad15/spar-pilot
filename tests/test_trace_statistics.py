@@ -87,3 +87,11 @@ def test_c3_calibration_diagnostic_is_reproducible_and_detects_a_large_injected_
     assert result['shift_detection_rate']==1
     assert result==calibration_diagnostics(lambda v:float(v[0]),dimension=2,n_documents=8,trials=2,draws=40,seed=11,shift=[100.,0.])
     assert result['establishes_nominal_calibration'] is False
+
+
+def test_full_cohort_ncurve_does_not_introduce_permutation_roundoff_variation():
+    from pilot_eval.trace_statistics import ncurves
+    examples={'a':[1e16],'b':[1.],'c':[-1e16]}
+    rows=ncurves(examples,lambda v:float(v[0]),sizes=[3],draws=12,seed=3,
+        strata={'a':'legacy-150','b':'legacy-150','c':'new-50'})
+    assert {row['score'] for row in rows}=={0.}
