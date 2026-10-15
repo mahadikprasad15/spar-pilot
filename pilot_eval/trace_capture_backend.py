@@ -24,6 +24,7 @@ class CaptureEngine:
         self.model=PeftModel.from_pretrained(base,root/config['adapters']['sft'],is_trainable=False)
         self.model.load_adapter(root/config['adapters']['grpo'],adapter_name='grpo-zero',is_trainable=False)
         self.model.eval();self.model.config.use_cache=False
+        self.numeric_lens_evidence=None
         body=self.model.get_base_model().model
         if len(body.layers)!=28:raise ValueError('Expected exactly 28 decoder blocks.')
         self.capture_hooks=HookedTraceCapture(self.model.get_input_embeddings(),list(body.layers))
@@ -56,8 +57,34 @@ class CaptureEngine:
                 except CaptureFailure as exc:
                     exc.diagnostics.update(example_id=row['id'],condition=condition)
                     raise
+                if condition=='base' and i==0:
+                    self.numeric_lens_evidence=self._numeric_lens(result[-1],row)
                 print(f'Diagnostic {condition}: {i+1}/{len(rows)} documents; 29 sites captured.',flush=True)
         return result
+
+    def _numeric_lens(self,values,row):
+        import numpy as np
+        from pilot_eval.trace_capture import logit_lens,CaptureFailure
+        torch=self.torch;body=self.model.get_base_model().model
+        head=self.model.get_output_embeddings()
+        if getattr(head,'bias',None) is not None:raise ValueError('Expected bias-free Qwen unembedding.')
+        # Check actual norm gain/head mathematics on base activations only.
+        # Fixed first 32 output rows keep this bounded; no decoded tokens appear.
+        vector=values['block-14-output'][0,row['content_positions'][:5]].astype(np.float64).mean(axis=0).astype(np.float32)
+        gain=body.norm.weight.detach().cpu().numpy()
+        matrix=head.weight[:32].detach().cpu().numpy()
+        epsilon=self.model.config.rms_norm_eps
+        expected=logit_lens(vector,norm_weight=gain,unembedding=matrix,epsilon=epsilon)
+        if expected is None:raise ValueError('Base diagnostic lens vector is unexpectedly zero.')
+        actual=torch.nn.functional.linear(body.norm(torch.tensor(vector,device='cuda:0')),head.weight[:32]).detach().cpu().numpy()
+        if not np.isfinite(actual).all():
+            raise CaptureFailure('Nonfinite numeric lens diagnostic',dict(site='block-14-output',example_id=row['id']))
+        difference=np.abs(actual.astype(np.float64)-expected);coordinate=int(np.argmax(difference))
+        return dict(scope='base pooled positions 0–4, block14, first32 unembedding rows',
+            example_id=row['id'],output_rows=32,auxiliary_norm_calls=1,qualified=False,
+            max_absolute_error=float(difference.max()),worst_output_row=coordinate,
+            framework_value=float(actual[coordinate]),fp64_oracle_value=float(expected[coordinate]),
+            allowance=None,gate='pending measured-evidence review',norm_epsilon=epsilon)
 
     def close(self):
         import gc

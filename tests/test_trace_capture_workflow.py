@@ -164,3 +164,13 @@ def test_notebook_capture_cells_prepare_restore_and_verify_without_previous_exec
     plan=namespace['CAPTURE_DIAGNOSTIC_PATH']
     run_diagnostic(plan,tmp_path,dependencies=Dependencies(Engine()))
     exec(compile(verify,'notebook-capture-verify','exec'),namespace)
+
+
+def test_real_runtime_requires_saved_numeric_lens_diagnostic(tmp_path):
+    from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic
+    corpus,paths=sources(tmp_path)
+    plan=prepare_diagnostic(corpus,paths['sft'],paths['grpo'],tmp_path,'lens-evidence')
+    class RealScope(Dependencies):
+        def runtime(self):return dict(execution_kind='real-cuda',device='fixture-only-no-CUDA-used')
+    with pytest.raises(ValueError,match='numeric lens evidence'):
+        run_diagnostic(plan,tmp_path,dependencies=RealScope(Engine()))

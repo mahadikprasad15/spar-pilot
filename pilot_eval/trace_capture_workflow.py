@@ -176,6 +176,10 @@ def run_diagnostic(path,output_root,*,dependencies=None):
                 evidence=dict(condition=condition,base_unchanged=True,seconds=time.monotonic()-started,
                     exact_zero=all(r['max_absolute_error']==0 for r in comparison),comparisons=comparison,
                     retention=conversion,qualified=False)
+                if condition=='base':
+                    evidence['numeric_lens']=getattr(engine,'numeric_lens_evidence',None)
+                    if runtime['execution_kind']=='real-cuda' and not evidence['numeric_lens']:
+                        raise ValueError('Real diagnostic is missing numeric lens evidence.')
                 folder=directory/'units'/condition
                 _save_arrays(folder/'arrays.npz',arrays);_write_json(folder/'evidence.json',evidence)
                 if condition!='base' and not evidence['exact_zero']:
@@ -198,6 +202,7 @@ def run_diagnostic(path,output_root,*,dependencies=None):
             result=dict(state='awaiting-review',diagnostic_complete=True,qualified=False,
                 execution_kind=runtime['execution_kind'],sequence_forwards=12,model_calls=12,sites=29,
                 base_moment_count=summary['base_moments']['count'],
+                numeric_lens=checks['base'].get('numeric_lens'),
                 checks={k:{field:v[field] for field in ['exact_zero','base_unchanged','seconds']} for k,v in checks.items()},
                 limits=['Four-document zero check only; no nonzero-adapter sensitivity claim.',
                         'GPU numerical acceptance and nonzero FP16/ranking/bootstrap checks remain pending.'])
