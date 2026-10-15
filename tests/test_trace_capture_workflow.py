@@ -98,3 +98,15 @@ def test_failed_zero_check_retains_coordinates_and_never_seals_failed_condition(
     errors=[json.loads(line) for line in (directory/'logs/errors.jsonl').read_text().splitlines()]
     assert errors[-1]['diagnostics']['worst']['coordinate']==[0,4,1]
     assert engine.closed
+
+
+def test_changed_plan_is_rejected_before_runtime_or_model_access(tmp_path):
+    from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic
+    corpus,paths=sources(tmp_path)
+    plan=prepare_diagnostic(corpus,paths['sft'],paths['grpo'],tmp_path,'changed-plan')
+    changed=json.loads(plan.read_text());changed['examples'][0]['input_ids'][0]+=1
+    plan.write_text(json.dumps(changed))
+    class NoAccess:
+        def runtime(self):raise AssertionError('Changed input must fail before GPU access')
+    with pytest.raises(ValueError,match='manifest'):
+        run_diagnostic(plan,tmp_path,dependencies=NoAccess())

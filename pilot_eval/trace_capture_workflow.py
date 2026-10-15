@@ -99,6 +99,9 @@ def _load(path,root):
     path=_inside(root,path);config=json.loads(path.read_text())
     if config['mode']!='bounded-zero-diagnostic' or config['implementation']!=_implementation():
         raise ValueError('Diagnostic implementation changed; preserve the old run and prepare a new name.')
+    manifest=json.loads((_inside(root,config['run_path'])/'meta/run_manifest.json').read_text())
+    if manifest!=dict(config_path=str(path.relative_to(root)),config_sha256=_hash(config)):
+        raise ValueError('Diagnostic plan differs from its saved manifest.')
     for relative,expected in config['parents'].items():
         if file_hash(_inside(root,relative))!=expected:raise ValueError('Diagnostic input parent hash mismatch.')
     return config
