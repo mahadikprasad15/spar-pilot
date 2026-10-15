@@ -39,3 +39,66 @@ def snr(document_vectors):
     mean=values.mean(axis=0)
     se=math.sqrt(float(np.square(values-mean).sum())/(n*(n-1)))
     return float(np.linalg.norm(mean)/se) if se else math.nan
+
+
+def _examples(examples):
+    if not isinstance(examples,dict) or not examples or not all(isinstance(key,str) for key in examples):
+        raise ValueError('Supply nonempty explicit document IDs and their vectors.')
+    ids=sorted(examples);values=np.asarray([examples[key] for key in ids],dtype=np.float64)
+    if values.ndim not in (2,3) or values.ndim==3 and values.shape[1]!=5 or not np.isfinite(values).all():
+        raise ValueError('Expected finite document vectors or five positions per document.')
+    return ids,values
+
+
+def _condition(values,scorer,form):
+    if form=='pooled':
+        pooled=values.mean(axis=1) if values.ndim==3 else values
+        return float(scorer(pooled.mean(axis=0)))
+    if form=='max-five' and values.ndim==3:
+        return max(float(scorer(values[:,index,:].mean(axis=0))) for index in range(5))
+    raise ValueError('max-five requires all five per-document positions; unsupported form.')
+
+
+def bootstrap_scores(examples,scorer,*,draws=1000,seed=20261016,form='pooled'):
+    ids,values=_examples(examples)
+    if type(draws) is not int or draws<1:raise ValueError('Positive bootstrap draw count required.')
+    rng=np.random.default_rng(seed);indices=[];scores=[]
+    for _ in range(draws):
+        chosen=rng.integers(0,len(ids),size=len(ids));indices.append(chosen.tolist())
+        scores.append(_condition(values[chosen],scorer,form))
+    interval=np.quantile(scores,[.025,.975],method='linear').tolist() if np.isfinite(scores).all() else [math.nan,math.nan]
+    pooled=values.mean(axis=1) if values.ndim==3 else values
+    return dict(document_ids=ids,indices=indices,scores=scores,observed=_condition(values,scorer,form),
+                interval=interval,snr=snr(pooled),form=form,seed=seed,quantile_method='linear')
+
+
+def bootstrap_compare(left,right,scorer,*,draws=2000,seed=20261016,form='pooled'):
+    ids,a=_examples(left);other,b=_examples(right)
+    if ids!=other or a.shape!=b.shape:raise ValueError('Paired bootstrap requires matching document IDs and shapes.')
+    if type(draws) is not int or draws<1:raise ValueError('Positive bootstrap draw count required.')
+    rng=np.random.default_rng(seed);indices=[];differences=[]
+    for _ in range(draws):
+        chosen=rng.integers(0,len(ids),size=len(ids));indices.append(chosen.tolist())
+        differences.append(_condition(a[chosen],scorer,form)-_condition(b[chosen],scorer,form))
+    valid=np.isfinite(differences).all()
+    return dict(document_ids=ids,indices=indices,differences=differences,
+        observed=_condition(a,scorer,form)-_condition(b,scorer,form),
+        p_value=c3_pvalue(differences) if valid else math.nan,
+        interval=np.quantile(differences,[.025,.975],method='linear').tolist() if valid else [math.nan,math.nan],
+        form=form,seed=seed,quantile_method='linear',interpretation='declared bootstrap-tail statistic; not an exact null test')
+
+
+def ncurves(examples,scorer,*,sizes=(25,50,100,200),draws=200,seed=20261017,strata,form='pooled'):
+    ids,values=_examples(examples)
+    if set(strata)!=set(ids):raise ValueError('Every document needs its preserved stratum.')
+    if type(draws) is not int or draws<1:raise ValueError('Positive subset draw count required.')
+    rng=np.random.default_rng(seed);rows=[]
+    from collections import Counter
+    for size in sizes:
+        if type(size) is not int or not 1<=size<=len(ids):raise ValueError('Invalid subset size.')
+        for draw in range(draws):
+            chosen=rng.choice(len(ids),size=size,replace=False)
+            selected=[ids[index] for index in chosen]
+            rows.append(dict(n=size,draw=draw,document_ids=selected,counts=dict(Counter(strata[key] for key in selected)),
+                             score=_condition(values[chosen],scorer,form),full_cohort=size==len(ids)))
+    return rows
