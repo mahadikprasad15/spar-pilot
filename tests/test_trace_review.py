@@ -76,3 +76,23 @@ def test_analysis_review_rejects_requests_outside_retained_evidence():
     with pytest.raises(ValueError, match='named site'):
         validate_analysis_requests([dict(evidence='cohort-position-mean',
             sites=['block-28-output'], positions=[0])])
+
+
+def test_review_draft_binds_verified_corpus_and_lists_unapproved_choices(tmp_path):
+    from test_trace_corpus import Sources, review
+    from pilot_eval.trace_corpus import prepare_corpus
+    from pilot_eval.trace_review import prepare_review
+    deps = Sources(tmp_path)
+    corpus = prepare_corpus(deps.path, tmp_path, 'corpus', review=review(), dependencies=deps)
+    result = prepare_review(corpus, tmp_path, 'review')
+    assert result['state'] == 'awaiting-review'
+    assert result['reveal_allowed'] is False
+    assert result['missing_choices'] == ['vocabulary', 'primary_testing', 'resampling',
+                                         'snr', 'robustness', 'grading']
+    assert result['corpus_counts'] == {'legacy-150': 150, 'new-50': 50}
+    assert prepare_review(corpus, tmp_path, 'review') == result
+    # A review draft does not grant reveal, even with a previously observed token list.
+    assert result['choices'] == {name: None for name in result['missing_choices']}
+    corpus.write_text('{}')
+    with pytest.raises(ValueError):
+        prepare_review(corpus, tmp_path, 'review')

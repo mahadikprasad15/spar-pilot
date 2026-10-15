@@ -90,3 +90,28 @@ def validate_analysis_requests(requests):
         elif request['evidence'] != 'cohort-position-mean':
             raise ValueError('Unsupported analysis evidence kind.')
     return requests
+
+
+def prepare_review(corpus_path, output_root, name):
+    """Create an immutable empty decision sheet bound to verified raw inputs.
+
+    This is a draft, not a freeze operation: no statistical settings or approvals
+    are inferred. Later reviewed proposals must use separately identified records.
+    """
+    from pilot_eval.trace_corpus import load_corpus
+    from pilot_eval.training import file_hash
+    root = Path(output_root).resolve()
+    corpus_path = Path(corpus_path)
+    corpus_path = (corpus_path if corpus_path.is_absolute() else root / corpus_path).resolve()
+    corpus, _ = load_corpus(corpus_path, root)
+    directory = _directory(root, name)
+    sections = ['vocabulary', 'primary_testing', 'resampling', 'snr', 'robustness', 'grading']
+    draft = dict(schema_version=1, state='awaiting-review', reveal_allowed=False,
+                 corpus_path=str(corpus_path.relative_to(root)),
+                 corpus_sha256=file_hash(corpus_path), corpus_counts=corpus['counts'],
+                 choices={section: None for section in sections}, missing_choices=sections,
+                 exposure_review='pending',
+                 capture_reference='pending capture-contract freeze; no capture settings defined here')
+    with run_lock(directory):
+        _save_frozen(directory / 'draft.json', draft)
+    return draft
