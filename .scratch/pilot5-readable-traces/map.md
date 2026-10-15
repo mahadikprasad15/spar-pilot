@@ -48,3 +48,7 @@ See design.md section 10 for unapproved choices and source-qualification prerequ
 
 - Ticket 02 implemented with 17 CPU corpus tests; 32 related tests pass. Real pinned-data corpus preparation is pending. Cells 7–9 need CPU only.
 - Approved new-50 selection: same pinned first-2,000 FineWeb pool, disjoint document/text identities, 128-content-token minimum, separate local seed 42, source order. Prior exposure remains explicitly recorded by the reviewer.
+
+## Ticket 03 progress · 2026-10-15
+
+Exposure history, verified-corpus review drafts and retained-evidence availability guards are implemented at the public CPU workflow seam. Scientific decisions remain empty; no reveal/freeze or learned readout is claimed. Real corpus completion and review approvals are pending. See `docs/pilot5-prereveal-review.md`.

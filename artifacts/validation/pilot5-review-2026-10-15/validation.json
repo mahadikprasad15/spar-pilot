@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-15",
+  "implementation_commit": "85a0fcf",
+  "status": "partial-implementation-awaiting-scientific-review",
+  "related_tests": {
+    "passed": 48,
+    "seconds": 30.68,
+    "files": [
+      "tests/test_trace_review.py",
+      "tests/test_trace_corpus.py",
+      "tests/test_trace_session.py",
+      "tests/test_workflow.py",
+      "tests/test_notebook_session.py"
+    ]
+  },
+  "session_regression": {
+    "state": "running",
+    "log": "/private/tmp/pilot5-session-2026-10-15.log"
+  },
+  "scientific_execution": {
+    "corpus": "not confirmed by user",
+    "vocabulary": "not implemented; proposal pending",
+    "freeze": "not implemented",
+    "model_inference": false,
+    "readout_reveal": false
+  },
+  "publication": "local commits only"
+}
