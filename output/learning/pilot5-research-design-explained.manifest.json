@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "title": "Pilot 5: Reading the traces of fine-tuning",
+  "date": "2026-10-15",
+  "artifact": "output/learning/pilot5-research-design-explained.html",
+  "artifact_sha256": "c7f8d0c877db6a5682a8e41a288f4f7d2bcf05c7e81b6706e3340f38a03fcc18",
+  "source_release": "13af28d29c952f7415d40bde44c8eb6df862aea6",
+  "scope": "Research design and implementation explainer; no Pilot 5 scientific results",
+  "sources": [
+    {
+      "path": ".scratch/pilot5-readable-traces/spec.md",
+      "sha256": "8839a6c35b610080d24172298a59e036325c5ff0edd12c84321460f4a9aeca27"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/design.md",
+      "sha256": "bf5fdeedd9e85b790c81f4db10a62fa24751e22a86149e12a5f9f7c7ffbf5ea2"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/ticket03-scoring-design-v1.1.md",
+      "sha256": "1d2bcdfaa1fb4275b384f18eb1a8fd3ce3b65927637bda0468f202f4827d7636"
+    },
+    {
+      "path": "TICKET_03_PREFLIGHT.md",
+      "sha256": "65eabcbad25afdbcbf3bd43225832f4559a73933bbcd892d33c8d99af734abf9"
+    },
+    {
+      "path": "TICKET_03_REPORT.md",
+      "sha256": "675ac126557783805b9f34986693c973eb9d25340b7b9deaa344610b1c88e925"
+    },
+    {
+      "path": "TICKET_04_REPORT.md",
+      "sha256": "002b1aeb2614b961a20cc8e1ea7e37f8a9d613c11f83669726bea9248a30d75a"
+    },
+    {
+      "path": "docs/pilot5-capture-diagnostic.md",
+      "sha256": "0169bb95ccc5f09cc9709bfaa8b200bc77a8cd9b2483c7f1fa31857ac9dba344"
+    },
+    {
+      "path": "docs/adr/0011-pilot5-primary-vector-and-durable-evidence.md",
+      "sha256": "a27fd878195d86cfbb0e72fa074b497d58e85bb5581ae23c97e8a4a36e9426cb"
+    },
+    {
+      "path": "docs/adr/0012-pilot5-corpus-extension-and-input-scope.md",
+      "sha256": "789d67dce1909c2ef8f537907018755187a8fe1ad8455a26f6d5f4aafa7d6d02"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/01-restore-and-colab-smoke.md",
+      "sha256": "063fe23a4b61f0ec18cc94ff3a2f2a6add0adf0c9cbc42265f908d88a4f43d1e"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/02-freeze-raw-corpus.md",
+      "sha256": "0ab15a3d819df055f26e33fd6a7c452120a9457c3ce79e39e861eeedc4077c45"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/03-freeze-vocabulary-and-reveal-policy.md",
+      "sha256": "0546c26dbf7a684b9411c36209c65642c351c5a8a6594b0648ea05a84a8e67ea"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/04-qualify-paired-capture.md",
+      "sha256": "0ce8a654e9d14ba81cd2f0c61eecd8698dabc46bddc289cb2b3096626c0d65dd"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/05-qualify-community-lens.md",
+      "sha256": "fc03aa92a2b4284eda2d4e0e01325c5808ab162530fffa1753badfca1adb3067"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/06-freeze-capture-budget-and-predictions.md",
+      "sha256": "04b4fb8f8033e4167f24ae90bcda812b52ea3167a6d9ba0dd9a5ad9161995106"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/07-capture-resume-and-durable-release.md",
+      "sha256": "5ea03fafd8e3ec170e108e7356d1dc3d5e2150ceb60daf733e7bd20add557af9"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/08-decode-controlled-readouts.md",
+      "sha256": "3321469964ed55d34fd073c6a3e39e03db1a247052abce69f2532de02c800d92"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/09-automatic-relevance-and-robustness.md",
+      "sha256": "a73a0252624f38d7f9e18d2f6fbd5507be312cad68be7dac4d96a5aefef1e28f"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/10-blinded-grading-supplement.md",
+      "sha256": "2df8928d1e74915f23c11e1cc1fd2805f8904838fdbcff62cae40e90da73e0fa"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/11-research-report-and-handoff.md",
+      "sha256": "225429e2e1ee4c353deff96352623acdd0a38f93d5405833659cf5c69bd435f2"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/12-optional-assistant-extension.md",
+      "sha256": "868f1c128957f20d0ec32b80e5caf46fcfd5d75c8f5bb9806e07ce89c3991ec4"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/13-fresh-colab-raw-validation.md",
+      "sha256": "734881434a5d1a8c3d8afcd96650d6e6d0dec6241aa125f68a06478a25776d39"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/issues/README.md",
+      "sha256": "161495c68294b9bf55566b21baa690c976838c81815b312b63fbe57df2983bf5"
+    }
+  ],
+  "validation": {
+    "chapters": 12,
+    "ticket_cards": 13,
+    "all_local_links_exist": true,
+    "all_anchors_resolve": true,
+    "java_script": "node syntax check and real Chrome execution",
+    "browser": {
+      "mobile": {
+        "width": 390,
+        "documentWidth": 390,
+        "tickets": 13
+      },
+      "interactions": {
+        "filters": true,
+        "tabs": true,
+        "calculator": true
+      },
+      "exceptions": []
+    },
+    "session_tests": {
+      "passed": 351,
+      "skipped": 35,
+      "seconds": 1048.88
+    },
+    "evidence_directory": "artifacts/validation/pilot5-research-guide-2026-10-15"
+  },
+  "external_dependencies": [],
+  "features": [
+    "paired capture diagrams",
+    "vector averaging illustration",
+    "assessment tabs",
+    "filterable ticket inventory",
+    "dependency graph",
+    "workload/storage calculator",
+    "mobile responsive",
+    "print stylesheet"
+  ]
+}

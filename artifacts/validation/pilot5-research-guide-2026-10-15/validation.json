@@ -1,0 +1,26 @@
+{
+  "chapters": 12,
+  "ticket_cards": 13,
+  "all_local_links_exist": true,
+  "all_anchors_resolve": true,
+  "java_script": "node syntax check and real Chrome execution",
+  "browser": {
+    "mobile": {
+      "width": 390,
+      "documentWidth": 390,
+      "tickets": 13
+    },
+    "interactions": {
+      "filters": true,
+      "tabs": true,
+      "calculator": true
+    },
+    "exceptions": []
+  },
+  "session_tests": {
+    "passed": 351,
+    "skipped": 35,
+    "seconds": 1048.88
+  },
+  "evidence_directory": "artifacts/validation/pilot5-research-guide-2026-10-15"
+}
