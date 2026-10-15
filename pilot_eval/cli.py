@@ -15,6 +15,12 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ('exposure', 'inspect'):
+        review = commands.add_parser('traces-review-' + operation, help='CPU prereveal review history')
+        review.add_argument('--name', required=True)
+        review.add_argument('--output-root', type=Path, required=True)
+        if operation == 'exposure':
+            review.add_argument('--event', type=Path, required=True)
     corpus_prepare = commands.add_parser('traces-corpus-prepare', help='CPU preparation of frozen Pilot 5 raw inputs')
     corpus_prepare.add_argument('--source-config', type=Path, required=True)
     corpus_prepare.add_argument('--review', type=Path, required=True)
@@ -182,7 +188,13 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == 'traces-corpus-prepare':
+        if args.command.startswith('traces-review-'):
+            from pilot_eval.trace_review import record_exposure, inspect_review
+            result = (record_exposure(args.output_root, args.name, json.loads(args.event.read_text()))
+                      if args.command == 'traces-review-exposure'
+                      else inspect_review(args.output_root, args.name))
+            print(json.dumps(result, indent=2))
+        elif args.command == 'traces-corpus-prepare':
             from pilot_eval.trace_corpus import prepare_corpus
             print(prepare_corpus(args.source_config, args.output_root, args.name,
                 review=json.loads(args.review.read_text()), dependencies=dependencies))
