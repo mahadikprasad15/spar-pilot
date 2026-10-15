@@ -27,3 +27,21 @@ def test_log_odds_matches_independent_literals_and_filters_rare_nonpositive_stri
     assert ref['format_number'] == ['####']
     assert ref['word'] == ['math']
     assert ref['short_reference'] is True
+
+
+def test_reference_freeze_is_reused_and_detects_edited_bytes_and_changed_parents(tmp_path):
+    from pilot_eval.trace_vocabulary import freeze_references, load_references
+    parent = tmp_path/'counts.json';parent.write_text('source counts')
+    references = {'ref_questions':{'strings':['total']},'ref_gold':{'strings':['####']},'ref_grpo':{'strings':['answer']}}
+    path = freeze_references(tmp_path/'references', references,
+        parameters={'alpha0':1000}, input_files={'counts':parent})
+    assert load_references(path)['references'] == references
+    assert freeze_references(tmp_path/'references', references,
+        parameters={'alpha0':1000}, input_files={'counts':parent}) == path
+    parent.write_text('changed counts')
+    with pytest.raises(ValueError, match='parent'):
+        load_references(path)
+    parent.write_text('source counts')
+    path.write_text(path.read_text()+' ')
+    with pytest.raises(ValueError, match='freeze.*hash'):
+        load_references(path)

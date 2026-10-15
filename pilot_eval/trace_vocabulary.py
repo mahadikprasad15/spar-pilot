@@ -67,3 +67,42 @@ def build_reference(task_counts, background_counts, *, alpha0=1000, size=200):
                 scores=scores, n_a=n_a, n_b=n_b, alpha0=alpha0,
                 minimum_count=5, requested_size=size, short_reference=len(selected) < 100,
                 tie_rule='descending-z,descending-y_a,ascending-string')
+
+
+def freeze_references(directory, references, *, parameters, input_files):
+    """Seal references, exact parameters and byte hashes of their source inputs."""
+    from pilot_eval.training import run_lock, file_hash
+    from pilot_eval.workflow import _save_frozen, _hash
+    directory = Path(directory).resolve()
+    if set(references) != {'ref_questions', 'ref_gold', 'ref_grpo'}:
+        raise ValueError('Freeze requires all three named references.')
+    parents = {name: dict(path=str(Path(path).resolve()), sha256=file_hash(Path(path)))
+               for name, path in input_files.items()}
+    payload = dict(schema_version=1, protocol='pilot5-overlap-v1.1',
+                   references=references, parameters=parameters, inputs=parents)
+    with run_lock(directory):
+        path = directory/'freeze.json'
+        _save_frozen(path, payload)
+        _save_frozen(directory/'freeze-seal.json', dict(sha256=file_hash(path), content_sha256=_hash(payload)))
+    load_references(path)
+    return path
+
+
+def load_references(path):
+    """Verify a reference freeze before a supported scoring operation."""
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+    path = Path(path).resolve()
+    if not path.is_file() or not (path.parent/'freeze-seal.json').is_file():
+        raise ValueError('A valid reference freeze is required before scoring.')
+    seal = json.loads((path.parent/'freeze-seal.json').read_text())
+    if file_hash(path) != seal['sha256']:
+        raise ValueError('Reference freeze byte hash mismatch.')
+    payload = json.loads(path.read_text())
+    if _hash(payload) != seal['content_sha256'] or payload.get('protocol') != 'pilot5-overlap-v1.1':
+        raise ValueError('Reference freeze content hash/protocol mismatch.')
+    for item in payload['inputs'].values():
+        source = Path(item['path'])
+        if not source.is_file() or file_hash(source) != item['sha256']:
+            raise ValueError('Reference parent hash mismatch.')
+    return payload
