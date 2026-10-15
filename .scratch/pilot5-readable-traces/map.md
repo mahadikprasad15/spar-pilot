@@ -52,3 +52,7 @@ See design.md section 10 for unapproved choices and source-qualification prerequ
 ## Ticket 03 progress · 2026-10-15
 
 Exposure history, verified-corpus review drafts and retained-evidence availability guards are implemented at the public CPU workflow seam. Scientific decisions remain empty; no reveal/freeze or learned readout is claimed. Real corpus completion and review approvals are pending. See `docs/pilot5-prereveal-review.md`.
+
+## Corpus target verification · 2026-10-15
+
+Ticket 02 resolved from user-reported public Colab verification: 200 documents, 150 legacy/50 new, 128 content tokens, no added special tokens, return code 0. Ticket 03's real-corpus dependency is satisfied; vocabulary/statistical approvals remain pending. No new GPU work is required to review those choices.

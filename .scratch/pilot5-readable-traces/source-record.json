@@ -12,6 +12,6 @@
     "bounded checks for both zero adapters",
     "new 50: same pinned first-2000 FineWeb pool; disjoint document/text identities; >=128 content tokens; local seed 42; source order"
   ],
-  "implementation_status": "Ticket 01 resolved from user-reported Colab smoke/reconnect/source audit; Ticket 02 implemented, real pinned-data preparation pending",
-  "validation": "Session regression: 289 passed, 35 skipped; related corpus/bootstrap/workflow: 32 passed. Real Colab bootstrap passed; production corpus pending."
+  "implementation_status": "Tickets 01 and 02 resolved from user-reported public Colab validation; Ticket 03 partially implemented, scientific approvals pending",
+  "validation": "Session regression 306 passed, 35 skipped; subsequent affected set 48 passed. Real bootstrap/source audit and 200-document corpus verification passed via user-reported public outputs."
 }

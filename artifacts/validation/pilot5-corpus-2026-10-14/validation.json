@@ -45,8 +45,9 @@
     }
   },
   "real_corpus": {
-    "state": "pending",
-    "reason": "Pinned dataset/tokenizer production preparation not executed"
+    "state": "completed",
+    "evidence": "colab-verification-2026-10-15.json",
+    "evidence_basis": "User-pasted public Colab traces-corpus-verify output; not independently fetched Drive payloads"
   },
   "verification_scope": "Sealed corpus/input files; capture must independently qualify adapter sources"
 }
