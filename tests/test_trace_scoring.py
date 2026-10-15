@@ -48,3 +48,10 @@ def test_scale_invariance_for_two_linear_lenses_and_matched_max_null():
     assert np.array_equal(result['toy'],null_scores(scorer,dimension=2,draws=3,seed=9,positions=5)['toy'])
     with pytest.raises(ValueError,match='covariance'):
         random_vectors(3,2,seed=9,covariance=np.zeros((2,2)))
+
+
+def test_step_zero_gate_is_exact_and_rejects_even_small_nonzero_deltas():
+    from pilot_eval.trace_scoring import check_zero_adapter
+    assert check_zero_adapter(np.zeros((2,5,3)))['exact_zero'] is True
+    with pytest.raises(ValueError,match='exactly zero'):
+        check_zero_adapter(np.full((2,5,3),1e-15))

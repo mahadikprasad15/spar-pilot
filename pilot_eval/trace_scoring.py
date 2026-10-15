@@ -98,3 +98,11 @@ def null_scores(scorer, *, dimension, draws=1000, seed=20261015, positions=1, co
         for name in values[0]:
             result.setdefault(name,[]).append(float(np.max([row[name] for row in values])))
     return {name:np.asarray(values,dtype=np.float64) for name,values in result.items()}
+
+
+def check_zero_adapter(delta):
+    """Exact step-zero assertion; no numerical allowance is substituted."""
+    values=np.asarray(delta)
+    if not values.size or not np.isfinite(values).all() or np.any(values!=0):
+        raise ValueError('Step-0 adapter delta must be finite and exactly zero.')
+    return dict(exact_zero=True,shape=list(values.shape),action='skip-undefined-readout')
