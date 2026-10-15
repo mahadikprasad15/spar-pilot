@@ -50,6 +50,7 @@ def verify_reference_run(path,output_root):
     reviewed=(path.parent/'review.json').exists()
     if reviewed:load_references(path,require_review=True)
     return dict(reference_names=['ref_questions','ref_gold','ref_grpo'],background_tokens=2000000,
+                procedure_plan=str(root/config['procedure_plan']),
                 training_examples=512,grpo_completions=4096,reference_sizes={k:len(v['strings']) for k,v in payload['references'].items()},
                 reveal_allowed=False,reference_review='reviewed' if reviewed else 'pending',
                 reference_gate_passed=reviewed,remaining_gate='qualified capture and readout consumer',
@@ -89,6 +90,7 @@ def prepare_reference_run(corpus_path,sft_path,grpo_path,output_root,name,*,depe
         parents.update({f'tokenizer-{key}':_inside(root,value['path']) for key,value in corpus['tokenizer_files'].items()})
         config=dict(schema_version=1,procedure=approved_procedure(),source_paths=[str(p.relative_to(root)) for p in (corpus_path,sft_path,grpo_path)],
                     implementation=_implementation(),
+                    procedure_plan=f'plans/{name}-overlap-v1/overlap.config.json',run_path=str(directory.relative_to(root)),
                     parent_hashes={key:file_hash(p) for key,p in parents.items()},prior_exposure=corpus['review']['prior_exposure'],
                     reviewer='Prasad',review_date='2026-10-15',verification_scope='sealed text/input parents; not a full optimizer/checkpoint audit')
         existing=directory/'config.json'
@@ -100,6 +102,10 @@ def prepare_reference_run(corpus_path,sft_path,grpo_path,output_root,name,*,depe
             config['origin_git_commit']=revision.stdout.strip() if revision.returncode==0 else 'unavailable'
         _save_frozen(directory/'config.json',config);_write_state(directory,'running',0,3)
         _save_frozen(directory/'meta/run_manifest.json',config)
+        plan_path=_inside(root,config['procedure_plan'])
+        _save_frozen(plan_path,config)
+        parents['procedure_plan']=plan_path
+        parents['run_manifest']=directory/'meta/run_manifest.json'
         try:
             deps=dependencies or ReferenceDependencies()
             inventory=deps.load_inventory(corpus,root)

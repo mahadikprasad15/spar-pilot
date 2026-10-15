@@ -40,6 +40,7 @@ def test_reference_workflow_builds_three_frozen_references_and_reuses_completed_
     assert result['reveal_allowed'] is False
     manifest=json.loads((path.parent.parent/'meta/run_manifest.json').read_text())
     assert len(manifest['origin_git_commit'])==40
+    assert (tmp_path/manifest['procedure_plan']).is_file()
     assert set(manifest['implementation'])=={'trace_vocabulary.py','trace_reference_workflow.py'}
     assert (path.parent/'top30.md').is_file()
     class NoAccess:
