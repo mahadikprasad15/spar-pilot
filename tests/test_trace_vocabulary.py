@@ -45,3 +45,33 @@ def test_reference_freeze_is_reused_and_detects_edited_bytes_and_changed_parents
     path.write_text(path.read_text()+' ')
     with pytest.raises(ValueError, match='freeze.*hash'):
         load_references(path)
+
+
+def test_background_preparation_is_bounded_exact_and_resumes_sealed_scan_chunks(tmp_path):
+    from pilot_eval.trace_vocabulary import prepare_background
+    docs=[{'text':v} for v in ['a'*80,'a'*80,'b'*80,'c'*80,'x'*10,'d'*80]]
+    class Tokenizer:
+        def __init__(self): self.seen=[]
+        def encode(self,text,add_special_tokens=False):
+            assert add_special_tokens is False
+            self.seen.append(text)
+            return [ord(c) for c in text]
+    def interrupted():
+        yield from docs[:3]
+        raise RuntimeError('fixture disconnect')
+    tok=Tokenizer()
+    kwargs=dict(measurement_indices=[2],scan_limit=6,token_target=100,seed=0,chunk_size=2,
+                tokenizer_identity={'fixture':'character'})
+    with pytest.raises(RuntimeError,match='disconnect'):
+        prepare_background(tmp_path/'background',interrupted(),tok,**kwargs)
+    resumed=Tokenizer()
+    result=prepare_background(tmp_path/'background',iter(docs),resumed,**kwargs)
+    assert result['selected_indices']==[0,5]
+    assert result['token_count']==100
+    assert [r['retained_tokens'] for r in result['documents']]==[80,20]
+    assert resumed.seen==['b'*80,'c'*80,'x'*10,'d'*80]
+    assert result['documents'][1]['token_ids']==[100]*20
+    assert prepare_background(tmp_path/'background',None,None,**kwargs)==result
+    (tmp_path/'background/chunks/000000.json').write_text('{}')
+    with pytest.raises(ValueError,match='hash'):
+        prepare_background(tmp_path/'background',None,None,**kwargs)

@@ -106,3 +106,99 @@ def load_references(path):
         if not source.is_file() or file_hash(source) != item['sha256']:
             raise ValueError('Reference parent hash mismatch.')
     return payload
+
+
+def prepare_background(directory, documents, tokenizer, *, measurement_indices,
+                       tokenizer_identity, scan_limit=10000, token_target=2000000,
+                       seed=20261019, chunk_size=250):
+    """Bounded, resumable source scan and exact raw-token background selection.
+
+    On resume the source stream is replayed to the cursor, but sealed chunks are
+    not retokenized. No learned vectors, lens tokens or model libraries are used.
+    """
+    import itertools
+    import random
+    from pilot_eval.training import file_hash, run_lock
+    from pilot_eval.workflow import _hash, _save_frozen
+    from pilot_eval.run import _write_json, _write_state
+    directory = Path(directory).resolve()
+    if (any(type(value) is not int or value <= 0 for value in (scan_limit,token_target,chunk_size))
+            or type(seed) is not int or not measurement_indices
+            or any(type(index) is not int or not 0 <= index < scan_limit for index in measurement_indices)):
+        raise ValueError('Declare a bounded scan containing every measurement source index.')
+    config = dict(schema_version=1, scan_limit=scan_limit, token_target=token_target,
+        seed=seed, chunk_size=chunk_size, measurement_indices=sorted(set(measurement_indices)),
+        tokenizer=tokenizer_identity, minimum_raw_tokens=64, maximum_document_tokens=1024,
+        deduplication="sha256(' '.join(text.split()).encode('utf-8'))")
+    with run_lock(directory):
+        _save_frozen(directory/'config.json', config)
+        complete=directory/'complete.json'
+        if complete.exists():
+            seal=json.loads(complete.read_text())
+            for name,expected in seal['files'].items():
+                if file_hash(directory/name)!=expected:
+                    raise ValueError('Background payload hash mismatch.')
+            return json.loads((directory/'results/background.json').read_text())
+        _write_state(directory,'running',0,scan_limit)
+        try:
+            chunks=directory/'chunks';chunks.mkdir(exist_ok=True)
+            scanned=[]
+            for path in sorted(chunks.glob('*.json')):
+                if path.name.endswith('.seal.json'): continue
+                seal=path.with_suffix('.seal.json')
+                if not seal.exists(): break  # interrupted unpublished chunk is safely replayed
+                if file_hash(path)!=json.loads(seal.read_text())['sha256']:
+                    raise ValueError('Background scan chunk hash mismatch.')
+                block=json.loads(path.read_text())
+                if [r['source_index'] for r in block]!=list(range(len(scanned),len(scanned)+len(block))):
+                    raise ValueError('Background scan chunks have a gap or reordered cursor.')
+                scanned.extend(block)
+            print(f'Background scan: restoring {len(scanned)}/{scan_limit} source documents.',flush=True)
+            stream=itertools.islice(documents,len(scanned),scan_limit)
+            while len(scanned)<scan_limit:
+                raw=list(itertools.islice(stream,min(chunk_size,scan_limit-len(scanned))))
+                if not raw: raise ValueError('Pinned stream ended before the declared scan bound.')
+                block=[]
+                for offset,doc in enumerate(raw):
+                    text=doc['text'];ids=tokenizer.encode(text,add_special_tokens=False)
+                    block.append(dict(source_index=len(scanned)+offset,source_id=doc.get('id'),
+                        full_text_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                        normalized_text_sha256=hashlib.sha256(' '.join(text.split()).encode()).hexdigest(),
+                        token_ids=ids[:1024],raw_token_count=len(ids)))
+                path=chunks/f'{len(scanned):06d}.json'
+                _write_json(path,block)
+                _write_json(path.with_suffix('.seal.json'),{'sha256':file_hash(path)})
+                scanned.extend(block)
+                _write_state(directory,'running',len(scanned),scan_limit)
+                print(f'Background scan: {len(scanned)}/{scan_limit} documents sealed.',flush=True)
+            excluded={scanned[i]['normalized_text_sha256'] for i in config['measurement_indices']}
+            excluded_ids={scanned[i]['source_id'] for i in config['measurement_indices']
+                          if scanned[i]['source_id'] is not None}
+            seen=set();eligible=[]
+            for row in scanned:
+                key=row['normalized_text_sha256']
+                if (row['source_index'] in config['measurement_indices'] or key in excluded
+                        or row['source_id'] is not None and row['source_id'] in excluded_ids): continue
+                if key in seen:continue
+                seen.add(key)
+                if row['raw_token_count']>=64:eligible.append(row)
+            random.Random(seed).shuffle(eligible)
+            selected=[];count=0
+            for row in eligible:
+                take=min(len(row['token_ids']),token_target-count)
+                selected.append(dict(row,token_ids=row['token_ids'][:take],retained_tokens=take))
+                count+=take
+                if count==token_target:break
+            if count!=token_target:
+                raise ValueError('Bounded background pool cannot supply the approved token target; review required.')
+            result=dict(config=config,documents=selected,token_count=count,
+                        selected_indices=[row['source_index'] for row in selected],
+                        selection_sha256=_hash([row['source_index'] for row in selected]))
+            _save_frozen(directory/'results/background.json',result)
+            payloads=[directory/'config.json',directory/'results/background.json',*sorted(chunks.glob('*.json'))]
+            _write_json(complete,{'files':{str(p.relative_to(directory)):file_hash(p) for p in payloads}})
+            _write_state(directory,'completed',scan_limit,scan_limit)
+            return result
+        except BaseException as exc:
+            _write_state(directory,'failed',len(scanned) if 'scanned' in locals() else 0,scan_limit,str(exc))
+            raise
