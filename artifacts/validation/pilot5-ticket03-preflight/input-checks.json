@@ -1,0 +1,14 @@
+{
+  "training_count": 512,
+  "training_unique_ids": 512,
+  "training_payload_matches_saved_sft_config": true,
+  "grpo_accepted_records": 4096,
+  "grpo_unique_draw_ids": 4096,
+  "grpo_distinct_training_indices": 512,
+  "grpo_indices_and_gold_match_sft": true,
+  "grpo_prompts_match_sft": true,
+  "measurement_count": 200,
+  "measurement_payload_matches_saved_config": true,
+  "all_measurement_content_lengths_128": true,
+  "tokenizer_hashes_match_recorded_colab_receipt": true
+}
