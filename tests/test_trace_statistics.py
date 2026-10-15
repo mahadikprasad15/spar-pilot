@@ -79,3 +79,11 @@ def test_secondary_max_bootstrap_recomputes_positions_and_ncurves_report_snr():
     assert set(result['scores'])<={1.,1.5,3.}
     curves=ncurves({'a':[1.,0.],'b':[3.,0.]},score,sizes=[2],draws=1,strata={'a':'legacy-150','b':'new-50'})
     assert curves[0]['snr']==2.
+
+
+def test_c3_calibration_diagnostic_is_reproducible_and_detects_a_large_injected_shift():
+    from pilot_eval.trace_statistics import calibration_diagnostics
+    result=calibration_diagnostics(lambda v:float(v[0]),dimension=2,n_documents=8,trials=2,draws=40,seed=11,shift=[100.,0.])
+    assert result['shift_detection_rate']==1
+    assert result==calibration_diagnostics(lambda v:float(v[0]),dimension=2,n_documents=8,trials=2,draws=40,seed=11,shift=[100.,0.])
+    assert result['establishes_nominal_calibration'] is False

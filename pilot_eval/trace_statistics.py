@@ -175,3 +175,24 @@ def stratum_robustness(examples,scorer,*,strata,draws=2000,matched_draws=1000,
     return dict(groups=within,matched_legacy_scores=scores,matched_document_ids=chosen_ids,
                 new_score_percentile=percentile,percentile_rule='upper empirical CDF; ties included',
                 interpretation='robustness only; no exposure-effect inference')
+
+
+def calibration_diagnostics(scorer,*,dimension,n_documents,trials,draws,seed,shift):
+    """Explicit bounded synthetic diagnostic, not a type-I calibration certificate."""
+    if any(type(n) is not int or n<1 for n in (dimension,n_documents,trials,draws)):
+        raise ValueError('Declare positive bounded diagnostic counts.')
+    shift=np.asarray(shift,dtype=np.float64)
+    if shift.shape!=(dimension,) or not np.isfinite(shift).all():raise ValueError('Invalid diagnostic shift vector.')
+    rng=np.random.default_rng(seed);null=[];shifted=[]
+    for _ in range(trials):
+        left={str(i):rng.standard_normal(dimension) for i in range(n_documents)}
+        right={str(i):rng.standard_normal(dimension) for i in range(n_documents)}
+        draw_seed=int(rng.integers(0,2**32))
+        null.append(bootstrap_compare(left,right,scorer,draws=draws,seed=draw_seed)['p_value'])
+        shifted.append(bootstrap_compare({k:v+shift for k,v in left.items()},right,scorer,draws=draws,seed=draw_seed)['p_value'])
+    return dict(seed=seed,trials=trials,draws=draws,n_documents=n_documents,dimension=dimension,
+                null_pvalues=null,shifted_pvalues=shifted,
+                null_rejection_rate=float(np.mean(np.asarray(null)<.05)),
+                shift_detection_rate=float(np.mean(np.asarray(shifted)<.05)),
+                establishes_nominal_calibration=False,
+                limitation='Synthetic case-specific diagnostic; assess actual ranking statistic and Monte Carlo uncertainty before inferential claims.')
