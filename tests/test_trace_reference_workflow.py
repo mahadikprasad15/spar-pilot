@@ -81,6 +81,7 @@ def test_public_reference_verify_and_review_commands_work_in_fresh_cpu_process(t
     assert json.loads(reviewed.stdout)['inference_status']=='exploratory-or-unverified-exposure'
     result=subprocess.run(cmd,capture_output=True,text=True,check=True)
     assert json.loads(result.stdout)['reference_review']=='reviewed'
+    assert json.loads((path.parent.parent/'meta/status.json').read_text())['state']=='frozen'
 
 
 def test_notebook_reference_cells_use_public_commands_and_reuse_saved_run(tmp_path):
