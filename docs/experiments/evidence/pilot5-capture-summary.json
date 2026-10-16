@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "user-supplied-console-log",
+  "documentation_review_date": "2026-10-16",
+  "source_attachment": "85a6a7e8-3c0c-4fb9-a9d9-9a39117c9570/Pasted text.txt",
+  "fresh_drive_verification": false,
+  "capture_complete": true,
+  "durable_verified": true,
+  "gpu_release_safe": true,
+  "production_scientific_success": null,
+  "examples": 200,
+  "conditions": [
+    "base",
+    "sft-64",
+    "grpo-64",
+    "random-64"
+  ],
+  "batch_size": 4,
+  "batches": 50,
+  "sequence_forwards": 800,
+  "model_calls": 200,
+  "sites": 29,
+  "forward_precision": "float32",
+  "accumulation_precision": "float64",
+  "retained_precision": "float32",
+  "durable_bytes_before_final_metadata": 6767685878,
+  "followup": {
+    "cell_24": "user reported completed",
+    "cell_25": "user reported running; no completion supplied"
+  },
+  "limits": [
+    "Console evidence summarized here; original Drive shards not independently rehashed during documentation refresh.",
+    "Capture completion does not establish learned readout or automatic relevance results."
+  ],
+  "source_attachment_sha256": "3658c4bfbbd03b44ba1a581da791e6d10891553c993dbe88ba178dc54a49c0c8"
+}

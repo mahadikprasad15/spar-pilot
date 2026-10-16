@@ -10,10 +10,16 @@ Google Drive logical root: `My Drive/SPAR/spar-pilot/artifacts`.
 Colab spelling: `/content/drive/MyDrive/SPAR/spar-pilot/artifacts` (not automatically accessible on this computer).
 
 Read these first:
-1. `docs/research/pilot-program-handoff.md` — pilot RQs, run recipes, decision/status caveats, source map.
-2. `docs/research/colleague-methods-primer.md` — terminology and technical questions.
-3. `docs/research/source-inventory.json` — local source files/hashes and starter report inventory.
-4. `CONTEXT.md`, the corresponding `.scratch/<pilot>/spec.md`, relevant complete ADR filenames and actual frozen runtime/config/review artifacts.
+1. `README.md` and `docs/experiments/README.md` — experiment map and navigation.
+2. `docs/experiments/pilot-{1..5}.md` and `docs/experiments/status.md` — current questions, configurations and evidence status.
+3. `docs/methods.md` and `docs/artifacts.md` — shared conventions and access requirements.
+4. `docs/research/source-inventory.json` — local source hashes and starter report inventory.
+5. `CONTEXT.md`, the corresponding `.scratch/<pilot>/spec.md`, relevant complete ADR filenames and actual frozen runtime/config/review artifacts.
+
+`docs/research/pilot-program-handoff.md` supplies additional research context.
+The methods primer and `output/learning/` are optional explanatory material, not
+the report structure. Use ordinary technical research writing; define project-specific
+terms without teaching general engineering concepts or adding a colleague FAQ.
 
 The Git clone excludes `artifacts/`. Confirm Drive/local access before promising a full synthesis. If a source is inaccessible, list the exact missing artifact and access needed; continue using available evidence without inventing it. Do not download all large binary shards initially: inventory small configs, manifests, status/seals and summaries, then fetch only raw evidence needed for a calculation or audit. Do not interrupt any active Pilot5 GPU process.
 
@@ -36,7 +42,7 @@ Separate intended settings from actual executed settings and from explanatory ra
 
 Write `source-inventory.csv` (or equivalent structured table) with pilot, scientific product, arm/checkpoint/cohort/variant, source path, SHA256, completion evidence, scorer/runtime/weighting, verification scope and whether raw inputs are accessible. Preserve history and select the current scientific run explicitly. Distinguish synthetic diagnostics/fixtures from actual model results.
 
-Start with preserved local report inputs at `artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/`, the A10040 review and existing SFT audits. The13Oct report is a snapshot; it does not establish latest completion. Cell27 was reported completed later. Pilot4 v2 KL/coefficients need a fresh status lookup. Pilot5 was executing capture when this context was written, so new results may now exist: inspect rather than assume either completion or absence.
+Start with preserved local report inputs at `artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/`, the A10040 review and existing SFT audits. The13Oct report is a snapshot; it does not establish latest completion. Cell27 was reported completed later. Pilot4 v2 KL/coefficients need a fresh status lookup. The supplied Pilot5 capture log records durable completion and the user reported cell24 complete; no completed learned-readout/automatic-analysis result has been supplied. Inspect current artifacts before extending those claims.
 
 ### Phase C — analyze and write the story
 
@@ -56,8 +62,8 @@ Do not redo training, generation, calibration or GPU measurements. Do not relax 
 
 Save a separately named research-report directory with:
 - `report.docx` (or a native Google Doc if explicitly available/authorized), plus PDF and readable Markdown source.
-- A short executive/technical summary, pilot map, per-pilot RQs/methods/results, integrated discussion, limitations and next experiments. Begin with a clear result story, then progressively explain methods.
-- Methods/config tables with provenance, data dictionary, completed/pending ledger and a short colleague FAQ.
+- An abstract, pilot map, per-pilot RQs/methods/results, integrated discussion, limitations and next experiments. Begin with a clear result story, then progressively explain methods.
+- Methods/config tables with provenance, data dictionary, completed/pending ledger and verification scope.
 - `figures/`: editable/vector SVG or PDF plus PNG previews and the exact plotting code/data. Every caption states population, N, scorer/checkpoint, weighting/denominator, uncertainty method and source.
 - Machine-readable source inventory and figure-to-data manifest; exact metrics tables as CSV/JSON. Record code/environment used for any recomputation.
 - An explicit list of unavailable evidence, unresolved discrepancies and analyses not yet executable.

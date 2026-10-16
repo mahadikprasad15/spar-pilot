@@ -1,9 +1,11 @@
-# Pilot 3 instrument: diagnostic stage
+# Pilot 3 instrument
 
-Implemented stages so far: frozen input preparation/audit and validation of one
-diagnostic batch across saved checkpoints 0, 8, 16, 32 and 64. Production
-profiling, full-cohort resume, scientific plotting and guided Colab are later
-tickets. A diagnostic completion does not mean Pilot 3 is scientifically complete.
+Current experiment/configuration and result evidence: [Pilot 3](experiments/pilot-3.md).
+The implemented workflow includes preparation, diagnostics, calibration, profiling,
+production measurement/resume and reporting. This guide retains stage-specific
+instructions and dated follow-ups. See the [status ledger](experiments/status.md)
+for recorded real-run evidence; a diagnostic completion alone is not a completed
+production measurement.
 
 ## Inputs and commands
 

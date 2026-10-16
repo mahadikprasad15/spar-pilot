@@ -50,7 +50,7 @@ Do not equate ticket “resolved” with real-model experiment completion. The t
 | Pilot4 direction comparison, cell27 | User reported completed after the13Oct snapshot | Locate its actual report. Snapshot omission is historical, not evidence it is still absent. |
 | Pilot4 coefficients/KL | v1 profile failed coefficient singleton/batch gate; approved ADR0010 repair implemented; no later completed v2 measurements shown here | Inspect Drive v2 plan/profile/status. Resume/review29→30→31→32→33 as appropriate. No retraining/generation. |
 | Pilot4 final combined export | Software implemented; supplemental completion unconfirmed |34–36 after all required verified products exist. |
-| Pilot5 capture | Production freeze succeeded; user reports cell23 running | Wait for23/24 completion. Do not interrupt the GPU job for this report. |
+| Pilot5 capture | Supplied cell23 log reports durable completion; user subsequently reported24 complete | Reuse saved capture. No fresh Drive shard audit performed for this handoff. |
 | Pilot5 automatic inference | Ticket09 implemented/published; no real scientific execution claimed | CPU25–26 review→26A nulls→27–28 readouts→29 analysis→30 verification. |
 | Pilot5 human grading/final presentation | Later work | Keep naming/relevance graders isolated; no external grader calls without approval. |
 
@@ -70,7 +70,7 @@ Do not equate ticket “resolved” with real-model experiment completion. The t
 
 | Path | Purpose / start here |
 |---|---|
-| `README.md` | Existing entrypoint, but stale; does not yet introduce Pilot5 and contains old real-GPU-unverified language. |
+| `README.md` | Project entrypoint; links five experiment records, shared methods, status and artifact access. |
 | `CONTEXT.md` | Project terminology: baseline, direct write, block-output change, weights/views. |
 | `.scratch/pilot-1-evaluation/spec.md` | Baseline evaluation design. |
 | `.scratch/pilot2-sft/{spec.md,map.md}` | SFT protocol and ticket map. |
@@ -78,7 +78,7 @@ Do not equate ticket “resolved” with real-model experiment completion. The t
 | `.scratch/pilot4-grpo/{spec.md,issues/}` | GRPO design and implementation issues. |
 | `.scratch/pilot5-readable-traces/{spec.md,design.md,map.md,issues/}` | Readable-trace design/tickets. Some draft status/scope sentences are superseded by later reviews. |
 | `docs/adr/` | Decisions/amendments, including scorer fixes, numerical gates and coefficient policy. Several ADR numbers are reused: use the complete filename. |
-| `docs/pilot2-sft.md`, `docs/pilot3-instrument.md` | SFT/instrument operational guides. Read all dated follow-ups; opening paragraphs can describe an earlier stage. |
+| `docs/pilot2-sft.md`, `docs/pilot3-instrument.md` | SFT/instrument operational guides. Read dated follow-ups alongside the current experiment record. |
 | `docs/pilot4-{grpo,fixed-writes,token-measurements,final-handoff}.md` | Four distinct GRPO workflows, including remaining KL work. |
 | `docs/pilot5-*.md` | Corpus, references, capture/lens qualification, durable capture/readouts, automatic analysis. |
 | `notebooks/pilot-{1,2,3,4,5}-colab.ipynb` | Thin stage launchers, pinned to their own harness commits. Opening main is not equivalent to running latest main code. |
@@ -128,7 +128,14 @@ Common products: `config.json`, `meta/run_manifest.json`, `meta/runtime.json`, `
 
 Strengths: durable raw outputs, explicit parent/source identities, exact mathematical checks and negative controls, separate stages, resumable batches, versioned scorer revisions and honest numerical limits.
 
-Presentation/maintenance debt observed: stale README/status paragraphs, no Pilot5 README entry, draft “ready” labels alongside later executed stages, reused ADR numbers, a large central CLI, some dense multi-statement implementation code, broadly specified package extras versus pinned notebook environments, and results absent from the Git clone. No root LICENSE or `.github` CI directory was found during this inspection. The recent full test runs had a notebook-layout failure fixed by a targeted recheck; do not advertise a clean full-suite run of the final snapshot without rerunning it.
+Documentation structure was refreshed on16Oct: README, five experiment records,
+shared methods, status ledger, artifact access and an operations index. Use
+[the status ledger](../experiments/status.md) as the current consolidated record.
+Remaining engineering work includes dense implementation sections, a large central
+CLI and broadly specified package extras versus pinned notebook environments.
+Scientific artifacts are outside Git; no public artifact download is configured.
+No root LICENSE or `.github` CI directory was found in the inspection. The session's
+full-suite outcome is recorded separately in [testing](../testing.md).
 
 Before colleague-facing sharing, create a single current overview, a validated config/completion table, one source-backed report, a small example artifact bundle and exact setup instructions for the intended use. Freeze the shared commit. Before public release, resolve license/redistribution and run a scoped secret/data-sharing review. Preserve original artifacts; create sanitized share copies when paths/IDs/credentials need removal. This handoff does not authorize a source-code cleanup, public release or new GPU runs.
 

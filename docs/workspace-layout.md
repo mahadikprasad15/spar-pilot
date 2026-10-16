@@ -1,40 +1,40 @@
-# One repository and one persistent workspace
+# Workspace layout
 
 ```text
-GitHub: spar-pilot/
-  notebooks/
-    pilot-1-colab.ipynb
-    pilot-2-colab.ipynb
-  pilot_eval/                 shared evaluation, training and scoring code
-  scripts/                   profiling and auxiliary commands
+spar-pilot/                   Git repository
+  notebooks/pilot-{1..5}-colab.ipynb
+  pilot_eval/                 shared measurement and training package
   tests/
-  docs/
+  docs/experiments/           experiment records and status
+  docs/operations/            execution guide index
+  docs/adr/                   decisions
+  .scratch/                   specifications and tickets
 
-Drive: MyDrive/SPAR/spar-pilot/
+My Drive/SPAR/spar-pilot/     persistent workspace
   artifacts/
-    cohorts/                 frozen dataset selections
-    plans/                   frozen configs and training inputs
-    runs/                    responses, adapters, logs and status
-    reports/                 original and revised analyses
-    notebook/                notebook console logs and review records
+    cohorts/
+    plans/
+    runs/
+    reports/
+    notebook/
 ```
 
-The Drive folder `SPAR/pilot1` was renamed to `SPAR/spar-pilot` in place.
-Its children and existing run names were retained. The temporary code checkout
-in Colab is `/content/spar-pilot` for both notebooks. Changing it does not move
-Drive data. Older `/content/spar-pilot2` checkouts can be left in an existing
-session; the updated notebook uses the shared name.
+Colab mounts the persistent artifact root at
+`/content/drive/MyDrive/SPAR/spar-pilot/artifacts`. Temporary harness checkouts,
+model caches and staging directories are separate. Their locations are defined
+by each notebook release; do not assume a shared checkout across all pilots.
+Pilot 5 uses revision-specific harness directories. Restarting a runtime loses
+temporary files and Python variables, not verified artifacts already saved to Drive.
 
-## Completed Pilot 2: next step
+The notebooks pin harness commits. Reopening a notebook from GitHub can update
+the launcher while an existing frozen execution still requires its original
+compatible code. Follow the named workflow's restoration and verification path.
+See [operations](operations/README.md), [artifact access](artifacts.md), and
+[current status](experiments/status.md).
 
-Open the current `notebooks/pilot-2-colab.ipynb` from GitHub in Colab. On a CPU
-runtime, **run only section 12**. It is self-contained and uses the saved
-`reports/<plan>-trajectory/results/paired-items.jsonl` to write a new
-`reports/<plan>-flexible-v3-audit-v1/` report under the shared Drive artifact root.
-It explicitly fetches the revision containing the audit command; the earlier
-training revision does not contain that command. An already-open Colab copy
-does not automatically receive GitHub notebook edits: reopen the current link
-or copy the new section into it.
+The Drive folder `SPAR/pilot1` was renamed to `SPAR/spar-pilot` in place; children
+and existing run names were retained. Historical absolute paths may therefore
+require validated migration rather than string replacement.
 
 ## Historical paths and resume
 

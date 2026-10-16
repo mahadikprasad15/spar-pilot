@@ -1,8 +1,10 @@
 # Pilot 2: exploratory rank-1 GSM8K SFT
 
-Use [the guided notebook](../notebooks/pilot-2-colab.ipynb) on a Colab
-L4 (the original T4 variant remains supported). The actual Qwen GPU run is not verified locally. CPU tests cover the workflow
-and a real tiny Qwen architecture built from configuration without downloads.
+Current experiment/configuration and result evidence: [Pilot 2](experiments/pilot-2.md).
+This guide documents execution. Use [the guided notebook](../notebooks/pilot-2-colab.ipynb)
+with its recorded environment and saved variant. CPU tests exercise the workflow
+and a tiny Qwen architecture without pretrained downloads; real-run evidence is
+tracked separately in the [status ledger](experiments/status.md).
 
 ## What runs
 

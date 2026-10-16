@@ -6,12 +6,12 @@
     "drive_logical_root": "My Drive/SPAR/spar-pilot/artifacts",
     "colab_artifact_root": "/content/drive/MyDrive/SPAR/spar-pilot/artifacts"
   },
-  "scope": "Existing local sources only; not a fresh Drive audit. Large raw arrays were not copied.",
+  "scope": "Local source inventory refreshed after documentation edits; result snapshots retain their original dates. Not a fresh Drive audit. Large raw arrays were not copied.",
   "sources": [
     {
       "path": "README.md",
-      "sha256": "604e94c1b8a9e25bba60b6934defe1db6da62e1e791e3294cdb8f254c89553bc",
-      "bytes": 11713,
+      "sha256": "bd2ed0d232b9514f66ed66c5daae729ef2ba0dcf2a685bdd4795bf75776fe600",
+      "bytes": 5283,
       "role": "code-or-design-document"
     },
     {
@@ -196,8 +196,8 @@
     },
     {
       "path": "docs/pilot3-instrument.md",
-      "sha256": "e9a18c8e0c4e16d91662f3fa9027f4e64ad88b49b2c489f2a58529a61adac6eb",
-      "bytes": 20749,
+      "sha256": "7ae8569b8aba9d93e0e4cd002cbbd173a665306a83121a63091a378e0fd7ef53",
+      "bytes": 20855,
       "role": "code-or-design-document"
     },
     {
@@ -220,8 +220,8 @@
     },
     {
       "path": "docs/pilot2-sft.md",
-      "sha256": "bf899c083e09fda64d29add6b38bfdeb3942cf739d2062a0e986bdcdf7d26cd1",
-      "bytes": 7131,
+      "sha256": "e579c3e5df10b97dd85a5e79b3b2d413dc418fcb5f9144c93e8a3f84062dfe02",
+      "bytes": 7264,
       "role": "code-or-design-document"
     },
     {
@@ -403,6 +403,78 @@
       "sha256": "10432b518e453ff680c517aeac1aab37a3d5ff88ae233d6e6a3be6002c9e1177",
       "bytes": 45673,
       "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/experiments/README.md",
+      "sha256": "35b3f9aded203580ed97230e2c57fb02f3df46067ba8a347d00efbc54878ac7d",
+      "bytes": 1458,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/experiments/evidence/pilot5-capture-summary.json",
+      "sha256": "30ff1a2b1f50b675b18933839b482ad5ac9edd18dde2418d96fcf31d6e040042",
+      "bytes": 1176,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/experiments/pilot-1.md",
+      "sha256": "bedca357e3769b7f78ba91a255936144ffab421fcd30b0bbddf6299732acc273",
+      "bytes": 3263,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/experiments/pilot-2.md",
+      "sha256": "bd1f678ad51c9cb48b2e49c1ebbd29d8d92090e69c10fe22224367aabb7ae843",
+      "bytes": 3291,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/experiments/pilot-3.md",
+      "sha256": "009f2a9b9b25a2c98a5758d73d33e9e77e5896d8897999703eb56e6fa2d9d87b",
+      "bytes": 3493,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/experiments/pilot-4.md",
+      "sha256": "306517782e908fe00267ae7b56b665dbff801404f757774f91150f4f9b7183e3",
+      "bytes": 5281,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/experiments/pilot-5.md",
+      "sha256": "50f1023fc0aa1a7f51446c69bd980106309b328a9a42dc824bfe5d88f35e2556",
+      "bytes": 6555,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/experiments/status.md",
+      "sha256": "2787ce2798b9f86c55f6cd00edd8d59088bd464b42a5ba546aa2c5cc52d091a1",
+      "bytes": 3547,
+      "role": "experiment-documentation"
+    },
+    {
+      "path": "docs/methods.md",
+      "role": "project-documentation",
+      "sha256": "3801add707eefbbd5815f7f5c2c9b26be253b370921dd558b5276c94366c1244",
+      "bytes": 5479
+    },
+    {
+      "path": "docs/artifacts.md",
+      "role": "project-documentation",
+      "sha256": "acf9f2ffb6240dbc60c1e4c266d258de8dad159b24449bb227d7b6e1ef3566b3",
+      "bytes": 3782
+    },
+    {
+      "path": "docs/testing.md",
+      "role": "project-documentation",
+      "sha256": "fb07e9aafc836b7c8f5a77c560712c40363950026894caf43463db4ac6ae2c92",
+      "bytes": 2551
+    },
+    {
+      "path": "docs/operations/README.md",
+      "role": "project-documentation",
+      "sha256": "d452384a319cdf264ff72f33ed3d5d7ac67c861c630d7164921ad4c0c95b6b68",
+      "bytes": 1725
     }
   ],
   "starter_metric_rows": 52,
@@ -411,5 +483,8 @@
     "pilot4_supplemental_kl": "Unconfirmed after failed v1 and approved v2 amendment",
     "pilot5_capture": "User reported ongoing; fresh status needed",
     "pilot5_analysis": "Implemented; no real result verified here"
-  }
+  },
+  "documentation_refresh_date": "2026-10-16",
+  "documentation_base_commit": "d522267",
+  "inventory_revision": "documentation-refresh-2026-10-16"
 }
