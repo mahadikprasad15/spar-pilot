@@ -15,6 +15,17 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ('propose','freeze','run','verify'):
+        production=commands.add_parser('traces-production-'+operation,help='Reviewed Pilot 5 durable capture workflow')
+        production.add_argument('--output-root',type=Path,required=True)
+        if operation=='propose':
+            production.add_argument('--profile',type=Path,required=True)
+            production.add_argument('--name',required=True)
+        elif operation=='freeze':
+            production.add_argument('--proposal',type=Path,required=True)
+            production.add_argument('--review',type=Path,required=True)
+        else:production.add_argument('--config',type=Path,required=True)
+        if operation=='run':production.add_argument('--staging-root',type=Path)
     lens=commands.add_parser('traces-lens-inspect',help='CPU inspection of the pinned community lens; never fits')
     lens.add_argument('--output-root',type=Path,required=True)
     lens.add_argument('--name',required=True)
@@ -222,7 +233,18 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command=='traces-lens-inspect':
+        if args.command.startswith('traces-production-'):
+            from pilot_eval.trace_production_plan import propose_capture,freeze_capture
+            from pilot_eval.trace_production import run_capture,verify_capture
+            if args.command=='traces-production-propose':
+                print(propose_capture(args.profile,args.output_root,args.name))
+            elif args.command=='traces-production-freeze':
+                print(freeze_capture(args.proposal,args.review,args.output_root))
+            else:
+                result=(run_capture(args.config,args.output_root,staging_root=args.staging_root,dependencies=dependencies)
+                        if args.command=='traces-production-run' else verify_capture(args.config,args.output_root))
+                print(json.dumps(result,indent=2))
+        elif args.command=='traces-lens-inspect':
             from pilot_eval.trace_community_lens import inspect_community
             path=inspect_community(args.output_root,args.name,artifact_dir=args.artifact_dir)
             print(path.read_text())
