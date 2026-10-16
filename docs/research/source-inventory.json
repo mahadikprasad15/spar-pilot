@@ -1,0 +1,415 @@
+{
+  "prepared_date": "2026-10-16",
+  "repo_commit_before_handoff": "0a037a3b056d07d9b9934ccd12945210ef18a7f0",
+  "root_mapping": {
+    "local_repo": "/Users/prasadmahadik/spar/pilot1",
+    "drive_logical_root": "My Drive/SPAR/spar-pilot/artifacts",
+    "colab_artifact_root": "/content/drive/MyDrive/SPAR/spar-pilot/artifacts"
+  },
+  "scope": "Existing local sources only; not a fresh Drive audit. Large raw arrays were not copied.",
+  "sources": [
+    {
+      "path": "README.md",
+      "sha256": "604e94c1b8a9e25bba60b6934defe1db6da62e1e791e3294cdb8f254c89553bc",
+      "bytes": 11713,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "CONTEXT.md",
+      "sha256": "dc592c15b2400f8f5da09a94d7c8eea94bbac433c3a4e4b2d74afe921a16b7da",
+      "bytes": 4240,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "7f947ef822b08926b25009c5e9621e53eb144020821914157a98610842a9fc74",
+      "bytes": 770,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "279c1fcca78eab95df9909f045e09a7c66a5a510e96da5f553c1cc72756f1c5d",
+      "bytes": 135,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0001-frozen-pilot-evaluation-protocol.md",
+      "sha256": "963f0610f46c0af2ae515da4cbaac5813dbd0657cca8c4596ca171a25fb3a61e",
+      "bytes": 808,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0012-pilot5-corpus-extension-and-input-scope.md",
+      "sha256": "789d67dce1909c2ef8f537907018755187a8fe1ad8455a26f6d5f4aafa7d6d02",
+      "bytes": 1679,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0004-pilot2-l4-throughput.md",
+      "sha256": "2f30f6bf422ae819a2f294691c5b7eeea896a300af3456ca3c036a2a798770c8",
+      "bytes": 2626,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0009-pilot3-production-integrity-recovery.md",
+      "sha256": "ed2163c901dd1ba77f88fe951fe0e827083669d3a5097ff20bb9335627fec5ee",
+      "bytes": 3047,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0007-pilot3-profile-integrity-boundaries.md",
+      "sha256": "27e681378feb49e74d8c6f0ed2bc3691656f0ba8a0c0d6784d2f72ee4f9e2b52",
+      "bytes": 2169,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0003-gsm8k-flexible-v2.md",
+      "sha256": "c02662546e53635d0e115847e1886d588c0e6512f0c71c0f1c8b235bb037fec4",
+      "bytes": 1976,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0008-pilot3-calibrated-agreement.md",
+      "sha256": "62da13796bee8c4d4cec1d67dd5b1c92d4ae321e602dd8825a1fc0d02e62f8ae",
+      "bytes": 3459,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0002-logit-ties.md",
+      "sha256": "30d50411580ea646e6187c2a8e006152ed00cef1dfaff54a9fcb01af3cc10557",
+      "bytes": 990,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0011-pilot5-primary-vector-and-durable-evidence.md",
+      "sha256": "a27fd878195d86cfbb0e72fa074b497d58e85bb5581ae23c97e8a4a36e9426cb",
+      "bytes": 1624,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0002-recovery-plans-and-combined-reports.md",
+      "sha256": "94b8574cf21b7a1355595db069f5b58eae8793af72df3eb107ba8378e7a6fa9d",
+      "bytes": 1221,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0008-pilot4-token-coefficients-and-kl.md",
+      "sha256": "1103285590dbf1e675b9726c5cbf823b5af6d120132dbd1096e7b8c8dee6dcd0",
+      "bytes": 2826,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0010-pilot4-tiny-learning-control.md",
+      "sha256": "923ad01f7b974a8b8d927b379a13caee7947fa2e50e514f413d9ae7c7061289f",
+      "bytes": 841,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0010-pilot4-coefficient-batch-sensitivity.md",
+      "sha256": "eb8810a3daf5b2a4695f184ee2735233fdebd5a9d6d41fce92118f5984aa4869",
+      "bytes": 2267,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0006-shared-workspace-names.md",
+      "sha256": "a7f76042f77cb26d134274c9bc0823996549d53bcc61e9dd4a988dc21184d933",
+      "bytes": 1082,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/adr/0005-gsm8k-flexible-v3.md",
+      "sha256": "e7df7c0ba5231c851a83f4d10e4064de0ddbe8411116677984d8142b3451422b",
+      "bytes": 2065,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot4-algorithm-checks.md",
+      "sha256": "d5eb0302378dc3f4ea911b9947d8fb8440cbcc3c4f5d07204b1dbd4e02b51b2e",
+      "bytes": 4850,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-prereveal-review.md",
+      "sha256": "f66f372ddf4c1cd53b4e6b1502ddf8189cb6141d793303b732ac06e3f9a0ecd8",
+      "bytes": 3014,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-automatic-analysis.md",
+      "sha256": "4fcbd91541c6b6fb3307ac7d2b4b44ba745a45a8fa9a78b7a6c4a37fa2392d4f",
+      "bytes": 9119,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot4-final-handoff.md",
+      "sha256": "0cce7f6b6e60754c51d2bae6e18c90808b9ad0a0d6d07f1d3b16e3918f6a3a08",
+      "bytes": 5428,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot-decisions-explained.md",
+      "sha256": "b58cf78941e4340cf71fc77739e5dd940e1486a0801a073683bd46cab1e40db4",
+      "bytes": 30807,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-corpus.md",
+      "sha256": "9c493345f3eb93fab49287c48e93b45a0e199ecd786ced9dd2ae555d7020c989",
+      "bytes": 2107,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot4-fixed-writes.md",
+      "sha256": "93c8629cef6fefd4db8617928cc0346ca9e25b80c2fe529723059cc6b7f69462",
+      "bytes": 6278,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-capture-qualification.md",
+      "sha256": "03e348684d3faf7f05be33894297caa8428553ee878a85e42126df3f5ca168ff",
+      "bytes": 5449,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-capture-and-readouts.md",
+      "sha256": "46fb9be9c31430bfa41fa6acc75b96bf8916d2298d2943fb7eb395f3e3fb6686",
+      "bytes": 11080,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-bootstrap.md",
+      "sha256": "7076b3cd11ddd9c2e01a70fbee671928a9c3ae35cf95eba85bcc485132a4b2aa",
+      "bytes": 3151,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-lens-and-profile.md",
+      "sha256": "e9c9af0a479e7523b0bdbc8aeeea53e585eaaedd7874e397ac348611383cbedd",
+      "bytes": 7567,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot4-token-measurements.md",
+      "sha256": "267568c172a6037d397ccd5be0132c75df4b05b2249a1e482931a872362c052b",
+      "bytes": 8361,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot3-instrument.md",
+      "sha256": "e9a18c8e0c4e16d91662f3fa9027f4e64ad88b49b2c489f2a58529a61adac6eb",
+      "bytes": 20749,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-capture-diagnostic.md",
+      "sha256": "0169bb95ccc5f09cc9709bfaa8b200bc77a8cd9b2483c7f1fa31857ac9dba344",
+      "bytes": 4850,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot5-jlens-qualification.md",
+      "sha256": "effb8d4838c034a4b188556edffa23c00b2495f5ed10fc52d55106d59d52d797",
+      "bytes": 6698,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot4-preflight-concepts.md",
+      "sha256": "7ea51eb4af76c088af98459596979ec22a63fc92366f557b427f727a87e25aa3",
+      "bytes": 13670,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot2-sft.md",
+      "sha256": "bf899c083e09fda64d29add6b38bfdeb3942cf739d2062a0e986bdcdf7d26cd1",
+      "bytes": 7131,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "docs/pilot4-grpo.md",
+      "sha256": "0d8ccf841d25336a7b998b3e23c84676572e673774903b1ebe24800984a1b60c",
+      "bytes": 16720,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": ".scratch/pilot-1-evaluation/spec.md",
+      "sha256": "24675c2f86cf6114678c95b14b09ca6ad8c00dbb9866dc087e970ad3459f652b",
+      "bytes": 9769,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": ".scratch/pilot2-sft/spec.md",
+      "sha256": "bc98b70d913ff3a547ff5a8a3d9293279fad4917395dd532d77f0dcbe8ac05ea",
+      "bytes": 16763,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": ".scratch/pilot3-write/spec.md",
+      "sha256": "33fa70b7bc2c707805539a8df155892e09e3784f6c6426e99cbb01626368d398",
+      "bytes": 24060,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": ".scratch/pilot4-grpo/spec.md",
+      "sha256": "466f654f0142ee3fb83540f7a53c2757be7d912fcdb4bccb3578cae0fbe1334d",
+      "bytes": 31683,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": ".scratch/pilot5-readable-traces/spec.md",
+      "sha256": "8839a6c35b610080d24172298a59e036325c5ff0edd12c84321460f4a9aeca27",
+      "bytes": 29025,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/training-results.json",
+      "sha256": "01d78a47b2886702cf01d6ca1f1dca79b7a599422f76014d541fdb85f4da5e6c",
+      "bytes": 2201,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/sft-behaviour-audit.json",
+      "sha256": "da9f6ead8362f5824712db935fd9638cbcd3a5ead24dae137242fbef8ea47f20",
+      "bytes": 8283,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/sft-profile.json",
+      "sha256": "79b49d50bfca7a450fcf392ac0045c7abead44f1cdd3e6bc3dfe929912ba6dce",
+      "bytes": 102880893,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/grpo-behaviour.json",
+      "sha256": "57efad502a4fa87d07fe22c5e840a37cabada7b057a559b6bcf9a7ef38b7595b",
+      "bytes": 12162,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/random-profile.json",
+      "sha256": "acdbe700f0097d3771ce621d3ad814e240d2e861b8e4a666899e80275510dbad",
+      "bytes": 40989480,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/training-config.json",
+      "sha256": "958123b24611e667e474b1d1d87e4d68ab03d63128ef0c8a2028c2cedd712958",
+      "bytes": 17536,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/grpo-write-results.json",
+      "sha256": "75b5bd07bfeb59851a784ce35a3ff60dc56b4a460b9d89dffad72c0b055a8e64",
+      "bytes": 7064179,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/controls-results.json",
+      "sha256": "334031842e4f35acccc3e9c391a6376e771b3035d38784c4aebe7892a6511390",
+      "bytes": 13886,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/sft-write-results.json",
+      "sha256": "d245d38b6ea32e28008e335c69eb36b6ca9dd8b246a4b7e782d8f0d4529a9071",
+      "bytes": 7055942,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/trainer-args.json",
+      "sha256": "350e29670e2f03325959feaed4a1993839d20a9319afd4b9f34b067d2d24aaa7",
+      "bytes": 6137,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/grpo-profile.json",
+      "sha256": "eb38d294f5071c4498f85392e828b18775f5cfdb5670c6e0b1ee72d9b8ef1b4c",
+      "bytes": 102904681,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/preflight-results.json",
+      "sha256": "2ffd99dea6d2db00ee8a5ab048511597ca3e81689f842a6a491ff03ebd0ce295",
+      "bytes": 2313,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/baseline-results.json",
+      "sha256": "fb07aab3533ab7e1ec5d059eaeeae4f560e38fda886237564add15885d1373ef",
+      "bytes": 10505,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/random-write-results.json",
+      "sha256": "667f124acc6f626486a4c96dce0f8773f9526bd794451f4366cfde5d79b3cb8a",
+      "bytes": 2781143,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/baseline-config.json",
+      "sha256": "cd60ceaa1bc2f34ea3b7150180431810c169e7c3dce091ca502a08078dd99379",
+      "bytes": 15433,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/frozen-config.json",
+      "sha256": "b9293fb0a4524841d1ce757a6895faa1ce7c07a893f369b215e8e755b51e9086",
+      "bytes": 19134,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/inputs/evaluation-config.json",
+      "sha256": "ae9d4dfbec0e8121462e52ae8366436a8ad277dca0a652fdbf83b58d11a59b99",
+      "bytes": 260682,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-results-so-far-2026-10-13/source-notes.json",
+      "sha256": "cb8789a902d09d5986648121df03c6a0508750830aa217617c88cbaa6870ec46",
+      "bytes": 4984,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "artifacts/reports/pilot4-a10040-v2-review/summary.md",
+      "sha256": "95213bb5b27630f020f6b31a002c0ad36cf8259be914b68faeee63a99dcfaeb7",
+      "bytes": 2155,
+      "role": "historical-result-snapshot"
+    },
+    {
+      "path": "notebooks/pilot-1-colab.ipynb",
+      "sha256": "ad1c7d5ac50f24cad4ae428a4e062599fa5caea27a21ffbe99cfc37de35c8934",
+      "bytes": 55608,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "notebooks/pilot-4-colab.ipynb",
+      "sha256": "5109f01d17d59f259b97fdcc6afd07ca7164013bbede8c0a3f55a16c2bdfc5b5",
+      "bytes": 50174,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "notebooks/pilot-2-colab.ipynb",
+      "sha256": "520f2aaace2647c372a174a27f16cf8d86b46e1120f61f3011059777efcc5439",
+      "bytes": 30255,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "notebooks/pilot-5-colab.ipynb",
+      "sha256": "3c0feb07a7c34a1ed4cf4231e3dcd956d79540dbdc6e61e78f9f04e2c99cbc28",
+      "bytes": 53284,
+      "role": "code-or-design-document"
+    },
+    {
+      "path": "notebooks/pilot-3-colab.ipynb",
+      "sha256": "10432b518e453ff680c517aeac1aab37a3d5ff88ae233d6e6a3be6002c9e1177",
+      "bytes": 45673,
+      "role": "code-or-design-document"
+    }
+  ],
+  "starter_metric_rows": 52,
+  "report_builder_prompt": "docs/research/claude-report-prompt.md",
+  "live_status": {
+    "pilot4_supplemental_kl": "Unconfirmed after failed v1 and approved v2 amendment",
+    "pilot5_capture": "User reported ongoing; fresh status needed",
+    "pilot5_analysis": "Implemented; no real result verified here"
+  }
+}
