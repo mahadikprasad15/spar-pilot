@@ -90,6 +90,9 @@ def _finish(config,directory,runtime,new,reused):
         for key,value in _read_arrays(folder).items():
             if '.position_sum.' in key or '.position_norm_sum.' in key or key in ['base.moment_sum','base.moment_outer_sum']:
                 aggregate[key]=aggregate.get(key,np.zeros_like(value))+value
+            elif '.primary_delta_norm.' in key or '.primary_base_norm.' in key:
+                target=key.replace('_norm.','_norm_sum.')
+                aggregate[target]=aggregate.get(target,np.array(0.,dtype=np.float64))+value.sum()
             elif '.primary_delta.' in key or '.primary_base.' in key:
                 target=key.replace('.primary_delta.','.primary_delta_sum.').replace('.primary_base.','.primary_base_sum.')
                 aggregate[target]=aggregate.get(target,np.zeros(value.shape[1],dtype=np.float64))+value.sum(axis=0)

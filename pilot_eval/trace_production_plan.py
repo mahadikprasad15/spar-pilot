@@ -4,6 +4,7 @@ This module consumes qualification receipts; it does not manufacture them from
 profile completion or choose any numerical allowance on the reviewer's behalf.
 """
 import json
+import math
 from pathlib import Path
 from pilot_eval.trace_corpus import _inside, load_corpus
 from pilot_eval.trace_profile import load_profile, verify_profile, endpoint
@@ -111,6 +112,14 @@ def freeze_capture(proposal_path,review_path,output_root):
         lens_path,lens=_receipt(review['lens_qualification_path'],root)
         if lens.get('qualified') is not True or lens.get('model_revision')!=p['model_revision']:
             raise ValueError('Qualified compatible Jacobian receipt required.')
+        from pilot_eval.trace_lenses import archive_inventory
+        artifact=_inside(root,lens['lens_path'])
+        inventory=archive_inventory(artifact)
+        if (file_hash(artifact)!=lens['lens_sha256'] or inventory['d_model']!=p['width']
+                or inventory['source_layers']!=lens['source_layers'] or 14 not in inventory['source_layers']
+                or lens.get('source_site')!='block-output' or lens.get('target')!='final-block-output-before-norm'):
+            raise ValueError('Qualified Jacobian source/shape/target contract mismatch.')
+        parents[str(artifact.relative_to(root))]=file_hash(artifact)
         for relative,digest in lens.get('evidence_files',{}).items():
             if file_hash(_inside(root,relative))!=digest:raise ValueError('Lens evidence hash mismatch.')
         parents[str(lens_path.relative_to(root))]=file_hash(lens_path)
@@ -118,7 +127,7 @@ def freeze_capture(proposal_path,review_path,output_root):
         parents.update(lens.get('evidence_files',{}))
     else:raise ValueError('Declare qualified dual-lens or explicitly approved logit-only scope.')
     budget=review['budget']
-    if (budget.get('approved') is not True or any(type(budget.get(k)) not in [int,float] or budget[k]<=0 for k in ['max_seconds','max_durable_bytes'])
+    if (budget.get('approved') is not True or any(type(budget.get(k)) not in [int,float] or not math.isfinite(budget[k]) or budget[k]<=0 for k in ['max_seconds','max_durable_bytes'])
             or not isinstance(review['predictions'],dict) or not all(review['predictions'].get(k) for k in ['sft','grpo'])):
         raise ValueError('Reviewed positive budget and actual SFT/GRPO predictions required.')
     adapters={}

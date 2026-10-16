@@ -126,3 +126,15 @@ def test_public_production_cli_verifies_complete_fixture_without_model(tmp_path)
         '--output-root',str(tmp_path)],capture_output=True,text=True)
     assert output.returncode==0,output.stdout+output.stderr
     assert json.loads(output.stdout)['gpu_release_safe'] is True
+
+
+def test_freeze_rejects_unqualified_receipt_not_just_profile_success(tmp_path):
+    from pilot_eval.trace_production_plan import freeze_capture
+    from pilot_eval.training import file_hash
+    with pytest.raises(ValueError,match='approval'):frozen(tmp_path,approved=False)
+    review=tmp_path/'capture-review.json';r=json.loads(review.read_text());r['approved']=True
+    qualification=Path(r['qualification_path']);q=json.loads(qualification.read_text());q['qualified']=False;qualification.write_text(json.dumps(q))
+    qualification.with_name(qualification.name+'.seal.json').write_text(json.dumps(dict(sha256=file_hash(qualification))))
+    r['qualification_sha256']=file_hash(qualification);review.write_text(json.dumps(r))
+    with pytest.raises(ValueError,match='Qualified capture receipt'):
+        freeze_capture(tmp_path/'plans/production/traces.production.proposal.json',review,tmp_path)
