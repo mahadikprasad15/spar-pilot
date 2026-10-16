@@ -18,7 +18,7 @@ GPU_COMMANDS = {
     'activation-calibration-prepare', 'activation-calibrate',
     'activation-calibration-validate', 'activation-profile', 'activation-measure',
     'activation-validate', 'activation-recover-measurement',
-    'tokens-profile', 'tokens-measure', 'traces-capture-diagnose',
+    'tokens-profile', 'tokens-measure', 'traces-capture-diagnose', 'traces-profile-run',
 }
 
 
@@ -326,6 +326,7 @@ print('NOTEBOOK_ENVIRONMENT=' + json.dumps(result))
     def _completed_command(self, args, command):
         """Route candidates through real CPU verifiers; never trust status alone."""
         verifiers = {'traces-capture-diagnose': 'traces-capture-verify',
+                     'traces-profile-run': 'traces-profile-verify',
                      'activation-measure': 'activation-verify',
                      'activation-recover-measurement': 'activation-verify',
                      'tokens-measure': 'tokens-verify',

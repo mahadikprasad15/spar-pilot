@@ -116,6 +116,8 @@ def inspect_lens(path,output_root,name,*,expected_sha256,provenance,expected_mod
     config=dict(schema_version=1,lens_path=str(path.relative_to(root)),sha256=expected_sha256,
         provenance=provenance,expected_model=expected_model,expected_revision=expected_revision,
         expected_width=expected_width,primary_block=primary_block,implementation_sha256=file_hash(Path(__file__)))
+    for relative,expected in provenance.get('files',{}).items():
+        if file_hash(_inside(root,relative))!=expected:raise ValueError('Lens provenance hash mismatch.')
     with run_lock(directory):
         _save_frozen(directory/'config.json',config)
         if file_hash(path)!=expected_sha256:raise ValueError('Lens file hash mismatch.')
@@ -168,4 +170,6 @@ def verify_lens_inspection(result_path,output_root):
     for name,expected in marker['files'].items():
         if file_hash(_inside(directory,name))!=expected:raise ValueError('Lens inspection payload hash mismatch.')
     if file_hash(_inside(root,config['lens_path']))!=config['sha256']:raise ValueError('Lens file hash mismatch.')
+    for relative,expected in config['provenance'].get('files',{}).items():
+        if file_hash(_inside(root,relative))!=expected:raise ValueError('Lens provenance hash mismatch.')
     return json.loads(result_path.read_text())

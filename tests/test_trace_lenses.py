@@ -54,3 +54,28 @@ def test_inspection_seal_cannot_omit_required_result(tmp_path):
     payload=json.loads(marker.read_text());payload['files'].pop('results/results.json')
     marker.write_text(json.dumps(payload))
     with pytest.raises(ValueError,match='required'):verify_lens_inspection(result,tmp_path)
+
+
+def test_provenance_file_changes_invalidate_saved_inspection(tmp_path):
+    from pilot_eval.trace_lenses import inspect_lens,verify_lens_inspection
+    from pilot_eval.training import file_hash
+    path=tmp_path/'lens.pt';archive(path)
+    card=tmp_path/'README.md';card.write_text('fitting evidence')
+    result=inspect_lens(path,tmp_path,'provenance',expected_sha256=file_hash(path),
+        provenance=dict(model='fixture',files={'README.md':file_hash(card)}),
+        expected_model='fixture',expected_revision='pin',expected_width=2,primary_block=0)
+    card.write_text('changed claim')
+    with pytest.raises(ValueError,match='provenance'):verify_lens_inspection(result,tmp_path)
+
+
+def test_pinned_community_wrapper_never_qualifies_by_filename(tmp_path,monkeypatch):
+    import pilot_eval.trace_community_lens as community
+    from pilot_eval.training import file_hash
+    path=tmp_path/community.FILENAME;archive(path)
+    monkeypatch.setattr(community,'SHA256',file_hash(path))
+    (tmp_path/'README.md').write_text('snapshot card')
+    (tmp_path/'lenses_manifest.json').write_text(json.dumps(dict(lenses=[dict(
+        lens_file=community.FILENAME,model='Qwen/Qwen2.5-1.5B-Instruct',site_layer=17)])))
+    result=json.loads(community.inspect_community(tmp_path,'public',artifact_dir=tmp_path).read_text())
+    assert result['status']=='incompatible' # independent width-2 fixture, not width 1536
+    assert result['qualified'] is False

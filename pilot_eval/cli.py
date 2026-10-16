@@ -15,6 +15,18 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    lens=commands.add_parser('traces-lens-inspect',help='CPU inspection of the pinned community lens; never fits')
+    lens.add_argument('--output-root',type=Path,required=True)
+    lens.add_argument('--name',required=True)
+    lens.add_argument('--artifact-dir',type=Path)
+    for operation in ('prepare','run','verify'):
+        profile=commands.add_parser('traces-profile-'+operation,help='Approved bounded Pilot 5 endpoint cost profile')
+        profile.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            profile.add_argument('--diagnostic',type=Path,required=True)
+            profile.add_argument('--random-config',type=Path,required=True)
+            profile.add_argument('--name',required=True)
+        else:profile.add_argument('--config',type=Path,required=True)
     for operation in ('prepare','diagnose','verify'):
         capture=commands.add_parser('traces-capture-'+operation,help='Bounded Pilot 5 capture instrument diagnostic')
         capture.add_argument('--output-root',type=Path,required=True)
@@ -210,7 +222,20 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('traces-capture-'):
+        if args.command=='traces-lens-inspect':
+            from pilot_eval.trace_community_lens import inspect_community
+            path=inspect_community(args.output_root,args.name,artifact_dir=args.artifact_dir)
+            print(path.read_text())
+            print('Saved lens status:',path)
+        elif args.command.startswith('traces-profile-'):
+            from pilot_eval.trace_profile import prepare_profile,run_profile,verify_profile
+            if args.command=='traces-profile-prepare':
+                print(prepare_profile(args.diagnostic,args.random_config,args.output_root,args.name))
+            else:
+                result=(run_profile(args.config,args.output_root,dependencies=dependencies)
+                        if args.command=='traces-profile-run' else verify_profile(args.config,args.output_root))
+                print(json.dumps(result,indent=2))
+        elif args.command.startswith('traces-capture-'):
             from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic,verify_diagnostic
             if args.command=='traces-capture-prepare':
                 print(prepare_diagnostic(args.corpus,args.sft_config,args.grpo_config,args.output_root,args.name))
