@@ -254,3 +254,20 @@ def test_full_vocabulary_rank_kernel_preserves_ties_and_primary_score_rules():
     assert result["list_ids"] == [2, 0, 1] + list(range(3, 20))
     assert result["scores"]["r"]["soft_rank"] == pytest.approx(1, abs=1e-9, rel=0)
     assert result["scores"]["r"]["overlap"] == 0.05
+
+
+def test_notebook_release_pin_contains_automatic_analysis_workflow():
+    import re, subprocess
+    from pathlib import Path
+
+    notebook = json.loads(Path("notebooks/pilot-5-colab.ipynb").read_text())
+    source = "\n".join("".join(c["source"]) for c in notebook["cells"])
+    pin = re.search(r"HARNESS_COMMIT = '([0-9a-f]{40})'", source).group(1)
+    cli = subprocess.check_output(
+        ["git", "show", pin + ":pilot_eval/cli.py"], text=True
+    )
+    assert "traces-analysis-" in cli
+    module = subprocess.check_output(
+        ["git", "show", pin + ":pilot_eval/trace_analysis.py"], text=True
+    )
+    assert "def run_analysis(" in module and "def run_nulls(" in module
