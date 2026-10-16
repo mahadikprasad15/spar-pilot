@@ -117,3 +117,25 @@ def test_public_profile_cli_and_notebook_guard_reuse_on_cpu(tmp_path):
     def no_probe():raise AssertionError('completed profile must reuse on CPU')
     runner.environment_probe=no_probe
     assert runner.run(args).returncode==0
+
+
+def test_shared_notebook_exposes_bounded_profile_with_restored_paths():
+    import ast
+    notebook=json.loads(Path('notebooks/pilot-5-colab.ipynb').read_text())
+    code=[''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code']
+    for command in ['traces-lens-inspect','traces-profile-prepare','traces-profile-run','traces-profile-verify']:
+        cell=next((c for c in code if repr(command) in c),None)
+        assert cell is not None,f'Missing public notebook command {command}'
+        ast.parse(cell)
+        if command!='traces-lens-inspect':assert 'saved_selection' in cell
+    for cell in notebook['cells']:
+        if cell['cell_type']=='code':assert cell['outputs']==[] and cell['execution_count'] is None
+
+
+def test_profile_records_random_norm_evidence_without_copying_direction_payload(tmp_path):
+    path=prepared(tmp_path);config=json.loads(path.read_text())
+    assert config['random_construction']['seed']==42
+    assert 'directions' not in config['random_construction']
+    first=config['random_norms'][0]
+    assert first['target_norm']==pytest.approx(.2236068,abs=1e-7)
+    assert first['realized_norm']==pytest.approx(.2236068,abs=1e-7)

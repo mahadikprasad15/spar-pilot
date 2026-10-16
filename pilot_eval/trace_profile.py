@@ -98,9 +98,12 @@ def prepare_profile(diagnostic_path, random_path, output_root, name, *, model_co
         if _inside(root, contract['control_path']) != control:
             raise ValueError('Random source path mismatch.')
         # Existing completion is mandatory. This call verifies; it cannot create a control.
-        from pilot_eval.grpo_random_control import construct_control
-        construct_control(_inside(root, adapters['grpo-64']), control)
-        construction = json.loads((control / 'construction.json').read_text())
+        from pilot_eval.grpo_random_control import construct_control, _factors
+        construction = construct_control(_inside(root, adapters['grpo-64']), control)
+        _, _, realized = _factors(control)
+        random_norms = [dict(layer=target['layer'], projection=target['projection'],
+            target_norm=target['target_norm'], realized_norm=actual['target_norm'])
+            for target, actual in zip(construction['modules'], realized)]
         if construction.get('seed') != 42 or construction.get('realizations') != 1:
             raise ValueError('Unexpected random construction seed or realization count.')
         if model_config is None:
@@ -119,7 +122,7 @@ def prepare_profile(diagnostic_path, random_path, output_root, name, *, model_co
             examples=diagnostic['examples'], conditions=CONDITIONS, batch_sizes=BATCHES, sites=SITES,
             model=diagnostic['model'], model_revision=diagnostic['model_revision'], tokenizer_revision=diagnostic['tokenizer_revision'],
             expected_base_hash=diagnostic['expected_base_hash'], adapters=adapters, width=width, seed=42,
-            capture_precision='float32', accumulation='float64', random_construction=construction,
+            capture_precision='float32', accumulation='float64', random_construction=construction, random_norms=random_norms,
             approval='Prasad: same four documents; base/SFT64/GRPO64/existing-random64; batches 1 and 4',
             workload=dict(sequence_forwards=32, model_calls=20, units=8),
             uncompressed_profile_capture_bytes=32*29*128*width*4,
