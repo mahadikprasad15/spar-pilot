@@ -4,7 +4,7 @@
 
 **Blocked by:** 04: Qualify bounded paired capture and logit-lens mathematics; 05: Inspect and qualify community Jacobian-lens status.
 
-**Status:** claimed (bounded profile implemented; real costs and production review pending)
+**Status:** claimed (real profile verified; numerical qualification and production review pending)
 
 - [ ] The public profile declares a bounded matrix before launch and reports loading/forward/hash/save/transfer timings, memory peaks and staging/durable storage needs.
 - [ ] Conditions are enumerated, not implied: base reference, selected SFT/GRPO checkpoints including the final endpoints, random-64 and separately declared bounded zero checks.
@@ -24,3 +24,7 @@ Carry per-document block-14 positions 0–4 through durable capture for whole-do
 ## Bounded profile approval · 2026-10-16
 
 Prasad approved the same four diagnostic documents (two legacy, two new), base/SFT-64/GRPO-64/existing random-64, batch sizes 1 and 4: 32 sequence forwards, 20 model calls, eight saved units. This does not select final production scope or approve numerical gates. The profile can run independently of the unresolved community lens provenance; no lens readout or production qualification is inferred. See `TICKET_05_06_REPORT.md` and `docs/pilot5-lens-and-profile.md`.
+
+## Real profile and freeze consumer · 2026-10-16
+
+Prasad supplied successful T4 profile and verification outputs (8/8 units; both commands exit 0). The reviewed contract consumer and conservative storage estimates are implemented alongside Ticket 07. No successful real numerical qualification receipt, production scope/budget/predictions or lens fallback has been created or approved by that implementation. See TICKET_07_08_REPORT.md for the measured breakdown and remaining gates.

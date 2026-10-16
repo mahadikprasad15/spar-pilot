@@ -15,6 +15,21 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    assets=commands.add_parser('traces-readout-assets',help='CPU extraction of pinned norm/head; no decoder inference')
+    assets.add_argument('--source','--capture',dest='source',type=Path,required=True)
+    assets.add_argument('--output-root',type=Path,required=True)
+    assets.add_argument('--name',required=True)
+    for operation in ('propose','prepare','run','verify'):
+        readout=commands.add_parser('traces-readouts-'+operation,help='Gated saved-vector readout workflow')
+        readout.add_argument('--output-root',type=Path,required=True)
+        if operation in ['propose','prepare']:
+            for field in ['capture','references']:readout.add_argument('--'+field,type=Path,required=True)
+            readout.add_argument('--name',required=True)
+        else:readout.add_argument('--config',type=Path,required=True)
+        if operation=='prepare':
+            readout.add_argument('--assets',type=Path,required=True)
+            readout.add_argument('--review',type=Path,required=True)
+        if operation=='run':readout.add_argument('--max-new-units',type=int)
     for operation in ('propose','freeze','run','verify'):
         production=commands.add_parser('traces-production-'+operation,help='Reviewed Pilot 5 durable capture workflow')
         production.add_argument('--output-root',type=Path,required=True)
@@ -233,7 +248,20 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('traces-production-'):
+        if args.command=='traces-readout-assets':
+            from pilot_eval.trace_readout_assets import prepare_assets
+            print(prepare_assets(args.source,args.output_root,args.name))
+        elif args.command.startswith('traces-readouts-'):
+            from pilot_eval.trace_readouts import propose_readouts,prepare_readouts,run_readouts,verify_readouts
+            if args.command=='traces-readouts-propose':
+                print(propose_readouts(args.capture,args.references,args.output_root,args.name))
+            elif args.command=='traces-readouts-prepare':
+                print(prepare_readouts(args.capture,args.assets,args.references,args.review,args.output_root,args.name))
+            else:
+                result=(run_readouts(args.config,args.output_root,max_new_units=args.max_new_units)
+                        if args.command=='traces-readouts-run' else verify_readouts(args.config,args.output_root))
+                print(json.dumps(result,indent=2))
+        elif args.command.startswith('traces-production-'):
             from pilot_eval.trace_production_plan import propose_capture,freeze_capture
             from pilot_eval.trace_production import run_capture,verify_capture
             if args.command=='traces-production-propose':

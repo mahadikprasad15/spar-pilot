@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: Prepare and freeze the raw corpus.
 
-**Status:** claimed (diagnostic implementation complete; real GPU evidence and gate review pending)
+**Status:** claimed (real zero diagnostic verified; numerical acceptance and nonzero sensitivity pending)
 
 - [x] Independent tiny-model/full-array answers agree with streamed per-position sums and named-site capture.
 - [ ] Both zero adapters pass the reviewed bounded identity checks, with unchanged base weights and finite/reconstruction checks.

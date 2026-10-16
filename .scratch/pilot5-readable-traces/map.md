@@ -68,3 +68,9 @@ Bounded four-document diagnostic and shared notebook 14–16 are implemented wit
 ## Ticket 04 target evidence and Tickets 05–06 · 2026-10-16
 
 User reported successful Tesla T4 zero diagnostic and CPU verification: exact zero for both adapters, unchanged base, 12 forwards, 29 sites, 508 moments; numerical allowance remains pending. Tickets 05–06 add actual pinned community artifact inspection (insufficient provenance) and the approved four-document endpoint cost profile. Notebook 17–20 exposes the workflow. Production freeze and capture remain pending scientific/numerical/budget review. See TICKET_05_06_REPORT.md.
+
+## Tickets 07–08 software handoff · 2026-10-16
+
+Implemented reviewed production contract, shared-base capture, resumable staged/durable batch evidence and CPU saved-vector readouts with reference/lens barriers. Shared notebook stages 21–28 preserve earlier numbering. See TICKET_07_08_REPORT.md. Production and learned-token reveal remain gated; no numerical tolerance, lens fallback or production scope was chosen automatically.
+
+User-reported T4 cells 19–20 completed and verified: 8 units, 32 sequence forwards, 20 calls; 8.54s forward/capture/transfer and 404.32s base hashing. Profile complete does not mean qualified.
