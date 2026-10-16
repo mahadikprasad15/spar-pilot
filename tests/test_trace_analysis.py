@@ -81,9 +81,31 @@ def test_nulls_are_durable_before_primary_scores_and_analysis_resumes(tmp_path):
     assert final["analysis_complete"] and final["reused_units"] >= 1
     assert final["decoder_forwards"] == 0 and final["synthetic_only"]
     assert len(final["primary"]) == 4 and len(final["contrasts"]) == 2
+    import subprocess, sys
+
+    checked = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pilot_eval",
+            "traces-analysis-verify",
+            "--config",
+            str(plan),
+            "--output-root",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout)["primary"] == final["primary"]
     # Literal fixture: every nonzero endpoint delta is [.25,.25], all five
     # vocabulary strings are valid; 'both' is one hit among five, hence .2.
     assert all(row["overlap"] == 0.2 for row in final["primary"])
+    assert all(
+        row["p_value"] == 1 and row["holm_p_value"] == 1 for row in final["primary"]
+    )
+    assert all(row["snr"] is None for row in final["primary"])
     assert all(row["difference"] == 0 for row in final["contrasts"])
     assert all(row["p_value"] == 1 for row in final["contrasts"])
     assert all(row["interval"] == [0, 0] for row in final["contrasts"])
@@ -169,3 +191,66 @@ def test_secondary_max_recomputes_each_resampled_position_before_taking_max(tmp_
         assert row["interval"] == [0.2, 0.2] and row["overlap"] == 0.2
         assert row["null_p_value"] is not None
     assert all(r["full_cohort_degeneracy"] for r in result["ncurves"] if r["n"] == 200)
+
+
+def test_analysis_cli_and_notebook_preserve_prereveal_null_order():
+    import ast, subprocess, sys
+    from pathlib import Path
+
+    command = subprocess.run(
+        [sys.executable, "-m", "pilot_eval", "traces-analysis-prepare", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert command.returncode == 0, command.stderr
+    notebook = json.loads(Path("notebooks/pilot-5-colab.ipynb").read_text())
+    sources = ["".join(c["source"]) for c in notebook["cells"]]
+    nulls = next(i for i, s in enumerate(sources) if "## 26A." in s)
+    decode = next(i for i, s in enumerate(sources) if s.startswith("## 27."))
+    assert nulls < decode
+    assert any("## 29." in s for s in sources) and any("## 30." in s for s in sources)
+    for c in notebook["cells"]:
+        if c["cell_type"] == "code":
+            ast.parse("".join(c["source"]))
+    decode_code = sources[decode + 1]
+    assert "'traces-analysis-nulls-verify'" in decode_code
+
+
+def test_batched_kernel_top20_membership_has_literal_task_contrast():
+    from pilot_eval.trace_analysis_scores import LensScorer
+    from pilot_eval.trace_vocabulary import TokenInventory
+
+    inventory = TokenInventory({i: "token" + str(i) for i in range(21)})
+    head = np.array([[1.0, 0.0]] + [[0.0, 1.0]] * 20)
+    reference = dict(strings=["token0"], word=["token0"], format_number=[], scores=[])
+    score = LensScorer(np.ones(2), head, 1e-6, inventory, {"ref_questions": reference})
+    left, right = score.many([[1, 0], [0, 1]])
+    assert left["scores"]["ref_questions"]["overlap"] == 0.05
+    assert right["scores"]["ref_questions"]["overlap"] == 0
+    assert left["list_ids"] == list(range(20))
+    assert right["list_ids"] == list(range(1, 21))
+
+
+def test_full_vocabulary_rank_kernel_preserves_ties_and_primary_score_rules():
+    from pilot_eval.trace_analysis_scores import LensScorer
+    from pilot_eval.trace_vocabulary import TokenInventory
+
+    # A large tied candidate boundary: only the lowest IDs may survive.
+    inventory = TokenInventory({i: "word" + str(i) for i in range(1002)})
+    ref = dict(
+        strings=["word0"],
+        word=["word0"],
+        format_number=[],
+        scores=[
+            dict(string="word0", y_a=5, y_b=1, z=1),
+            dict(string="word1", y_a=5, y_b=1, z=1),
+            dict(string="word2", y_a=5, y_b=1, z=3),
+        ],
+    )
+    scorer = LensScorer(np.ones(2), np.zeros((1002, 2)), 1e-6, inventory, {"r": ref})
+    scores = np.zeros(1002)
+    scores[2] = 2
+    result = scorer.score_logits(scores, norm=1)
+    assert result["list_ids"] == [2, 0, 1] + list(range(3, 20))
+    assert result["scores"]["r"]["soft_rank"] == pytest.approx(1, abs=1e-9, rel=0)
+    assert result["scores"]["r"]["overlap"] == 0.05

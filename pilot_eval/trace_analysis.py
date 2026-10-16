@@ -7,6 +7,7 @@ restricted to synthetic artifacts. Missing qualified scope stays unavailable.
 
 import json
 import math
+import os
 import time
 from pathlib import Path
 import numpy as np
@@ -117,8 +118,22 @@ def prepare_analysis(readouts_path, output_root, name, *, test_counts=None):
         implementation=implementation(),
         parents=parents,
         chunk_size=16,
+        numpy_version=np.__version__,
+        random_generator="numpy.default_rng / PCG64",
+        workload=dict(
+            null_vectors=counts["null"] * 7,
+            analysis_vector_requests=4 * counts["primary"]
+            + 4 * counts["c3"]
+            + 8 * counts["stratum"]
+            + 4 * counts["matched"]
+            + 4 * len(counts["sizes"]) * counts["ncurve"]
+            + 10 * counts["primary"]
+            + 150,
+            note="Requests before exact duplicate-vector reuse. Full-vocabulary CPU projections can be costly.",
+        ),
         quantile_method="linear",
         positive_only=True,
+        document_draw_order="lexicographic document ID, matching Ticket03 procedures",
         primary_family="SFT/GRPO × logit/Jacobian; pooled0–4 block14 step64 ref_questions",
         covariance_null=dict(
             state="unavailable",
@@ -158,6 +173,10 @@ def _load(path, root):
     for n, h in c["parents"].items():
         if file_hash(_inside(root, n)) != h:
             raise ValueError("Analysis parent hash mismatch.")
+    if c["numpy_version"] != np.__version__:
+        raise ValueError(
+            "Analysis NumPy version changed; preserve the schedule and review a new execution."
+        )
     load_readouts(root / c["readouts_path"], root)
     return c
 
@@ -250,6 +269,19 @@ def _verify(directory, c, required):
     return json.loads((directory / "results/results.json").read_text())
 
 
+def _save_schedule(path, arrays, *, npz=False):
+    """Publish a fully written schedule; interrupted temporary files can repeat."""
+    temporary = path.with_name(path.name + ".partial")
+    with temporary.open("wb") as stream:
+        if npz:
+            np.savez_compressed(stream, **arrays)
+        else:
+            np.save(stream, arrays, allow_pickle=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
+
+
 def _null_units(c):
     # JLens individual positions are not inferred qualified from its pooled receipt.
     for lens, form in [
@@ -301,7 +333,7 @@ def run_nulls(path, output_root, *, max_new_chunks=None):
                 if not np.array_equal(np.load(npy, allow_pickle=False), v):
                     raise ValueError("Null schedule changed.")
             else:
-                np.save(npy, v, allow_pickle=False)
+                _save_schedule(npy, v)
         scorers = _scorers(c, root)
         new = reused = 0
         start_time = time.monotonic()
@@ -320,6 +352,7 @@ def run_nulls(path, output_root, *, max_new_chunks=None):
                         new_chunks=new,
                         reused_chunks=reused,
                     )
+                chunk_started = time.monotonic()
                 values = vectors[form][start : start + c["chunk_size"]]
                 rows = scorers[lens].many(values.reshape(-1, dimension))
                 positions = values.shape[1]
@@ -352,8 +385,28 @@ def run_nulls(path, output_root, *, max_new_chunks=None):
                             valid=all(r["state"] == "scored" for r in selected),
                         )
                     )
-                _save_unit(directory, name, c, dict(lens=lens, form=form, draws=draws))
+                _save_unit(
+                    directory,
+                    name,
+                    c,
+                    dict(
+                        lens=lens,
+                        form=form,
+                        draws=draws,
+                        vector_requests=len(values) * positions,
+                        seconds=time.monotonic() - chunk_started,
+                    ),
+                )
                 new += 1
+                _write_json(
+                    directory / "checkpoints/progress.json",
+                    dict(
+                        completed=new + reused,
+                        new_this_attempt=new,
+                        reused=reused,
+                        last_sealed=name,
+                    ),
+                )
                 print(
                     f"Analysis nulls: {new+reused}/{len(list(_null_units(c)))} chunks sealed; {name}.",
                     flush=True,
@@ -365,6 +418,10 @@ def run_nulls(path, output_root, *, max_new_chunks=None):
                 new_chunks=new,
                 reused_chunks=reused,
                 seconds_this_attempt=time.monotonic() - start_time,
+                seconds_total_units=sum(
+                    _read_unit(directory, n, c)["seconds"]
+                    for n, _, _, _ in _null_units(c)
+                ),
                 seed=seed,
                 draws=c["counts"]["null"],
                 exposure=timing,
@@ -424,12 +481,14 @@ def _documents(c, root):
                         z[f"{arm}.retained_delta.{SITE}"][:, :5, :].astype(np.float64)
                     )
             base.append(z[f"base.primary_base.{SITE}"].copy())
+    # Reuse Ticket03's lexical-ID convention for deterministic document draws.
+    order = np.argsort(ids, kind="stable")
     return (
         capture,
-        ids,
-        {k: np.concatenate(v) for k, v in pooled.items()},
-        np.concatenate(base),
-        {k: np.concatenate(v) for k, v in positions.items()},
+        [ids[i] for i in order],
+        {k: np.concatenate(v)[order] for k, v in pooled.items()},
+        np.concatenate(base)[order],
+        {k: np.concatenate(v)[order] for k, v in positions.items()},
     )
 
 
@@ -543,7 +602,8 @@ def run_analysis(path, output_root, *, max_new_units=None):
             return verify_analysis(path, root)
         verify_readouts(root / c["readouts_path"], root)
         capture, ids, pooled, base, positions = _documents(c, root)
-        strata = [r["stratum"] for r in capture["examples"]]
+        strata_by_id = {r["id"]: r["stratum"] for r in capture["examples"]}
+        strata = [strata_by_id[key] for key in ids]
         schedules = _schedule(c, ids, strata)
         schedule_path = directory / "draws.npz"
         if schedule_path.exists():
@@ -553,7 +613,7 @@ def run_analysis(path, output_root, *, max_new_units=None):
                 ):
                     raise ValueError("Analysis paired document schedule changed.")
         else:
-            np.savez_compressed(schedule_path, **schedules)
+            _save_schedule(schedule_path, schedules, npz=True)
         _save_frozen(
             directory / "document-order.json",
             dict(
@@ -677,27 +737,73 @@ def run_analysis(path, output_root, *, max_new_units=None):
                         ],
                     )
                 elif kind == "layers":
+                    rows = []
+                    all_primary = {
+                        a: {site: [] for site in capture["sites"]} for a in ARMS
+                    }
+                    for index in range(len(capture["batches"])):
+                        with np.load(
+                            root
+                            / capture["run_path"]
+                            / "units"
+                            / f"{index:06d}"
+                            / "arrays.npz",
+                            allow_pickle=False,
+                        ) as z:
+                            for arm in ARMS:
+                                for site in capture["sites"]:
+                                    all_primary[arm][site].append(
+                                        z[f"{arm}.primary_delta.{site}"]
+                                    )
                     with np.load(
                         root / capture["run_path"] / "results/aggregate.npz",
                         allow_pickle=False,
                     ) as z:
-                        rows = []
                         for arm in ARMS:
-                            vectors = [
-                                z[f"{arm}.primary_delta_sum.{site}"] / len(ids)
+                            documents = [
+                                np.concatenate(all_primary[arm][site])
                                 for site in capture["sites"]
                             ]
-                            scored = scorers["logit"].many(vectors)
-                            rows.extend(
-                                dict(
-                                    condition=arm,
-                                    lens="logit",
-                                    site=site,
-                                    classification="secondary",
-                                    **row,
-                                )
-                                for site, row in zip(capture["sites"], scored)
+                            primary_rows = scorers["logit"].many(
+                                np.stack([v.mean(axis=0) for v in documents])
                             )
+                            tail_rows = scorers["logit"].many(
+                                np.stack(
+                                    [
+                                        z[f"{arm}.position_sum.{site}"][5:128].mean(
+                                            axis=0
+                                        )
+                                        / len(ids)
+                                        for site in capture["sites"]
+                                    ]
+                                )
+                            )
+                            for site, doc, row, tail in zip(
+                                capture["sites"], documents, primary_rows, tail_rows
+                            ):
+                                rows.append(
+                                    dict(
+                                        condition=arm,
+                                        lens="logit",
+                                        site=site,
+                                        window="pooled0–4",
+                                        snr=_clean(snr(doc)),
+                                        classification="secondary",
+                                        **row,
+                                    )
+                                )
+                                rows.append(
+                                    dict(
+                                        condition=arm,
+                                        lens="logit",
+                                        site=site,
+                                        window="pooled5–127",
+                                        snr=None,
+                                        snr_reason="Not computed from cohort sums; no inferred per-example uncertainty.",
+                                        classification="secondary",
+                                        **tail,
+                                    )
+                                )
                     value = dict(
                         rows=rows,
                         jacobian_other_layers="unavailable: primary-only qualification",
@@ -765,6 +871,15 @@ def run_analysis(path, output_root, *, max_new_units=None):
                     dict(**value, seconds=time.monotonic() - started),
                 )
                 new += 1
+                _write_json(
+                    directory / "checkpoints/progress.json",
+                    dict(
+                        completed=new + reused,
+                        new_this_attempt=new,
+                        reused=reused,
+                        last_sealed=name,
+                    ),
+                )
                 print(
                     f"Analysis: {new+reused}/{len(units)} durable units; {name}; elapsed {(time.monotonic()-start_time)/60:.1f}min.",
                     flush=True,
@@ -987,6 +1102,16 @@ def _finish(path, c, root, new, reused, seconds):
         new_units=new,
         reused_units=reused,
         seconds_this_attempt=seconds,
+        analysis_unit_seconds=sum(
+            _read_unit(directory, n, c)["seconds"] for n, _, _, _ in _analysis_units(c)
+        ),
+        nulls_seconds_recorded=nulls["seconds_total_units"],
+        availability=dict(
+            jacobian="primary block14 pooled0–4 only",
+            covariance_null=c["covariance_null"],
+            per_position_base_adapted="unavailable: base positions were not retained individually",
+            intermediate_checkpoints="excluded by accepted endpoint-only scope",
+        ),
         limitations=[
             "One arm passing a threshold does not establish an arm difference.",
             "C3 uses approved bootstrap-tail statistic; no exact/nominal calibration claim.",
@@ -997,6 +1122,31 @@ def _finish(path, c, root, new, reused, seconds):
             "Undefined vectors/SNR/soft ranks stay undefined; no replacement/resampling.",
         ],
     )
+    reference_payload = load_references(
+        root / c["references_path"], require_review=True
+    )
+    sensitivities = []
+    for alpha, refs in reference_payload["parameters"].get("sensitivities", {}).items():
+        for row in observed:
+            if row["group"] != "all" or row["condition"] not in ARMS:
+                continue
+            for reference, ref_set in refs.items():
+                strings = set(row.get("strings", []))
+                sensitivities.append(
+                    dict(
+                        classification="secondary",
+                        alpha0=int(alpha),
+                        lens=row["lens"],
+                        condition=row["condition"],
+                        reference=reference,
+                        overlap=(
+                            len(strings & set(ref_set["strings"])) / row["valid_count"]
+                            if row["valid_count"]
+                            else None
+                        ),
+                    )
+                )
+    result["reference_prior_sensitivity"] = sensitivities
     records = [
         dict(
             classification=(
@@ -1036,6 +1186,41 @@ def _finish(path, c, root, new, reused, seconds):
         f"- {r['lens']}: difference {r['difference']}; interval {r['interval']}; Holm p {r.get('holm_p_value')}."
         for r in main
     )
+    lines += [
+        "",
+        "## Secondary: corpus-group robustness",
+        "",
+        "| Arm | Lens | Group | N | Overlap | 95% interval | SNR |",
+        "|---|---|---|---:|---:|---|---:|",
+    ]
+    lines.extend(
+        f"| {r['condition']} | {r['lens']} | {r['group']} | {r['n']} | {r.get('overlap')} | {r.get('interval')} | {r.get('snr')} |"
+        for r in robustness
+        if r["group"] != "matched-legacy"
+    )
+    lines += [
+        "",
+        "Matched legacy draws and new-group percentiles are stored in results.json. They are robustness checks, not evidence of an exposure effect.",
+        "",
+        "## Secondary: sample-size curves",
+        "",
+        "| Arm | Lens | N | Median overlap | 5–95% range | Median SNR |",
+        "|---|---|---:|---:|---|---:|",
+    ]
+    lines.extend(
+        f"| {r['condition']} | {r['lens']} | {r['n']} | {r['median']} | {r['range_5_95']} | {r['snr_median']} |"
+        for r in curves
+    )
+    lines += [
+        "",
+        "N=200 subsets all contain the complete cohort; their repeated values are not independent additional evidence.",
+        "",
+        "## Saved secondary evidence",
+        "",
+        "scores.jsonl includes all three references, word/format overlap, soft rank, random/base/adapted baselines, all-site logit layer curves and secondary max-five evidence. Results.json includes frozen-prior reference sensitivities.",
+        "",
+        f"CPU projection time summed across saved analysis units: {sum(_read_unit(directory,n,c)['seconds'] for n,_,_,_ in _analysis_units(c)):.1f} seconds (excludes preparation, source verification and null phase).",
+    ]
     lines += ["", "## Limitations", ""] + ["- " + x for x in result["limitations"]]
     _write_json(directory / "results/results.json", _clean(result))
     (directory / "results/scores.jsonl").write_text(

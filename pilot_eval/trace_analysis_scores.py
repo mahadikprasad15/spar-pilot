@@ -2,7 +2,26 @@
 
 import math
 import numpy as np
-from pilot_eval.trace_scoring import _spearman
+
+
+def _correlation(left, right):
+    """Average-rank Spearman, vectorized for the full supported vocabulary."""
+    if len(left) < 2:
+        return math.nan
+
+    def ranks(values):
+        values = np.asarray(values)
+        order = np.argsort(values, kind="stable")
+        sorted_values = values[order]
+        starts = np.flatnonzero(np.r_[True, sorted_values[1:] != sorted_values[:-1]])
+        stops = np.r_[starts[1:], len(values)]
+        result = np.empty(len(values), dtype=np.float64)
+        result[order] = np.repeat((starts + stops - 1) / 2, stops - starts)
+        return result - result.mean()
+
+    a, b = ranks(left), ranks(right)
+    denominator = np.linalg.norm(a) * np.linalg.norm(b)
+    return float(a @ b / denominator) if denominator else math.nan
 
 
 class LensScorer:
@@ -25,9 +44,21 @@ class LensScorer:
                 for r in ref["scores"]
                 if r["y_a"] + r["y_b"] >= 5 and r["string"] in groups
             ]
+            selected = [groups[r["string"]] for r in rows]
             self.support[name] = (
-                [(groups[r["string"]]) for r in rows],
-                [r["z"] for r in rows],
+                (
+                    np.concatenate(selected).astype(np.int64)
+                    if selected
+                    else np.array([], dtype=np.int64)
+                ),
+                (
+                    np.r_[0, np.cumsum([len(g) for g in selected])[:-1]].astype(
+                        np.int64
+                    )
+                    if selected
+                    else np.array([], dtype=np.int64)
+                ),
+                np.array([r["z"] for r in rows], dtype=np.float64),
             )
 
     def score_logits(self, logits, *, norm):
@@ -80,8 +111,13 @@ class LensScorer:
                     ("overlap_format", "format_number"),
                 ]
             }
-            groups, z = self.support[name]
-            soft = _spearman([float(np.max(logits[g])) for g in groups], z)
+            indices, starts, z = self.support[name]
+            collapsed = (
+                np.maximum.reduceat(logits[indices], starts)
+                if len(starts)
+                else np.array([])
+            )
+            soft = _correlation(collapsed, z)
             values["soft_rank"] = soft if math.isfinite(soft) else None
             scores[name] = values
         return dict(
@@ -96,6 +132,22 @@ class LensScorer:
         )
 
     def many(self, vectors):
+        vectors = np.asarray(vectors, dtype=np.float64)
+        if (
+            vectors.ndim != 2
+            or vectors.shape[1] != len(self.norm)
+            or not np.isfinite(vectors).all()
+        ):
+            raise ValueError(
+                "Expected finite analysis vectors with pinned model width."
+            )
+        # Identical vectors within one chunk (notably N=200 subsets) need one
+        # projection, while every declared draw remains in the saved results.
+        unique, inverse = np.unique(vectors, axis=0, return_inverse=True)
+        rows = self._project_many(unique)
+        return [dict(rows[i]) for i in inverse]
+
+    def _project_many(self, vectors):
         vectors = np.asarray(vectors, dtype=np.float64)
         if (
             vectors.ndim != 2

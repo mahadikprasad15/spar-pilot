@@ -15,6 +15,19 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ('prepare', 'nulls-run', 'nulls-verify', 'run', 'verify'):
+        analysis = commands.add_parser('traces-analysis-' + operation,
+            help='CPU automatic trace relevance with saved nulls and paired document draws')
+        analysis.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            analysis.add_argument('--readouts', type=Path, required=True)
+            analysis.add_argument('--name', required=True)
+        else:
+            analysis.add_argument('--config', type=Path, required=True)
+        if operation == 'nulls-run':
+            analysis.add_argument('--max-new-chunks', type=int)
+        if operation == 'run':
+            analysis.add_argument('--max-new-units', type=int)
     assets=commands.add_parser('traces-readout-assets',help='CPU extraction of pinned norm/head; no decoder inference')
     assets.add_argument('--source','--capture',dest='source',type=Path,required=True)
     assets.add_argument('--output-root',type=Path,required=True)
@@ -319,6 +332,20 @@ def main(argv=None, *, dependencies=None):
             else:
                 result = approve(args.config, args.review, args.output_root)
             print_summary(result)
+        elif args.command.startswith('traces-analysis-'):
+            from pilot_eval.trace_analysis import prepare_analysis, run_nulls, verify_nulls, run_analysis, verify_analysis
+            operation = args.command.removeprefix('traces-analysis-')
+            if operation == 'prepare':
+                result = prepare_analysis(args.readouts, args.output_root, args.name)
+            elif operation == 'nulls-run':
+                result = run_nulls(args.config, args.output_root, max_new_chunks=args.max_new_chunks)
+            elif operation == 'nulls-verify':
+                result = verify_nulls(args.config, args.output_root)
+            elif operation == 'run':
+                result = run_analysis(args.config, args.output_root, max_new_units=args.max_new_units)
+            else:
+                result = verify_analysis(args.config, args.output_root)
+            print(result if isinstance(result, Path) else json.dumps(result, indent=2))
         elif args.command=='traces-lens-inspect':
             from pilot_eval.trace_community_lens import inspect_community
             path=inspect_community(args.output_root,args.name,artifact_dir=args.artifact_dir)
