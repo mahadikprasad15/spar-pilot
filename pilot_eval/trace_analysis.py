@@ -506,6 +506,8 @@ def _analysis_units(c):
     yield "layer-curves", "layers", None, 0
     for arm in ARMS:
         yield f"logit-{arm}-max-five", "max-five", arm, 0
+        for start in range(0, c["counts"]["primary"], c["chunk_size"]):
+            yield f"logit-{arm}-max-bootstrap-{start:06d}", "max-bootstrap", arm, start
 
 
 def _interval(values):
@@ -712,16 +714,49 @@ def run_analysis(path, output_root, *, max_new_units=None):
                         )
                         for ref in scorers["logit"].references
                     }
-                    # Secondary bootstrap recomputes the maximum within each paired draw.
-                    # These costly draws are further chunked below in a later workflow slice.
                     value = dict(
                         condition=selection,
                         lens="logit",
                         classification="secondary",
                         observed=scores,
                         per_position=row,
-                        bootstrap_state="pending-secondary-chunk-workflow",
+                        per_position_snr=[
+                            _clean(snr(values[:, i, :])) for i in range(5)
+                        ],
                         jacobian="unavailable: pooled-only qualification",
+                    )
+                elif kind == "max-bootstrap":
+                    values = positions[selection]
+                    draw = schedules["primary"][start : start + c["chunk_size"]]
+                    means = np.stack([values[idx].mean(axis=0) for idx in draw])
+                    scores = scorers["logit"].many(means.reshape(-1, capture["width"]))
+                    rows = []
+                    for i, idx in enumerate(draw):
+                        five = scores[i * 5 : (i + 1) * 5]
+                        rows.append(
+                            dict(
+                                draw=start + i,
+                                scores={
+                                    ref: (
+                                        max(r["scores"][ref]["overlap"] for r in five)
+                                        if all(
+                                            r["scores"][ref]["overlap"] is not None
+                                            for r in five
+                                        )
+                                        else None
+                                    )
+                                    for ref in scorers["logit"].references
+                                },
+                                position_snr=[
+                                    _clean(snr(values[idx, j, :])) for j in range(5)
+                                ],
+                            )
+                        )
+                    value = dict(
+                        condition=selection,
+                        lens="logit",
+                        classification="secondary",
+                        rows=rows,
                     )
                 _save_unit(
                     directory,
@@ -909,6 +944,32 @@ def _finish(path, c, root, new, reused, seconds):
         or nulls["exposure"]["learned_unit_seals_present"]
     ):
         inference = "exploratory: nulls frozen after learned readout artifacts"
+    secondary_max = []
+    for arm in ARMS:
+        obs = _read_unit(directory, f"logit-{arm}-max-five", c)
+        boot = []
+        for n, k, sel, _ in _analysis_units(c):
+            if k == "max-bootstrap" and sel == arm:
+                boot.extend(_read_unit(directory, n, c)["rows"])
+        for reference, value in obs["observed"].items():
+            null = _null_values(c, root, "logit", reference, form="max-five")
+            p = (
+                null_pvalue(value, null)["p_value"]
+                if value is not None and all(v is not None for v in null)
+                else None
+            )
+            secondary_max.append(
+                dict(
+                    condition=arm,
+                    lens="logit",
+                    classification="secondary",
+                    reference=reference,
+                    overlap=value,
+                    interval=_interval([r["scores"][reference] for r in boot]),
+                    null_p_value=p,
+                    interpretation="Descriptive matched max-five search; outside primary testing family.",
+                )
+            )
     result = dict(
         analysis_complete=True,
         decoder_forwards=0,
@@ -918,6 +979,7 @@ def _finish(path, c, root, new, reused, seconds):
         secondary_contrasts=[
             r for r in contrasts if r["classification"] == "secondary"
         ],
+        secondary_max=secondary_max,
         robustness=robustness,
         ncurves=curves,
         inference_status=inference,

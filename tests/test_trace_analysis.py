@@ -95,3 +95,77 @@ def test_nulls_are_durable_before_primary_scores_and_analysis_resumes(tmp_path):
     (directory / "results/report.md").write_text("tampered")
     with pytest.raises(ValueError, match="hash"):
         verify_analysis(plan, tmp_path)
+
+
+def test_batched_analysis_scores_match_independent_ticket03_scorer():
+    from pilot_eval.trace_analysis_scores import LensScorer
+    from pilot_eval.trace_scoring import score_vector
+    from pilot_eval.trace_capture import logit_lens
+    from pilot_eval.trace_vocabulary import TokenInventory
+
+    inventory = TokenInventory(
+        {0: " alpha", 1: "Alpha", 2: "beta", 3: " gamma", 4: "<special>", 5: "4"},
+        special_ids=[4],
+    )
+    ref = dict(
+        strings=["alpha", "4"],
+        word=["alpha"],
+        format_number=["4"],
+        scores=[
+            dict(string="alpha", y_a=6, y_b=1, z=4),
+            dict(string="beta", y_a=5, y_b=5, z=0),
+            dict(string="4", y_a=7, y_b=2, z=3),
+        ],
+    )
+    references = {n: ref for n in ["ref_questions", "ref_gold", "ref_grpo"]}
+    norm = np.array([1.0, 2.0])
+    head = np.array([[1, 0], [1, 0], [0, 1], [-1, 1], [9, 9], [1, -1.0]])
+    scorer = LensScorer(norm, head, 1e-6, inventory, references, batch_size=2)
+    vectors = np.array([[1, 2], [-2, 1], [0, 0], [3, 6.0]])
+    actual = scorer.many(vectors)
+    for v, row in zip(vectors, actual):
+        expected = score_vector(
+            v,
+            lambda x: logit_lens(x, norm_weight=norm, unembedding=head, epsilon=1e-6),
+            inventory,
+            references=references,
+            synthetic=True,
+        )
+        assert row["state"] == expected["state"]
+        if expected["state"] == "scored":
+            assert row["strings"] == expected["strings"]
+            assert row["list_ids"] == expected["list_ids"]
+            for name in references:
+                for metric, value in expected["scores"][name].items():
+                    assert row["scores"][name][metric] == pytest.approx(value)
+    assert actual[0]["scores"] == actual[3]["scores"]
+
+
+def test_secondary_max_recomputes_each_resampled_position_before_taking_max(tmp_path):
+    from pilot_eval.trace_analysis import prepare_analysis, run_nulls, run_analysis
+    from pilot_eval.trace_readouts import run_readouts
+
+    readouts = fixture(tmp_path)
+    plan = prepare_analysis(
+        readouts,
+        tmp_path,
+        "secondary",
+        test_counts={
+            "null": 4,
+            "primary": 4,
+            "c3": 4,
+            "stratum": 4,
+            "matched": 2,
+            "ncurve": 2,
+            "sizes": [25, 50, 100, 200],
+        },
+    )
+    run_nulls(plan, tmp_path)
+    run_readouts(readouts, tmp_path)
+    result = run_analysis(plan, tmp_path)
+    assert len(result["secondary_max"]) == 6
+    for row in result["secondary_max"]:
+        assert row["classification"] == "secondary" and row["lens"] == "logit"
+        assert row["interval"] == [0.2, 0.2] and row["overlap"] == 0.2
+        assert row["null_p_value"] is not None
+    assert all(r["full_cohort_degeneracy"] for r in result["ncurves"] if r["n"] == 200)
