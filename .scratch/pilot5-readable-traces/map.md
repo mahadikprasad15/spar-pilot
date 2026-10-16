@@ -64,3 +64,7 @@ Approved v1.1/preflight procedure implemented and verified: 73 affected CPU test
 ## Ticket 04 implementation handoff · 2026-10-15
 
 Bounded four-document diagnostic and shared notebook 14–16 are implemented with independent CPU oracles and public saved-workflow tests. See `TICKET_04_REPORT.md`. Real CUDA execution and numerical-gate review remain pending; no production capture or qualification is claimed. A6/A7 moments/retention and paired precision-sensitivity utilities are carried forward.
+
+## Ticket 04 target evidence and Tickets 05–06 · 2026-10-16
+
+User reported successful Tesla T4 zero diagnostic and CPU verification: exact zero for both adapters, unchanged base, 12 forwards, 29 sites, 508 moments; numerical allowance remains pending. Tickets 05–06 add actual pinned community artifact inspection (insufficient provenance) and the approved four-document endpoint cost profile. Notebook 17–20 exposes the workflow. Production freeze and capture remain pending scientific/numerical/budget review. See TICKET_05_06_REPORT.md.
