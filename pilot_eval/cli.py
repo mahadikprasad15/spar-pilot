@@ -57,6 +57,24 @@ def main(argv=None, *, dependencies=None):
             qualification.add_argument('--max-new-units', type=int)
         if operation == 'approve':
             qualification.add_argument('--review', type=Path, required=True)
+    for operation in ('prepare', 'diagnose', 'verify', 'approve'):
+        capture_q = commands.add_parser('traces-capture-qualification-' + operation,
+            help='CPU capture acceptance from saved zero/profile evidence; explicit limits required')
+        capture_q.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            for field in ('profile', 'assets'):
+                capture_q.add_argument('--' + field, type=Path, required=True)
+            capture_q.add_argument('--name', required=True)
+            capture_q.add_argument('--batch-size', type=int, required=True)
+            capture_q.add_argument('--storage-dtype', choices=['float16', 'float32'], required=True)
+            capture_q.add_argument('--bootstrap-draws', type=int, required=True)
+            capture_q.add_argument('--seed', type=int, required=True)
+        else:
+            capture_q.add_argument('--config', type=Path, required=True)
+        if operation == 'diagnose':
+            capture_q.add_argument('--max-new-units', type=int)
+        if operation == 'approve':
+            capture_q.add_argument('--review', type=Path, required=True)
     lens=commands.add_parser('traces-lens-inspect',help='CPU inspection of the pinned community lens; never fits')
     lens.add_argument('--output-root',type=Path,required=True)
     lens.add_argument('--name',required=True)
@@ -314,6 +332,26 @@ def main(argv=None, *, dependencies=None):
                 result=(run_profile(args.config,args.output_root,dependencies=dependencies)
                         if args.command=='traces-profile-run' else verify_profile(args.config,args.output_root))
                 print(json.dumps(result,indent=2))
+        elif args.command.startswith('traces-capture-qualification-'):
+            from pilot_eval.trace_capture_qualification import prepare, diagnose, verify, approve
+            operation = args.command.removeprefix('traces-capture-qualification-')
+            if operation == 'prepare':
+                result = prepare(args.profile, args.assets, args.output_root, args.name,
+                    batch_size=args.batch_size, storage_dtype=args.storage_dtype,
+                    bootstrap_draws=args.bootstrap_draws, seed=args.seed)
+            elif operation == 'diagnose':
+                result = diagnose(args.config, args.output_root, max_new_units=args.max_new_units)
+            elif operation == 'verify':
+                result = verify(args.config, args.output_root)
+            else:
+                result = approve(args.config, args.review, args.output_root)
+            if isinstance(result, Path):
+                print(result)
+            else:
+                summary = {**result, 'measurements': [
+                    {k:v for k,v in row.items() if k != 'bootstrap_draws'}
+                    for row in result.get('measurements', [])]}
+                print(json.dumps(summary, indent=2))
         elif args.command.startswith('traces-capture-'):
             from pilot_eval.trace_capture_workflow import prepare_diagnostic,run_diagnostic,verify_diagnostic
             if args.command=='traces-capture-prepare':

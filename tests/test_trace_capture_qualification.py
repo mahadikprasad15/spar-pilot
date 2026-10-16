@@ -76,6 +76,51 @@ def test_capture_review_cannot_be_replaced_by_profile_completion(tmp_path, monke
     assert receipt["protocol"] == "pilot5-capture-qualification-v1"
     assert all(v["passed"] for v in receipt["checks"].values())
     assert receipt["profile_sha256"] == file_hash(profile)
+    # The producer's receipt is accepted by the actual production-freeze seam.
+    from pilot_eval.trace_production_plan import propose_capture, freeze_capture
+
+    proposal = propose_capture(profile, tmp_path, "production")
+    production = json.loads(proposal.read_text())["review_template"]
+    production.update(
+        approved=True,
+        reviewer="fixture",
+        notes="Synthetic workflow integration",
+        proposal_sha256=file_hash(proposal),
+        conditions=["base", "sft-64", "grpo-64", "random-64"],
+        batch_size=4,
+        storage_dtype="float32",
+        scope="endpoints",
+        qualification_path=str(receipt_path.relative_to(tmp_path)),
+        qualification_sha256=file_hash(receipt_path),
+        lens_mode="logit-only",
+        partial_mode_approved=True,
+        predictions={
+            a: dict(statement="Synthetic fixture only", confidence=0.5)
+            for a in ["sft", "grpo"]
+        },
+        budget=dict(approved=True, max_seconds=10000, max_durable_bytes=100000000),
+    )
+    production_review = tmp_path / "production-review.json"
+    production_review.write_text(json.dumps(production))
+    frozen = freeze_capture(proposal, production_review, tmp_path)
+    assert json.loads(frozen.read_text())["mode"] == "frozen-production-capture"
+    import subprocess, sys
+
+    fresh = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pilot_eval",
+            "traces-capture-qualification-verify",
+            "--config",
+            str(plan),
+            "--output-root",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert fresh.returncode == 0, fresh.stderr
     # A stricter reviewed decision is saved as failed, never silently widened.
     review["limits"]["batch_max_absolute_difference"] = 0
     path2 = directory / "review.strict.json"
@@ -87,3 +132,32 @@ def test_capture_review_cannot_be_replaced_by_profile_completion(tmp_path, monke
     (directory / "units/operator/result.json").write_text("{}")
     with pytest.raises(ValueError, match="hash"):
         verify(plan, tmp_path)
+
+
+def test_capture_qualification_cli_and_notebook_handoff(tmp_path):
+    import ast
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pilot_eval",
+            "traces-capture-qualification-prepare",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    notebook = json.loads(Path("notebooks/pilot-5-colab.ipynb").read_text())
+    headings = [
+        "".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "markdown"
+    ]
+    assert any("## 21A." in h for h in headings)
+    assert any("## 21B." in h for h in headings)
+    for c in notebook["cells"]:
+        if c["cell_type"] == "code":
+            ast.parse("".join(c["source"]))

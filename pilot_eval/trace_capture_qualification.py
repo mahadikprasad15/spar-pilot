@@ -442,6 +442,7 @@ def approve(path, review_path, output_root):
     )
     failures = [k for k, v in checks.items() if not v]
     evidence = {
+        str(_inside(root, path).relative_to(root)): file_hash(_inside(root, path)),
         **config["parents"],
         str(review_path.relative_to(root)): file_hash(review_path),
     }

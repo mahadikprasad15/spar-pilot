@@ -28,3 +28,7 @@ Prasad approved the same four diagnostic documents (two legacy, two new), base/S
 ## Real profile and freeze consumer · 2026-10-16
 
 Prasad supplied successful T4 profile and verification outputs (8/8 units; both commands exit 0). The reviewed contract consumer and conservative storage estimates are implemented alongside Ticket 07. No successful real numerical qualification receipt, production scope/budget/predictions or lens fallback has been created or approved by that implementation. See TICKET_07_08_REPORT.md for the measured breakdown and remaining gates.
+
+## Capture qualification handoff repair — 2026-10-16
+
+The saved CPU prepare/diagnose/verify/approve workflow now produces the capture receipt required by production freeze. See `docs/pilot5-capture-qualification.md`. Shared notebook 21A/21B reuses existing zero/profile/asset evidence, adds primary logit retention/ranking/bootstrap diagnostics, and requires separately reviewed explicit limits. All-site batching/retention and zero/base integrity are checked independently. Real execution/acceptance remains pending; production scope/budget/predictions are not chosen by this repair. JLens qualification remains a separate prerequisite.
