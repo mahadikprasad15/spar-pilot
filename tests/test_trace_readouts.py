@@ -221,7 +221,7 @@ def test_shared_notebook_has_ordered_capture_and_readout_stages():
     import ast
 
     notebook = json.loads(Path("notebooks/pilot-5-colab.ipynb").read_text())
-    cells = ["".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code"]
+    cells = ["".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code" and c.get("metadata", {}).get("pilot5_stage") != "lens-qualification"]
     assert len(cells) == 28
     for number, command in [
         (21, "traces-production-propose"),
@@ -265,3 +265,18 @@ def test_readout_basis_can_be_prepared_from_profile_before_production(tmp_path):
     result = verify_assets(path, tmp_path)
     assert result["decoder_forwards"] == 0 and result["compute_device"] == "cpu"
     assert result["source_path"] == str(profile.relative_to(tmp_path))
+
+
+def test_primary_window_qualification_does_not_authorize_other_jacobian_windows(tmp_path):
+    from pilot_eval.trace_readouts import prepare_readouts, run_readouts
+    capture, assets, refs, review = evidence(tmp_path, dual=True)
+    data = json.loads(review.read_text())
+    data['requests'].append(dict(name='unqualified-window', condition='sft-64', role='delta',
+        site='block-14-output', positions=[0]))
+    review.write_text(json.dumps(data))
+    plan = prepare_readouts(capture, assets, refs, review, tmp_path, 'scoped-readouts')
+    run_readouts(plan, tmp_path)
+    directory = tmp_path / json.loads(plan.read_text())['run_path']
+    result = json.loads((directory / 'units/unqualified-window/result.json').read_text())
+    assert result['readouts']['logit']['state'] == 'decoded'
+    assert result['readouts']['jacobian'] == dict(state='unavailable', reason='outside qualified source/window scope')

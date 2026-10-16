@@ -105,6 +105,8 @@ def frozen(root, *, approved=True, dual=False):
                     lens_sha256=file_hash(lens),
                     d_model=2,
                     source_layers=[14],
+                    qualified_source_layers=[14],
+                    positions=[0, 1, 2, 3, 4],
                     source_site="block-output",
                     target="final-block-output-before-norm",
                     evidence_files={"lens.pt": file_hash(lens)},

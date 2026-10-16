@@ -404,6 +404,16 @@ def run_readouts(path, output_root, *, max_new_units=None):
                                     state="unavailable", reason="unsupported source site"
                                 )
                                 continue
+                            qualified_layers = config["jacobian"].get("qualified_source_layers")
+                            qualified_positions = config["jacobian"].get("positions")
+                            if (
+                                qualified_layers is not None and layer not in qualified_layers
+                                or qualified_positions is not None and request["positions"] != qualified_positions
+                            ):
+                                output["readouts"][lens] = dict(
+                                    state="unavailable", reason="outside qualified source/window scope"
+                                )
+                                continue
                             if layer not in matrices:
                                 matrices[layer] = read_matrix(
                                     root / config["jacobian"]["lens_path"],

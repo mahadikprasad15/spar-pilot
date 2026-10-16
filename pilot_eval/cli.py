@@ -41,6 +41,22 @@ def main(argv=None, *, dependencies=None):
             production.add_argument('--review',type=Path,required=True)
         else:production.add_argument('--config',type=Path,required=True)
         if operation=='run':production.add_argument('--staging-root',type=Path)
+    for operation in ('prepare', 'diagnose', 'verify', 'approve'):
+        qualification = commands.add_parser('traces-lens-qualification-' + operation,
+            help='CPU JLens diagnostics from four saved profile documents; explicit review required')
+        qualification.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            for field in ('profile', 'inspection', 'assets'):
+                qualification.add_argument('--' + field, type=Path, required=True)
+            qualification.add_argument('--name', required=True)
+            qualification.add_argument('--bootstrap-draws', type=int, required=True)
+            qualification.add_argument('--seed', type=int, required=True)
+        else:
+            qualification.add_argument('--config', type=Path, required=True)
+        if operation == 'diagnose':
+            qualification.add_argument('--max-new-units', type=int)
+        if operation == 'approve':
+            qualification.add_argument('--review', type=Path, required=True)
     lens=commands.add_parser('traces-lens-inspect',help='CPU inspection of the pinned community lens; never fits')
     lens.add_argument('--output-root',type=Path,required=True)
     lens.add_argument('--name',required=True)
@@ -272,6 +288,19 @@ def main(argv=None, *, dependencies=None):
                 result=(run_capture(args.config,args.output_root,staging_root=args.staging_root,dependencies=dependencies)
                         if args.command=='traces-production-run' else verify_capture(args.config,args.output_root))
                 print(json.dumps(result,indent=2))
+        elif args.command.startswith('traces-lens-qualification-'):
+            from pilot_eval.trace_lens_qualification import prepare, diagnose, verify, approve, print_summary
+            operation = args.command.removeprefix('traces-lens-qualification-')
+            if operation == 'prepare':
+                result = prepare(args.profile, args.inspection, args.assets, args.output_root,
+                    args.name, bootstrap_draws=args.bootstrap_draws, seed=args.seed)
+            elif operation == 'diagnose':
+                result = diagnose(args.config, args.output_root, max_new_units=args.max_new_units)
+            elif operation == 'verify':
+                result = verify(args.config, args.output_root)
+            else:
+                result = approve(args.config, args.review, args.output_root)
+            print_summary(result)
         elif args.command=='traces-lens-inspect':
             from pilot_eval.trace_community_lens import inspect_community
             path=inspect_community(args.output_root,args.name,artifact_dir=args.artifact_dir)

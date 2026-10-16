@@ -42,3 +42,7 @@ flowchart LR
 The dashed grade-supplement edge is not an implementation blocker. The reveal-policy edge is a scientific exposure gate. Neither optional grading nor assistant execution gates the required automatic report or raw validation.
 
 Start with 01. Its offline implementation checks and real Colab smoke have separate evidence status; no full scientific run is authorized by ticket completion.
+
+## Qualification handoff status · 2026-10-16
+
+**Inspection complete, profile complete, JLens acceptance pending.** The numerical qualification producer is now exposed in notebook **20A–20C**, before production. Execution and reviewed acceptance are still required; `qualified: false` is not merely an administrative checkbox. Ticket 05 is partial. Ticket 04/06 capture numerical acceptance and production scope/budget/predictions remain separate gates. See [bounded JLens workflow](../../../docs/pilot5-jlens-qualification.md). No completion claim for 04–06 follows from the later capture/readout consumers being implemented.
