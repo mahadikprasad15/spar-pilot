@@ -221,7 +221,7 @@ def test_shared_notebook_has_ordered_capture_and_readout_stages():
     import ast
 
     notebook = json.loads(Path("notebooks/pilot-5-colab.ipynb").read_text())
-    cells = ["".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code" and c.get("metadata", {}).get("pilot5_stage") != "lens-qualification"]
+    cells = ["".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code" and c.get("metadata", {}).get("pilot5_stage") not in {"lens-qualification", "capture-qualification"}]
     assert len(cells) == 28
     for number, command in [
         (21, "traces-production-propose"),

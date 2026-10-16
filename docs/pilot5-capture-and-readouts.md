@@ -4,7 +4,7 @@
 
 Cells 19–20 have completed on the user's Tesla T4: eight profile units, 32 sequence forwards, 20 model calls, successful verification. That is a completed **cost diagnostic**, with `qualified: false` and `production_ready: false`. Its saved FP32 arrays can support further numerical review; the diagnostic does not approve tolerances, FP16 retention or production scope.
 
-Tickets 07–08 now implement the capture and readout machinery. **CPU 1–2 → 21** prepares the next proposal. Actual production remains gated on Ticket 04/06 qualification receipts, lens disposition, scope, budget and predictions. No successful real qualification receipt was fabricated in this release.
+Tickets 07–08 now implement the capture and readout machinery. **After accepted JLens review, CPU 1–2 → 21A** diagnoses saved capture evidence; 21B applies separately reviewed capture limits. Cell 21 remains the production proposal. Actual production remains gated on both qualification receipts, scope, budget and predictions. See `docs/pilot5-capture-qualification.md`; no successful real capture receipt is fabricated by software completion.
 
 ```text
 Completed profile + saved source/corpus evidence

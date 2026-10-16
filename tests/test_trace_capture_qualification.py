@@ -158,6 +158,17 @@ def test_capture_qualification_cli_and_notebook_handoff(tmp_path):
     ]
     assert any("## 21A." in h for h in headings)
     assert any("## 21B." in h for h in headings)
+    staged = [
+        c
+        for c in notebook["cells"]
+        if c.get("metadata", {}).get("pilot5_stage") == "capture-qualification"
+    ]
+    assert len([c for c in staged if c["cell_type"] == "code"]) == 2
+    assert notebook["cells"].index(staged[-1]) < next(
+        i
+        for i, c in enumerate(notebook["cells"])
+        if "".join(c["source"]).startswith("## 22.")
+    )
     for c in notebook["cells"]:
         if c["cell_type"] == "code":
             ast.parse("".join(c["source"]))
