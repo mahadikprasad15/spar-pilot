@@ -161,3 +161,80 @@ def test_capture_qualification_cli_and_notebook_handoff(tmp_path):
     for c in notebook["cells"]:
         if c["cell_type"] == "code":
             ast.parse("".join(c["source"]))
+
+
+def test_notebook_pin_contains_capture_qualification_commands():
+    import re
+    import subprocess
+    from pathlib import Path
+
+    notebook = json.loads(Path("notebooks/pilot-5-colab.ipynb").read_text())
+    source = "\n".join("".join(c["source"]) for c in notebook["cells"])
+    commit = re.search(r"HARNESS_COMMIT = '([0-9a-f]{40})'", source).group(1)
+    cli = subprocess.check_output(
+        ["git", "show", commit + ":pilot_eval/cli.py"], text=True
+    )
+    assert "traces-capture-qualification-" in cli
+    module = subprocess.check_output(
+        ["git", "show", commit + ":pilot_eval/trace_capture_qualification.py"],
+        text=True,
+    )
+    assert "pilot5-capture-qualification-v1" in module
+
+
+def test_capture_reports_literal_fp16_conversion_error_without_accepting_it(
+    tmp_path, monkeypatch
+):
+    from test_trace_profile import Engine as ProfileEngine
+    from pilot_eval.trace_capture_workflow import run_diagnostic
+    from pilot_eval.trace_capture_qualification import prepare, diagnose, approve
+
+    class ConstantBase(ProfileEngine):
+        def capture(self, rows, condition):
+            return {k: v * 0 for k, v in super().capture(rows, condition).items()}
+
+    monkeypatch.setattr("test_trace_lens_qualification.Engine", ConstantBase)
+    profile, _, assets = inputs(tmp_path)
+    p = json.loads(profile.read_text())
+    run_diagnostic(
+        tmp_path / p["diagnostic_path"], tmp_path, dependencies=Dependencies(Engine())
+    )
+    plan = prepare(
+        profile,
+        assets,
+        tmp_path,
+        "fp16-check",
+        batch_size=4,
+        storage_dtype="float16",
+        bootstrap_draws=8,
+        seed=42,
+    )
+    result = diagnose(plan, tmp_path)
+    # IEEE representations: f32 .12345670163631439 → f16 .12347412109375.
+    assert result["capture"]["retention_max_absolute_error"] == 0.00001741945743560791
+    assert not result["qualified"]
+    folder = tmp_path / json.loads(plan.read_text())["run_path"]
+    review = json.loads((folder / "review.draft.json").read_text())
+    review.update(
+        approved=True,
+        reviewer="fixture",
+        notes="Strict literal error rejection",
+        bounded_scope_accepted=True,
+    )
+    review["limits"] = dict(
+        batch_max_absolute_difference=0,
+        retention_max_absolute_error=0,
+        numeric_lens_max_score_error=1e-10,
+        cohort_max_score_error=1,
+        bootstrap_max_score_error=1,
+        cohort_min_top20_overlap=0,
+        bootstrap_min_top20_overlap=0,
+    )
+    path = folder / "review.strict.json"
+    path.write_text(json.dumps(review))
+    with pytest.raises(ValueError, match="retention"):
+        approve(plan, path, tmp_path)
+    # Mutating an upstream payload must fail before any reuse/computation.
+    assets.write_text("{}")
+    with pytest.raises(ValueError, match="parent hash"):
+        diagnose(plan, tmp_path)
