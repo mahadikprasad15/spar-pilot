@@ -1,6 +1,6 @@
 # Proposed implementation slices
 
-Status: proposed; user approval required before publishing individual tickets
+Status: approved by user, 2026-10-22; individual tickets published locally
 
 Parent: behavioural gain breakdown specification in this effort.
 
@@ -97,11 +97,9 @@ was actually executed, reviewed and verified without model inference.
   completed merely because the software ticket's fixture round trip passed.
 - No ticket implements forced read-off, new training or a reasoning-validity audit.
 
-## Questions before publication
+## Approval and publication
 
-1. Is five slices the right granularity?
-2. Do the listed blockers represent genuine dependencies?
-3. Should any slice be merged or split?
-
-Individual ready-for-agent tickets are not published until this breakdown is
-approved. No implementation has started.
+The user approved the five slices and all listed dependencies on 2026-10-22.
+Individual ready-for-agent tickets are now published in the local tracker.
+No ticket has been claimed and no implementation has started. Ticket 01 is
+the initial unblocked frontier; 02 and 03 become available after it completes.

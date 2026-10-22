@@ -5,7 +5,9 @@
 - Supplied 2026-10-22: `source-proposal.docx`; readable `source-proposal.md`;
   provenance `source-record.json`.
 - Review and first interview frontier: `design.md`.
-- Specification: `spec.md`; proposed breakdown: `ticket-proposal.md`.
+- Specification: `spec.md`; approved breakdown: `ticket-proposal.md`.
+- Individual implementation tickets: `issues/01-verified-source-scoring.md`
+  through `issues/05-combined-findings-handoff.md`.
 - Parent experiment: `.scratch/pilot4-grpo/spec.md`.
 - Scorer history: `docs/adr/0005-gsm8k-flexible-v3.md`.
 
@@ -29,13 +31,14 @@
   freeze labels before the second-stage reveal (Q7).
 - Public saved-workflow test boundary approved; CPU-only fixtures and separate
   real-artifact acceptance evidence.
+- Five-ticket granularity and dependencies approved; tickets published locally
+  as ready-for-agent. Ticket 01 is the initial unblocked frontier. Implementation
+  has not started.
 - No decision-rule thresholds, new inference or implementation have been
   approved in this interview.
 
 ## Fog
 
-- User review of ticket granularity and dependency edges before publication.
 - Whether forced read-off is needed, to be decided after CPU findings.
-- Transition denominators, finite-draw interpretation and coherent decision rules.
 - Exact saved-response availability and SFT/GRPO source compatibility.
-- Any glossary additions and ADRs depend on settled interview answers.
+- Actual audit workload and real-data execution evidence.
