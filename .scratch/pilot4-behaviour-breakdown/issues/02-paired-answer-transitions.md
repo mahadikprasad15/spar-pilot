@@ -7,7 +7,7 @@ inputs, with exact item-level evidence behind every count.
 
 **Blocked by:** 01 — verified source and harmonized scoring workflow.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Parent:** Behavioural gain breakdown specification.
 
@@ -35,3 +35,5 @@ inputs, with exact item-level evidence behind every count.
       paired alignment/resampling, partial-overlap disclosure, distinct baselines,
       source-change rejection and idempotent report reconstruction.
 - [ ] Automatic answer transitions are not labelled validated reasoning gains.
+
+2026-10-22: User authorized the next tickets; CPU saved-output implementation started.

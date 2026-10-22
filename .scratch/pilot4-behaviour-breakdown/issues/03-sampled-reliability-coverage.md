@@ -7,7 +7,7 @@ human audit once the source/scorer contracts are available.
 
 **Blocked by:** 01 — verified source and harmonized scoring workflow.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Parent:** Behavioural gain breakdown specification.
 
@@ -35,3 +35,5 @@ human audit once the source/scorer contracts are available.
       exercise draw completeness, incompatible cross-checks, paired resampling,
       fresh-session replay and altered-source rejection.
 - [ ] Fixture success and actual real-source execution have separate evidence.
+
+2026-10-22: User authorized the next tickets; CPU saved-output implementation started.

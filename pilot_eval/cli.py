@@ -15,6 +15,10 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    transitions=commands.add_parser('behaviour-transitions',help='CPU paired answer transitions and intervals')
+    transitions.add_argument('--config',type=Path,required=True)
+    transitions.add_argument('--name',required=True)
+    transitions.add_argument('--output-root',type=Path,default=Path('artifacts'))
     for operation in ('prepare','score','verify'):
         behaviour=commands.add_parser('behaviour-'+operation,help='CPU saved-output behavioural breakdown')
         behaviour.add_argument('--output-root',type=Path,default=Path('artifacts'))
@@ -303,7 +307,11 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('behaviour-'):
+        if args.command=='behaviour-transitions':
+            from pilot_eval.behaviour_transitions import report_transitions
+            result=report_transitions(args.config,args.output_root,args.name)
+            print(json.dumps({'execution_kind':result['execution_kind'],'report':str(args.output_root/'reports'/args.name/'results/report.md')},indent=2))
+        elif args.command.startswith('behaviour-'):
             from pilot_eval.behaviour_breakdown import prepare_behaviour,score_behaviour,verify_behaviour
             if args.command=='behaviour-prepare':print(prepare_behaviour(args.selection,args.output_root,args.name))
             elif args.command=='behaviour-score':print(json.dumps(score_behaviour(args.config,args.output_root,args.max_new_units),indent=2))
