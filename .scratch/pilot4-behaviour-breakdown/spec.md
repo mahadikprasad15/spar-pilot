@@ -341,3 +341,27 @@ Implementation tickets are proposed separately and require the user's review
 of granularity and blocking edges before publication. Source payload inventory
 and raw-response availability must be verified during implementation acceptance;
 the currently inspected local report snapshot alone is insufficient for A–D.
+
+## Amendment: assisted numeric transcription (2026-10-22)
+
+The reviewer completed all 215 status classifications, but 204 numeric entries
+lack transcriptions. The user approved separate automatic number proposals and
+targeted review to avoid transcribing every numeric answer manually.
+
+Preserve the original backup byte-for-byte. Generate proposals from response text
+only; do not use the question to solve the problem, gold answers, correctness,
+method or checkpoint to choose a number. Compare proposals afterward with saved
+flexible-v3 and last-number extractions, flagging invalid/disagreeing extractions,
+non-unique proposals and capped responses. A strict valid numeric disagreement
+also flags review; strict format rejection alone does not require manual review.
+
+Store assistance in its own named source-hashed artifact directory. No proposal
+is a human transcription unless explicitly confirmed; unflagged proposals remain
+automatic, and their agreement with existing scorers is not independent human
+validation. Original human classifications and any existing transcriptions are
+preserved. Do not freeze or reveal the original incomplete label journal, or
+claim a completed fully human-corrected audit from this assisted workflow.
+
+The assisted page omits gold, correctness, method and checkpoint. It is a read-only
+triage artifact, not a label submission interface. Confirmations/corrections can
+be collected separately in a subsequent explicit review step.
