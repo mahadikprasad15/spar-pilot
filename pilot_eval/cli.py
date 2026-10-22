@@ -20,6 +20,12 @@ def main(argv=None, *, dependencies=None):
     transitions.add_argument('--name',required=True)
     transitions.add_argument('--output-root',type=Path,default=Path('artifacts'))
     transitions.add_argument('--max-new-units',type=int)
+    sampling=commands.add_parser('behaviour-sampling',help='CPU saved eight-draw GRPO reliability')
+    sampling.add_argument('--config',type=Path,required=True)
+    sampling.add_argument('--sampled-source-index',type=int,required=True)
+    sampling.add_argument('--name',required=True)
+    sampling.add_argument('--output-root',type=Path,default=Path('artifacts'))
+    sampling.add_argument('--max-new-units',type=int)
     for operation in ('prepare','score','verify'):
         behaviour=commands.add_parser('behaviour-'+operation,help='CPU saved-output behavioural breakdown')
         behaviour.add_argument('--output-root',type=Path,default=Path('artifacts'))
@@ -312,6 +318,11 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval.behaviour_transitions import report_transitions
             result=report_transitions(args.config,args.output_root,args.name,max_new_units=args.max_new_units)
             print(json.dumps({'execution_kind':result['execution_kind'],'report':str(args.output_root/'reports'/args.name/'results/report.md')},indent=2))
+        elif args.command=='behaviour-sampling':
+            from pilot_eval.behaviour_sampling import report_sampling
+            result=report_sampling(args.config,args.output_root,args.name,args.sampled_source_index,
+                                   max_new_units=args.max_new_units)
+            print(json.dumps({'state':result.get('state','completed'), 'report':str(args.output_root/'reports'/args.name/'results/report.md')},indent=2))
         elif args.command.startswith('behaviour-'):
             from pilot_eval.behaviour_breakdown import prepare_behaviour,score_behaviour,verify_behaviour
             if args.command=='behaviour-prepare':print(prepare_behaviour(args.selection,args.output_root,args.name))
