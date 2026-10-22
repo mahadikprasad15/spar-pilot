@@ -22,12 +22,17 @@
   unchanged-case sample; no exact overall hand-corrected accuracy claim (Q4).
 - Counts and intervals with compatible explanations; the supplied categorical
   decision thresholds are not adopted (Q5).
+- Audit selection: all approved transition/invalid/extractor-disagreement cases
+  plus 20 seeded remaining unchanged pairs per method; report packet size (Q6).
+- Identify intended answers while gold/scorers and method/checkpoint are hidden;
+  freeze labels before the second-stage reveal (Q7).
 - No decision-rule thresholds, new inference or implementation have been
   approved in this interview.
 
 ## Fog
 
-- Single-reviewer audit sampling/coverage, blinding and rubric.
+- Confirm the public-workflow test boundary for specification synthesis.
+- Reviewable implementation details and precise annotation rubric.
 - Whether forced read-off is needed, to be decided after CPU findings.
 - Transition denominators, finite-draw interpretation and coherent decision rules.
 - Exact saved-response availability and SFT/GRPO source compatibility.

@@ -185,6 +185,16 @@ until an actual consequential trade-off is settled. This document is not
    is partial blinding: writing style can still suggest the method. No
    reasoning-validity judgment is requested in this first-stage rubric.
 
-These are proposals awaiting user approval, not frozen audit rules. Parser,
-resampling, source-identity and artifact details will be included in the
-reviewable specification; new inference remains deferred.
+### Round 3 decisions
+
+- **Q6 accepted:** the inclusion rules above and 20 remaining unchanged control
+  pairs per method, using seed 42. Report the actual packet size before labelling.
+- **Q7 accepted:** intended-answer identification first, followed by frozen labels
+  and a separate gold/scorer reveal for error attribution. One reviewer; no
+  inter-reviewer agreement claim.
+
+The user requested the to-spec workflow followed by to-tickets. Scientific
+interview decisions are now recorded; specification synthesis follows. The
+public workflow test boundary must be checked with the user before publishing
+the specification. Ticket granularity and blocking edges require a separate
+review before individual tickets are published. New inference remains deferred.
