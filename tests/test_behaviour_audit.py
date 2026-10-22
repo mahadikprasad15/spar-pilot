@@ -164,3 +164,30 @@ def test_altered_packet_mapping_or_draft_is_rejected(tmp_path,target):
     assert action('save',root,'--labels',str(patch))==0
     path=directory/target;path.write_bytes(path.read_bytes()+b' ')
     assert action('status',root)==1
+
+
+def test_explanation_annotations_are_source_bound_and_separate_from_answers(tmp_path):
+    root,parent=audit_parent(tmp_path);assert prepare(root,parent)==0
+    config=json.loads((root/'plans/audit/behaviour.audit.json').read_text());directory=root/config['run_path']
+    packet=json.loads((directory/'reviewer/packet.json').read_text())
+    import hashlib
+    payload=dict(packet_sha256=config['packet_sha256'],reviewer='fixture',base_revision=0,
+                 labels=[dict(response_id=r['response_id'],status='absent') for r in packet])
+    assert action('save',root,'--labels',str(save(tmp_path/'labels.json',payload)))==0
+    assert action('freeze',root)==0;assert action('reveal',root)==0
+    frozen=(directory/'labels/frozen.json').read_bytes()
+    annotations=dict(packet_sha256=config['packet_sha256'],reviewer='fixture',
+        reveal_sha256=hashlib.sha256((directory/'reveal/results.json').read_bytes()).hexdigest(),
+        annotations=[dict(response_id=packet[0]['response_id'],scorer='flexible_v3',category='uncertain',
+                          evidence='The conclusion is unclear.',note='Need discussion')])
+    path=save(tmp_path/'explanations.json',annotations)
+    assert action('explain',root,'--annotations',str(path),'--revision','review-v1')==0
+    assert (directory/'labels/frozen.json').read_bytes()==frozen
+    result=json.loads((directory/'explanations/review-v1/results.json').read_text())
+    assert result['annotated_response_scorer_pairs']==1
+    assert result['explanation_review']=='partial'
+    assert result['category_counts']['uncertain']==1
+    annotations['annotations'][0]['category']='proved_reasoning_gain'
+    assert action('explain',root,'--annotations',str(save(path,annotations)),'--revision','invalid')==1
+    annotations['annotations'][0]['category']='other';annotations['reveal_sha256']='0'*64
+    assert action('explain',root,'--annotations',str(save(path,annotations)),'--revision','wrong-source')==1

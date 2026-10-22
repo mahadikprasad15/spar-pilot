@@ -431,3 +431,59 @@ def revise_labels(path,root,labels_path,revision,reason):
               [f'revisions/{revision}/'+n for n in ['labels.json','results.json','report.md']])
         return dict(state='completed',revision=revision,post_reveal_revision=True,
                     original_frozen_labels_changed=False)
+
+
+CATEGORIES = ('intermediate_number','missed_format','conflicting_or_ambiguous',
+              'cap_or_truncation','other','uncertain')
+
+
+def _revealed_source(directory,source_revision=None):
+    if source_revision is None:
+        _check_seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
+        path=directory/'reveal/results.json'
+    else:
+        source_revision=_name(source_revision)
+        files=[f'revisions/{source_revision}/'+n for n in ['labels.json','results.json','report.md']]
+        _check_seal(directory,f'revisions/{source_revision}/complete.json',files)
+        path=directory/'revisions'/source_revision/'results.json'
+    return json.loads(path.read_text()),file_hash(path)
+
+
+def explain_audit(path,root,annotations_path,revision,*,source_revision=None):
+    config,directory=_load(path,root);revision=_name(revision)
+    with run_lock(directory):
+        _frozen(config,directory)
+        result,source_sha=_revealed_source(directory,source_revision)
+        payload=json.loads(Path(annotations_path).read_text())
+        if (not isinstance(payload,dict) or set(payload)-{'packet_sha256','reviewer','reveal_sha256','annotations'}
+            or payload.get('packet_sha256')!=config['packet_sha256'] or payload.get('reveal_sha256')!=source_sha
+            or payload.get('reviewer')!=result['reviewer']):
+            raise ValueError('explanations must bind the revealed result, packet and reviewer')
+        entries=payload.get('annotations')
+        if not isinstance(entries,list):
+            raise ValueError('explanation annotations must be a list')
+        ids={r['response_id'] for r in result['responses']};seen=set();clean=[]
+        for entry in entries:
+            if (not isinstance(entry,dict) or set(entry)-{'response_id','scorer','category','evidence','note'}
+                or entry.get('response_id') not in ids or entry.get('scorer') not in ['strict','flexible_v3','last_number']
+                or entry.get('category') not in CATEGORIES
+                or any(not isinstance(entry.get(k,''),str) for k in ['evidence','note'])):
+                raise ValueError('invalid explanation ID, scorer, category or evidence')
+            key=(entry['response_id'],entry['scorer'])
+            if key in seen:
+                raise ValueError('duplicate response/scorer explanation')
+            seen.add(key)
+            clean.append({**entry,'evidence':entry.get('evidence',''),'note':entry.get('note','')})
+        clean.sort(key=lambda r:(r['response_id'],r['scorer']))
+        saved=dict(packet_sha256=config['packet_sha256'],reveal_sha256=source_sha,
+            source_revision=source_revision,reviewer=payload['reviewer'],annotations=clean)
+        summary=dict(review_scope='selected response/scorer pairs only',reviewer_count=1,
+            annotated_response_scorer_pairs=len(clean),possible_response_scorer_pairs=3*len(ids),
+            explanation_review='completed' if len(clean)==3*len(ids) else 'partial',
+            category_counts={c:sum(r['category']==c for r in clean) for c in CATEGORIES},
+            source_revision=source_revision,post_reveal_revision=result['post_reveal_revision'],limitations=LIMITS)
+        folder=directory/'explanations'/revision
+        _save_frozen(folder/'annotations.json',saved);_save_frozen(folder/'results.json',summary)
+        _seal(directory,f'explanations/{revision}/complete.json',
+              [f'explanations/{revision}/'+n for n in ['annotations.json','results.json']])
+        return summary
