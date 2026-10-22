@@ -1,6 +1,7 @@
 """Combined findings through the public saved-workflow command boundary."""
 import json
 from pathlib import Path
+import pytest
 
 from pilot_eval.cli import main
 from test_behaviour_sampling import prepared_sampled, sampling
@@ -113,3 +114,32 @@ def test_interrupted_report_rejects_incomplete_unit_receipt(tmp_path):
     (directory/'results/results.json').unlink()
     assert findings(root,plan)==1
     assert not (directory/'complete.json').exists()
+
+
+def test_resealed_aggregate_cannot_disagree_with_saved_per_question_counts(tmp_path):
+    import hashlib
+    root,plan=inputs(tmp_path)
+    directory=root/'reports/sampling';path=directory/'results/results.json'
+    data=json.loads(path.read_text())
+    data['metrics']['flexible_v3']['coverage_gain_ids']=[]
+    path.write_text(json.dumps(data))
+    seal_path=directory/'complete.json';seal=json.loads(seal_path.read_text())
+    seal['files']['results/results.json']=hashlib.sha256(path.read_bytes()).hexdigest()
+    seal_path.write_text(json.dumps(seal))
+    assert findings(root,plan)==1
+    assert not (root/'reports/findings/complete.json').exists()
+
+
+@pytest.mark.parametrize('target',['paired-interval','direct-contrast'])
+def test_saved_uncertainty_must_reconcile_with_paired_outcomes(tmp_path,target):
+    import hashlib
+    root,plan=inputs(tmp_path)
+    directory=root/'reports/transitions';path=directory/'results/results.json'
+    data=json.loads(path.read_text())
+    if target=='paired-interval':data['within_method']['grpo']['flexible_v3']['difference']['interval_95']=[.8,.9]
+    else:data['direct_comparison']['flexible_v3']['difference']['estimate']=.9
+    path.write_text(json.dumps(data))
+    seal_path=directory/'complete.json';seal=json.loads(seal_path.read_text())
+    seal['files']['results/results.json']=hashlib.sha256(path.read_bytes()).hexdigest()
+    seal_path.write_text(json.dumps(seal))
+    assert findings(root,plan)==1

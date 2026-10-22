@@ -35,7 +35,22 @@ def _close(left,right):
     return np.isclose(left,right,rtol=0,atol=1e-12)
 
 
-def _reconcile(scoring, records, transitions, pairs, sampled, samples):
+def _interval_check(directory,relative,ids,delta,saved):
+    path=_inside(directory,relative)
+    manifest=json.loads(path.with_suffix('.json').read_text())
+    _require(manifest['item_ids']==ids and manifest['draws']==10000 and manifest['seed']==42,
+             'saved bootstrap order/procedure differs')
+    indices=np.load(path,allow_pickle=False)
+    _require(indices.shape==(10000,len(ids)) and np.issubdtype(indices.dtype,np.integer) and
+             indices.min()>=0 and indices.max()<len(ids),'saved bootstrap indices invalid')
+    delta=np.asarray(delta,dtype=float)
+    limits=np.percentile(delta[indices].mean(axis=1),[2.5,97.5])
+    _require(_close(delta.mean(),saved['estimate']) and
+             np.allclose(limits,saved['interval_95'],rtol=0,atol=1e-12),
+             'paired estimate/interval does not match saved outcomes and draws')
+
+
+def _reconcile(scoring, records, transitions, pairs, sampled, samples,transition_path,sampling_path):
     groups=defaultdict(list)
     for record in records:groups[f'{record["method"]}:{record["step"]}'].append(record)
     for key,rows in groups.items():
@@ -60,6 +75,19 @@ def _reconcile(scoring, records, transitions, pairs, sampled, samples):
             gains=len(cells['W:C'])+len(cells['U:C']);losses=len(cells['C:W'])+len(cells['C:U'])
             _require(matrix==flow['counts'] and [gains,losses,gains-losses]==
                      [flow['gross_gains'],flow['gross_losses'],flow['net_change']], 'transition count reconciliation failed')
+            ordered=sorted(selected,key=lambda p:p['item_id'])
+            _require([p['item_id'] for p in ordered]==flow['item_ids'],'paired question order changed')
+            _interval_check(transition_path,flow['resampling_path'],flow['item_ids'],
+                [int(p['after']['scores'][scorer]['correct'])-int(p['before']['scores'][scorer]['correct']) for p in ordered],
+                flow['difference'])
+    for scorer,contrast in transitions['direct_comparison'].items():
+        if not contrast.get('available'):continue
+        before={r['item_id']:r for r in groups['sft:64']};after={r['item_id']:r for r in groups['grpo:64']}
+        common=sorted(set(before)&set(after))
+        _require(common==contrast['item_ids'] and len(common)==contrast['n'],'direct comparison cohort differs')
+        _interval_check(transition_path,contrast['resampling_path'],common,
+            [int(after[i]['scores'][scorer]['correct'])-int(before[i]['scores'][scorer]['correct']) for i in common],
+            contrast['difference'])
     observed=defaultdict(dict)
     for row in samples:
         key=(row['item_id'],row['step'])
@@ -76,8 +104,23 @@ def _reconcile(scoring, records, transitions, pairs, sampled, samples):
             derived.append(dict(item_id=item,**{f'correct_{step}':sum(bool(r['scores'][scorer]['correct'])
                 for r in observed[item,step].values()) for step in [0,64]}))
         _require(derived==metric['per_item'], 'sampled per-item counts changed')
+        gains=[r['item_id'] for r in derived if r['correct_0']==0 and r['correct_64']>0]
+        losses=[r['item_id'] for r in derived if r['correct_0']>0 and r['correct_64']==0]
+        both=[r for r in derived if r['correct_0']>0 and r['correct_64']>0]
+        _require(gains==metric['coverage_gain_ids'] and losses==metric['coverage_loss_ids'],
+                 'sampled coverage-change IDs disagree with per-item counts')
+        saved_both=metric['already_observed_solved']
+        _require([r['item_id'] for r in both]==saved_both['item_ids'], 'already-solved subset IDs disagree')
+        change=float(np.mean([r['correct_64']-r['correct_0'] for r in both])) if both else None
+        _require((change is None and saved_both['mean_count_change'] is None) or
+                 (change is not None and _close(change,saved_both['mean_count_change'])),
+                 'already-solved mean count change disagrees')
         matrix=[[sum(r['correct_0']==a and r['correct_64']==b for r in derived) for b in range(9)] for a in range(9)]
         _require(matrix==metric['count_transition'], 'sampled count transition mismatch')
+        _interval_check(sampling_path,metric['resampling_path'],ids,
+                        [(r['correct_64']-r['correct_0'])/8 for r in derived],metric['mean_draw_reward']['difference'])
+        _interval_check(sampling_path,metric['resampling_path'],ids,
+                        [int(r['correct_64']>0)-int(r['correct_0']>0) for r in derived],metric['observed_coverage']['difference'])
         for step,key in [(0,'before'),(64,'after')]:
             _require(_close(sum(r[f'correct_{step}'] for r in derived)/(8*len(ids)),metric['mean_draw_reward'][key]),
                      'sampled reward reconciliation failed')
@@ -229,7 +272,7 @@ def build_findings(path,transition_path,sampling_path,root,name,*,audit_path=Non
                  cfg['parent_seal_sha256']==file_hash(parent_dir/'complete.json'),'report belongs to another scored parent')
     records=_jsonl(parent_dir/'results/responses.jsonl');pairs=_jsonl(transition_path/'results/paired-items.jsonl')
     samples=_jsonl(sampling_path/'results/responses.jsonl')
-    _,lengths=_reconcile(scoring,records,transitions,pairs,sampled,samples)
+    _,lengths=_reconcile(scoring,records,transitions,pairs,sampled,samples,transition_path,sampling_path)
     audit,extra,corrections=_audit(audit_path,assisted_report,transition_path,pairs,root)
     from pilot_eval import behaviour_findings_render
     files=[path,parent_dir/'complete.json',transition_path/'config.json',transition_path/'complete.json',
