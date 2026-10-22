@@ -198,3 +198,33 @@ def test_incompatible_cross_method_prompts_are_reported_without_losing_source_to
     assert result['groups']['grpo:0']['total']==2
     assert result['comparison']['paired_comparison_eligible'] is False
     assert result['comparison']['prompt_gold_conflicts']==['gsm8k:test:1']
+
+
+def test_report_discloses_missing_historical_scores_and_conditional_denominators(tmp_path):
+    selection=source_selection(tmp_path);root=tmp_path/'artifacts'
+    assert prepare(selection,root)==0;assert command('score',root)==0
+    run=root/'runs/pilot-4/behaviour-breakdown/followup'
+    report=(run/'results/report.md').read_text()
+    assert 'Accuracy among extractable' in report
+    assert 'Historical score evidence' in report
+    assert 'unavailable' in report
+    assert 'Shared step-0 reference eligible: False' in report
+
+
+def test_extracting_the_final_number_does_not_change_when_gold_changes(tmp_path):
+    selection=source_selection(tmp_path);gp=tmp_path/'grpo.jsonl'
+    rows=[json.loads(l) for l in gp.read_text().splitlines()]
+    rows[0]['text']='I considered 2; final answer: 3.'
+    gp.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    root=tmp_path/'artifacts';assert prepare(selection,root)==0;assert command('score',root)==0
+    def first(name):
+        return next(json.loads(l) for l in (root/f'runs/pilot-4/behaviour-breakdown/{name}/results/responses.jsonl').read_text().splitlines()
+                    if json.loads(l)['method']=='grpo' and json.loads(l)['step']==0 and json.loads(l)['item_id']=='gsm8k:test:1')['scores']['last_number']
+    before=first('followup')
+    for path in [tmp_path/'source-config.json',tmp_path/'grpo.jsonl',tmp_path/'sft.jsonl']:
+        path.write_text(path.read_text().replace('#### 3','#### 2'))
+    assert prepare(selection,root,'gold2')==0;assert command('score',root,'gold2')==0
+    after=first('gold2')
+    assert before['value']==after['value']=='3'
+    assert before['span']==after['span']
+    assert before['correct'] is True and after['correct'] is False

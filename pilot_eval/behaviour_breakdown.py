@@ -227,8 +227,15 @@ def _scored(row):
     text=row['generated_text'];gold=row['gold'];capped=row['capped']
     last=_extract_last_number(text,capped)
     if last['status']=='valid':last['correct']=_numeric_value(last['value'])==_numeric_value(gold.rsplit('####',1)[-1].strip())
-    return {**row,'scores':dict(strict=score_gsm8k(text,gold,capped)['strict'],
+    result={**row,'scores':dict(strict=score_gsm8k(text,gold,capped)['strict'],
         flexible_v3=score_gsm8k_flexible_v3(text,gold,capped),last_number=last)}
+    raw=row['source_record'];nested=raw.get('score',{})
+    candidates=[('flexible_v3',raw.get('flexible_v3')),('score.flexible_v3',nested.get('flexible_v3')),
+        ('score.flexible_v2',nested.get('flexible_v2')),('flexible',raw.get('flexible')),('score.flexible',nested.get('flexible'))]
+    prior=next(((location,value) for location,value in candidates if value is not None),None)
+    result['stored_vs_v3']=(dict(location=prior[0],stored=prior[1],
+        changed=any(prior[1].get(k)!=result['scores']['flexible_v3'][k] for k in ['status','correct'])) if prior else None)
+    return result
 
 
 def _declared_settings(row,config):
@@ -285,6 +292,12 @@ def _summary(records,config):
         for step in [0,64]:
             rows=[r for r in records if r['method']==method and r['step']==step];entry=dict(total=len(rows),
                 cap_count=sum(r['capped'] for r in rows),mean_tokens=sum(r['token_count'] for r in rows)/len(rows))
+            entry['historical_score_evidence']=dict(
+                verified_records=sum(any(c['state']=='matches' for c in r['historical_score_checks']) for r in rows),
+                unavailable_records=sum(not any(c['state']=='matches' for c in r['historical_score_checks']) for r in rows),
+                unrecognized_decisions=sum(c['state']=='unrecognized' for r in rows for c in r['historical_score_checks']),
+                prior_flexible_decisions=sum(r['stored_vs_v3'] is not None for r in rows),
+                prior_flexible_changed=sum(bool(r['stored_vs_v3'] and r['stored_vs_v3']['changed']) for r in rows))
             for scorer in ['strict','flexible_v3','last_number']:
                 valid=sum(r['scores'][scorer]['status']=='valid' for r in rows)
                 correct=sum(r['scores'][scorer]['correct'] for r in rows)
@@ -300,12 +313,48 @@ def _summary(records,config):
         evidence_boundary='Verified exported bytes and harmonized scores; no independent training verification or human audit.')
 
 
+def _report(result):
+    lines=['# Saved endpoint scoring','',result['evidence_boundary'],'',
+        '| Method / step | N | Strict | Flexible-v3 | Last number | Capped |',
+        '|---|---:|---:|---:|---:|---:|']
+    for group,row in result['groups'].items():
+        lines.append(f"| {group} | {row['total']} | {row['strict']['accuracy']:.3f} | {row['flexible_v3']['accuracy']:.3f} | {row['last_number']['accuracy']:.3f} | {row['cap_count']} |")
+    lines+=['','## Accuracy among extractable responses','',
+        'Denominators vary with the scorer. These conditional rates are not reasoning-quality measurements.','',
+        '| Group | Scorer | Extractable / total | Correct / extractable |','|---|---|---:|---:|']
+    for group,row in result['groups'].items():
+        for scorer in ['strict','flexible_v3','last_number']:
+            score=row[scorer];valid=row['total']-score['invalid']
+            lines.append(f"| {group} | {scorer} | {valid}/{row['total']} | {score['correct']}/{valid}"+(' (undefined)' if valid==0 else '')+' |')
+    lines+=['','## Historical score evidence','',
+        'Verified means consistency with a recognized recorded scorer, not independent correctness or checkpoint verification. Unknown/missing decisions stay explicit.','',
+        '| Group | Records checked | Records unavailable | Prior flexible decisions | Changed under v3 |',
+        '|---|---:|---:|---:|---:|']
+    for group,row in result['groups'].items():
+        h=row['historical_score_evidence']
+        lines.append(f"| {group} | {h['verified_records']} | {h['unavailable_records']} | {h['prior_flexible_decisions']} | {h['prior_flexible_changed']} |")
+    c=result['comparison']
+    lines+=['','## Source compatibility','',f"Shared step-0 reference eligible: {c['step0_identity']['shared_reference_eligible']}",
+        f"Paired endpoint comparison eligible: {c['paired_comparison_eligible']}",
+        f"Common IDs: {len(c['common_ids'])}; identical cohorts: {c['cohorts_identical']}",
+        f"Prompt/gold conflicts: {len(c['prompt_gold_conflicts'])}",
+        'All method-specific baselines and original denominators remain saved. Declared settings and original IDs are in the structured result.',
+        '', '## Source-file inventory','', '| Source | Method | Format | Selected endpoint records |', '|---|---|---|---:|']
+    for source in result['source_inventory']:
+        lines.append(f"| {source['source_index']} | {source['method']} | {source['format']} | {source['selected_records']} |")
+    lines+=['','No GPU inference, human answer audit or paired significance analysis was performed in this scoring stage.','']
+    return '\n'.join(lines).encode()
+
+
 def score_behaviour(path,root,max_new_units=None):
     config,directory,records=_load(path,root)
     if max_new_units is not None and max_new_units<1:raise ValueError('max-new-units must be positive')
     config_digest=file_hash(Path(path))
     with run_lock(directory):
-        if (directory/'complete.json').exists():return verify_behaviour(path,root)
+        if (directory/'complete.json').exists():
+            result=verify_behaviour(path,root)
+            _write_state(directory,'completed',len(records),len(records))
+            return result
         count=0;scored=[]
         for method in ['sft','grpo']:
             for step in [0,64]:
@@ -329,11 +378,7 @@ def score_behaviour(path,root,max_new_units=None):
         result=_summary(scored,config)
         _save_frozen(directory/'results/results.json',result)
         _save_bytes(directory/'results/responses.jsonl',''.join(json.dumps(r,sort_keys=True)+'\n' for r in scored).encode())
-        lines=['# Saved endpoint scoring','',result['evidence_boundary'],'',
-            '| Method / step | N | Strict | Flexible-v3 | Last number | Capped |','|---|---:|---:|---:|---:|---:|']
-        for group,row in result['groups'].items():
-            lines.append(f"| {group} | {row['total']} | {row['strict']['accuracy']:.3f} | {row['flexible_v3']['accuracy']:.3f} | {row['last_number']['accuracy']:.3f} | {row['cap_count']} |")
-        _save_bytes(directory/'results/report.md',('\n'.join(lines)+'\n').encode())
+        _save_bytes(directory/'results/report.md',_report(result))
         files=[p for folder in ['units','results'] for p in (directory/folder).glob('*') if p.is_file()]
         _save_frozen(directory/'complete.json',dict(config_sha256=config_digest,
             files={str(p.relative_to(directory)):file_hash(p) for p in files}))
