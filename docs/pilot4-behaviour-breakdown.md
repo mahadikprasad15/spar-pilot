@@ -47,6 +47,10 @@ is also supported and must agree with any configured cohort.
 }
 ```
 
+Each source can supply a `sha256` map for `responses` and `config` from a
+historical receipt. Declared digests are checked before import and retained in
+the frozen source inventory.
+
 Other supported formats are SFT `paired-trajectory` (JSONL or JSON array) and
 GRPO `grpo-paired` (one greedy draw per pair). Repeated SFT baseline references
 are checked for equality and counted once per question. Keep provenance receipts

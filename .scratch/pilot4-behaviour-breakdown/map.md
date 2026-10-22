@@ -31,14 +31,13 @@
   freeze labels before the second-stage reveal (Q7).
 - Public saved-workflow test boundary approved; CPU-only fixtures and separate
   real-artifact acceptance evidence.
-- Five-ticket granularity and dependencies approved; tickets published locally
-  as ready-for-agent. Ticket 01 is the initial unblocked frontier. Implementation
-  has not started.
-- No decision-rule thresholds, new inference or implementation have been
-  approved in this interview.
+- Five-ticket granularity and dependencies approved; tickets published locally.
+  Ticket 01 is implemented and executed against saved real outputs; see
+  `execution-ticket01.md`. Tickets 02 and 03 are now unblocked.
+- No categorical decision thresholds or new inference are approved. The user
+  authorized Ticket 01 implementation separately after the design interview.
 
 ## Fog
 
 - Whether forced read-off is needed, to be decided after CPU findings.
-- Exact saved-response availability and SFT/GRPO source compatibility.
-- Actual audit workload and real-data execution evidence.
+- Actual audit workload; later-ticket real-data execution evidence.
