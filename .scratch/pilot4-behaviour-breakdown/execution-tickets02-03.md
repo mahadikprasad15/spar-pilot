@@ -76,7 +76,7 @@ The blinded human audit and combined interpretation remain Tickets 04–05.
 
 ## Tests and notebook handoff
 
-- Affected regression run: 61 passed in 37.32 seconds. Includes the 32 Ticket 01
+- Affected regression run: 61 passed in 33.21 seconds. Includes the 32 Ticket 01
   tests, six transition tests, ten sampling/notebook tests and predecessor offline
   scoring/session regressions.
 - Independent fixtures check flow arithmetic, exact paired equality, saved draw
