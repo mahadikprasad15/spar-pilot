@@ -143,3 +143,38 @@ def test_saved_uncertainty_must_reconcile_with_paired_outcomes(tmp_path,target):
     seal['files']['results/results.json']=hashlib.sha256(path.read_bytes()).hexdigest()
     seal_path.write_text(json.dumps(seal))
     assert findings(root,plan)==1
+
+
+def test_notebook_resumes_combined_report_in_fresh_cpu_process(tmp_path):
+    import os
+    import subprocess
+    import sys
+    root,plan=inputs(tmp_path)
+    assert findings(root,plan,'--max-new-units','1')==0
+    directory=root/'reports/findings';unit=(directory/'units/synthesis.complete.json').read_bytes()
+    repo=Path(__file__).resolve().parents[1];book=repo/'notebooks/pilot-4-behaviour-breakdown.ipynb'
+    blocker=tmp_path/'no-models';blocker.mkdir()
+    (blocker/'sitecustomize.py').write_text("import sys\nfor n in ['torch','transformers','datasets','peft','accelerate','huggingface_hub']:\n sys.modules[n]=None\n")
+    env={**os.environ,'PYTHONPATH':str(blocker)+os.pathsep+str(repo),'SPAR_REPO_DIR':str(repo),
+         'SPAR_BEHAVIOUR_ROOT':str(root),'SPAR_BEHAVIOUR_NAME':'sample-parent',
+         'SPAR_FINDINGS_NAME':'findings','SPAR_FINDINGS_TRANSITIONS':str(root/'reports/transitions'),
+         'SPAR_FINDINGS_SAMPLING':str(root/'reports/sampling')}
+    script="""
+import json,sys
+from pathlib import Path
+book=json.loads(Path(sys.argv[1]).read_text());keep={'setup','settings','findings'};seen=set();namespace={}
+for c in book['cells']:
+ tags=set(c.get('metadata',{}).get('tags',[]))
+ if c['cell_type']=='code' and tags&keep:
+  exec(compile(''.join(c['source']),'<notebook>','exec'),namespace);seen.update(tags)
+assert keep<=seen,(keep,seen)
+"""
+    command=[sys.executable,'-c',script,str(book)]
+    first=subprocess.run(command,env=env,cwd=repo,capture_output=True,text=True)
+    assert first.returncode==0,first.stderr
+    assert (directory/'units/synthesis.complete.json').read_bytes()==unit
+    receipt=(directory/'complete.json').read_bytes()
+    for key in ['SPAR_FINDINGS_NAME','SPAR_FINDINGS_TRANSITIONS','SPAR_FINDINGS_SAMPLING']:env.pop(key)
+    second=subprocess.run(command,env=env,cwd=repo,capture_output=True,text=True)
+    assert second.returncode==0,second.stderr
+    assert (directory/'complete.json').read_bytes()==receipt
