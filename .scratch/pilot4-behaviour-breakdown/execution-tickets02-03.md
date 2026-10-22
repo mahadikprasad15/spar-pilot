@@ -87,8 +87,11 @@ The blinded human audit and combined interpretation remain Tickets 04–05.
   with Torch, Transformers, PEFT, Datasets, Accelerate and Hub imports blocked.
 - The public command is the verification/replay boundary: rerunning a completed
   report validates parent receipts and output hashes, and returns saved results.
-- The session-wide test command was started before implementation; its final
-  outcome is reported separately. No real Colab run or human audit is claimed.
+- Session-wide baseline command, started before implementation: 426 passed,
+  35 skipped, 4 warnings in 1,588.99 seconds. This is not a complete post-change
+  suite. Skips/warnings include unavailable local Torch (`libtorch_cpu.dylib`).
+  The new CPU stages separately pass with model imports blocked.
+- No real Colab run, live GPU qualification or human audit is claimed.
 
 Notebook: `notebooks/pilot-4-behaviour-breakdown.ipynb`; guide:
 `docs/pilot4-behaviour-breakdown.md`. It remains an unpublished local release.
