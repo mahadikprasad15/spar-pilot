@@ -19,11 +19,14 @@ def main(argv=None, *, dependencies=None):
     audit.add_argument('--transitions',type=Path,required=True)
     audit.add_argument('--name',required=True)
     audit.add_argument('--output-root',type=Path,default=Path('artifacts'))
-    for operation in ['status','save','freeze','reveal']:
+    for operation in ['status','save','freeze','reveal','revise']:
         audit_stage=commands.add_parser('behaviour-audit-'+operation,help='Saved single-reviewer audit workflow')
         audit_stage.add_argument('--config',type=Path,required=True)
         audit_stage.add_argument('--output-root',type=Path,default=Path('artifacts'))
-        if operation=='save':audit_stage.add_argument('--labels',type=Path,required=True)
+        if operation in ['save','revise']:audit_stage.add_argument('--labels',type=Path,required=True)
+        if operation=='revise':
+            audit_stage.add_argument('--revision',required=True)
+            audit_stage.add_argument('--reason',required=True)
     transitions=commands.add_parser('behaviour-transitions',help='CPU paired answer transitions and intervals')
     transitions.add_argument('--config',type=Path,required=True)
     transitions.add_argument('--name',required=True)
@@ -327,9 +330,10 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval.behaviour_audit import prepare_audit
             print(prepare_audit(args.transitions,args.output_root,args.name))
         elif args.command.startswith('behaviour-audit-'):
-            from pilot_eval.behaviour_audit import audit_status,save_labels,freeze_labels,reveal_audit
+            from pilot_eval.behaviour_audit import audit_status,save_labels,freeze_labels,reveal_audit,revise_labels
             operation=args.command.removeprefix('behaviour-audit-')
             if operation=='save':result=save_labels(args.config,args.output_root,args.labels)
+            elif operation=='revise':result=revise_labels(args.config,args.output_root,args.labels,args.revision,args.reason)
             else:result={'status':audit_status,'freeze':freeze_labels,'reveal':reveal_audit}[operation](args.config,args.output_root)
             print(json.dumps(result,indent=2))
         elif args.command=='behaviour-transitions':

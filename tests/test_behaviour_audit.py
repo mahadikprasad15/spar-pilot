@@ -1,6 +1,7 @@
 """Single-reviewer answer audit at the notebook's public saved-workflow boundary."""
 import json
 from pathlib import Path
+import pytest
 
 from pilot_eval.cli import main
 from test_behaviour_transitions import save
@@ -101,3 +102,65 @@ def test_incremental_labels_survive_reload_and_freeze_before_reveal(tmp_path):
     assert result['labelled_unique_responses']==len(packet)
     assert result['post_reveal_revision'] is False
     assert len(result['responses'])==len(packet)
+    corrected=save(tmp_path/'correction.json',dict(packet_sha256=config['packet_sha256'],reviewer='fixture-reviewer',
+        base_revision=2,labels=[dict(response_id=packet[0]['response_id'],status='absent',answer=None,note='After reveal correction')]))
+    assert action('save',root,'--labels',str(corrected))==1
+    assert action('revise',root,'--labels',str(corrected),'--revision','exposed-v1',
+                  '--reason','Reviewer corrected an answer after seeing results')==0
+    exposed=json.loads((directory/'revisions/exposed-v1/results.json').read_text())
+    assert exposed['post_reveal_revision'] is True
+    assert (directory/'labels/frozen.json').read_bytes()==frozen
+    assert json.loads((directory/'reveal/results.json').read_text())==result
+    assert action('revise',root,'--labels',str(corrected),'--revision','exposed-v1',
+                  '--reason','Reviewer corrected an answer after seeing results')==0
+
+
+@pytest.mark.parametrize('damage',['packet','unknown','duplicate','malformed','undefined','unsupported','status','stale','reviewer'])
+def test_invalid_label_updates_cannot_change_a_saved_draft(tmp_path,damage):
+    root,parent=audit_parent(tmp_path);assert prepare(root,parent)==0
+    config=json.loads((root/'plans/audit/behaviour.audit.json').read_text());directory=root/config['run_path']
+    packet=json.loads((directory/'reviewer/packet.json').read_text())
+    patch=dict(packet_sha256=config['packet_sha256'],reviewer='fixture',base_revision=0,
+               labels=[dict(response_id=packet[0]['response_id'],status='numeric',answer='3')])
+    path=save(tmp_path/'first.json',patch);assert action('save',root,'--labels',str(path))==0
+    before=(directory/'drafts/000001.json').read_bytes()
+    patch['base_revision']=1;patch['labels'][0]['note']='different update'
+    if damage=='packet':patch['packet_sha256']='0'*64
+    if damage=='unknown':patch['labels'][0]['response_id']='unknown'
+    if damage=='duplicate':patch['labels'].append(patch['labels'][0].copy())
+    if damage=='malformed':patch['labels'][0]['answer']='three'
+    if damage=='undefined':patch['labels'][0]['answer']='1/0'
+    if damage=='unsupported':patch['labels'][0]['answer']='1e3'
+    if damage=='status':patch['labels'][0]['status']='absent'
+    if damage=='stale':patch['base_revision']=0
+    if damage=='reviewer':patch['reviewer']='another person'
+    assert action('save',root,'--labels',str(save(tmp_path/'bad.json',patch)))==1
+    assert (directory/'drafts/000001.json').read_bytes()==before
+    assert not (directory/'drafts/000002.complete.json').exists()
+
+
+def test_draft_cache_can_be_rebuilt_from_sealed_journal(tmp_path):
+    root,parent=audit_parent(tmp_path);assert prepare(root,parent)==0
+    config=json.loads((root/'plans/audit/behaviour.audit.json').read_text());directory=root/config['run_path']
+    packet=json.loads((directory/'reviewer/packet.json').read_text())
+    labels=[dict(response_id=packet[0]['response_id'],status='ambiguous',answer=None,note='conflicting conclusions')]
+    path=save(tmp_path/'patch.json',dict(packet_sha256=config['packet_sha256'],reviewer='fixture',base_revision=0,labels=labels))
+    assert action('save',root,'--labels',str(path))==0
+    (directory/'reviewer/draft.json').unlink()
+    assert action('status',root)==0
+    draft=json.loads((directory/'reviewer/draft.json').read_text())
+    assert draft['base_revision']==1
+    assert draft['labels'][0]['status']=='ambiguous'
+    assert draft['labels'][0]['note']=='conflicting conclusions'
+
+
+@pytest.mark.parametrize('target',['reviewer/packet.json','reviewer/review.html','private/mapping.json','drafts/000001.json'])
+def test_altered_packet_mapping_or_draft_is_rejected(tmp_path,target):
+    root,parent=audit_parent(tmp_path);assert prepare(root,parent)==0
+    config=json.loads((root/'plans/audit/behaviour.audit.json').read_text());directory=root/config['run_path']
+    packet=json.loads((directory/'reviewer/packet.json').read_text())
+    patch=save(tmp_path/'patch.json',dict(packet_sha256=config['packet_sha256'],reviewer='fixture',base_revision=0,
+        labels=[dict(response_id=packet[0]['response_id'],status='absent')]))
+    assert action('save',root,'--labels',str(patch))==0
+    path=directory/target;path.write_bytes(path.read_bytes()+b' ')
+    assert action('status',root)==1

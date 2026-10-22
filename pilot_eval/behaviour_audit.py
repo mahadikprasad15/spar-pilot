@@ -263,7 +263,7 @@ def save_labels(path,root,labels_path):
         raise ValueError('export revision differs from base_revision')
     update_digest=hashlib.sha256(_json_bytes(patch)).hexdigest()
     with run_lock(directory):
-        if (directory/'labels/frozen.complete.json').exists():
+        if (directory/'labels/frozen.json').exists():
             raise ValueError('labels are frozen; use an explicit exposed revision after reveal')
         current,ids,previous=_draft(config,directory)
         updates=_labels(patch.get('labels'),ids)
@@ -296,7 +296,7 @@ def audit_status(path,root):
         selection=json.loads((directory/'private/selection.json').read_text())
         state='awaiting-review'
         if (directory/'labels/frozen.complete.json').exists():
-            _check_seal(directory,'labels/frozen.complete.json',['labels/frozen.json'])
+            _frozen(config,directory)
             state='labels-frozen'
         if (directory/'reveal/complete.json').exists():
             _check_seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
@@ -310,6 +310,10 @@ def audit_status(path,root):
 def freeze_labels(path,root):
     config,directory=_load(path,root)
     with run_lock(directory):
+        if (directory/'labels/frozen.complete.json').exists():
+            frozen=_frozen(config,directory)
+            return dict(state='completed' if (directory/'reveal/complete.json').exists() else 'labels-frozen',
+                        unique_responses=len(frozen['labels']))
         draft,ids,digest=_draft(config,directory)
         labels=_labels(draft['labels'],ids,complete=True)
         if draft['reviewer'] is None:
@@ -320,6 +324,18 @@ def freeze_labels(path,root):
         _seal(directory,'labels/frozen.complete.json',['labels/frozen.json'])
         _write_state(directory,'labels-frozen',len(ids),len(ids))
         return dict(state='labels-frozen',unique_responses=len(ids))
+
+
+def _frozen(config,directory):
+    _check_seal(directory,'labels/frozen.complete.json',['labels/frozen.json'])
+    frozen=json.loads((directory/'labels/frozen.json').read_text())
+    draft,ids,digest=_draft(config,directory)
+    _labels(frozen['labels'],ids,complete=True)
+    if (frozen.get('packet_sha256')!=config['packet_sha256'] or frozen.get('draft_sha256')!=digest
+        or frozen.get('draft_revision')!=draft['revision'] or frozen.get('reviewer')!=draft['reviewer']
+        or frozen['labels']!=draft['labels'] or frozen.get('label_scope')!='before-reveal'):
+        raise ValueError('frozen labels differ from the bound draft or packet')
+    return frozen
 
 
 def _reveal_result(config,directory,frozen,*,exposed=False):
@@ -372,15 +388,46 @@ def _revealed_markdown(result):
 def reveal_audit(path,root):
     config,directory=_load(path,root)
     with run_lock(directory):
-        _check_seal(directory,'labels/frozen.complete.json',['labels/frozen.json'])
-        frozen=json.loads((directory/'labels/frozen.json').read_text())
-        ids={r['response_id'] for r in json.loads((directory/'reviewer/packet.json').read_text())}
-        _labels(frozen['labels'],ids,complete=True)
-        if frozen['packet_sha256']!=config['packet_sha256']:
-            raise ValueError('frozen labels bind another packet')
+        frozen=_frozen(config,directory)
+        ids={r['response_id'] for r in frozen['labels']}
         result=_reveal_result(config,directory,frozen)
         _save_frozen(directory/'reveal/results.json',result)
         _save_bytes(directory/'reveal/report.md',_revealed_markdown(result))
         _seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
         _write_state(directory,'completed',len(ids),len(ids))
         return dict(state='completed',labelled_unique_responses=len(ids),explanation_review='pending')
+
+
+def revise_labels(path,root,labels_path,revision,reason):
+    config,directory=_load(path,root);revision=_name(revision)
+    if not isinstance(reason,str) or not reason.strip():
+        raise ValueError('post-reveal correction requires a reason')
+    with run_lock(directory):
+        frozen=_frozen(config,directory)
+        _check_seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
+        patch=json.loads(Path(labels_path).read_text())
+        if (not isinstance(patch,dict) or set(patch)-{'packet_sha256','reviewer','base_revision','revision','labels'}
+            or patch.get('packet_sha256')!=config['packet_sha256'] or patch.get('reviewer')!=frozen['reviewer']
+            or patch.get('base_revision')!=frozen['draft_revision']):
+            raise ValueError('correction must bind the original frozen packet, reviewer and draft revision')
+        ids=[r['response_id'] for r in frozen['labels']]
+        updates=_labels(patch.get('labels'),ids)
+        if not updates:
+            raise ValueError('correction requires explicit answer labels')
+        merged={r['response_id']:r for r in frozen['labels']}
+        merged.update({r['response_id']:r for r in updates})
+        labels=_labels([merged[i] for i in ids],ids,complete=True)
+        corrected=dict(packet_sha256=config['packet_sha256'],reviewer=frozen['reviewer'],labels=labels,
+            original_frozen_sha256=file_hash(directory/'labels/frozen.json'),
+            original_reveal_sha256=file_hash(directory/'reveal/results.json'),
+            revision=revision,reason=reason.strip(),label_scope='post-reveal-exposed')
+        folder=directory/'revisions'/revision
+        result=_reveal_result(config,directory,corrected,exposed=True)
+        result.update(revision=revision,revision_reason=reason.strip())
+        _save_frozen(folder/'labels.json',corrected)
+        _save_frozen(folder/'results.json',result)
+        _save_bytes(folder/'report.md',_revealed_markdown(result))
+        _seal(directory,f'revisions/{revision}/complete.json',
+              [f'revisions/{revision}/'+n for n in ['labels.json','results.json','report.md']])
+        return dict(state='completed',revision=revision,post_reveal_revision=True,
+                    original_frozen_labels_changed=False)
