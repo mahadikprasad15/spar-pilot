@@ -154,3 +154,37 @@ until an actual consequential trade-off is settled. This document is not
 5. Interpretation: report continuous transition/audit/coverage decompositions
    and compatible hypotheses, or retain revised, explicit categorical decision
    rules? The original numeric cutoffs are still unapproved.
+
+### Round 2 decisions
+
+- **Q4 accepted:** targeted human audit to explain gains/losses and possible
+  extraction errors, plus a reproducible sample of unchanged cases. Do not
+  report exact overall human-corrected accuracy from this targeted sample.
+  The exact inclusion rules and unchanged-case sample remain to be approved.
+- **Q5 accepted:** report counts and intervals, with potentially compatible
+  explanations. The supplied numeric cutoffs for mostly-format, real-reasoning,
+  SFT-stable and SFT-churn are not adopted as decision gates. Report churn
+  continuously and describe evidential limits instead of forcing categories.
+
+## Third decision frontier
+
+6. Proposed audit inclusion: all flexible-v3 endpoint-bin changes
+   (correct/wrong/invalid), every pair with an endpoint invalid under flexible-v3,
+   and every pair with an endpoint disagreement between flexible-v3 and the
+   declared last-number diagnostic on validity or extracted numeric value.
+   Add a seeded random sample of 20 remaining stable pairs per method (or all
+   if fewer), sampled from sorted item IDs with local seed 42. Do not inspect
+   follow-up outcomes to choose the sample size. Strict-only format failures
+   remain visible in the full automatic tables; they are not all automatically
+   sent for human review. The same response can be shared by several pairs and
+   receives one response-level label when its source identity is identical.
+7. Proposed audit visibility: first show question and response under opaque
+   identifiers, hiding method/checkpoint, gold and scorer outputs. Record the
+   intended final answer or no-answer/ambiguous. After freezing those labels,
+   compare with gold and reveal scorer decisions for error attribution. This
+   is partial blinding: writing style can still suggest the method. No
+   reasoning-validity judgment is requested in this first-stage rubric.
+
+These are proposals awaiting user approval, not frozen audit rules. Parser,
+resampling, source-identity and artifact details will be included in the
+reviewable specification; new inference remains deferred.
