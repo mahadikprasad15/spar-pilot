@@ -20,7 +20,7 @@ label{display:block;font-size:13px;font-weight:650;margin:14px 0 5px}input,selec
 <p id="instructions">Identify the response’s intended final answer. Use absent or ambiguous when appropriate. This does not ask you to validate its reasoning.</p>
 <p class="small">Download your draft regularly. Browser storage is a convenience cache, not the durable record. After saving through the notebook, import its updated draft before continuing. Source files are held separately; this page is not an access-control boundary.</p>
 <div class="toolbar"><button id="previous">← Previous</button><button id="next">Next →</button><button id="pending">Next pending</button><select id="jump" aria-label="Go to response"></select><span id="progress" aria-live="polite"></span></div>
-<div class="toolbar"><button id="download" class="primary">Download draft</button><label class="file" for="import">Import saved draft</label><input id="import" type="file" accept="application/json,.json"></div><div id="message" role="status"></div></header>
+<div class="toolbar"><button id="download" class="primary">Download draft</button><button id="backup">Backup all edits</button><label class="file" for="import">Import saved draft</label><input id="import" type="file" accept="application/json,.json"></div><div id="message" role="status"></div></header>
 <main><div class="grid"><article><div id="identity"></div><h2>Question</h2><pre id="question"></pre><h2>Response</h2><pre id="response"></pre><pre id="details"></pre></article>
 <aside><label for="reviewer">Reviewer name or ID</label><input id="reviewer" autocomplete="off"><label for="status" id="status-label">Intended answer</label><select id="status"></select>
 <div id="answer-section"><label for="answer">Numeric transcription</label><input id="answer" autocomplete="off" placeholder="e.g. 12, -0.5, or 3/2"><p class="small">Enter one number without currency or units. You may transcribe a written-out number; record the supporting text below.</p></div>
@@ -49,10 +49,10 @@ function restore(payload){
  for(const row of rows){
   const id=key(row),status=isAnswers?row.status:row.category;
   if(!known.has(id)||seen.has(id)||!data.statuses.includes(status))throw Error('Unknown, duplicate or malformed review entry.');
-  if(isAnswers&&status==='numeric'&&(typeof row.answer!=='string'||!validNumber(row.answer.trim())))throw Error('Numeric transcription is unsupported or undefined.');
+  if(isAnswers&&status==='numeric'&&row.answer!=null&&typeof row.answer!=='string')throw Error('Numeric transcription must be text.');
   if(isAnswers&&status!=='numeric'&&row.answer!=null&&row.answer!=='')throw Error('Nonnumeric status carries an answer.');
   if(typeof(row.evidence??'')!=='string'||typeof(row.note??'')!=='string')throw Error('Evidence and notes must be text.');
-  seen.add(id);entries[id]=isAnswers?{response_id:row.response_id,status,answer:status==='numeric'?row.answer.trim():null,evidence:row.evidence||'',note:row.note||''}:
+  seen.add(id);entries[id]=isAnswers?{response_id:row.response_id,status,answer:status==='numeric'?(row.answer==null?null:row.answer):null,evidence:row.evidence||'',note:row.note||''}:
    {response_id:row.response_id,scorer:row.scorer,category:status,evidence:row.evidence||'',note:row.note||''};
  }
  if(payload.reviewer!=null&&typeof payload.reviewer!=='string')throw Error('Reviewer ID must be text.');
@@ -64,7 +64,7 @@ function exported(validate=true){
  const rows=data.rows.map(row=>state.entries[key(row)]||blank(row));
  if(validate&&!state.reviewer.trim())throw Error('Enter your reviewer name or ID before downloading.');
  if(isAnswers){
-  if(validate&&rows.some(row=>row.status==='numeric'&&!validNumber((row.answer||'').trim())))throw Error('Finish the numeric transcription or choose pending before downloading.');
+  if(validate&&rows.some(row=>row.status==='numeric'&&!validNumber((row.answer||'').trim())))throw Error('Some numeric entries are incomplete or invalid. Use Backup all edits to preserve everything, then Next pending to locate them.');
   result.base_revision=state.base_revision;result.labels=rows;
  }else{result.reveal_sha256=data.reveal_sha256;result.annotations=rows.filter(row=>row.category!=='pending');}
  return result;
@@ -90,9 +90,10 @@ el('status').addEventListener('change',()=>{const entry=current();if(isAnswers){
 for(const field of ['answer','evidence','note'])el(field).addEventListener('input',()=>{current()[field]=el(field).value;persist();progress();});
 el('previous').addEventListener('click',()=>{if(index>0){index--;render();}});
 el('next').addEventListener('click',()=>{if(index<data.rows.length-1){index++;render();}});
-el('pending').addEventListener('click',()=>{for(let n=1;n<=data.rows.length;n++){const candidate=(index+n)%data.rows.length,entry=state.entries[key(data.rows[candidate])];if(!entry||(isAnswers?entry.status:entry.category)==='pending'){index=candidate;render();return;}}notify('No pending entries remain. Download your draft.');});
+el('pending').addEventListener('click',()=>{for(let n=1;n<=data.rows.length;n++){const candidate=(index+n)%data.rows.length,entry=state.entries[key(data.rows[candidate])];if(!entry||(isAnswers?entry.status:entry.category)==='pending'||(isAnswers&&entry.status==='numeric'&&!validNumber((entry.answer||'').trim()))){index=candidate;render();return;}}notify('No pending entries remain. Download your draft.');});
 el('jump').addEventListener('change',()=>{const choice=Number(el('jump').value);if(Number.isInteger(choice)&&choice>=0&&choice<data.rows.length){index=choice;render();}});
-el('download').addEventListener('click',()=>{try{const blob=new Blob([JSON.stringify(exported(),null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=isAnswers?'answers.json':'explanations.json';a.click();URL.revokeObjectURL(url);notify('Draft downloaded. Save it through the notebook to create a durable revision.');}catch(e){notify(e.message);}});
+el('backup').addEventListener('click',()=>{const text=JSON.stringify(exported(false),null,2)+'\n',blob=new Blob([text],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='review-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('Backup exported, including incomplete entries. Complete invalid numeric entries before saving through the notebook.');});
+el('download').addEventListener('click',()=>{try{const blob=new Blob([JSON.stringify(exported(),null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=isAnswers?'answers.json':'explanations.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('Draft downloaded. Save it through the notebook to create a durable revision.');}catch(e){notify(e.message);}});
 el('import').addEventListener('change',async()=>{try{const file=el('import').files[0];if(!file)return;const payload=JSON.parse(await file.text());if(!confirm('Replace the page draft with this file? Download current edits first if needed.'))return;restore(payload);persist();render();notify('Saved draft imported.');}catch(e){notify(e.message);}});
 try{const cached=localStorage.getItem(cacheKey);if(cached)restore(JSON.parse(cached));}catch(e){notify('Cached draft could not be restored: '+e.message);}
 render();

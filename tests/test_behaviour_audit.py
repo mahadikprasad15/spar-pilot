@@ -232,6 +232,16 @@ async function run(){
  get('reviewer').value='fixture-reviewer';get('reviewer').handlers.input();
  get('status').value='numeric';get('status').handlers.change();
  assert(get('progress').textContent.startsWith('0/'));
+ get('backup').click();
+ let backup=JSON.parse(downloaded);assert.equal(backup.labels[0].status,'numeric');
+ assert.equal(backup.labels[0].answer,null);
+ vm.runInNewContext(source.script,{...sandbox});
+ assert.equal(get('status').value,'numeric');
+ assert.equal(get('answer').value,'');
+ assert(!get('message').textContent.includes('could not be restored'));
+ get('import').files=[{text:async()=>JSON.stringify(backup)}];await get('import').handlers.change();
+ assert.equal(get('status').value,'numeric');
+ assert(!get('message').textContent.includes('unsupported'));
  get('answer').value='3';get('answer').handlers.input();
  get('download').click();
  let draft=JSON.parse(downloaded);assert.equal(draft.packet_sha256,source.data.packet_sha256);
