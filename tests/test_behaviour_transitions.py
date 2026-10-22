@@ -1,6 +1,7 @@
 """Paired endpoint reports through the notebook's public saved-workflow seam."""
 import json
 from pathlib import Path
+import pytest
 
 from pilot_eval.cli import main
 
@@ -68,3 +69,31 @@ def test_paired_report_reconciles_flows_and_keeps_paired_uncertainty(tmp_path):
     assert transitions(root,config)==0
     assert (directory/'complete.json').read_bytes()==before
     assert (directory/'plots/accuracy-differences.svg').is_file()
+
+
+def test_partial_report_resumes_sealed_units_and_discloses_overlap(tmp_path):
+    root,config=prepared_scores(tmp_path,overlap=True)
+    assert transitions(root,config,'partial','--max-new-units','1')==0
+    directory=root/'reports/partial'
+    assert not (directory/'complete.json').exists()
+    sealed=directory/'units/sft-strict.json'
+    old=sealed.stat().st_mtime_ns
+    assert transitions(root,config,'partial')==0
+    assert sealed.stat().st_mtime_ns==old
+    result=json.loads((directory/'results/results.json').read_text())
+    assert result['within_method']['sft']['strict']['n']==5
+    assert result['within_method']['grpo']['strict']['n']==6
+    assert result['direct_comparison']['strict']['n']==5
+    assert result['source_comparison']['cohorts_identical'] is False
+
+
+@pytest.mark.parametrize('damage',['parent','unit','plot'])
+def test_reports_reject_changed_parent_or_derived_evidence(tmp_path,damage):
+    root,config=prepared_scores(tmp_path)
+    assert transitions(root,config)==0
+    directory=root/'reports/transitions'
+    path={'parent':root/'runs/pilot-4/behaviour-breakdown/scored/results/responses.jsonl',
+          'unit':directory/'units/grpo-flexible_v3.json',
+          'plot':directory/'plots/accuracy-differences.svg'}[damage]
+    path.write_bytes(path.read_bytes()+b' ')
+    assert transitions(root,config)==1

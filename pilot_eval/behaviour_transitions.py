@@ -178,6 +178,8 @@ def _markdown(result):
 
 
 def report_transitions(path, root, name, *, max_new_units=None):
+    if max_new_units is not None and max_new_units < 1:
+        raise ValueError('max-new-units must be positive')
     root = Path(root).resolve()
     path = Path(path).resolve()
     source_result = verify_behaviour(path, root)
@@ -195,11 +197,20 @@ def report_transitions(path, root, name, *, max_new_units=None):
         groups = {(m,s): {r['item_id']:r for r in records if r['method']==m and r['step']==s}
                   for m in ['sft','grpo'] for s in [0,64]}
         within, paired = {}, []
+        new_units = 0
         for method in ['sft','grpo']:
             before, after = groups[method,0], groups[method,64]
             ids = sorted(set(before) & set(after))
-            within[method] = {scorer:_unit(directory, method+'-'+scorer,
-                lambda scorer=scorer: _flow(before, after, scorer, ids, directory)) for scorer in SCORERS}
+            within[method] = {}
+            for scorer in SCORERS:
+                unit_name = method+'-'+scorer
+                is_new = not (directory/'units'/(unit_name+'.complete.json')).exists()
+                if is_new and max_new_units is not None and new_units >= max_new_units:
+                    _write_state(directory, 'incomplete', sum(len(v) for v in within.values()), 9)
+                    return dict(state='incomplete', execution_kind='cpu-saved-output-only')
+                within[method][scorer] = _unit(directory, unit_name,
+                    lambda scorer=scorer: _flow(before, after, scorer, ids, directory))
+                new_units += int(is_new)
             for item in ids:
                 gold = before[item]['gold']
                 paired.append(dict(method=method, item_id=item, gold=gold,
@@ -217,12 +228,18 @@ def report_transitions(path, root, name, *, max_new_units=None):
                 direct[scorer] = dict(available=False, n=len(common), item_ids=common,
                     reason='incompatible or missing declared endpoint settings, prompt/gold, or common IDs')
                 continue
+            unit_name = 'direct-'+scorer
+            is_new = not (directory/'units'/(unit_name+'.complete.json')).exists()
+            if is_new and max_new_units is not None and new_units >= max_new_units:
+                _write_state(directory, 'incomplete', 6+len(direct), 9)
+                return dict(state='incomplete', execution_kind='cpu-saved-output-only')
             indices, relative = _bootstrap(directory, common)
-            direct[scorer] = _unit(directory, 'direct-'+scorer, lambda scorer=scorer: dict(available=True,
+            direct[scorer] = _unit(directory, unit_name, lambda scorer=scorer: dict(available=True,
                 n=len(common), item_ids=common, resampling_path=relative,
                 cohort_label='common-ID endpoint cohort; original cohorts retained separately',
                 difference=_difference([groups['sft',64][i]['scores'][scorer]['correct'] for i in common],
                                        [groups['grpo',64][i]['scores'][scorer]['correct'] for i in common], indices)))
+            new_units += int(is_new)
         result = dict(within_method=within, direct_comparison=direct,
             source_comparison=comparison, bootstrap=config['bootstrap'], limitations=LIMITS,
             sft_descriptive=_descriptive(paired), parent_identity=config,

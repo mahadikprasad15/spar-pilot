@@ -19,6 +19,7 @@ def main(argv=None, *, dependencies=None):
     transitions.add_argument('--config',type=Path,required=True)
     transitions.add_argument('--name',required=True)
     transitions.add_argument('--output-root',type=Path,default=Path('artifacts'))
+    transitions.add_argument('--max-new-units',type=int)
     for operation in ('prepare','score','verify'):
         behaviour=commands.add_parser('behaviour-'+operation,help='CPU saved-output behavioural breakdown')
         behaviour.add_argument('--output-root',type=Path,default=Path('artifacts'))
@@ -309,7 +310,7 @@ def main(argv=None, *, dependencies=None):
     try:
         if args.command=='behaviour-transitions':
             from pilot_eval.behaviour_transitions import report_transitions
-            result=report_transitions(args.config,args.output_root,args.name)
+            result=report_transitions(args.config,args.output_root,args.name,max_new_units=args.max_new_units)
             print(json.dumps({'execution_kind':result['execution_kind'],'report':str(args.output_root/'reports'/args.name/'results/report.md')},indent=2))
         elif args.command.startswith('behaviour-'):
             from pilot_eval.behaviour_breakdown import prepare_behaviour,score_behaviour,verify_behaviour
