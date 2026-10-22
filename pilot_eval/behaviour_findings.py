@@ -121,8 +121,8 @@ def _audit(audit_path, assisted, transitions_path, pairs, root):
             _require(reveal==_reveal_result(config,directory,frozen), 'revealed labels/results differ from frozen evidence')
             state.update(state='complete-selected-human-audit',complete_human_audit=True,
                          labelled_unique_responses=len(reveal['responses']),explanation_review=reveal['explanation_review'])
-            for name in ['complete.json',*REVEAL_FILES]:
-                f=directory/'reveal'/name
+            for name in ['reveal/complete.json',*REVEAL_FILES]:
+                f=directory/name
                 if f.exists():inputs[str(f.relative_to(root))]=file_hash(f)
     correction=None
     if assisted is not None:
@@ -155,6 +155,8 @@ def _audit(audit_path, assisted, transitions_path, pairs, root):
         assistance=dict(rows=[dict(response_id=r['response_id'],index=i,human_label=r['label']) for i,r in enumerate(reveal['responses'],1)])
         from pilot_eval.behaviour_assisted_report import summarize
         correction=summarize(pairs,mapping,assistance,[])
+        correction['original_audit_frozen']=True
+        correction['scope']='confirmed numeric overlay from completed selected-answer audit; not whole-cohort human accuracy'
     return state,inputs,correction
 
 
