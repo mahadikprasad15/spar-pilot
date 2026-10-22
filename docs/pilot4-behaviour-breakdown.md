@@ -138,5 +138,126 @@ these commands. Training-cohort draws cannot substitute for held-out evaluation.
 The intervals condition on these trained checkpoints and saved responses. They
 do not capture training-seed variability or uncertainty from fresh decoding.
 Observed 0/8-to-positive changes are coverage gains, not proof of new ability.
-Automatic transitions are not validated reasoning gains. Human audit and the
-combined findings remain Tickets 04–05.
+Automatic transitions are not validated reasoning gains. The combined findings
+remain Ticket 05; the intended-answer audit is described below.
+
+## Intended-answer audit
+
+Ticket 04 adds notebook sections 8–12. Everything runs on CPU. The notebook calls
+the same public commands used by the tests:
+
+```sh
+python -m pilot_eval behaviour-audit-prepare \
+  --transitions artifacts/reports/pilot4-behaviour-transitions-v1 \
+  --name pilot4-answer-audit-v1 --output-root artifacts
+python -m pilot_eval behaviour-audit-status \
+  --config artifacts/plans/pilot4-answer-audit-v1/behaviour.audit.json \
+  --output-root artifacts
+```
+
+Preparation selects the approved flexible-v3 transitions, invalid endpoints and
+numeric/validity disagreements with the last-number diagnostic. Each method gets
+20 additional remaining stable pairs, or all if fewer, using a separate Python
+`random.Random(42)` on its sorted question IDs. Pools, selections and reasons are
+saved. Strict-only formatting failures are not all mandatory.
+
+The status command prints mandatory/control pair counts and the deduplicated
+response workload before review. Identical responses are merged only when the
+question, gold, content, cap/token metadata and complete declared input/decoding
+settings match; retained token IDs must agree where both sources provide them.
+Every parent reference is retained privately. Opaque IDs and shuffled order are
+created once and recovered from a saved construction checkpoint after interruption.
+
+### Review and save
+
+The run is under `artifacts/runs/pilot-4/behaviour-audit/<name>/`:
+
+- `reviewer/review.html`: self-contained offline editor.
+- `reviewer/packet.json`: opaque response IDs, questions and responses only.
+- `reviewer/draft.json`: current draft export, rebuilt from sealed label history.
+- `private/`: source mapping, selection reasons and construction evidence.
+- `drafts/`: immutable, packet-bound incremental label snapshots and receipts.
+- `results/`: workload only; this does not establish completed human review.
+
+Share only the reviewer folder for the first stage. The page omits methods,
+checkpoints, gold, scorer decisions, pair grouping and reasons. Style can still
+suggest a source; this is partial blinding, not access-control security.
+
+Identify the response's intended answer, rather than grading correctness or
+reasoning. Choose a numeric transcription, absent, ambiguous or pending. Evidence
+and notes are optional; preserve the supporting text when transcribing a written
+number. The supported numeric grammar is the existing exact integer/decimal/
+comma/fraction grammar; scientific notation and undefined fractions are rejected.
+
+Use **Download draft** to save `answers.json`. Browser caching is temporary.
+Import the file through notebook section 9, or:
+
+```sh
+python -m pilot_eval behaviour-audit-save \
+  --config artifacts/plans/pilot4-answer-audit-v1/behaviour.audit.json \
+  --labels /absolute/path/answers.json --output-root artifacts
+```
+
+Then import the regenerated `reviewer/draft.json` into the page before continuing.
+The export's `base_revision` prevents an older page from overwriting newer labels.
+Repeating the exact last import is idempotent. A stale import is rejected; keep
+both downloads and reconcile against the current draft explicitly, rather than
+discarding unsaved work. Different reviewers, packets, unknown/duplicate IDs and
+malformed labels are rejected. The sealed history survives a missing draft cache.
+
+### Freeze, then reveal
+
+After all selected responses are labelled, explicitly enable notebook section 10
+to freeze, then run section 11 to reveal. Pending labels block completion.
+
+```sh
+python -m pilot_eval behaviour-audit-freeze \
+  --config artifacts/plans/pilot4-answer-audit-v1/behaviour.audit.json --output-root artifacts
+python -m pilot_eval behaviour-audit-reveal \
+  --config artifacts/plans/pilot4-answer-audit-v1/behaviour.audit.json --output-root artifacts
+```
+
+`labels/frozen.json` retains the complete pre-reveal labels and draft identity.
+The separate `reveal/` report compares those labels with gold and all three
+scorers. It distinguishes agreement, missed intended answers, wrong-number
+extraction, and absent/ambiguous reviewer labels. It never labels an automatic
+answer transition a validated reasoning gain.
+
+The revealed `review.html` supports response/scorer explanation categories:
+intermediate number, missed format, conflicting/ambiguous, cap/truncation, other
+and uncertain. Download `explanations.json` and save it in notebook section 12:
+
+```sh
+python -m pilot_eval behaviour-audit-explain \
+  --config artifacts/plans/pilot4-answer-audit-v1/behaviour.audit.json \
+  --annotations /absolute/path/explanations.json --revision review-v1 --output-root artifacts
+```
+
+Annotations bind the packet, revealed-result hash and reviewer. Each immutable
+snapshot gets a new revision name. Partial explanations remain explicitly partial;
+they do not change the frozen answer labels. These are selected-case findings,
+not exact whole-cohort human-corrected accuracy, reasoning-validity rates or
+inter-reviewer agreement.
+
+### Corrections after reveal
+
+Ordinary draft saves stop after freezing. An answer correction requires a named,
+reasoned revision and is always marked **post-reveal exposed**:
+
+```sh
+python -m pilot_eval behaviour-audit-revise \
+  --config artifacts/plans/pilot4-answer-audit-v1/behaviour.audit.json \
+  --labels /absolute/path/corrections.json --revision correction-v1 \
+  --reason 'Explain the correction' --output-root artifacts
+```
+
+The correction file uses the same answer-label envelope, with `base_revision`
+equal to the original frozen draft revision. It may contain only changed labels;
+each correction revision starts from the original frozen answers. To retain
+several corrections together, include all of them explicitly. Original frozen
+labels and the original reveal remain unchanged. Corrected reports/pages are
+under `revisions/<revision>/`. Explanations for one of those pages require the
+matching `--source-revision <revision>`; no latest revision is chosen implicitly.
+
+Software fixture round trips and the real reviewer's outstanding labels are
+separate evidence. Preparing a real packet does not complete the human audit.

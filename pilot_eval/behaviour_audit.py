@@ -119,7 +119,10 @@ def _seal(directory,marker,files):
 
 
 def _check_seal(directory,marker,required):
-    seal=json.loads((directory/marker).read_text())
+    content=(directory/marker).read_bytes()
+    seal=json.loads(content)
+    if content!=_json_bytes(seal):
+        raise ValueError('audit receipt bytes changed')
     if set(seal.get('files',{}))!=set(required):
         raise ValueError('audit receipt inventory changed')
     for relative,digest in seal['files'].items():

@@ -5,15 +5,17 @@ import pytest
 import re
 import subprocess
 import shutil
+import os
+import sys
 
 from pilot_eval.cli import main
 from test_behaviour_transitions import save
 
 
-def audit_parent(tmp_path):
+def audit_parent(tmp_path,count=28):
     root=tmp_path/'artifacts'; sources=[]
     items=[dict(id=f'gsm8k:test:{i:02d}',prompt=f'Question {chr(65+i)} <literal text>',
-                gold='#### 1234' if i==2 else '#### 3') for i in range(28)]
+                gold='#### 1234' if i==2 else '#### 3') for i in range(count)]
     for method in ['sft','grpo']:
         for step in [0,64]:
             config=save(tmp_path/f'{method}-{step}-config.json',dict(model='tiny-fixture',
@@ -259,3 +261,62 @@ def test_interrupted_packet_publication_reuses_opaque_ids(tmp_path):
     assert prepare(root,parent)==0
     assert (directory/'reviewer/packet.json').read_bytes()==packet
     assert action('status',root)==0
+
+
+def test_notebook_audit_stages_restore_without_models_and_require_explicit_freeze(tmp_path):
+    root,parent=audit_parent(tmp_path);repo=Path(__file__).resolve().parents[1]
+    book=repo/'notebooks/pilot-4-behaviour-breakdown.ipynb'
+    blocker=tmp_path/'no-models';blocker.mkdir()
+    (blocker/'sitecustomize.py').write_text("import sys\nfor n in ['torch','transformers','datasets','peft','accelerate','huggingface_hub']:\n sys.modules[n]=None\n")
+    env={**os.environ,'PYTHONPATH':str(blocker)+os.pathsep+str(repo),'SPAR_BEHAVIOUR_ROOT':str(root),
+         'SPAR_BEHAVIOUR_NAME':'scores','SPAR_AUDIT_NAME':'answers','SPAR_REPO_DIR':str(repo),
+         'SPAR_AUDIT_TRANSITIONS':str(parent)}
+    script="""
+import json,sys
+from pathlib import Path
+book=json.loads(Path(sys.argv[1]).read_text());keep=set(['setup','settings',sys.argv[2]]);seen=set();namespace={}
+for cell in book['cells']:
+ tags=set(cell.get('metadata',{}).get('tags',[]))
+ if cell['cell_type']=='code' and tags&keep:
+  exec(compile(''.join(cell['source']),'<notebook>','exec'),namespace);seen.update(tags)
+assert keep<=seen,(keep,seen)
+"""
+    def run(stage):
+        return subprocess.run([sys.executable,'-c',script,str(book),stage],env=env,cwd=repo,capture_output=True,text=True)
+    prepared=run('audit_prepare');assert prepared.returncode==0,prepared.stderr
+    config=json.loads((root/'plans/answers/behaviour.audit.json').read_text());directory=root/config['run_path']
+    packet=json.loads((directory/'reviewer/packet.json').read_text())
+    payload=save(tmp_path/'human-fixture.json',dict(packet_sha256=config['packet_sha256'],reviewer='fixture-reviewer',
+        base_revision=0,labels=[dict(response_id=r['response_id'],status='absent') for r in packet]))
+    env['SPAR_AUDIT_LABELS']=str(payload)
+    saved=run('audit_save');assert saved.returncode==0,saved.stderr
+    assert run('audit_freeze').returncode!=0
+    assert not (directory/'labels/frozen.complete.json').exists()
+    env['SPAR_AUDIT_FREEZE']='1'
+    frozen=run('audit_freeze');assert frozen.returncode==0,frozen.stderr
+    revealed=run('audit_reveal');assert revealed.returncode==0,revealed.stderr
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='completed'
+
+
+def test_all_remaining_controls_are_retained_when_pool_has_fewer_than_twenty(tmp_path):
+    root,parent=audit_parent(tmp_path,count=6);assert prepare(root,parent)==0
+    cfg=json.loads((root/'plans/audit/behaviour.audit.json').read_text())
+    selection=json.loads((root/cfg['run_path']/'private/selection.json').read_text())
+    assert selection['sft']['control_ids']==['gsm8k:test:04','gsm8k:test:05']
+    assert selection['grpo']['control_ids']==['gsm8k:test:00','gsm8k:test:03','gsm8k:test:04','gsm8k:test:05']
+    assert len(selection['sft']['selected_ids'])==len(selection['grpo']['selected_ids'])==6
+
+
+@pytest.mark.parametrize('target',['labels/frozen.json','labels/frozen.complete.json','reveal/results.json'])
+def test_modified_frozen_or_revealed_labels_cannot_be_reused(tmp_path,target):
+    root,parent=audit_parent(tmp_path,count=6);assert prepare(root,parent)==0
+    cfg=json.loads((root/'plans/audit/behaviour.audit.json').read_text());directory=root/cfg['run_path']
+    packet=json.loads((directory/'reviewer/packet.json').read_text())
+    labels=save(tmp_path/'labels.json',dict(packet_sha256=cfg['packet_sha256'],reviewer='fixture',base_revision=0,
+        labels=[dict(response_id=r['response_id'],status='absent') for r in packet]))
+    assert action('save',root,'--labels',str(labels))==0
+    assert action('freeze',root)==0;assert action('reveal',root)==0
+    assert action('freeze',root)==0
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='completed'
+    p=directory/target;p.write_bytes(p.read_bytes()+b' ')
+    assert action('status',root)==1
