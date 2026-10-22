@@ -150,6 +150,12 @@ def prepare_behaviour(selection_path,output_root,name):
     for index,entry in enumerate(sources):
         if entry.get('method') not in ['sft','grpo']:raise ValueError('source method must be sft or grpo')
         response=_resolve(selection_path.parent,entry['responses']);source_config=_resolve(selection_path.parent,entry['config'])
+        declared=entry.get('sha256',{})
+        if not isinstance(declared,dict) or set(declared)-{'responses','config'}:
+            raise ValueError('source sha256 must map responses/config to historical digests')
+        for role,path in [('responses',response),('config',source_config)]:
+            if role in declared and file_hash(path)!=declared[role]:
+                raise ValueError(f'historical source hash mismatch: {role}')
         cfg=json.loads(source_config.read_text())
         records.extend(_source_rows(entry,cfg,response,index))
         files=[]
@@ -158,6 +164,7 @@ def prepare_behaviour(selection_path,output_root,name):
             content=path.read_bytes();snapshot[relative]=content
             files.append(dict(role=role,original=str(path),snapshot=relative,sha256=hashlib.sha256(content).hexdigest()))
         source_meta.append(dict(method=entry['method'],format=entry['format'],files=files,
+            verified_declared_sha256=declared,
             metadata={k:cfg.get(k) for k in ['model','model_revision','tokenizer_revision','prompt_template','chat_template_sha256','decoding','policies','runtime','dtype','attention_implementation']},
             provenance='verified exported bytes; original checkpoint/training integrity not independently established'))
     keys=[(r['method'],r['step'],r['item_id']) for r in records]

@@ -1,5 +1,8 @@
 """Offline tests at the same saved-workflow commands used by the notebook."""
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 import pytest
 
@@ -37,6 +40,15 @@ def source_selection(tmp_path):
 
 def prepare(selection,root,name='followup'):
     return main(['behaviour-prepare','--selection',str(selection),'--name',name,'--output-root',str(root)])
+
+
+def test_declared_historical_file_hash_is_checked_before_import(tmp_path):
+    selection=source_selection(tmp_path)
+    value=json.loads(selection.read_text())
+    value['sources'][0]['sha256']={'responses':'0'*64}
+    write_json(selection,value)
+    assert prepare(selection,tmp_path/'artifacts')==1
+    assert not (tmp_path/'artifacts/plans/followup/behaviour.analysis.json').exists()
 
 
 def command(operation,root,name='followup',*extra):
@@ -228,3 +240,29 @@ def test_extracting_the_final_number_does_not_change_when_gold_changes(tmp_path)
     assert before['value']==after['value']=='3'
     assert before['span']==after['span']
     assert before['correct'] is True and after['correct'] is False
+
+
+def test_cpu_notebook_commands_work_in_a_fresh_process_without_model_libraries(tmp_path):
+    selection=source_selection(tmp_path);root=tmp_path/'artifacts'
+    repo=Path(__file__).resolve().parents[1]
+    notebook=repo/'notebooks/pilot-4-behaviour-breakdown.ipynb'
+    blocker=tmp_path/'no-models';blocker.mkdir()
+    (blocker/'sitecustomize.py').write_text("import sys\nfor name in ['torch','transformers','datasets','peft','accelerate','huggingface_hub']:\n sys.modules[name]=None\n")
+    env={**os.environ,'PYTHONPATH':str(blocker)+os.pathsep+str(repo),
+        'SPAR_BEHAVIOUR_ROOT':str(root),'SPAR_BEHAVIOUR_NAME':'followup',
+        'SPAR_BEHAVIOUR_SELECTION':str(selection),'SPAR_REPO_DIR':str(repo)}
+    script="""
+import json,sys
+from pathlib import Path
+book=json.loads(Path(sys.argv[1]).read_text());keep=set(sys.argv[2].split(','))
+namespace={'__name__':'__main__'}
+for cell in book['cells']:
+ if cell['cell_type']=='code' and keep.intersection(cell.get('metadata',{}).get('tags',[])):
+  exec(compile(''.join(cell['source']),'<notebook-cell>','exec'),namespace)
+"""
+    first=subprocess.run([sys.executable,'-c',script,str(notebook),'setup,settings,prepare,score,report'],cwd=repo,env=env,capture_output=True,text=True)
+    assert first.returncode==0,first.stderr
+    # New process; skip source import/scoring and restore the persisted report.
+    restored=subprocess.run([sys.executable,'-c',script,str(notebook),'setup,settings,report'],cwd=repo,env=env,capture_output=True,text=True)
+    assert restored.returncode==0,restored.stderr
+    assert 'Saved endpoint scoring' in restored.stdout
