@@ -131,11 +131,26 @@ until an actual consequential trade-off is settled. This document is not
 
 ## Interview decisions — 2026-10-22
 
-- **Q1 remains open.** The user requested an explanation of answer-level
-  decomposition versus reasoning-validity annotation before choosing scope.
+- **Q1 accepted:** answer-level decomposition first: answer correctness,
+  extraction/presentation and observed sampled reliability. Do not label
+  wrong-to-correct transitions as validated reasoning improvements. After
+  reviewing the decomposition, decide whether a focused reasoning-validity
+  audit of remaining unexplained cases is warranted; no exhaustive reasoning
+  annotation is included in the initial scope.
 - **Q2 accepted:** one human reviewer; no inter-reviewer agreement claim.
   Blinding, sampling and the annotation rubric remain to be settled.
 - **Q3 accepted:** perform the CPU-only source audit and A/B/D first; decide
   whether to run C after reviewing those findings and its measured inference
   budget. This is the agreed execution sequence, not authorization to start
   implementation before the design/spec is settled.
+
+## Second decision frontier
+
+4. Human-audit coverage: explain the observed transitions through a targeted
+   case audit with checks of unchanged cases, or obtain a complete human answer
+   label for every unique greedy response? A targeted audit cannot be reported
+   as exact overall hand-corrected accuracy; a probability-sampled audit would
+   need its own weighted estimator and uncertainty.
+5. Interpretation: report continuous transition/audit/coverage decompositions
+   and compatible hypotheses, or retain revised, explicit categorical decision
+   rules? The original numeric cutoffs are still unapproved.

@@ -13,6 +13,9 @@
 - The user requested persistence of the proposal and a design-readiness review
   using grill-with-docs.
 - One human reviewer; no inter-reviewer agreement claim (design.md, Q2).
+- Answer-level decomposition first; consider a focused reasoning-validity
+  audit after the initial breakdown, rather than including exhaustive reasoning
+  annotation now (design.md, Q1).
 - CPU-only source audit and A/B/D first; review findings and inference budget
   before deciding on C (design.md, Q3).
 - No decision-rule thresholds, new inference or implementation have been
@@ -20,8 +23,8 @@
 
 ## Fog
 
-- Answer-level outcome versus reasoning-validity audit.
 - Single-reviewer audit sampling/coverage, blinding and rubric.
+- Continuous decomposition versus categorical interpretation thresholds.
 - Whether forced read-off is needed, to be decided after CPU findings.
 - Transition denominators, finite-draw interpretation and coherent decision rules.
 - Exact saved-response availability and SFT/GRPO source compatibility.
