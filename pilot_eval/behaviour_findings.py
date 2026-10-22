@@ -2,13 +2,14 @@
 import csv
 import io
 import json
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 
 from pilot_eval.behaviour_breakdown import verify_behaviour, _jsonl
-from pilot_eval.behaviour_transitions import _verify_files, _bin, SCORERS, BINS
+from pilot_eval.behaviour_transitions import _verify_files, _bin, _descriptive, SCORERS, BINS
 from pilot_eval.behaviour_sampling import _verify as verify_sampling
 from pilot_eval.recovery import _inside, _name
 from pilot_eval.rescoring import _save_bytes
@@ -56,12 +57,26 @@ def _reconcile(scoring, records, transitions, pairs, sampled, samples,transition
     for key,rows in groups.items():
         saved=scoring['groups'][key]
         _require(len({r['item_id'] for r in rows})==len(rows)==saved['total'], 'greedy denominator mismatch')
+        _require(sum(bool(r['capped']) for r in rows)==saved['cap_count'] and
+                 _close(np.mean([r['token_count'] for r in rows]),saved['mean_tokens']),
+                 'greedy cap/length aggregate disagrees')
         for scorer in SCORERS:
             counts=Counter(_bin(r['scores'][scorer]) for r in rows)
             _require([counts[b] for b in BINS]==[saved[scorer][k] for k in ['correct','wrong','invalid']],
                      'greedy aggregate does not match per-item records')
+            valid=len(rows)-counts['U']
+            _require(_close(counts['C']/len(rows),saved[scorer]['accuracy']) and
+                     _close(valid/len(rows),saved[scorer]['extractable_fraction']) and
+                     ((valid==0 and saved[scorer]['accuracy_among_extractable'] is None) or
+                      (valid>0 and _close(counts['C']/valid,saved[scorer]['accuracy_among_extractable']))),
+                     'greedy accuracy/extractability rate disagrees')
     indexed={(r['method'],r['step'],r['item_id']):r for r in records}
     for pair in pairs:
+        _require(pair['gold']==pair['before']['gold']==pair['after']['gold'] and
+                 pair['tokens_0']==pair['before']['token_count'] and pair['tokens_64']==pair['after']['token_count'] and
+                 pair['gold_calculator_annotations']==len(re.findall(r'<<[^<>]*>>',pair['gold'])) and
+                 pair['gold_nonempty_lines']==sum(bool(line.strip()) for line in pair['gold'].splitlines()),
+                 'paired descriptive fields differ from source')
         for endpoint in ['before','after']:
             row=pair[endpoint]
             _require(row==indexed[(row['method'],row['step'],row['item_id'])], 'transition endpoint differs from scored record')
@@ -75,6 +90,12 @@ def _reconcile(scoring, records, transitions, pairs, sampled, samples,transition
             gains=len(cells['W:C'])+len(cells['U:C']);losses=len(cells['C:W'])+len(cells['C:U'])
             _require(matrix==flow['counts'] and [gains,losses,gains-losses]==
                      [flow['gross_gains'],flow['gross_losses'],flow['net_change']], 'transition count reconciliation failed')
+            _require(flow['churn']==gains+losses and
+                     flow['net_wrong_flow']==len(cells['W:C'])-len(cells['C:W']) and
+                     flow['net_invalid_flow']==len(cells['U:C'])-len(cells['C:U']),
+                     'transition churn or wrong/invalid flow disagrees')
+            expected_ids=sorted({r['item_id'] for r in groups[method+':0']}&{r['item_id'] for r in groups[method+':64']})
+            _require(flow['item_ids']==expected_ids,'within-method paired cohort differs from endpoint intersection')
             ordered=sorted(selected,key=lambda p:p['item_id'])
             _require([p['item_id'] for p in ordered]==flow['item_ids'],'paired question order changed')
             _interval_check(transition_path,flow['resampling_path'],flow['item_ids'],
@@ -88,6 +109,7 @@ def _reconcile(scoring, records, transitions, pairs, sampled, samples,transition
         _interval_check(transition_path,contrast['resampling_path'],common,
             [int(after[i]['scores'][scorer]['correct'])-int(before[i]['scores'][scorer]['correct']) for i in common],
             contrast['difference'])
+    _require(_descriptive(pairs)==transitions['sft_descriptive'],'SFT descriptive strata disagree with paired records')
     observed=defaultdict(dict)
     for row in samples:
         key=(row['item_id'],row['step'])

@@ -189,3 +189,18 @@ def test_completed_findings_reject_changed_outputs_or_parent_identity(tmp_path,d
     target=root/'reports/findings/report.html' if damage=='combined-output' else plan
     target.write_bytes(target.read_bytes()+b' ')
     assert findings(root,plan)==1
+
+
+@pytest.mark.parametrize('aggregate',['churn','length-stratum'])
+def test_descriptive_aggregates_must_match_the_paired_records(tmp_path,aggregate):
+    import hashlib
+    root,plan=inputs(tmp_path)
+    directory=root/'reports/transitions';path=directory/'results/results.json'
+    data=json.loads(path.read_text())
+    if aggregate=='churn':data['within_method']['sft']['flexible_v3']['churn']=999
+    else:next(iter(data['sft_descriptive'].values()))['mean_tokens_0']=999
+    path.write_text(json.dumps(data))
+    seal_path=directory/'complete.json';seal=json.loads(seal_path.read_text())
+    seal['files']['results/results.json']=hashlib.sha256(path.read_bytes()).hexdigest()
+    seal_path.write_text(json.dumps(seal))
+    assert findings(root,plan)==1
