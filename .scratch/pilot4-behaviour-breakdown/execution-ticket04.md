@@ -70,3 +70,35 @@ dependencies, generation or GPU allocation are needed.
 
 The real workload is ready for the reviewer. Ticket 05 can publish a partial
 combined report while this human work remains pending.
+
+## Assisted-review outcome (2026-10-22)
+
+The recovered backup contains 215 human classifications: 210 numeric, three
+ambiguous and two absent. Six numeric entries already had transcriptions.
+The user subsequently confirmed all 16 flagged transcriptions in separate
+source-bound confirmation files. The other 188 number proposals remain automatic.
+The original backup, label journal and blinded packet remain unchanged; no
+original full-audit freeze/reveal is claimed.
+
+A separate partial confirmed-case correction report is available at
+`artifacts/reports/pilot4-confirmed-extraction-corrections-2026-10-22-v1/`.
+It substitutes only 22 confirmed numeric intended answers (six original + 16
+assisted confirmations) into their verified source references, retaining original
+flexible-v3 correctness everywhere else. Shared baseline corrections propagate to
+both method references. It does not substitute automatic proposals or assign
+correctness to absent/ambiguous labels.
+
+| Method | Original counts 0→64 | Confirmed-case overlay 0→64 | Net gain |
+|---|---|---|---|
+| GRPO | 102→114 of 150 | 111→117 of 150 | +6 (+4 pp) |
+| SFT | 102→99 of 150 | 111→100 of 150 | −11 (−7.33 pp) |
+
+This demonstrates an answer-extraction contribution to the original reported
+net gain, without establishing reasoning quality, exhaustive human accuracy or
+causal shares. Original bootstrap intervals do not apply to the revised totals.
+The sampled-reliability report remains unchanged. Ticket 05's full combined
+report/notebook handoff is still separate outstanding work.
+
+Validation: 31 affected tests passed (audit, assistance and correction reporting).
+The real report command verified sealed audit/transition inputs and wrote source
+hashes, structured results, Markdown, standalone HTML and explicit partial status.
