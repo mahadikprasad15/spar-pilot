@@ -137,7 +137,21 @@ def _audit(audit_path, assisted, transitions_path, pairs, root):
             _require(file.is_file() and file_hash(file)==digest,'assisted source changed or missing: '+str(file))
             if file.is_relative_to(root):inputs[str(file.relative_to(root))]=digest
             if file.name.startswith('confirmations-'):docs.append(json.loads(file.read_text()))
-            elif file.name=='results.json' and 'assistance' in file.parts:assistance=json.loads(file.read_text())
+            elif file.name=='results.json' and 'assistance' in file.parts:
+                assistance=json.loads(file.read_text())
+                proposal_dir=file.parent
+                proposal_receipt=_seal_files(proposal_dir,'status.json',['results.json','config.json','review.html'])
+                proposal_config=json.loads((proposal_dir/'config.json').read_text())
+                for source,expected in proposal_config['sources'].items():
+                    original=Path(source)
+                    if not original.exists() and '/artifacts/' in source:
+                        original=_inside(root,source.split('/artifacts/',1)[1])
+                    _require(original.is_file() and file_hash(original)==expected,
+                             'assisted proposal source changed: '+str(original))
+                    if original.is_relative_to(root):inputs[str(original.relative_to(root))]=expected
+                for filename in [*proposal_receipt['files'],'status.json']:
+                    original=proposal_dir/filename
+                    inputs[str(original.relative_to(root))]=file_hash(original)
         _require(assistance is not None and assistance['packet_sha256']==config['packet_sha256'],
                  'assisted proposal packet mismatch')
         from pilot_eval.behaviour_assisted_report import summarize
@@ -232,19 +246,25 @@ def build_findings(path,transition_path,sampling_path,root,name,*,audit_path=Non
     links=dict(scores=str(parent_dir.relative_to(root)),transitions=str(transition_path.relative_to(root)),
                sampling=str(sampling_path.relative_to(root)),audit_config=config['audit_config'],assisted_report=config['assisted_report'])
     result=_summary(scoring,transitions,sampled,lengths,audit,corrections,links)
+    expected_outputs={
+        'synthesis':['results/results.json','results/summary.csv','results/paired-items.jsonl','results/sampled-counts.jsonl'],
+        'plots':['plots/greedy-outcomes.svg','plots/answer-transitions.svg','plots/sampling-reliability.svg']+
+                (['plots/confirmed-corrections.svg'] if corrections else []),
+        'presentation':['results/report.md','report.html']}
+    required_complete=[f for group in expected_outputs.values() for f in group]
     with run_lock(directory):
         _save_frozen(directory/'config.json',config)
         _save_frozen(root/'plans'/name/'behaviour.findings.json',config)
         _save_frozen(directory/'meta/run_manifest.json',dict(stage='combined-behaviour-findings',**config))
         if (directory/'complete.json').exists():
-            seal=_seal_files(directory,'complete.json',['results/results.json','report.html','results/summary.csv'])
+            seal=_seal_files(directory,'complete.json',required_complete)
             _require(seal['config_sha256']==file_hash(directory/'config.json'),'combined report config changed')
             return dict(state='completed',evidence_state=result['evidence_state'],report=str(directory/'report.html'),reused=True)
         tasks=['synthesis','plots','presentation'];new=0
         for index,task in enumerate(tasks):
             marker=directory/'units'/(task+'.complete.json')
             if marker.exists():
-                _seal_files(directory,str(marker.relative_to(directory)))
+                _seal_files(directory,str(marker.relative_to(directory)),expected_outputs[task])
                 continue
             if max_new_units is not None and new>=max_new_units:
                 _write_state(directory,'incomplete',index,len(tasks))
@@ -261,6 +281,7 @@ def build_findings(path,transition_path,sampling_path,root,name,*,audit_path=Non
                 _save_bytes(directory/'results/report.md',behaviour_findings_render.markdown(result).encode())
                 _save_bytes(directory/'report.html',behaviour_findings_render.page(result,directory,root).encode())
                 outputs=['results/report.md','report.html']
+            _require(set(outputs)==set(expected_outputs[task]),'combined unit inventory differs')
             _save_frozen(marker,dict(files={f:file_hash(directory/f) for f in outputs}))
             new+=1;_write_state(directory,'running',index+1,len(tasks))
             _save_frozen(directory/'checkpoints'/f'{index+1}.json',dict(completed_unit=task,unit_receipt=str(marker.relative_to(directory))))

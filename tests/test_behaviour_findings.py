@@ -70,3 +70,46 @@ def test_full_selected_audit_report_requires_verified_freeze_and_reveal(tmp_path
     assert result['confirmed_case_overlay']['original_audit_frozen'] is True
     (directory/'labels/frozen.json').write_bytes((directory/'labels/frozen.json').read_bytes()+b' ')
     assert main(args)==1
+
+
+def test_assisted_report_is_partial_and_rechecks_confirmations(tmp_path):
+    import subprocess
+    import sys
+    root,plan=inputs(tmp_path)
+    assert main(['behaviour-audit-prepare','--transitions',str(root/'reports/transitions'),
+                 '--name','audit','--output-root',str(root)])==0
+    audit_plan=root/'plans/audit/behaviour.audit.json';cfg=json.loads(audit_plan.read_text());audit=root/cfg['run_path']
+    packet=json.loads((audit/'reviewer/packet.json').read_text());numeric=next(r for r in packet if r['response']=='#### 3')
+    backup=root/'backup.json';backup.write_text(json.dumps(dict(packet_sha256=cfg['packet_sha256'],reviewer='fixture',base_revision=0,
+        labels=[dict(response_id=r['response_id'],status='numeric' if r['response'].startswith('####') else 'absent',
+                     answer='3' if r['response_id']==numeric['response_id'] else None) for r in packet])))
+    def command(module,*args):
+        result=subprocess.run([sys.executable,'-m',module,*map(str,args)],capture_output=True,text=True)
+        assert result.returncode==0,result.stderr
+    command('pilot_eval.behaviour_assistance','--audit-config',audit_plan,'--backup',backup,'--output-root',root,'--name','proposals')
+    assisted=audit/'assistance/proposals/results.json';report=root/'reports/assisted'
+    command('pilot_eval.behaviour_assisted_report','--assistance',assisted,'--audit-directory',audit,
+            '--transitions',root/'reports/transitions','--output',report)
+    assert findings(root,plan,'--audit-config',str(audit_plan),'--assisted-report',str(report))==0
+    result=json.loads((root/'reports/findings/results/results.json').read_text())
+    assert result['audit']['complete_human_audit'] is False
+    assert result['audit']['confirmed_numeric_answers']==1
+    assert result['audit']['unconfirmed_numeric_proposals']>0
+    assert result['confirmed_case_overlay']['unconfirmed_proposals_used']==0
+    assert not (audit/'labels/frozen.json').exists()
+    # Changing the source backup after the assisted report must be rejected,
+    # even if the combined-report receipt itself has not changed.
+    backup.write_text(backup.read_text()+' ')
+    assert findings(root,plan,'--audit-config',str(audit_plan),'--assisted-report',str(report))==1
+
+
+def test_interrupted_report_rejects_incomplete_unit_receipt(tmp_path):
+    root,plan=inputs(tmp_path)
+    assert findings(root,plan,'--max-new-units','1')==0
+    directory=root/'reports/findings'
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='incomplete'
+    receipt=directory/'units/synthesis.complete.json'
+    receipt.write_text(json.dumps({'files':{}}))
+    (directory/'results/results.json').unlink()
+    assert findings(root,plan)==1
+    assert not (directory/'complete.json').exists()
