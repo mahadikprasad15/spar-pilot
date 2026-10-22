@@ -83,7 +83,7 @@ def _reconcile(scoring, records, transitions, pairs, sampled, samples,transition
     for scorer,contrast in transitions['direct_comparison'].items():
         if not contrast.get('available'):continue
         before={r['item_id']:r for r in groups['sft:64']};after={r['item_id']:r for r in groups['grpo:64']}
-        common=sorted(set(before)&set(after))
+        common=sorted(set(before)&set(after)&{r['item_id'] for r in groups['sft:0']}&{r['item_id'] for r in groups['grpo:0']})
         _require(common==contrast['item_ids'] and len(common)==contrast['n'],'direct comparison cohort differs')
         _interval_check(transition_path,contrast['resampling_path'],common,
             [int(after[i]['scores'][scorer]['correct'])-int(before[i]['scores'][scorer]['correct']) for i in common],
@@ -294,6 +294,7 @@ def build_findings(path,transition_path,sampling_path,root,name,*,audit_path=Non
         'plots':['plots/greedy-outcomes.svg','plots/answer-transitions.svg','plots/sampling-reliability.svg']+
                 (['plots/confirmed-corrections.svg'] if corrections else []),
         'presentation':['results/report.md','report.html']}
+    expected_outputs['plots'] += [f.replace('.svg','.png') for f in expected_outputs['plots']]
     required_complete=[f for group in expected_outputs.values() for f in group]
     with run_lock(directory):
         _save_frozen(directory/'config.json',config)

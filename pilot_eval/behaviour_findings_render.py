@@ -20,7 +20,10 @@ def plots(result,directory):
     def save(fig,name):
         path='plots/'+name+'.svg';stream=io.BytesIO()
         fig.savefig(stream,format='svg',metadata={'Date':None},bbox_inches='tight')
-        plt.close(fig);_save_bytes(directory/path,stream.getvalue());paths.append(path)
+        _save_bytes(directory/path,stream.getvalue());paths.append(path)
+        png=io.BytesIO();fig.savefig(png,format='png',dpi=170,bbox_inches='tight')
+        png_path='plots/'+name+'.png';_save_bytes(directory/png_path,png.getvalue());paths.append(png_path)
+        plt.close(fig)
     with plt.rc_context({'svg.hashsalt':'pilot4-combined-v1','font.size':10,'axes.spines.top':False,
                          'axes.spines.right':False,'axes.facecolor':'#fcfcf8','figure.facecolor':'white'}):
         fig,ax=plt.subplots(figsize=(9,4.5),layout='constrained');labels=[]
@@ -33,7 +36,7 @@ def plots(result,directory):
                 ax.plot(b,i,'o',color='#437b91' if b>=a else '#ae7869',label='Step 64' if i==0 else None)
                 ax.annotate(f'{a:.1f} → {b:.1f}',(max(a,b)+1,i),va='center',fontsize=9)
         ax.set(yticks=range(6),yticklabels=labels,xlabel='Original automatic accuracy (%)',xlim=(0,100),title='The apparent outcome depends on the extraction rule')
-        ax.invert_yaxis();ax.legend(frameon=False,loc='lower right');save(fig,'greedy-outcomes')
+        ax.invert_yaxis();ax.legend(frameon=False,loc='upper right');save(fig,'greedy-outcomes')
         fig,axes=plt.subplots(1,2,figsize=(10,4),layout='constrained')
         ceiling=max(max(row) for m in ['sft','grpo'] for row in result['transitions'][m]['flexible_v3']['counts'])
         for ax,m in zip(axes,['sft','grpo']):
@@ -118,15 +121,17 @@ def markdown(r):
             'No SFT sampled comparison is available in this saved experiment.','',
             '| Scorer | Measurement | Step 0 | Step 64 | Paired change, 95% interval |',
             '|---|---|---|---|---|']
+    sampling_notes=[]
     for s,v in r['sampling'].items():
         for field,label in [('mean_draw_reward','Mean draw reward'),('observed_coverage','Observed ≥1/8 coverage')]:
             metric=v[field]
             lines.append(f'| {s} | {label} | {_pct(metric["before"])} | {_pct(metric["after"])} | '
                          f'{_pp(metric["difference"]["estimate"])}; {_interval(metric["difference"])} |')
-        lines.append(f'\n{s}: {len(v["coverage_gain_ids"])} observed coverage gains and '
+        sampling_notes.append(f'{s}: {len(v["coverage_gain_ids"])} observed coverage gains and '
                      f'{len(v["coverage_loss_ids"])} losses; {len(v["already_observed_solved"]["item_ids"])} questions solved '
                      f'at least once at both endpoints. Mean correct-draw change on that subset: '
-                     f'{v["already_observed_solved"]["mean_count_change"]:+.2f} out of eight.\n')
+                     f'{v["already_observed_solved"]["mean_count_change"]:+.2f} out of eight.')
+    lines+=['']+sampling_notes
     lines+=['','Higher mean draw reward with little observed coverage change is compatible with greater reliability '
             'on questions already solved in the saved draws. Eight draws cannot establish the complete support '
             'of either policy. These sampled outputs remain automatically scored; greedy audit corrections do not transfer to them.','',
@@ -165,6 +170,13 @@ def page(r,directory,root):
     def image(name,alt):return f'<figure><img src="plots/{name}.svg" alt="{esc(alt)}"></figure>'
     corrected=r['confirmed_case_overlay'];has=bool(corrected)
     title='Extraction changes the interpretation of the gain' if has else 'What is behind the behavioural change?'
+    hero='Saved greedy answers, paired transitions and eight-draw sampling distinguish what changed from what the scorer counted.'
+    if has:
+        grpo=corrected['methods']['grpo'];sft=corrected['methods']['sft']
+        hero=(f'Confirmed extraction corrections reduce GRPO’s measured gain from {grpo["original"]["gain_pp"]:+.1f} to '
+              f'{grpo["confirmed_corrections_only"]["gain_pp"]:+.1f} percentage points. '
+              f'SFT’s measured change becomes {sft["confirmed_corrections_only"]["gain_pp"]:+.1f} points. '
+              'These are partial confirmed-case corrections, not exhaustive human-scored accuracy.')
     greedy=[]
     for m in ['sft','grpo']:
         for s in ['strict','flexible_v3','last_number']:
@@ -173,10 +185,13 @@ def page(r,directory,root):
     flowrows=[]
     for m in ['sft','grpo']:
         f=r['transitions'][m]['flexible_v3'];flowrows.append([m.upper(),f['gross_gains'],f['gross_losses'],f['churn'],f['net_change']])
-    content='<section id="scores"><div class="eyebrow">01 · Scoring</div><h2>The scorer is part of the measurement</h2><p>Strict format compliance, flexible extraction and the last-number diagnostic produce different apparent outcomes. Last-number extraction is a diagnostic, not a human oracle.</p>'+table(['Method','Scorer','Step 0','Step 64','Paired change','95% interval'],greedy)+image('greedy-outcomes','Original greedy accuracy by method, scorer and checkpoint')+'</section>'
+    content='<section id="scores"><div class="eyebrow">01 · Scoring</div><h2>The scorer is part of the measurement</h2><p>Strict format compliance, flexible extraction and the last-number diagnostic produce different apparent outcomes. Last-number extraction is a diagnostic, not a human oracle. A response can give an identifiable answer while missing the exact final-line grammar; repeated question quantities can also trigger flexible-v3 ambiguity checks.</p>'+table(['Method','Scorer','Step 0','Step 64','Paired change','95% interval'],greedy)+image('greedy-outcomes','Original greedy accuracy by method, scorer and checkpoint')+'</section>'
     content+='<section id="transitions"><div class="eyebrow">02 · Paired questions</div><h2>A net change hides gains and losses</h2>'+table(['Method','Gains','Losses','Churn','Net'],flowrows)+'<p>The cells below retain the original flexible-v3 classification. Correct, wrong and unextractable are scorer-defined states. Neither a wrong→correct nor an unextractable→correct transition establishes a reasoning improvement.</p>'+image('answer-transitions','Original flexible-v3 paired correct, wrong and unextractable transitions')+'</section>'
     content+='<section id="audit"><div class="eyebrow">03 · Human evidence</div><h2>Correcting missed answers changes the starting point</h2><p class="callout">Audit status: '+esc(r['audit']['state'])+'. This report keeps completed automatic analysis distinct from a completed full human audit.</p>'
     if has:
+        counts=r['audit'].get('human_classification_counts',corrected.get('human_classification_counts',{}))
+        content+='<p>Saved human classifications: '+esc(', '.join(str(v)+' '+k for k,v in counts.items()))+'. '
+        content+=str(corrected['unique_confirmed_numeric'])+' numeric transcriptions are human-confirmed; '+str(r['audit'].get('unconfirmed_numeric_proposals',0))+' automatic numeric proposals remain unconfirmed and are excluded.</p>'
         rows=[]
         for m,v in corrected['methods'].items():
             a=v['original'];b=v['confirmed_corrections_only'];rows.append([m.upper(),f'{a["before_correct"]} → {a["after_correct"]} / {a["n"]}',f'{b["before_correct"]} → {b["after_correct"]} / {b["n"]}',f'{b["gain_pp"]:+.1f} pp'])
@@ -202,4 +217,4 @@ def page(r,directory,root):
         content+='<h3>'+esc(row.get('method','source'))+'</h3><pre>'+esc(__import__('json').dumps(row.get('metadata',row),indent=2))+'</pre>'
     content+='</details><p class="small">Paired percentile intervals use 10,000 question resamples, seed 42, preserving endpoints and all eight sampled draws within each item. They condition on these checkpoints and saved generations.</p></section>'
     return '''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pilot 4 · Behavioural findings</title><style>
-:root{--ink:#203b43;--muted:#62767a;--line:#d9e2dc;--accent:#346c78}*{box-sizing:border-box}body{margin:0;background:#f6f7f2;color:var(--ink);font:16px/1.7 system-ui,-apple-system,sans-serif}header,main,footer{max-width:1120px;margin:auto;padding:40px 28px}header{padding-top:70px}h1{font:clamp(34px,5vw,58px)/1.12 Georgia,serif;max-width:900px;margin:14px 0 24px}h2{font:30px/1.25 Georgia,serif;margin:12px 0 20px}h3{font-size:18px}p{max-width:920px}.eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:12px;font-weight:700;color:var(--muted)}.lead{font-size:20px;max-width:880px}.callout{background:#e7efea;border-left:4px solid #6f9b8e;padding:18px 22px}.badge{display:inline-block;font-size:12px;border:1px solid var(--line);padding:5px 10px;border-radius:20px;margin:4px 6px 0 0}nav{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:16px 0;display:flex;gap:20px;flex-wrap:wrap}a{color:var(--accent);text-underline-offset:3px}section{padding:42px 0;border-bottom:1px solid var(--line);scroll-margin-top:20px}.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;background:#fffefa;font-size:14px}td,th{text-align:left;padding:13px 15px;border-bottom:1px solid var(--line);vertical-align:top}th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}figure{margin:30px 0}img{width:100%;height:auto;background:white;border:1px solid var(--line);border-radius:6px}details{margin:22px 0;padding:18px;background:#fffefa;border:1px solid var(--line);border-radius:6px}summary{cursor:pointer;font-weight:650}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 ui-monospace}.small{font-size:13px;color:var(--muted)}footer{font-size:13px;color:var(--muted)}@media(max-width:600px){header,main,footer{padding:26px 16px}header{padding-top:42px}td,th{padding:10px}nav{gap:14px}section{padding:30px 0}h2{font-size:26px}}@media print{nav{display:none}body{background:white}header,main{padding:15px}details{display:block}section{break-inside:avoid}}</style></head><body>'''+ '<header><div class="eyebrow">SPAR · Pilot 4 behavioural follow-up</div><h1>'+esc(title)+'</h1><p class="lead">Saved greedy answers, paired transitions and eight-draw sampling distinguish what changed from what the scorer counted.</p><span class="badge">CPU analysis · no new inference</span><span class="badge">'+esc(r['evidence_kind'])+'</span><span class="badge">'+esc(r['audit']['state'])+'</span><nav>'+''.join('<a href="#'+k+'">'+v+'</a>' for k,v in [('scores','Scores'),('transitions','Transitions'),('audit','Human evidence'),('sampling','Sampling'),('limits','Interpretation'),('evidence','Sources')])+'</nav></header><main>'+content+'</main><footer>Named immutable evidence snapshots · original outcomes retained · automatic proposals distinct from human confirmations</footer></body></html>'
+:root{--ink:#203b43;--muted:#62767a;--line:#d9e2dc;--accent:#346c78}*{box-sizing:border-box}body{margin:0;background:#f6f7f2;color:var(--ink);font:16px/1.7 system-ui,-apple-system,sans-serif}header,main,footer{max-width:1120px;margin:auto;padding:40px 28px}header{padding-top:70px}h1{font:clamp(34px,5vw,58px)/1.12 Georgia,serif;max-width:900px;margin:14px 0 24px}h2{font:30px/1.25 Georgia,serif;margin:12px 0 20px}h3{font-size:18px}p{max-width:920px}.eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:12px;font-weight:700;color:var(--muted)}.lead{font-size:20px;max-width:880px}.callout{background:#e7efea;border-left:4px solid #6f9b8e;padding:18px 22px}.badge{display:inline-block;font-size:12px;border:1px solid var(--line);padding:5px 10px;border-radius:20px;margin:4px 6px 0 0}nav{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:16px 0;display:flex;gap:20px;flex-wrap:wrap}a{color:var(--accent);text-underline-offset:3px}section{padding:42px 0;border-bottom:1px solid var(--line);scroll-margin-top:20px}.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;background:#fffefa;font-size:14px}td,th{text-align:left;padding:13px 15px;border-bottom:1px solid var(--line);vertical-align:top}th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}figure{margin:30px 0}img{width:100%;height:auto;background:white;border:1px solid var(--line);border-radius:6px}details{margin:22px 0;padding:18px;background:#fffefa;border:1px solid var(--line);border-radius:6px}summary{cursor:pointer;font-weight:650}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 ui-monospace}.small{font-size:13px;color:var(--muted)}footer{font-size:13px;color:var(--muted)}@media(max-width:600px){header,main,footer{padding:26px 16px}header{padding-top:42px}td,th{padding:10px}nav{gap:14px}section{padding:30px 0}h2{font-size:26px}}@media print{nav{display:none}body{background:white}header,main{padding:15px}details{display:block}section{break-inside:avoid}}</style></head><body>'''+ '<header><div class="eyebrow">SPAR · Pilot 4 behavioural follow-up</div><h1>'+esc(title)+'</h1><p class="lead">'+esc(hero)+'</p><span class="badge">CPU analysis · no new inference</span><span class="badge">'+esc(r['evidence_kind'])+'</span><span class="badge">'+esc(r['audit']['state'])+'</span><nav>'+''.join('<a href="#'+k+'">'+v+'</a>' for k,v in [('scores','Scores'),('transitions','Transitions'),('audit','Human evidence'),('sampling','Sampling'),('limits','Interpretation'),('evidence','Sources')])+'</nav></header><main>'+content+'</main><footer>Named immutable evidence snapshots · original outcomes retained · automatic proposals distinct from human confirmations</footer></body></html>'
