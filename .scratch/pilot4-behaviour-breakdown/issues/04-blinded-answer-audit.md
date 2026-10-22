@@ -7,7 +7,7 @@ error attribution. Demonstrate the whole round trip with CPU fixtures.
 
 **Blocked by:** 02 — paired per-question transitions and diagnostic outcomes.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Parent:** Behavioural gain breakdown specification.
 
@@ -42,3 +42,7 @@ error attribution. Demonstrate the whole round trip with CPU fixtures.
       immutability, reveal ordering and versioned corrections.
 - [ ] Keep software round-trip completion distinct from the real reviewer's
       outstanding labels; do not invent human annotations to finish the ticket.
+
+## Comments
+
+2026-10-22: User authorized implementation of Ticket 04. Real labels remain human work.

@@ -15,6 +15,10 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    audit=commands.add_parser('behaviour-audit-prepare',help='Select and export blinded intended-answer review')
+    audit.add_argument('--transitions',type=Path,required=True)
+    audit.add_argument('--name',required=True)
+    audit.add_argument('--output-root',type=Path,default=Path('artifacts'))
     transitions=commands.add_parser('behaviour-transitions',help='CPU paired answer transitions and intervals')
     transitions.add_argument('--config',type=Path,required=True)
     transitions.add_argument('--name',required=True)
@@ -314,7 +318,10 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command=='behaviour-transitions':
+        if args.command=='behaviour-audit-prepare':
+            from pilot_eval.behaviour_audit import prepare_audit
+            print(prepare_audit(args.transitions,args.output_root,args.name))
+        elif args.command=='behaviour-transitions':
             from pilot_eval.behaviour_transitions import report_transitions
             result=report_transitions(args.config,args.output_root,args.name,max_new_units=args.max_new_units)
             print(json.dumps({'execution_kind':result['execution_kind'],'report':str(args.output_root/'reports'/args.name/'results/report.md')},indent=2))
