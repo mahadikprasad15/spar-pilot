@@ -127,7 +127,8 @@ def _check_seal(directory,marker,required):
             raise ValueError('audit artifact changed: '+relative)
 
 
-PACKET_FILES=['config.json','reviewer/packet.json','reviewer/review.html','private/selection.json','private/mapping.json']
+PACKET_FILES=['config.json','reviewer/packet.json','reviewer/review.html','private/selection.json','private/mapping.json',
+              'private/preparation.json','private/preparation.complete.json','results/results.json','results/report.md']
 REVEAL_FILES=['reveal/results.json','reveal/report.md','reveal/review.html']
 
 
@@ -163,7 +164,22 @@ def prepare_audit(transitions,root,name):
             if config['transitions_path']!=str(transitions.relative_to(root)):
                 raise ValueError('audit identity already binds another parent')
             return path
-        selection=_select(rows);packet,mapping=_packet(rows,selection,parent)
+        source=dict(transitions_path=str(transitions.relative_to(root)),
+            transitions_seal_sha256=file_hash(transitions/'complete.json'),implementation=_implementation())
+        construction=directory/'private/preparation.json'
+        selection=_select(rows)
+        if construction.exists():
+            saved=json.loads(construction.read_text())
+            if saved.get('source')!=source or saved.get('selection')!=selection:
+                raise ValueError('audit preparation checkpoint binds changed sources or selection')
+            if (directory/'private/preparation.complete.json').exists():
+                _check_seal(directory,'private/preparation.complete.json',['private/preparation.json'])
+            packet,mapping=saved['packet'],saved['mapping']
+            _validate_construction(packet,mapping,rows,selection,parent)
+        else:
+            packet,mapping=_packet(rows,selection,parent)
+            _save_frozen(construction,dict(source=source,selection=selection,packet=packet,mapping=mapping))
+        _seal(directory,'private/preparation.complete.json',['private/preparation.json'])
         content=_json_bytes(packet)
         config=dict(schema_version=1,protocol='pilot4-blinded-answer-audit-v1',name=name,
             run_path=str(directory.relative_to(root)),transitions_path=str(transitions.relative_to(root)),
@@ -176,11 +192,45 @@ def prepare_audit(transitions,root,name):
         _save_bytes(directory/'reviewer/review.html',review_page(packet,config['packet_sha256']))
         _save_frozen(directory/'private/selection.json',selection)
         _save_frozen(directory/'private/mapping.json',mapping)
+        workload=dict(mode='audit-packet-preparation',unique_responses=len(packet),
+            source_response_references=sum(len(r['references']) for r in mapping),
+            pair_counts={m:dict(mandatory=len(v['mandatory_ids']),controls=len(v['control_ids']),
+                               selected=len(v['selected_ids'])) for m,v in selection.items()},
+            human_review='not established by packet preparation',limitations=LIMITS)
+        _save_frozen(directory/'results/results.json',workload)
+        _save_bytes(directory/'results/report.md',('\n'.join(['# Intended-answer audit workload','',LIMITS,'',
+            f"Unique responses to label: {len(packet)}.",
+            *[f"- {m}: {v['mandatory']} mandatory pairs + {v['controls']} control pairs = {v['selected']} pairs."
+              for m,v in workload['pair_counts'].items()],
+            '', 'Preparing the packet does not complete human review. See meta/status.json for saved label progress.',''])).encode())
         _seal(directory,'packet.complete.json',PACKET_FILES)
         _save_frozen(directory/'meta/run_manifest.json',dict(mode='single-reviewer-cpu',model_calls=0,**config))
         _save_frozen(path,config)
         _write_state(directory,'awaiting-review',0,len(packet))
         return path
+
+
+def _validate_construction(packet,mapping,rows,selection,parent):
+    expected=[]
+    for pair in rows:
+        if pair['item_id'] in selection[pair['method']]['selected_ids']:
+            expected.extend(dict(method=pair['method'],step=pair[e]['step'],item_id=pair['item_id'],
+                reasons=selection[pair['method']]['reasons'][pair['item_id']],record=pair[e]) for e in ['before','after'])
+    actual=[r for group in mapping for r in group['references']]
+    if sorted(map(_json_bytes,actual))!=sorted(map(_json_bytes,expected)):
+        raise ValueError('audit preparation references differ from verified selected records')
+    ids=[r['response_id'] for r in mapping]
+    if len(set(ids))!=len(ids) or any(not re.fullmatch(r'r_[0-9a-f]{24}',i) for i in ids):
+        raise ValueError('invalid opaque IDs in audit preparation')
+    for group in mapping:
+        refs=group['references']
+        if not refs or not all(_same_response(a['record'],b['record'],parent)
+                               for i,a in enumerate(refs) for b in refs[i+1:]):
+            raise ValueError('audit preparation merged incompatible responses')
+    expected_packet=[dict(response_id=g['response_id'],question=g['references'][0]['record']['prompt'],
+                          response=g['references'][0]['record']['generated_text']) for g in mapping]
+    if sorted(map(_json_bytes,packet))!=sorted(map(_json_bytes,expected_packet)):
+        raise ValueError('audit preparation reviewer fields changed')
 
 
 def _atomic_json(path,value):
@@ -468,7 +518,8 @@ def explain_audit(path,root,annotations_path,revision,*,source_revision=None):
         ids={r['response_id'] for r in result['responses']};seen=set();clean=[]
         for entry in entries:
             if (not isinstance(entry,dict) or set(entry)-{'response_id','scorer','category','evidence','note'}
-                or entry.get('response_id') not in ids or entry.get('scorer') not in ['strict','flexible_v3','last_number']
+                or not isinstance(entry.get('response_id'),str) or entry.get('response_id') not in ids
+                or entry.get('scorer') not in ['strict','flexible_v3','last_number']
                 or entry.get('category') not in CATEGORIES
                 or any(not isinstance(entry.get(k,''),str) for k in ['evidence','note'])):
                 raise ValueError('invalid explanation ID, scorer, category or evidence')

@@ -246,3 +246,16 @@ run().catch(e=>{console.error(e);process.exitCode=1;});
     js=tmp_path/'ui-check.cjs';js.write_text(harness)
     completed=subprocess.run(['node',str(js),str(source)],capture_output=True,text=True)
     assert completed.returncode==0,completed.stderr
+
+
+def test_interrupted_packet_publication_reuses_opaque_ids(tmp_path):
+    root,parent=audit_parent(tmp_path);assert prepare(root,parent)==0
+    plan=root/'plans/audit/behaviour.audit.json';config=json.loads(plan.read_text());directory=root/config['run_path']
+    packet=(directory/'reviewer/packet.json').read_bytes()
+    # A process can exit after checkpointing construction but before publishing
+    # the packet receipt and final plan. This is distinct from altering an
+    # already-published packet, which the corruption tests reject.
+    plan.unlink();(directory/'packet.complete.json').unlink();(directory/'reviewer/review.html').unlink()
+    assert prepare(root,parent)==0
+    assert (directory/'reviewer/packet.json').read_bytes()==packet
+    assert action('status',root)==0
