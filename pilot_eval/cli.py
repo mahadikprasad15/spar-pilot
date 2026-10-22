@@ -15,6 +15,14 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ('prepare','score','verify'):
+        behaviour=commands.add_parser('behaviour-'+operation,help='CPU saved-output behavioural breakdown')
+        behaviour.add_argument('--output-root',type=Path,default=Path('artifacts'))
+        if operation=='prepare':
+            behaviour.add_argument('--selection',type=Path,required=True)
+            behaviour.add_argument('--name',required=True)
+        else:behaviour.add_argument('--config',type=Path,required=True)
+        if operation=='score':behaviour.add_argument('--max-new-units',type=int)
     for operation in ('prepare', 'nulls-run', 'nulls-verify', 'run', 'verify'):
         analysis = commands.add_parser('traces-analysis-' + operation,
             help='CPU automatic trace relevance with saved nulls and paired document draws')
@@ -295,7 +303,12 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command=='traces-readout-assets':
+        if args.command.startswith('behaviour-'):
+            from pilot_eval.behaviour_breakdown import prepare_behaviour,score_behaviour,verify_behaviour
+            if args.command=='behaviour-prepare':print(prepare_behaviour(args.selection,args.output_root,args.name))
+            elif args.command=='behaviour-score':print(json.dumps(score_behaviour(args.config,args.output_root,args.max_new_units),indent=2))
+            else:print(json.dumps(verify_behaviour(args.config,args.output_root),indent=2))
+        elif args.command=='traces-readout-assets':
             from pilot_eval.trace_readout_assets import prepare_assets
             print(prepare_assets(args.source,args.output_root,args.name))
         elif args.command.startswith('traces-readouts-'):

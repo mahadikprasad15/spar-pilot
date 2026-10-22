@@ -7,7 +7,7 @@ fresh-session restart, without assuming a shared baseline or changing old data.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Parent:** Behavioural gain breakdown specification.
 
@@ -39,3 +39,8 @@ fresh-session restart, without assuming a shared baseline or changing old data.
 - [ ] Real source availability and execution evidence are recorded separately
       from fixture success; do not report real Pilot 4 rescoring as completed
       merely because the command implementation passes its tests.
+
+## Comments
+
+2026-10-22: User requested starting Ticket 01 in parallel with two local HTML
+explainers. Implementation is in progress; no new inference is authorized.
