@@ -174,15 +174,15 @@ def prepare_behaviour(selection_path,output_root,name):
         run_path=str(directory.relative_to(root)),selection_sha256=file_hash(selection_path),
         sources=source_meta,implementation=_implementation(),
         source_evidence_kind=selection.get('evidence_kind','unverified-export'))
+    snapshot['inputs/responses.jsonl']=''.join(json.dumps(r,sort_keys=True)+'\n' for r in records).encode()
+    config['input_files']={relative:hashlib.sha256(content).hexdigest() for relative,content in snapshot.items()}
     with run_lock(directory):
         _save_frozen(config_path,config);_save_frozen(directory/'config.json',config)
         for relative,content in snapshot.items():_save_bytes(directory/relative,content)
-        _save_bytes(directory/'inputs/responses.jsonl', ''.join(json.dumps(r,sort_keys=True)+'\n' for r in records).encode())
-        _save_frozen(directory/'inputs/complete.json',dict(files={relative:file_hash(directory/relative)
-            for relative in [*snapshot,'inputs/responses.jsonl']}))
+        _save_frozen(directory/'inputs/complete.json',dict(files=config['input_files']))
         _save_frozen(directory/'meta/run_manifest.json',dict(config_path=str(config_path.relative_to(root)),
             mode='saved-output-cpu',implementation=config['implementation'],model_calls=0))
-        if not (directory/'complete.json').exists():_write_state(directory,'prepared',0,4)
+        if not (directory/'complete.json').exists():_write_state(directory,'prepared',0,len(records))
     return config_path
 
 
@@ -194,8 +194,10 @@ def _load(path,root):
     if json.loads((directory/'config.json').read_text())!=config:raise ValueError('analysis config changed')
     for source in config['sources']:
         for file in source['files']:
-            if file_hash(Path(file['original']))!=file['sha256']:raise ValueError('original source changed')
+            original=Path(file['original'])
+            if original.exists() and file_hash(original)!=file['sha256']:raise ValueError('original source changed')
     seal=json.loads((directory/'inputs/complete.json').read_text())
+    if seal['files']!=config['input_files']:raise ValueError('source snapshot inventory changed')
     for relative,digest in seal['files'].items():
         if file_hash(_inside(directory,relative))!=digest:raise ValueError('source snapshot changed')
     return config,directory,_jsonl(directory/'inputs/responses.jsonl')
@@ -250,19 +252,29 @@ def _summary(records,config):
 
 def score_behaviour(path,root,max_new_units=None):
     config,directory,records=_load(path,root)
+    if max_new_units is not None and max_new_units<1:raise ValueError('max-new-units must be positive')
+    config_digest=file_hash(Path(path))
     with run_lock(directory):
         if (directory/'complete.json').exists():return verify_behaviour(path,root)
         count=0;scored=[]
         for method in ['sft','grpo']:
             for step in [0,64]:
                 target=directory/'units'/f'{method}-{step}.json'
+                marker=target.with_suffix('.complete.json')
                 rows=[r for r in records if r['method']==method and r['step']==step]
-                if target.exists():values=json.loads(target.read_text())
+                if marker.exists():
+                    seal=json.loads(marker.read_text())
+                    if seal!=dict(sha256=file_hash(target),config_sha256=config_digest):
+                        _write_state(directory,'failed',len(scored),len(records),'scored unit changed')
+                        raise ValueError('scored unit changed')
+                    values=json.loads(target.read_text())
                 else:
                     if max_new_units is not None and count>=max_new_units:
                         _write_state(directory,'incomplete',len(scored),len(records));return dict(state='incomplete')
                     values=[_scored(r) for r in rows];_save_frozen(target,values);count+=1
+                    _save_frozen(marker,dict(sha256=file_hash(target),config_sha256=config_digest))
                 scored.extend(values)
+                _write_state(directory,'running',len(scored),len(records))
                 print(f'Behaviour scoring: {method}:{step}; {len(scored)}/{len(records)} responses',flush=True)
         result=_summary(scored,config)
         _save_frozen(directory/'results/results.json',result)
@@ -273,7 +285,8 @@ def score_behaviour(path,root,max_new_units=None):
             lines.append(f"| {group} | {row['total']} | {row['strict']['accuracy']:.3f} | {row['flexible_v3']['accuracy']:.3f} | {row['last_number']['accuracy']:.3f} | {row['cap_count']} |")
         _save_bytes(directory/'results/report.md',('\n'.join(lines)+'\n').encode())
         files=[p for folder in ['units','results'] for p in (directory/folder).glob('*') if p.is_file()]
-        _save_frozen(directory/'complete.json',dict(files={str(p.relative_to(directory)):file_hash(p) for p in files}))
+        _save_frozen(directory/'complete.json',dict(config_sha256=config_digest,
+            files={str(p.relative_to(directory)):file_hash(p) for p in files}))
         _write_state(directory,'completed',len(scored),len(records))
         return result
 
@@ -281,6 +294,10 @@ def score_behaviour(path,root,max_new_units=None):
 def verify_behaviour(path,root):
     config,directory,_=_load(path,root)
     seal=json.loads((directory/'complete.json').read_text())
+    required={'results/'+n for n in ['results.json','responses.jsonl','report.md']}
+    required|={f'units/{method}-{step}{suffix}' for method in ['sft','grpo'] for step in [0,64] for suffix in ['.json','.complete.json']}
+    if seal.get('config_sha256')!=file_hash(Path(path)) or set(seal.get('files',{}))!=required:
+        raise ValueError('scored output inventory/config changed')
     for relative,digest in seal['files'].items():
         if file_hash(_inside(directory,relative))!=digest:raise ValueError('scored output changed')
     return json.loads((directory/'results/results.json').read_text())

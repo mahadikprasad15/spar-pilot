@@ -138,3 +138,28 @@ def test_source_validation_rejects_inconsistent_saved_evidence(tmp_path,damage):
     root=tmp_path/'artifacts'
     assert prepare(selection,root)==1
     assert not (root/'runs/pilot-4/behaviour-breakdown/followup/results/results.json').exists()
+
+
+def test_partial_resume_reuses_sealed_units_and_rejects_corruption(tmp_path):
+    selection=source_selection(tmp_path);root=tmp_path/'artifacts';assert prepare(selection,root)==0
+    assert command('score',root,'followup','--max-new-units','1')==0
+    run=root/'runs/pilot-4/behaviour-breakdown/followup';unit=run/'units/sft-0.json'
+    before=unit.read_bytes();stamp=unit.stat().st_mtime_ns
+    values=json.loads(before);values[0]['scores']['strict']['correct']=False
+    unit.write_text(json.dumps(values))
+    assert command('score',root)==1
+    assert not (run/'complete.json').exists()
+    unit.write_bytes(before)
+    assert command('score',root)==0
+    sealed_stamp=unit.stat().st_mtime_ns
+    assert command('score',root)==0 and unit.stat().st_mtime_ns==sealed_stamp
+    # Both origin changes and generated-result changes are explicit failures.
+    source=tmp_path/'grpo.jsonl';source.write_text(source.read_text()+'\n')
+    assert command('verify',root)==1
+
+
+def test_frozen_source_bundle_can_resume_if_original_exports_are_unavailable(tmp_path):
+    selection=source_selection(tmp_path);root=tmp_path/'artifacts';assert prepare(selection,root)==0
+    for p in tmp_path.glob('*.json*'):p.unlink()
+    assert command('score',root)==0
+    assert command('verify',root)==0
