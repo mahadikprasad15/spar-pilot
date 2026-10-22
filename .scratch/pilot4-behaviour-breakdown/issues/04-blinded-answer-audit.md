@@ -11,8 +11,14 @@ error attribution. Demonstrate the whole round trip with CPU fixtures.
 
 **Parent:** Behavioural gain breakdown specification.
 
-**Execution:** Software round trip verified on fixtures. Real packet prepared;
-all 215 intended-answer labels remain pending. No real freeze/reveal completed.
+**Execution:** Software round trip verified on fixtures. The reviewer classified
+all 215 real responses (210 numeric, three ambiguous, two absent). Under the
+approved assisted-transcription amendment, six original numeric transcriptions
+and 16 subsequently confirmed numbers are available; 188 proposals remain
+automatic and unconfirmed. All 16 flagged cases are resolved. A separate partial
+confirmed-case correction report was executed. The original complete-label
+freeze/reveal was not performed and is not claimed. Ticket 05 can proceed using
+this explicitly partial evidence state.
 
 - [x] Per method, select every flexible-v3 endpoint-bin change, every pair with
       a flexible-invalid endpoint, and every pair with an endpoint numeric-value
@@ -53,3 +59,9 @@ all 215 intended-answer labels remain pending. No real freeze/reveal completed.
 2026-10-22: Software implemented, 24 new audit tests and 85 affected regressions
 pass. Real packet prepared under `pilot4-behaviour-audit-2026-10-22-v1`;
 215 unique responses, 0 labels. See `../execution-ticket04.md`.
+
+2026-10-22: Updated real execution state after assisted review. All 16 flagged
+transcriptions confirmed; 22 numeric answers total are human-confirmed. The
+correction report excludes 188 unconfirmed proposals. See the approved spec
+amendment and `../execution-ticket04.md`. No further full transcription is
+required to begin Ticket 05 under the amended scope.
