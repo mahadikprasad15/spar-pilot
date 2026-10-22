@@ -144,22 +144,31 @@ def _load(path,root):
     return config,directory,_jsonl(directory/'inputs/responses.jsonl')
 
 
-def _last_number(text,gold,capped):
-    matches=list(re.finditer(_NUMBER,text))
+def _extract_last_number(text,capped):
+    # Consume unsupported compound expressions too, so 1e3 or 1,00 cannot
+    # accidentally become a different valid final answer such as 3 or 00.
+    candidates=r'(?<![\w.])[+-]?(?:\d|\.\d)[\d,./eE+\-]*(?:\s*/\s*[+-]?\d+)?'
+    matches=list(re.finditer(candidates,text))
     result=dict(extracted=None,span=None,value=None,status='invalid',correct=False,invalid_reason='no_numeric_answer')
     if not matches:return result
-    match=matches[-1];result.update(extracted=match.group(),span=list(match.span()))
-    try:value=_numeric_value(match.group())
+    match=matches[-1];literal=match.group();end=match.end()
+    if literal.endswith(('.',',')):
+        literal=literal[:-1];end-=1
+    result.update(extracted=literal,span=[match.start(),end])
+    if not re.fullmatch(_NUMBER,literal):return {**result,'invalid_reason':'unsupported_number'}
+    try:value=_numeric_value(literal)
     except (ValueError,ZeroDivisionError):return {**result,'invalid_reason':'malformed_number'}
     result['value']=str(value)
     if capped:return {**result,'invalid_reason':'capped_response'}
-    return {**result,'status':'valid','correct':value==_numeric_value(gold.rsplit('####',1)[-1].strip()),'invalid_reason':None}
+    return {**result,'status':'valid','invalid_reason':None}
 
 
 def _scored(row):
     text=row['generated_text'];gold=row['gold'];capped=row['capped']
+    last=_extract_last_number(text,capped)
+    if last['status']=='valid':last['correct']=_numeric_value(last['value'])==_numeric_value(gold.rsplit('####',1)[-1].strip())
     return {**row,'scores':dict(strict=score_gsm8k(text,gold,capped)['strict'],
-        flexible_v3=score_gsm8k_flexible_v3(text,gold,capped),last_number=_last_number(text,gold,capped))}
+        flexible_v3=score_gsm8k_flexible_v3(text,gold,capped),last_number=last)}
 
 
 def _summary(records,config):

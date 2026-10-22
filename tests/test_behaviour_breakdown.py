@@ -1,6 +1,7 @@
 """Offline tests at the same saved-workflow commands used by the notebook."""
 import json
 from pathlib import Path
+import pytest
 
 from pilot_eval.cli import main
 
@@ -60,3 +61,30 @@ def test_public_saved_scoring_roundtrip_preserves_sources_and_restores(tmp_path)
     assert result['real_artifact_execution'] is False
     assert command('score',root)==0
     assert all(p.read_bytes()==content for p,content in before.items())
+
+
+@pytest.mark.parametrize('text,capped,value,status',[
+    ('Costs $1,234.50.',False,'2469/2','valid'),
+    ('Answer: -3/2',False,'-3/2','valid'),
+    ('First 0.5; finally 1/2.',False,'1/2','valid'),
+    ('Answer .5',False,'1/2','valid'),
+    ('50%',False,'50','valid'),
+    ('x=3',False,'3','valid'),
+    ('First 10; answer 1/0',False,None,'invalid'),
+    ('First 10; answer 1e3',False,None,'invalid'),
+    ('First 10; answer 1,00',False,None,'invalid'),
+    ('First 10; answer 1.2.3',False,None,'invalid'),
+    ('First 10; answer 1 / 2',False,None,'invalid'),
+    ('abc12',False,None,'invalid'),
+    ('twelve apples',False,None,'invalid'),
+    ('#### 3',True,'3','invalid'),
+])
+def test_last_number_diagnostic_uses_whole_numeric_expression(tmp_path,text,capped,value,status):
+    selection=source_selection(tmp_path)
+    path=tmp_path/'grpo.jsonl';rows=[json.loads(line) for line in path.read_text().splitlines()]
+    rows[0].update(text=text,capped=capped,stop_reason='cap' if capped else 'eos')
+    path.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    root=tmp_path/'artifacts';assert prepare(selection,root)==0;assert command('score',root)==0
+    scored=[json.loads(line) for line in (root/'runs/pilot-4/behaviour-breakdown/followup/results/responses.jsonl').read_text().splitlines()]
+    answer=next(r for r in scored if r['method']=='grpo' and r['step']==0 and r['item_id']=='gsm8k:test:1')['scores']['last_number']
+    assert (answer['value'],answer['status'])==(value,status)
