@@ -15,6 +15,15 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    findings=commands.add_parser('behaviour-findings',help='CPU combined behavioural findings and evidence handoff')
+    findings.add_argument('--config',type=Path,required=True)
+    findings.add_argument('--transitions',type=Path,required=True)
+    findings.add_argument('--sampling',type=Path,required=True)
+    findings.add_argument('--audit-config',type=Path)
+    findings.add_argument('--assisted-report',type=Path)
+    findings.add_argument('--name',required=True)
+    findings.add_argument('--output-root',type=Path,default=Path('artifacts'))
+    findings.add_argument('--max-new-units',type=int)
     audit=commands.add_parser('behaviour-audit-prepare',help='Select and export blinded intended-answer review')
     audit.add_argument('--transitions',type=Path,required=True)
     audit.add_argument('--name',required=True)
@@ -330,7 +339,13 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command=='behaviour-audit-prepare':
+        if args.command=='behaviour-findings':
+            from pilot_eval.behaviour_findings import build_findings
+            result=build_findings(args.config,args.transitions,args.sampling,args.output_root,args.name,
+                                  audit_path=args.audit_config,assisted_report=args.assisted_report,
+                                  max_new_units=args.max_new_units)
+            print(json.dumps(result,indent=2))
+        elif args.command=='behaviour-audit-prepare':
             from pilot_eval.behaviour_audit import prepare_audit
             print(prepare_audit(args.transitions,args.output_root,args.name))
         elif args.command.startswith('behaviour-audit-'):
