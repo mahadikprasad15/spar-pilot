@@ -2,6 +2,9 @@
 import json
 from pathlib import Path
 import pytest
+import os
+import subprocess
+import sys
 
 from pilot_eval.cli import main
 from test_behaviour_transitions import prepared_scores, save
@@ -108,3 +111,32 @@ def test_sampled_partial_resume_and_altered_parent_are_checked(tmp_path):
     assert (directory/'units/sampled-0.json').stat().st_mtime_ns==before
     raw.write_text(raw.read_text()+' ')
     assert sampling(root,parent,'resume')==1
+
+
+def test_new_notebook_stages_restore_in_fresh_cpu_processes(tmp_path):
+    root,parent,_,_=prepared_sampled(tmp_path)
+    repo=Path(__file__).resolve().parents[1]
+    notebook=repo/'notebooks/pilot-4-behaviour-breakdown.ipynb'
+    blocker=tmp_path/'no-models';blocker.mkdir()
+    (blocker/'sitecustomize.py').write_text("import sys\nfor n in ['torch','transformers','peft','datasets','accelerate','huggingface_hub']:\n sys.modules[n]=None\n")
+    env={**os.environ,'PYTHONPATH':str(blocker)+os.pathsep+str(repo),
+         'SPAR_BEHAVIOUR_ROOT':str(root),'SPAR_BEHAVIOUR_NAME':'sample-parent',
+         'SPAR_SAMPLED_SOURCE_INDEX':'2','SPAR_REPO_DIR':str(repo)}
+    script="""
+import json,sys
+from pathlib import Path
+book=json.loads(Path(sys.argv[1]).read_text());keep=set(sys.argv[2].split(','));namespace={}
+found=set()
+for cell in book['cells']:
+ tags=set(cell.get('metadata',{}).get('tags',[]))
+ if cell['cell_type']=='code' and keep.intersection(tags):
+  exec(compile(''.join(cell['source']),'<notebook>','exec'),namespace);found.update(tags)
+assert keep<=found,(keep,found)
+"""
+    for stage in ['transitions','sampling','transitions','sampling']:
+        result=subprocess.run([sys.executable,'-c',script,str(notebook),'setup,settings,'+stage],
+                              cwd=repo,env=env,capture_output=True,text=True)
+        assert result.returncode==0,result.stderr
+    for suffix in ['-transitions-v1','-sampling-v1']:
+        status=json.loads((root/'reports'/('sample-parent'+suffix)/'meta/status.json').read_text())
+        assert status['state']=='completed'

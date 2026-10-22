@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import pytest
+import numpy as np
 
 from pilot_eval.cli import main
 
@@ -60,6 +61,9 @@ def test_paired_report_reconciles_flows_and_keeps_paired_uncertainty(tmp_path):
     assert direct['n']==6
     assert result['bootstrap']['draws']==10000
     assert result['bootstrap']['seed']==42
+    indices=np.load(directory/flow['resampling_path'],allow_pickle=False)
+    assert indices.shape==(10000,6)
+    assert indices[0].tolist()==[0,4,3,2,2,5]
     assert result['source_comparison']['step0_identity']['shared_reference_eligible'] is False
     rows=[json.loads(l) for l in (directory/'results/paired-items.jsonl').read_text().splitlines()]
     assert len(rows)==12

@@ -88,5 +88,55 @@ matching exported content and declared input/decoding settings. Separate origina
 and common-ID denominators prevent overlap from silently replacing the headline.
 Missing historical decisions and incompatible settings remain explicit.
 
-Tickets 02–05 add transitions, sampled reliability, the blinded human audit and
-the combined findings. Those analyses are not implied by Ticket 01 completion.
+## Paired transitions and sampled reliability
+
+Notebook section 6 runs Ticket 02. Section 7 runs Ticket 03 independently of
+section 6. After a restart, run setup and settings, then the desired section.
+These stages need NumPy and the `report` extra (Matplotlib), and no model packages.
+
+```sh
+python -m pilot_eval behaviour-transitions \
+  --config artifacts/plans/pilot4-behaviour-breakdown-v1/behaviour.analysis.json \
+  --name pilot4-behaviour-transitions-v1 --output-root artifacts
+python -m pilot_eval behaviour-sampling \
+  --config artifacts/plans/pilot4-behaviour-breakdown-v1/behaviour.analysis.json \
+  --sampled-source-index 2 --name pilot4-behaviour-sampling-v1 --output-root artifacts
+```
+
+The sampled source index is explicit: inspect `sources` in the scoring plan.
+Index 2 applies to the example above, not every selection. It must identify a
+frozen native GRPO export containing sampled endpoints. The command reads that
+verified source snapshot; it does not fetch files or generate missing draws.
+
+Reports live under `artifacts/reports/<name>/`, with configuration, parent hashes,
+sealed `units/`, per-question/per-response evidence, `results/report.md`, SVG
+figures, `meta/status.json` and a completion receipt. The `bootstrap/` directory
+retains the actual NumPy index arrays and sorted item identities. The configured
+10,000 resamples use a local seed-42 generator and 2.5/97.5 percentile bounds,
+matching the existing interval convention. Within an item, paired endpoints and
+all eight observed draws remain together.
+
+Both commands support `--max-new-units 1` for a bounded stop. Repeat the same
+command to verify completed outputs or reuse sealed units after interruption.
+Changed parent sources, implementations, or output hashes are rejected. Use a
+new report name for an intentional protocol change.
+
+Transition reports contain all C/W/U cell IDs for strict, flexible-v3 and the
+last-number diagnostic, gross gains/losses, churn, net W/U flows and the direct
+paired GRPO64-minus-SFT64 difference. Each original cohort and the common-ID
+restriction remain explicit. Changes in input/decoding contracts within a method
+block a matched transition report. Gold calculator-annotation counts and
+nonempty-line counts describe SFT transitions and response lengths; neither is
+a validated difficulty or causal measure.
+
+Sampling reports require exactly eight distinct draws for every held-out question
+at both endpoints, matching prompts/gold and decoding contracts. They retain
+correct-draw counts, a 9×9 count-transition table, mean draw reward, observed
+coverage and its gains/losses. No additional untuned run is selected or pooled by
+these commands. Training-cohort draws cannot substitute for held-out evaluation.
+
+The intervals condition on these trained checkpoints and saved responses. They
+do not capture training-seed variability or uncertainty from fresh decoding.
+Observed 0/8-to-positive changes are coverage gains, not proof of new ability.
+Automatic transitions are not validated reasoning gains. Human audit and the
+combined findings remain Tickets 04–05.

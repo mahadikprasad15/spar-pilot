@@ -33,7 +33,8 @@
   real-artifact acceptance evidence.
 - Five-ticket granularity and dependencies approved; tickets published locally.
   Ticket 01 is implemented and executed against saved real outputs; see
-  `execution-ticket01.md`. Tickets 02 and 03 are now unblocked.
+  `execution-ticket01.md`. Tickets 02 and 03 are also implemented and executed; see
+  `execution-tickets02-03.md`. Ticket 04 (blinded audit) is the next frontier.
 - No categorical decision thresholds or new inference are approved. The user
   authorized Ticket 01 implementation separately after the design interview.
 
