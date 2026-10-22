@@ -34,7 +34,9 @@
 - Five-ticket granularity and dependencies approved; tickets published locally.
   Ticket 01 is implemented and executed against saved real outputs; see
   `execution-ticket01.md`. Tickets 02 and 03 are also implemented and executed; see
-  `execution-tickets02-03.md`. Ticket 04 (blinded audit) is the next frontier.
+  `execution-tickets02-03.md`. Ticket 04 software is implemented and its real packet is prepared;
+  see `execution-ticket04.md`. Human intended-answer labels remain pending.
+  Ticket 05 may build an honest partial report without claiming completed review.
 - No categorical decision thresholds or new inference are approved. The user
   authorized Ticket 01 implementation separately after the design interview.
 
