@@ -217,11 +217,25 @@ def _audit(audit_path, assisted, transitions_path, pairs, root):
     return state,inputs,correction
 
 
-def _summary(scoring, transitions, sampled, lengths, audit, corrections, links):
+def _recorded(records):
+    groups=defaultdict(list)
+    for row in records:groups[f"{row['method']}:{row['step']}"].append(row)
+    result={}
+    for key,rows in groups.items():
+        prior=[r['stored_vs_v3'] for r in rows if r.get('stored_vs_v3')]
+        known=[r for r in prior if isinstance(r['stored'],dict) and type(r['stored'].get('correct')) is bool]
+        result[key]=dict(total=len(rows),available=len(known),missing_or_unrecognized=len(rows)-len(known),
+                         correct=sum(r['stored']['correct'] for r in known) if known else None,
+                         recorded_versions=sorted({str(r['stored'].get('scorer_version') or 'unspecified') for r in known}),
+                         changed_decision_under_v3=sum(bool(r['changed']) for r in known))
+    return result
+
+
+def _summary(scoring, transitions, sampled, lengths, audit, corrections, links, recorded):
     return dict(schema_version=1,execution_kind='cpu-saved-output-only',
         evidence_state='automatic-results-ready; '+('selected-human-audit-complete' if audit['complete_human_audit'] else 'human-audit-not-complete'),
         evidence_kind='real-data' if scoring['real_artifact_execution'] else 'fixture-data',
-        greedy=scoring['groups'],source_inventory=scoring['source_inventory'],source_comparison=scoring['comparison'],
+        greedy=scoring['groups'],recorded_flexible=recorded,source_inventory=scoring['source_inventory'],source_comparison=scoring['comparison'],
         transitions=transitions['within_method'],direct_comparison=transitions['direct_comparison'],
         original_endpoint_totals=transitions['original_endpoint_totals'],excluded_from_within_method=transitions['excluded_from_within_method'],
         sft_descriptive=transitions['sft_descriptive'],response_lengths=lengths,
@@ -288,7 +302,7 @@ def build_findings(path,transition_path,sampling_path,root,name,*,audit_path=Non
     directory=root/'reports'/name
     links=dict(scores=str(parent_dir.relative_to(root)),transitions=str(transition_path.relative_to(root)),
                sampling=str(sampling_path.relative_to(root)),audit_config=config['audit_config'],assisted_report=config['assisted_report'])
-    result=_summary(scoring,transitions,sampled,lengths,audit,corrections,links)
+    result=_summary(scoring,transitions,sampled,lengths,audit,corrections,links,_recorded(records))
     expected_outputs={
         'synthesis':['results/results.json','results/summary.csv','results/paired-items.jsonl','results/sampled-counts.jsonl'],
         'plots':['plots/greedy-outcomes.svg','plots/answer-transitions.svg','plots/sampling-reliability.svg']+

@@ -80,6 +80,14 @@ def markdown(r):
             a=r['greedy'][m+':0'];b=r['greedy'][m+':64'];flow=r['transitions'][m][s]
             lines.append(f'| {m.upper()} | {s} | {a[s]["correct"]}/{a["total"]} | {b[s]["correct"]}/{b["total"]} | '
                          f'{_pp(flow["difference"]["estimate"])}; {_interval(flow["difference"])} |')
+    lines+=['','### Earlier recorded flexible decisions','',
+            'These preserve historical policies, not one shared scorer. Missing decisions are not counted as wrong.',
+            '', '| Method / step | Recorded correct / available | Available / cohort | Recorded version | Changed decision under v3 |',
+            '|---|---|---|---|---|']
+    for key,v in r['recorded_flexible'].items():
+        lines.append(f'| {key} | {v["correct"] if v["correct"] is not None else "unavailable"}/{v["available"]} | '
+                     f'{v["available"]}/{v["total"]} | {", ".join(v["recorded_versions"]) or "unavailable"} | '
+                     f'{v["changed_decision_under_v3"]} |')
     lines+=['','Strict compliance requires the requested final-line grammar. Flexible-v3 rejects some '
             'identifiable conclusions when contextual numbers trigger ambiguity checks. The last-number '
             'diagnostic can instead select an incidental number; none is a reasoning judge.','',
@@ -186,6 +194,11 @@ def page(r,directory,root):
     for m in ['sft','grpo']:
         f=r['transitions'][m]['flexible_v3'];flowrows.append([m.upper(),f['gross_gains'],f['gross_losses'],f['churn'],f['net_change']])
     content='<section id="scores"><div class="eyebrow">01 · Scoring</div><h2>The scorer is part of the measurement</h2><p>Strict format compliance, flexible extraction and the last-number diagnostic produce different apparent outcomes. Last-number extraction is a diagnostic, not a human oracle. A response can give an identifiable answer while missing the exact final-line grammar; repeated question quantities can also trigger flexible-v3 ambiguity checks.</p>'+table(['Method','Scorer','Step 0','Step 64','Paired change','95% interval'],greedy)+image('greedy-outcomes','Original greedy accuracy by method, scorer and checkpoint')+'</section>'
+    historical=[]
+    for key,v in r['recorded_flexible'].items():
+        historical.append([key,str(v['correct'])+'/'+str(v['available']) if v['correct'] is not None else 'unavailable',
+                           str(v['available'])+'/'+str(v['total']),', '.join(v['recorded_versions']) or 'unavailable',v['changed_decision_under_v3']])
+    content+='<details><summary>Earlier stored scores and scorer changes</summary><p>Recorded flexible decisions can use different extraction policies. They are preserved as historical evidence, not substituted for harmonized scoring. Missing values are not counted as wrong.</p>'+table(['Method / step','Recorded correct / available','Available / cohort','Recorded version','Changed under v3'],historical)+'</details>'
     content+='<section id="transitions"><div class="eyebrow">02 · Paired questions</div><h2>A net change hides gains and losses</h2>'+table(['Method','Gains','Losses','Churn','Net'],flowrows)+'<p>The cells below retain the original flexible-v3 classification. Correct, wrong and unextractable are scorer-defined states. Neither a wrong→correct nor an unextractable→correct transition establishes a reasoning improvement.</p>'+image('answer-transitions','Original flexible-v3 paired correct, wrong and unextractable transitions')+'</section>'
     content+='<section id="audit"><div class="eyebrow">03 · Human evidence</div><h2>Correcting missed answers changes the starting point</h2><p class="callout">Audit status: '+esc(r['audit']['state'])+'. This report keeps completed automatic analysis distinct from a completed full human audit.</p>'
     if has:

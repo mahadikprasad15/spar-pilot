@@ -1,14 +1,15 @@
-# Pilot 4 behavioural breakdown: saved-output scoring
+# Pilot 4 behavioural follow-up
 
-Ticket 01 imports existing greedy SFT and GRPO responses at steps 0 and 64,
-preserves their recorded decisions, and applies a common set of scorers. It runs
-on CPU. It neither loads a language model nor regenerates answers.
+The workflow imports saved SFT and GRPO answers, harmonizes scoring, measures
+paired transitions and sampled reliability, supports intended-answer review, and
+assembles a source-bound findings report. Every stage runs on CPU; none loads a
+language model or regenerates answers.
 
 ## Run locally
 
 Use `notebooks/pilot-4-behaviour-breakdown.ipynb` from the repository root, or the
-commands below. The notebook contains setup, settings, import, scoring and report
-sections. Set the source selection path once; subsequent sessions can restore the
+commands below. The notebook contains one incremental workflow through combined findings
+(section 13). Set the source selection path once; subsequent sessions can restore the
 frozen analysis directly. The local notebook is not yet a published Colab release.
 Its Colab setup requires a supplied checkout at its explicit harness commit; it
 does not silently clone a moving branch or install model dependencies.
@@ -261,3 +262,82 @@ matching `--source-revision <revision>`; no latest revision is chosen implicitly
 
 Software fixture round trips and the real reviewer's outstanding labels are
 separate evidence. Preparing a real packet does not complete the human audit.
+
+
+## Combined findings (Ticket 05)
+
+Run notebook sections **1–2, then 13** to restore existing reports. Sections 3–7
+create the automatic source products only when needed. Sections 9–12 are the
+optional complete-transcription journal/freeze/reveal route; do not run them for
+an incomplete assisted-review backup.
+
+Section 13 accepts explicit completed transition and sampling directories. The
+audit config is optional. For the approved assisted route, supply both that
+config and the separately generated confirmed-correction report directory.
+Selections are saved per analysis; an existing findings plan restores its exact
+named parents after restart. No directory-wide latest-run discovery is used.
+
+```sh
+python -m pilot_eval behaviour-findings \
+  --config artifacts/plans/<analysis>/behaviour.analysis.json \
+  --transitions artifacts/reports/<transitions> \
+  --sampling artifacts/reports/<sampling> \
+  --audit-config artifacts/plans/<audit>/behaviour.audit.json \
+  --assisted-report artifacts/reports/<confirmed-corrections> \
+  --name <findings> --output-root artifacts
+```
+
+Omit the last two source options to generate an automatic-only partial report.
+A verified complete frozen/revealed selected audit can instead be supplied with
+`--audit-config` alone. Software completion, automatic results, pending review,
+assisted targeted review and a completed frozen selected audit are distinct
+states. Explanatory annotations remain separate from intended-answer labels.
+
+The command verifies source/config/output receipts and reconciles endpoint totals,
+transition cells, direct contrasts, sampled draw counts, coverage IDs and saved
+paired bootstrap intervals against the per-item records. Assisted corrections
+are recomputed from the bound proposals and explicit confirmations; original
+backups and their source chains are checked. Unconfirmed proposals do not enter
+the confirmed-case totals. It does not silently rewrite earlier scores or use
+original confidence intervals for revised totals.
+
+Outputs under `artifacts/reports/<findings>/`:
+
+- `report.html`: analyst presentation with figures, tables, case links and limits.
+- `results/report.md`, `results/results.json`, `results/summary.csv`: readable and
+  structured findings. Recorded historical flexible decisions remain distinct
+  from harmonized strict/flexible-v3/last-number decisions.
+- `results/paired-items.jsonl`, `results/sampled-counts.jsonl`: inspectable source
+  rows underlying the report.
+- `plots/`: standalone SVG and PNG exports.
+- `config.json`, `meta/run_manifest.json`, `meta/status.json`,
+  `checkpoints/`, `units/`, `complete.json`: source identities, progress and
+  completion receipts. The plan is `plans/<findings>/behaviour.findings.json`.
+
+Three CPU units—synthesis, figures and presentation—seal independently. Use
+`--max-new-units 1` to stop after a bounded unit and repeat the same command to
+resume. Completed verified outputs are reused. Changed evidence, labels,
+implementation or corrupt outputs stop reuse; choose a new report name for an
+intentional revision. CPU reporting does not require repeating inference.
+
+For transfer to another machine, retain the named scoring plan and frozen input
+bundle, transition/sampling reports (including bootstrap arrays), and any audit,
+assistance, backup and confirmation artifacts referenced by the selected
+correction report. Keep the canonical artifact subpaths under the new root.
+Adapter weights, model files and activation caches are not inputs to this CPU
+report. The analyst report intentionally contains answers and gold comparisons;
+share the separate `reviewer/review.html` packet for blinded review.
+
+### Evidence from the 2026-10-22 assisted review
+
+All 215 status classifications were recovered: 210 numeric, three ambiguous and
+two absent. Six numeric transcriptions were already present; 16 flagged numbers
+were subsequently confirmed. The other 188 proposals remain unconfirmed and do
+not affect the correction analysis. The nine corrected shared untuned responses
+were rechecked explicitly by the reviewer.
+
+Only these confirmed-case changes give GRPO 111→117/150 (+4 pp) and SFT
+111→100/150 (−7.33 pp). These are partial correction overlays, not exhaustive
+human-scored accuracy. Original sampled reward/coverage analyses remain
+unmodified and extraction-dependent. No conclusion about reasoning validity,
+newly acquired ability or training-seed reproducibility follows from these counts.

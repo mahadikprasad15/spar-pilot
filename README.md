@@ -19,6 +19,11 @@ measures them internally. Pilot 4 adds GRPO checkpoints and matched measurement
 products. Pilot 5 reuses the adapters for a separate raw-text experiment; it
 does not require completion of Pilot 4's supplemental KL measurements.
 
+Pilot 4 also has a [CPU behavioural follow-up](docs/pilot4-behaviour-breakdown.md)
+for saved-answer transitions, sampling reliability and intended-answer review.
+Its [local notebook](notebooks/pilot-4-behaviour-breakdown.ipynb) ends with the
+combined findings report; it does not repeat model inference.
+
 See [execution and result status](docs/experiments/status.md),
 [measurement conventions](docs/methods.md), and [domain terminology](CONTEXT.md).
 The status record distinguishes software validation, saved scientific evidence

@@ -28,6 +28,8 @@ def test_partial_findings_reconciles_saved_evidence_and_reuses_completed_stage(t
     assert result['execution_kind']=='cpu-saved-output-only'
     assert result['audit']['state']=='not-supplied'
     assert result['evidence_state']=='automatic-results-ready; human-audit-not-complete'
+    assert result['recorded_flexible']['grpo:0']['available']==0
+    assert result['recorded_flexible']['grpo:0']['correct'] is None
     assert result['greedy']['grpo:0']['flexible_v3']['correct']==3
     assert result['greedy']['grpo:64']['flexible_v3']['correct']==3
     assert result['sampling']['flexible_v3']['mean_draw_reward']['before']==9/48
@@ -178,3 +180,12 @@ assert keep<=seen,(keep,seen)
     second=subprocess.run(command,env=env,cwd=repo,capture_output=True,text=True)
     assert second.returncode==0,second.stderr
     assert (directory/'complete.json').read_bytes()==receipt
+
+
+@pytest.mark.parametrize('damage',['combined-output','parent-plan'])
+def test_completed_findings_reject_changed_outputs_or_parent_identity(tmp_path,damage):
+    root,plan=inputs(tmp_path)
+    assert findings(root,plan)==0
+    target=root/'reports/findings/report.html' if damage=='combined-output' else plan
+    target.write_bytes(target.read_bytes()+b' ')
+    assert findings(root,plan)==1
