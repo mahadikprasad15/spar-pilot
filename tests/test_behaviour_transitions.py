@@ -89,6 +89,7 @@ def test_partial_report_resumes_sealed_units_and_discloses_overlap(tmp_path):
     assert result['within_method']['grpo']['strict']['n']==6
     assert result['direct_comparison']['strict']['n']==5
     assert result['source_comparison']['cohorts_identical'] is False
+    assert result['original_endpoint_totals']=={'sft:0':5,'sft:64':5,'grpo:0':6,'grpo:64':6}
 
 
 @pytest.mark.parametrize('damage',['parent','unit','plot'])

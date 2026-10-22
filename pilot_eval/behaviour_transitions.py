@@ -150,6 +150,8 @@ def _plot(result, directory):
 
 def _markdown(result):
     lines = ['# Paired greedy answer transitions', '', LIMITS, '',
+        'Original endpoint denominators: ' + ', '.join(f'{k}={v}' for k,v in result['original_endpoint_totals'].items()) + '.',
+        'Paired tables use the explicitly saved common IDs; excluded endpoint IDs are retained separately.', '',
         'Bins: C = correct, W = valid but wrong, U = scorer-invalid. Rows are checkpoint 0; columns checkpoint 64.', '',
         '| Method / scorer | N | Gross gains | Gross losses | Churn | Net | Net W flow | Net U flow | Change, 95% interval |',
         '|---|---:|---:|---:|---:|---:|---:|---:|---|']
@@ -248,6 +250,9 @@ def report_transitions(path, root, name, *, max_new_units=None):
             new_units += int(is_new)
         result = dict(within_method=within, direct_comparison=direct,
             source_comparison=comparison, bootstrap=config['bootstrap'], limitations=LIMITS,
+            original_endpoint_totals={f'{m}:{s}':len(g) for (m,s),g in groups.items()},
+            excluded_from_within_method={m:{str(s):sorted(set(groups[m,s])-(set(groups[m,0])&set(groups[m,64])))
+                for s in [0,64]} for m in ['sft','grpo']},
             sft_descriptive=_descriptive(paired), parent_identity=config,
             execution_kind='cpu-saved-output-only')
         _save_frozen(directory / 'results/results.json', result)

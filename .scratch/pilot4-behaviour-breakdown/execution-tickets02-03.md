@@ -1,15 +1,17 @@
 # Tickets 02–03: real execution evidence
 
-Executed 2026-10-22, CPU only, against the verified Ticket 01 bundle:
+Executed 2026-10-22, CPU only. Final v2 reports add explicit original endpoint
+denominators to the completed v1 transition report; the v1 bundles remain preserved.
+The final reports run against the verified Ticket 01 bundle:
 `artifacts/plans/pilot4-behaviour-breakdown-2026-10-22-v1/behaviour.analysis.json`.
 No training, model loading, new generation, GPU allocation or source edits.
 
 ## Ticket 02: paired greedy transitions
 
 Command: `behaviour-transitions`, report name
-`pilot4-behaviour-transitions-2026-10-22-v1`.
+`pilot4-behaviour-transitions-2026-10-22-v2`.
 
-Outputs: `artifacts/reports/pilot4-behaviour-transitions-2026-10-22-v1/`.
+Outputs: `artifacts/reports/pilot4-behaviour-transitions-2026-10-22-v2/`.
 Status completed, nine report units. `complete.json` binds 24 output files,
 including per-question rows, all six scorer/method flow tables, three direct
 comparisons, an SVG figure, and actual bootstrap indices with item identities.
@@ -45,9 +47,9 @@ difficulty measures.
 ## Ticket 03: observed sampled reliability
 
 Command: `behaviour-sampling`, explicit frozen source index 2, report name
-`pilot4-behaviour-sampling-2026-10-22-v1`.
+`pilot4-behaviour-sampling-2026-10-22-v2`.
 
-Outputs: `artifacts/reports/pilot4-behaviour-sampling-2026-10-22-v1/`.
+Outputs: `artifacts/reports/pilot4-behaviour-sampling-2026-10-22-v2/`.
 Status completed, four report units. `complete.json` binds 15 output files.
 The source is the native saved GRPO evaluation: 150 held-out questions × eight
 distinct draws × two endpoints = 2,400 responses. Both endpoints use temperature
