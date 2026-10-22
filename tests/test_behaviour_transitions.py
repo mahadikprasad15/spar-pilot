@@ -97,3 +97,14 @@ def test_reports_reject_changed_parent_or_derived_evidence(tmp_path,damage):
           'plot':directory/'plots/accuracy-differences.svg'}[damage]
     path.write_bytes(path.read_bytes()+b' ')
     assert transitions(root,config)==1
+
+
+def test_within_method_comparison_blocks_changed_decoding_contract(tmp_path):
+    root,_=prepared_scores(tmp_path)
+    cfg=tmp_path/'sft-64-config.json'
+    value=json.loads(cfg.read_text());value['decoding']['max_new_tokens']=512;save(cfg,value)
+    assert main(['behaviour-prepare','--selection',str(tmp_path/'selection.json'),
+                 '--name','changed-decoder','--output-root',str(root)])==0
+    parent=root/'plans/changed-decoder/behaviour.analysis.json'
+    assert main(['behaviour-score','--config',str(parent),'--output-root',str(root)])==0
+    assert transitions(root,parent)==1

@@ -183,6 +183,13 @@ def report_transitions(path, root, name, *, max_new_units=None):
     root = Path(root).resolve()
     path = Path(path).resolve()
     source_result = verify_behaviour(path, root)
+    comparison = source_result['comparison']
+    if not comparison['declared_settings_complete']:
+        raise ValueError('paired transitions require complete declared input/decoding settings')
+    for method in ['sft','grpo']:
+        settings = comparison['declared_settings']
+        if settings[method+':0'] != settings[method+':64']:
+            raise ValueError('within-method endpoint input/decoding contracts differ: '+method)
     parent = json.loads(path.read_text())
     records = _jsonl(_inside(root, parent['run_path']) / 'results/responses.jsonl')
     directory = root / 'reports' / _name(name)
@@ -221,7 +228,6 @@ def report_transitions(path, root, name, *, max_new_units=None):
                     before=before[item], after=after[item]))
             _write_state(directory, 'running', len(within)*3, 9)
         direct = {}
-        comparison = source_result['comparison']
         common = comparison['common_ids']
         for scorer in SCORERS:
             if not comparison['paired_comparison_eligible']:

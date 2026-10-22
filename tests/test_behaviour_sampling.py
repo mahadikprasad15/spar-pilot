@@ -1,6 +1,7 @@
 """Observed eight-draw coverage and reward at the public saved-workflow seam."""
 import json
 from pathlib import Path
+import pytest
 
 from pilot_eval.cli import main
 from test_behaviour_transitions import prepared_scores, save
@@ -69,3 +70,41 @@ def test_fixed_eight_distinguishes_coverage_from_mean_reward(tmp_path):
     original=(directory/'complete.json').read_bytes()
     assert sampling(root,config)==0
     assert (directory/'complete.json').read_bytes()==original
+
+
+@pytest.mark.parametrize('damage',['missing','duplicate','draw_alias','record_alias','prompt','policy','training'])
+def test_fixed_eight_rejects_incomplete_or_incompatible_sampled_inputs(tmp_path,damage):
+    root,parent,raw,cfg=prepared_sampled(tmp_path)
+    rows=[json.loads(l) for l in raw.read_text().splitlines()]
+    index=next(i for i,r in enumerate(rows) if r['mode']=='sampled')
+    if damage=='missing':rows.pop(index)
+    if damage=='duplicate':rows.append(rows[index])
+    if damage=='draw_alias':rows[index]['draw_id']='wrong'
+    if damage=='record_alias':rows[index+1]['record_id']=rows[index]['record_id']
+    if damage=='prompt':rows[index]['prompt']='another question'
+    raw.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    if damage=='policy':
+        value=json.loads(cfg.read_text());value['policies'][-1]['temperature']=0.7;save(cfg,value)
+    # Re-import changed exports under a distinct analysis identity so this checks
+    # sample contracts rather than simply tripping the old parent source hash.
+    selection=tmp_path/'sampling-selection.json'
+    if damage=='training':
+        for path in tmp_path.glob('*.json*'):
+            path.write_text(path.read_text().replace('gsm8k:test:','gsm8k:train:'))
+    assert main(['behaviour-prepare','--selection',str(selection),'--name','bad-parent','--output-root',str(root)])==0
+    parent=root/'plans/bad-parent/behaviour.analysis.json'
+    assert main(['behaviour-score','--config',str(parent),'--output-root',str(root)])==0
+    assert sampling(root,parent)==1
+    assert not (root/'reports/sampling/complete.json').exists()
+
+
+def test_sampled_partial_resume_and_altered_parent_are_checked(tmp_path):
+    root,parent,raw,_=prepared_sampled(tmp_path)
+    assert sampling(root,parent,'resume','--max-new-units','1')==0
+    directory=root/'reports/resume'
+    assert not (directory/'complete.json').exists()
+    before=(directory/'units/sampled-0.json').stat().st_mtime_ns
+    assert sampling(root,parent,'resume')==0
+    assert (directory/'units/sampled-0.json').stat().st_mtime_ns==before
+    raw.write_text(raw.read_text()+' ')
+    assert sampling(root,parent,'resume')==1

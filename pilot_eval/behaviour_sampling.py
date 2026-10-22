@@ -107,9 +107,10 @@ def _plot(result, directory):
     import matplotlib.pyplot as plt
     with plt.rc_context({'svg.hashsalt':'pilot4-observed-eight-v1','font.size':10}):
         fig, axes = plt.subplots(1,2,figsize=(10,4.5),layout='constrained')
+        common_max=max(1,max(max(row) for scorer in SCORERS for row in result['metrics'][scorer]['count_transition']))
         for ax, scorer in zip(axes, SCORERS):
             table=result['metrics'][scorer]['count_transition']
-            image=ax.imshow(table,cmap='Blues',vmin=0,vmax=max(1,max(map(max,table))))
+            image=ax.imshow(table,cmap='Blues',vmin=0,vmax=common_max)
             for a in range(9):
                 for b in range(9):
                     if table[a][b]:
@@ -185,9 +186,17 @@ def report_sampling(path, root, name, source_index, *, max_new_units=None):
                 return dict(state='incomplete')
             scored.extend(_unit(directory,unit_name,lambda step=step:[_scored(r) for r in rows if r['step']==step]))
             new_units+=int(is_new)
-            _write_state(directory,'running',step==64 and 2 or 1,4)
+            _write_state(directory,'running',2 if step==64 else 1,4)
             print(f'Sampled scoring: step {step}; {len(scored)}/{len(rows)} responses',flush=True)
-        metrics={s:_unit(directory,'metric-'+s,lambda s=s:_metric(scored,ids,s,directory)) for s in SCORERS}
+        metrics={}
+        for scorer in SCORERS:
+            unit_name='metric-'+scorer
+            is_new=not (directory/'units'/(unit_name+'.complete.json')).exists()
+            if is_new and max_new_units is not None and new_units>=max_new_units:
+                _write_state(directory,'incomplete',2+len(metrics),4)
+                return dict(state='incomplete')
+            metrics[scorer]=_unit(directory,unit_name,lambda scorer=scorer:_metric(scored,ids,scorer,directory))
+            new_units+=int(is_new)
         result=dict(n=len(ids),response_count=len(rows),draws_per_question=8,metrics=metrics,
             parent_identity=config,bootstrap=config['bootstrap'],limitations=LIMITS,
             evidence_kind=parent['source_evidence_kind'],execution_kind='cpu-saved-output-only')
