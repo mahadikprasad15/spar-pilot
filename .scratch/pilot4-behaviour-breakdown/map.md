@@ -5,6 +5,7 @@
 - Supplied 2026-10-22: `source-proposal.docx`; readable `source-proposal.md`;
   provenance `source-record.json`.
 - Review and first interview frontier: `design.md`.
+- Specification: `spec.md`; proposed breakdown: `ticket-proposal.md`.
 - Parent experiment: `.scratch/pilot4-grpo/spec.md`.
 - Scorer history: `docs/adr/0005-gsm8k-flexible-v3.md`.
 
@@ -26,13 +27,14 @@
   plus 20 seeded remaining unchanged pairs per method; report packet size (Q6).
 - Identify intended answers while gold/scorers and method/checkpoint are hidden;
   freeze labels before the second-stage reveal (Q7).
+- Public saved-workflow test boundary approved; CPU-only fixtures and separate
+  real-artifact acceptance evidence.
 - No decision-rule thresholds, new inference or implementation have been
   approved in this interview.
 
 ## Fog
 
-- Confirm the public-workflow test boundary for specification synthesis.
-- Reviewable implementation details and precise annotation rubric.
+- User review of ticket granularity and dependency edges before publication.
 - Whether forced read-off is needed, to be decided after CPU findings.
 - Transition denominators, finite-draw interpretation and coherent decision rules.
 - Exact saved-response availability and SFT/GRPO source compatibility.

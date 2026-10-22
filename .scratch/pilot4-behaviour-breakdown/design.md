@@ -198,3 +198,15 @@ interview decisions are now recorded; specification synthesis follows. The
 public workflow test boundary must be checked with the user before publishing
 the specification. Ticket granularity and blocking edges require a separate
 review before individual tickets are published. New inference remains deferred.
+
+## Specification handoff
+
+The user approved the public saved-workflow boundary for tests: source
+verification/import, rescoring, transitions/coverage, audit export, label
+save/freeze, reveal and reporting. CPU fixtures cover fresh-runtime recovery
+and changed-source/label rejection; real Drive acceptance remains separate.
+
+`spec.md` synthesizes the agreed scope and contracts. `ticket-proposal.md`
+contains five proposed vertical slices and their blocking edges, pending user
+approval before individual issue publication. This handoff does not launch
+implementation or new analyses.

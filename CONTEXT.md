@@ -83,3 +83,23 @@ _Avoid_: Anonymous results, when the mapping is preserved for later unblinding
 **Position-wise mean trace**:
 The average adapted-minus-base activation vector across examples at one declared layer and content-relative position.
 _Avoid_: Per-example token difference, when describing a cohort average
+
+**Answer transition**:
+A paired change between correct, valid-but-wrong and scorer-invalid outcomes
+for the same question under one declared scorer at two checkpoints.
+_Avoid_: Reasoning improvement, when only answer outcomes were checked
+
+**Intended final answer**:
+The answer a reviewer identifies as the response's conclusion, independently of
+whether it matches gold or a scorer's extracted value; it may be absent or ambiguous.
+_Avoid_: Correct answer, before comparison with gold
+
+**Observed eight-draw coverage**:
+The fraction of questions with at least one scorer-correct answer among eight
+retained sampled responses per question under a declared decoding procedure.
+_Avoid_: Newly acquired ability, inferred from a zero-to-positive sampled count
+
+**Frozen answer audit**:
+A saved set of intended-answer labels bound to specified responses before gold
+answers and scorer decisions are revealed to the reviewer.
+_Avoid_: Independent reviewer agreement, when only one person labelled the responses
