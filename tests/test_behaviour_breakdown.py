@@ -163,3 +163,38 @@ def test_frozen_source_bundle_can_resume_if_original_exports_are_unavailable(tmp
     for p in tmp_path.glob('*.json*'):p.unlink()
     assert command('score',root)==0
     assert command('verify',root)==0
+
+
+def test_baseline_identity_requires_matching_content_and_declared_settings(tmp_path):
+    selection=source_selection(tmp_path);cfg=tmp_path/'source-config.json'
+    value=json.loads(cfg.read_text())
+    for policy in value['policies']:policy['num_beams']=1
+    write_json(cfg,value)
+    root=tmp_path/'artifacts';assert prepare(selection,root)==0;assert command('score',root)==0
+    result=json.loads((root/'runs/pilot-4/behaviour-breakdown/followup/results/results.json').read_text())
+    assert result['comparison']['step0_identity']['shared_reference_eligible'] is True
+    assert result['comparison']['paired_comparison_eligible'] is True
+    # Equal average length must not merge different baseline response texts.
+    gp=tmp_path/'grpo.jsonl';rows=[json.loads(l) for l in gp.read_text().splitlines()]
+    rows[0]['text']='#### 4';gp.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    assert prepare(selection,root,'different')==0;assert command('score',root,'different')==0
+    changed=json.loads((root/'runs/pilot-4/behaviour-breakdown/different/results/results.json').read_text())
+    assert changed['comparison']['step0_identity']['shared_reference_eligible'] is False
+    assert changed['comparison']['step0_identity']['response_content_equal'] is False
+
+
+def test_incompatible_cross_method_prompts_are_reported_without_losing_source_totals(tmp_path):
+    selection=source_selection(tmp_path);spec=json.loads(selection.read_text())
+    cfg=json.loads((tmp_path/'source-config.json').read_text())
+    cfg['items'][0]['prompt']='a different rendering'
+    other=write_json(tmp_path/'different-config.json',cfg)
+    spec['sources'][0]['config']=str(other);write_json(selection,spec)
+    gp=tmp_path/'grpo.jsonl';rows=[json.loads(l) for l in gp.read_text().splitlines()]
+    for row in rows:
+        if row['item_id']=='gsm8k:test:1':row['prompt']='a different rendering'
+    gp.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    root=tmp_path/'artifacts';assert prepare(selection,root)==0;assert command('score',root)==0
+    result=json.loads((root/'runs/pilot-4/behaviour-breakdown/followup/results/results.json').read_text())
+    assert result['groups']['grpo:0']['total']==2
+    assert result['comparison']['paired_comparison_eligible'] is False
+    assert result['comparison']['prompt_gold_conflicts']==['gsm8k:test:1']

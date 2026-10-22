@@ -158,7 +158,7 @@ def prepare_behaviour(selection_path,output_root,name):
             content=path.read_bytes();snapshot[relative]=content
             files.append(dict(role=role,original=str(path),snapshot=relative,sha256=hashlib.sha256(content).hexdigest()))
         source_meta.append(dict(method=entry['method'],format=entry['format'],files=files,
-            metadata={k:cfg.get(k) for k in ['model','model_revision','tokenizer_revision','prompt_template','decoding','policies','runtime']},
+            metadata={k:cfg.get(k) for k in ['model','model_revision','tokenizer_revision','prompt_template','chat_template_sha256','decoding','policies','runtime','dtype','attention_implementation']},
             provenance='verified exported bytes; original checkpoint/training integrity not independently established'))
     keys=[(r['method'],r['step'],r['item_id']) for r in records]
     if len(keys)!=len(set(keys)):raise ValueError('duplicate endpoint response identity')
@@ -167,9 +167,10 @@ def prepare_behaviour(selection_path,output_root,name):
     by_id={}
     for row in records:
         value=(row['prompt'],row['gold'])
-        if row['item_id'] in by_id and by_id[row['item_id']]!=value:
+        key=(row['method'],row['item_id'])
+        if key in by_id and by_id[key]!=value:
             raise ValueError('question/prompt/gold mismatch for shared item')
-        by_id[row['item_id']]=value
+        by_id[key]=value
     config=dict(schema_version=1,protocol='pilot4-behaviour-breakdown-v1',name=name,
         run_path=str(directory.relative_to(root)),selection_sha256=file_hash(selection_path),
         sources=source_meta,implementation=_implementation(),
@@ -230,6 +231,54 @@ def _scored(row):
         flexible_v3=score_gsm8k_flexible_v3(text,gold,capped),last_number=last)}
 
 
+def _declared_settings(row,config):
+    meta=config['sources'][row['source_index']]['metadata']
+    contract=meta.get('prompt_template');contract_fields=contract if isinstance(contract,dict) else {}
+    decoder=meta.get('decoding') or contract_fields.get('decoding') or {}
+    policies=[p for p in meta.get('policies') or [] if p.get('mode')=='greedy' and p.get('step')==row['step']]
+    if len(policies)==1:decoder=policies[0]
+    value={k:meta.get(k) for k in ['model','model_revision','tokenizer_revision']}
+    value.update(prompt_template=contract_fields.get('prompt_template',contract),
+        do_sample=decoder.get('do_sample'),max_new_tokens=decoder.get('max_new_tokens',decoder.get('completion_limit')),
+        num_beams=decoder.get('num_beams'),chat_template_sha256=meta.get('chat_template_sha256') or contract_fields.get('chat_template_sha256'))
+    complete=(all(value[k] is not None for k in ['model','model_revision','tokenizer_revision','prompt_template'])
+        and value['do_sample'] is False and type(value['max_new_tokens']) is int and value['max_new_tokens']>0
+        and type(value['num_beams']) is int and value['num_beams']>0)
+    return value,complete
+
+
+def _comparison(records,config):
+    groups={(m,s):{r['item_id']:r for r in records if r['method']==m and r['step']==s}
+        for m in ['sft','grpo'] for s in [0,64]}
+    ids={m:set(groups[m,0])&set(groups[m,64]) for m in ['sft','grpo']}
+    common=sorted(ids['sft']&ids['grpo'])
+    conflicts=[i for i in common if len({(groups[m,s][i]['prompt'],groups[m,s][i]['gold'])
+        for m in ['sft','grpo'] for s in [0,64]})!=1]
+    settings={key:_declared_settings(next(iter(rows.values())),config) for key,rows in groups.items()}
+    setting_values={k:v[0] for k,v in settings.items()}
+    complete=all(v[1] for v in settings.values())
+    equal=setting_values['sft',64]==setting_values['grpo',64]
+    same_ids=all(set(rows)==set(groups['sft',0]) for rows in groups.values())
+    contents_equal=(set(groups['sft',0])==set(groups['grpo',0]) and all(
+        all(groups['sft',0][i][key]==groups['grpo',0][i][key]
+            for key in ['prompt','gold','generated_text','token_count','stop_reason'])
+        and all(groups['sft',0][i]['source_record'].get(key)==groups['grpo',0][i]['source_record'].get(key)
+            for key in ['token_ids','generated_token_ids']
+            if key in groups['sft',0][i]['source_record'] and key in groups['grpo',0][i]['source_record'])
+        for i in groups['sft',0]))
+    baseline_settings=(settings['sft',0][1] and settings['grpo',0][1]
+        and setting_values['sft',0]==setting_values['grpo',0])
+    return dict(common_ids=common,original_ids={m:sorted(set(groups[m,0])|set(groups[m,64])) for m in ids},
+        cohorts_identical=same_ids,prompt_gold_conflicts=conflicts,
+        declared_settings={f'{m}:{s}':value for (m,s),value in setting_values.items()},
+        declared_settings_complete=complete,endpoint_settings_equal=equal,
+        paired_comparison_eligible=bool(common) and not conflicts and complete and equal,
+        within_method_cohorts_equal={m:set(groups[m,0])==set(groups[m,64]) for m in ids},
+        step0_identity=dict(response_content_equal=contents_equal,declared_settings_equal=baseline_settings,
+            shared_reference_eligible=contents_equal and baseline_settings,
+            evidence_boundary='Equality of exported content and declared settings; no independent weight/runtime verification.'))
+
+
 def _summary(records,config):
     groups={}
     for method in ['sft','grpo']:
@@ -243,9 +292,10 @@ def _summary(records,config):
                     accuracy=correct/len(rows),extractable_fraction=valid/len(rows),
                     accuracy_among_extractable=correct/valid if valid else None)
             groups[f'{method}:{step}']=entry
-    ids={m:{r['item_id'] for r in records if r['method']==m} for m in ['sft','grpo']}
-    return dict(groups=groups,comparison=dict(common_ids=sorted(ids['sft']&ids['grpo']),
-        original_ids={m:sorted(v) for m,v in ids.items()}),execution_kind='cpu-saved-output-only',
+    inventory=[dict(source_index=i,method=source['method'],format=source['format'],
+        selected_records=sum(r['source_index']==i for r in records),metadata=source['metadata'],
+        provenance=source['provenance']) for i,source in enumerate(config['sources'])]
+    return dict(groups=groups,comparison=_comparison(records,config),source_inventory=inventory,execution_kind='cpu-saved-output-only',
         real_artifact_execution=config['source_evidence_kind']=='real-data',
         evidence_boundary='Verified exported bytes and harmonized scores; no independent training verification or human audit.')
 
