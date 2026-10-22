@@ -1,6 +1,8 @@
 # Pilot 4 follow-up: behavioural gain breakdown
 
-Status: ready-for-agent
+Status: approved; five implementation tickets resolved. Real combined findings
+are executed with the approved partial assisted-review evidence boundary.
+See `map.md` and `execution-ticket05.md` for current execution status.
 
 ## Problem Statement
 

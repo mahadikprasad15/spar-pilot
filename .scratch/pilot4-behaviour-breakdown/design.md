@@ -1,6 +1,6 @@
 # Pilot 4 follow-up: behavioural gain breakdown
 
-Status: design interview; not an approved execution specification
+Status: historical design interview; current approved contract is `spec.md`
 
 ## Objective
 
@@ -13,7 +13,8 @@ validity of the reasoning is an open scope decision.
 The supplied proposal is preserved unchanged in `source-proposal.docx`, with a
 readable extraction in `source-proposal.md` and its SHA256 in
 `source-record.json`. The comments below review the proposal; they are not
-silent amendments to it. No follow-up analysis or inference has started.
+silent amendments to it. At this design-review stage, no follow-up analysis or
+inference had started. Current implementation/execution status is in `map.md`.
 
 ## Verified starting evidence
 

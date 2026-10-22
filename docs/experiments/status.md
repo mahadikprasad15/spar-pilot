@@ -32,3 +32,32 @@ and supplied execution logs; it is not a fresh scan of Google Drive.
 When new results arrive, update this ledger with the run/config path, verifier
 outcome and evidence date. Preserve failed execution records and older reports.
 Do not convert “implemented” or a zero process exit alone into scientific success.
+
+
+## Pilot 4 behavioural follow-up — 22 October 2026
+
+This update concerns the saved-output follow-up only; the table above retains
+its 16 October review scope for the other components.
+
+The CPU source/scoring, paired-transition, sampled-reliability and audit software
+are implemented and executed against named local outputs. The combined analyst
+report is at
+`artifacts/reports/pilot4-behaviour-findings-2026-10-22-v2/report.html`.
+It verifies parent receipts and reconciles per-item counts and saved paired
+bootstrap draws. No new training, generation or activation capture was performed.
+
+The user classified 215 selected responses. Twenty-two numeric transcriptions
+are human-confirmed, including all 16 assisted-review flags; 188 automatic
+proposals are excluded from the correction overlay. This is completed targeted
+assisted review, not an exhaustive human-scored accuracy audit or the original
+complete-label freeze/reveal route. The nine corrected shared untuned responses
+were explicitly rechecked.
+
+Confirmed-case overlays change GRPO's counts from 102→114 to 111→117 of 150
+(+4 pp instead of +8 pp), and SFT's from 102→99 to 111→100 (−7.33 pp).
+Original sampled analyses remain automatically scored and unchanged. These
+results do not establish reasoning quality or completion of Pilot 4's separate
+KL/coefficient supplement.
+
+See [workflow and evidence guide](../pilot4-behaviour-breakdown.md) and the
+[Ticket 05 execution record](../../.scratch/pilot4-behaviour-breakdown/execution-ticket05.md).
