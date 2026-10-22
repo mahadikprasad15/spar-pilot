@@ -128,3 +128,14 @@ Answers will be recorded here and may open dependent decisions about sampling,
 annotation rubrics, decision rules and continuation details. No ADR is created
 until an actual consequential trade-off is settled. This document is not
 `spec.md`, and no implementation tickets have been issued.
+
+## Interview decisions — 2026-10-22
+
+- **Q1 remains open.** The user requested an explanation of answer-level
+  decomposition versus reasoning-validity annotation before choosing scope.
+- **Q2 accepted:** one human reviewer; no inter-reviewer agreement claim.
+  Blinding, sampling and the annotation rubric remain to be settled.
+- **Q3 accepted:** perform the CPU-only source audit and A/B/D first; decide
+  whether to run C after reviewing those findings and its measured inference
+  budget. This is the agreed execution sequence, not authorization to start
+  implementation before the design/spec is settled.
