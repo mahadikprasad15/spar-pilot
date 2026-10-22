@@ -2,6 +2,9 @@
 import json
 from pathlib import Path
 import pytest
+import re
+import subprocess
+import shutil
 
 from pilot_eval.cli import main
 from test_behaviour_transitions import save
@@ -9,7 +12,7 @@ from test_behaviour_transitions import save
 
 def audit_parent(tmp_path):
     root=tmp_path/'artifacts'; sources=[]
-    items=[dict(id=f'gsm8k:test:{i:02d}',prompt=f'Question {chr(65+i)}',
+    items=[dict(id=f'gsm8k:test:{i:02d}',prompt=f'Question {chr(65+i)} <literal text>',
                 gold='#### 1234' if i==2 else '#### 3') for i in range(28)]
     for method in ['sft','grpo']:
         for step in [0,64]:
@@ -191,3 +194,55 @@ def test_explanation_annotations_are_source_bound_and_separate_from_answers(tmp_
     assert action('explain',root,'--annotations',str(save(path,annotations)),'--revision','invalid')==1
     annotations['annotations'][0]['category']='other';annotations['reveal_sha256']='0'*64
     assert action('explain',root,'--annotations',str(save(path,annotations)),'--revision','wrong-source')==1
+
+
+@pytest.mark.skipif(shutil.which('node') is None,reason='Node is needed for the offline reviewer interaction check')
+def test_reviewer_page_exports_and_imports_a_bound_draft_without_hidden_data(tmp_path):
+    root,parent=audit_parent(tmp_path);assert prepare(root,parent)==0
+    config=json.loads((root/'plans/audit/behaviour.audit.json').read_text());directory=root/config['run_path']
+    page=(directory/'reviewer/review.html').read_text()
+    payload=re.search(r'<script id="review-data" type="application/json">(.*?)</script>',page,re.S)
+    assert payload is not None
+    data=json.loads(payload.group(1))
+    assert all(set(row)=={'response_id','question','response'} for row in data['rows'])
+    assert data['rows']==json.loads((directory/'reviewer/packet.json').read_text())
+    script=re.search(r'<script>(.*?)</script>',page,re.S).group(1)
+    harness=r'''
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+class Element {
+ constructor(){this.value='';this.textContent='';this.files=[];this.handlers={};this.children=[];this.disabled=false;this.style={};}
+ addEventListener(k,f){this.handlers[k]=f;}
+ appendChild(x){this.children.push(x);return x;}
+ replaceChildren(){this.children=[];}
+ click(){return this.handlers.click?.({target:this});}
+ remove(){}
+}
+const fields={},storage=new Map();let downloaded;
+const get=k=>fields[k]||(fields[k]=new Element());get('review-data').textContent=JSON.stringify(source.data);
+const sandbox={document:{getElementById:get,createElement:()=>new Element(),body:new Element()},
+ localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},
+ Blob:class{constructor(parts){this.content=parts.join('');}},
+ URL:{createObjectURL:b=>(downloaded=b.content,'blob:test'),revokeObjectURL:()=>{}},
+ console,setTimeout:()=>{},confirm:()=>true};
+vm.runInNewContext(source.script,sandbox);
+async function run(){
+ get('reviewer').value='fixture-reviewer';get('reviewer').handlers.input();
+ get('status').value='numeric';get('status').handlers.change();
+ assert(get('progress').textContent.startsWith('0/'));
+ get('answer').value='3';get('answer').handlers.input();
+ get('download').click();
+ let draft=JSON.parse(downloaded);assert.equal(draft.packet_sha256,source.data.packet_sha256);
+ assert.equal(draft.reviewer,'fixture-reviewer');assert.equal(draft.base_revision,0);
+ assert.equal(draft.labels.filter(x=>x.status==='numeric').length,1);
+ const imported={...draft,base_revision:5,revision:5};
+ get('import').files=[{text:async()=>JSON.stringify(imported)}];await get('import').handlers.change();
+ get('download').click();draft=JSON.parse(downloaded);assert.equal(draft.base_revision,5);
+ assert(!downloaded.includes('gold'));assert(!downloaded.includes('flexible_v3'));
+}
+run().catch(e=>{console.error(e);process.exitCode=1;});
+'''
+    source=save(tmp_path/'ui-source.json',dict(data=data,script=script))
+    js=tmp_path/'ui-check.cjs';js.write_text(harness)
+    completed=subprocess.run(['node',str(js),str(source)],capture_output=True,text=True)
+    assert completed.returncode==0,completed.stderr

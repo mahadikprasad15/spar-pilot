@@ -1,6 +1,5 @@
 """Source-bound single-reviewer audit; answer identification precedes reveal."""
 import hashlib
-import html
 import json
 import random
 import secrets
@@ -16,6 +15,7 @@ from pilot_eval.run import _write_state
 from pilot_eval.scoring import _NUMBER, _numeric_value
 from pilot_eval.training import file_hash, run_lock
 from pilot_eval.workflow import _save_frozen
+from pilot_eval.behaviour_audit_ui import review_page, explanation_page
 
 
 LIMITS = ('Targeted single-reviewer audit; no whole-cohort human-corrected accuracy, '
@@ -109,13 +109,9 @@ def _packet(rows,selection,parent):
     return packet,mapping
 
 
-def _review_page(packet):
-    cards='\n'.join('<article><h2>'+html.escape(row['response_id'])+'</h2><h3>Question</h3><pre>'+
-        html.escape(row['question'])+'</pre><h3>Response</h3><pre>'+html.escape(row['response'])+'</pre></article>' for row in packet)
-    return ('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
-        '<title>Answer review</title><style>body{font:16px/1.6 system-ui;max-width:900px;margin:40px auto;padding:20px;color:#263b40;background:#f8f8f3}article{padding:24px;background:white;border:1px solid #dbe2dc;margin:24px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}h2{font:13px monospace}</style>'
-        '<h1>Intended-answer review</h1><p>Identify the response’s intended final answer. Mark absent or ambiguous when appropriate. '
-        'This is an answer-identification task, not a judgement of reasoning validity.</p>'+cards+'</html>').encode()
+def _implementation():
+    from pilot_eval import behaviour_audit_ui
+    return {p.name:file_hash(p) for p in [Path(__file__),Path(behaviour_audit_ui.__file__)]}
 
 
 def _seal(directory,marker,files):
@@ -132,6 +128,11 @@ def _check_seal(directory,marker,required):
 
 
 PACKET_FILES=['config.json','reviewer/packet.json','reviewer/review.html','private/selection.json','private/mapping.json']
+REVEAL_FILES=['reveal/results.json','reveal/report.md','reveal/review.html']
+
+
+def _revision_files(revision):
+    return [f'revisions/{revision}/'+n for n in ['labels.json','results.json','report.md','review.html']]
 
 
 def _load(path,root):
@@ -139,7 +140,7 @@ def _load(path,root):
     if not path.is_relative_to(root):
         raise ValueError('audit config escapes artifact root')
     config=json.loads(path.read_text());directory=_inside(root,config['run_path'])
-    if config['implementation_sha256']!=file_hash(Path(__file__)):
+    if config['implementation']!=_implementation():
         raise ValueError('audit implementation changed; create a new audit identity')
     if config!=json.loads((directory/'config.json').read_text()):
         raise ValueError('audit plan differs from saved config')
@@ -167,12 +168,12 @@ def prepare_audit(transitions,root,name):
         config=dict(schema_version=1,protocol='pilot4-blinded-answer-audit-v1',name=name,
             run_path=str(directory.relative_to(root)),transitions_path=str(transitions.relative_to(root)),
             transitions_seal_sha256=file_hash(transitions/'complete.json'),
-            implementation_sha256=file_hash(Path(__file__)),packet_sha256=hashlib.sha256(content).hexdigest(),
+            implementation=_implementation(),packet_sha256=hashlib.sha256(content).hexdigest(),
             source_evidence_kind=parent['source_evidence_kind'],
             limitations=LIMITS)
         _save_frozen(directory/'config.json',config)
         _save_bytes(directory/'reviewer/packet.json',content)
-        _save_bytes(directory/'reviewer/review.html',_review_page(packet))
+        _save_bytes(directory/'reviewer/review.html',review_page(packet,config['packet_sha256']))
         _save_frozen(directory/'private/selection.json',selection)
         _save_frozen(directory/'private/mapping.json',mapping)
         _seal(directory,'packet.complete.json',PACKET_FILES)
@@ -299,7 +300,7 @@ def audit_status(path,root):
             _frozen(config,directory)
             state='labels-frozen'
         if (directory/'reveal/complete.json').exists():
-            _check_seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
+            _check_seal(directory,'reveal/complete.json',REVEAL_FILES)
             state='completed'
         return dict(state=state,revision=draft['revision'],unique_responses=len(ids),label_counts=counts,
             pair_counts={m:dict(mandatory=len(s['mandatory_ids']),controls=len(s['control_ids']),selected=len(s['selected_ids']))
@@ -393,7 +394,8 @@ def reveal_audit(path,root):
         result=_reveal_result(config,directory,frozen)
         _save_frozen(directory/'reveal/results.json',result)
         _save_bytes(directory/'reveal/report.md',_revealed_markdown(result))
-        _seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
+        _save_bytes(directory/'reveal/review.html',explanation_page(result,file_hash(directory/'reveal/results.json'),CATEGORIES))
+        _seal(directory,'reveal/complete.json',REVEAL_FILES)
         _write_state(directory,'completed',len(ids),len(ids))
         return dict(state='completed',labelled_unique_responses=len(ids),explanation_review='pending')
 
@@ -404,7 +406,7 @@ def revise_labels(path,root,labels_path,revision,reason):
         raise ValueError('post-reveal correction requires a reason')
     with run_lock(directory):
         frozen=_frozen(config,directory)
-        _check_seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
+        _check_seal(directory,'reveal/complete.json',REVEAL_FILES)
         patch=json.loads(Path(labels_path).read_text())
         if (not isinstance(patch,dict) or set(patch)-{'packet_sha256','reviewer','base_revision','revision','labels'}
             or patch.get('packet_sha256')!=config['packet_sha256'] or patch.get('reviewer')!=frozen['reviewer']
@@ -427,8 +429,9 @@ def revise_labels(path,root,labels_path,revision,reason):
         _save_frozen(folder/'labels.json',corrected)
         _save_frozen(folder/'results.json',result)
         _save_bytes(folder/'report.md',_revealed_markdown(result))
+        _save_bytes(folder/'review.html',explanation_page(result,file_hash(folder/'results.json'),CATEGORIES))
         _seal(directory,f'revisions/{revision}/complete.json',
-              [f'revisions/{revision}/'+n for n in ['labels.json','results.json','report.md']])
+              _revision_files(revision))
         return dict(state='completed',revision=revision,post_reveal_revision=True,
                     original_frozen_labels_changed=False)
 
@@ -439,11 +442,11 @@ CATEGORIES = ('intermediate_number','missed_format','conflicting_or_ambiguous',
 
 def _revealed_source(directory,source_revision=None):
     if source_revision is None:
-        _check_seal(directory,'reveal/complete.json',['reveal/results.json','reveal/report.md'])
+        _check_seal(directory,'reveal/complete.json',REVEAL_FILES)
         path=directory/'reveal/results.json'
     else:
         source_revision=_name(source_revision)
-        files=[f'revisions/{source_revision}/'+n for n in ['labels.json','results.json','report.md']]
+        files=_revision_files(source_revision)
         _check_seal(directory,f'revisions/{source_revision}/complete.json',files)
         path=directory/'revisions'/source_revision/'results.json'
     return json.loads(path.read_text()),file_hash(path)
