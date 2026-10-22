@@ -7,7 +7,8 @@ from pathlib import Path
 from pilot_eval.recovery import _inside, _name
 from pilot_eval.rescoring import _save_bytes
 from pilot_eval.run import _write_state
-from pilot_eval.scoring import _NUMBER, _numeric_value, score_gsm8k, score_gsm8k_flexible_v3
+from pilot_eval.scoring import (_NUMBER, _numeric_value, score_gsm8k,
+    score_gsm8k_flexible_v2, score_gsm8k_flexible_v3)
 from pilot_eval.training import file_hash, run_lock
 from pilot_eval.workflow import _save_frozen
 
@@ -42,18 +43,56 @@ def _normalize(record,method,step,source_index,source_row):
         or record.get('stop_reason') not in ['eos','cap','other']):
         raise ValueError('invalid saved response fields')
     capped=record['stop_reason']=='cap'
+    aliases=[record[k] for k in ['id','item_id','group_id'] if k in record]
+    if any(value!=item for value in aliases):raise ValueError('conflicting question ID fields')
     if 'capped' in record and record['capped'] is not capped:
         raise ValueError('conflicting cap metadata')
+    if 'token_ids' in record and (not isinstance(record['token_ids'],list)
+        or any(type(t) is not int or t<0 for t in record['token_ids'])
+        or len(record['token_ids'])!=record['token_count']):
+        raise ValueError('saved token-count metadata mismatch')
+    legacy=score_gsm8k(text,record['gold'],capped)
+    v3=score_gsm8k_flexible_v3(text,record['gold'],capped)
+    expected={'strict':legacy['strict'],'flexible':legacy['flexible'],
+        'flexible_v2':score_gsm8k_flexible_v2(text,record['gold'],capped),'flexible_v3':v3}
+    checks=[]
+    stored=record.get('score',{})
+    if not isinstance(stored,dict):raise ValueError('invalid stored score object')
+    for key,value in stored.items():
+        if key not in expected:
+            checks.append(dict(location='score.'+key,state='unrecognized'));continue
+        if not isinstance(value,dict) or any(value.get(k)!=v for k,v in expected[key].items()):
+            raise ValueError(f'stored score mismatch: {item}/score.{key}')
+        checks.append(dict(location='score.'+key,state='matches'))
+    for key,target in [('strict',legacy['strict']),('flexible',v3),('flexible_v3',v3)]:
+        if key not in record:continue
+        value=record[key]
+        if not isinstance(value,dict) or any(value.get(k)!=v for k,v in target.items()):
+            raise ValueError(f'stored score mismatch: {item}/{key}')
+        checks.append(dict(location=key,state='matches'))
+    if 'reward' in record and record['reward']!=int(v3['correct']):raise ValueError('saved reward mismatch')
     return dict(method=method,step=step,item_id=item,prompt=record['prompt'],gold=record['gold'],
         generated_text=text,token_count=record['token_count'],stop_reason=record['stop_reason'],
-        capped=capped,source_index=source_index,source_row=source_row,source_record=record)
+        capped=capped,source_index=source_index,source_row=source_row,source_record=record,
+        historical_score_checks=checks)
 
 
 def _source_rows(entry,config,path,index):
-    rows=_jsonl(path);normalized=[];baselines={}
+    rows=_jsonl(path);normalized=[];baselines={};baseline_refs={}
+    if config.get('decoding',{}).get('do_sample') is True:
+        raise ValueError('saved greedy source has sampled decoding config')
+    if any(p.get('mode')=='greedy' and p.get('step') in [0,64] and p.get('do_sample') is True
+           for p in config.get('policies',[])):
+        raise ValueError('saved greedy source has sampled policy')
     for line,row in enumerate(rows):
-        if entry['format']=='grpo-behaviour':
+        if entry['format'] in ['grpo-behaviour','grpo-paired']:
             if row.get('mode')!='greedy' or row.get('step') not in [0,64]:continue
+            if entry['format']=='grpo-paired':
+                draws=row.get('draws')
+                if not isinstance(draws,list) or len(draws)!=1:raise ValueError('greedy pair requires one draw')
+                outer=row;row=draws[0]
+                if row.get('item_id',row.get('group_id'))!=outer.get('item_id') or row.get('step')!=outer['step'] or row.get('mode')!='greedy':
+                    raise ValueError('paired draw identity mismatch')
             if row.get('draw_index',0)!=0:raise ValueError('greedy draw must be zero')
             normalized.append(_normalize(row,entry['method'],row['step'],index,line))
         elif entry['format']=='paired-trajectory':
@@ -65,13 +104,26 @@ def _source_rows(entry,config,path,index):
             if item in baselines and baselines[item]!=baseline:
                 raise ValueError('repeated baseline changed')
             baselines[item]=baseline
-            if step in [0,64]:
-                adapted=_normalize(row['adapted'],entry['method'],step,index,line)
-                if adapted['item_id']!=item:raise ValueError('paired item identity mismatch')
-                if step==0 and row['adapted']!=baseline:raise ValueError('zero pair differs from baseline')
+            baseline_refs.setdefault(item,[]).append(line)
+            adapted=_normalize(row['adapted'],entry['method'],step,index,line)
+            if adapted['item_id']!=item:raise ValueError('paired item identity mismatch')
+            if (adapted['prompt'],adapted['gold'])!=(baseline['prompt'],baseline['gold']):
+                raise ValueError('paired prompt/gold mismatch')
+            if step==0 and row['adapted']!=baseline:raise ValueError('zero pair differs from baseline')
+            if step==64:
                 normalized.append(adapted)
+        elif entry['format']=='evaluation':
+            if entry.get('step') not in [0,64]:raise ValueError('native evaluation requires an explicit endpoint')
+            if config.get('decoding',{}).get('do_sample') is True:raise ValueError('evaluation source must be greedy')
+            normalized.append(_normalize(row,entry['method'],entry['step'],index,line))
         else:raise ValueError('unsupported source format')
-    expected=entry.get('expected_ids') or [r['id'] for r in config.get('items',[])] or config.get('cohort_manifest',{}).get('item_ids')
+    for item,baseline in baselines.items():
+        normalized.append({**_normalize(baseline,entry['method'],0,index,baseline_refs[item][0]),
+            'source_references':baseline_refs[item]})
+    configured=[r['id'] for r in config.get('items',[])] or config.get('cohort_manifest',{}).get('item_ids')
+    expected=entry.get('expected_ids') or configured
+    if configured and entry.get('expected_ids') and set(configured)!=set(entry['expected_ids']):
+        raise ValueError('selected IDs differ from source config cohort')
     if not expected or len(set(expected))!=len(expected):
         raise ValueError('independent expected question IDs required from config or selection')
     steps={r['step'] for r in normalized}
@@ -79,6 +131,11 @@ def _source_rows(entry,config,path,index):
         ids=[r['item_id'] for r in normalized if r['step']==step]
         if len(ids)!=len(set(ids)) or set(ids)!=set(expected):
             raise ValueError('duplicate or incomplete endpoint cohort')
+    configured_items={r['id']:r for r in config.get('items',[])}
+    for row in normalized:
+        item=configured_items.get(row['item_id'])
+        if item and any(key in item and item[key]!=row[key] for key in ['prompt','gold']):
+            raise ValueError('saved response differs from configured prompt/gold')
     return normalized
 
 

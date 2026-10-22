@@ -88,3 +88,53 @@ def test_last_number_diagnostic_uses_whole_numeric_expression(tmp_path,text,capp
     scored=[json.loads(line) for line in (root/'runs/pilot-4/behaviour-breakdown/followup/results/responses.jsonl').read_text().splitlines()]
     answer=next(r for r in scored if r['method']=='grpo' and r['step']==0 and r['item_id']=='gsm8k:test:1')['scores']['last_number']
     assert (answer['value'],answer['status'])==(value,status)
+
+
+def test_saved_native_and_paired_exports_import_without_baseline_overcount(tmp_path):
+    selection=source_selection(tmp_path);spec=json.loads(selection.read_text())
+    # Final handoff exports a JSON array; its final-step pair already contains
+    # the baseline, so a separate step-zero pair must not be necessary.
+    sp=tmp_path/'sft.jsonl';pairs=[json.loads(l) for l in sp.read_text().splitlines()]
+    sp.write_text(json.dumps([{**r,'item_id':r['id']} for r in pairs if r['step']==64]))
+    # The GRPO paired report contains a draws array rather than a native row.
+    gp=tmp_path/'grpo.jsonl';draws=[json.loads(l) for l in gp.read_text().splitlines()]
+    gp.write_text(''.join(json.dumps(dict(item_id=r['item_id'],mode=r['mode'],step=r['step'],draws=[r]))+'\n' for r in draws))
+    spec['sources'][0]['format']='grpo-paired';write_json(selection,spec)
+    root=tmp_path/'artifacts';assert prepare(selection,root)==0;assert command('score',root)==0
+    result=json.loads((root/'runs/pilot-4/behaviour-breakdown/followup/results/results.json').read_text())
+    assert {r['total'] for r in result['groups'].values()}=={2}
+
+
+def test_native_sft_evaluation_sources_accept_explicit_checkpoint_selection(tmp_path):
+    selection=source_selection(tmp_path);spec=json.loads(selection.read_text())
+    pairs=[json.loads(l) for l in (tmp_path/'sft.jsonl').read_text().splitlines()]
+    spec['sources']=spec['sources'][:1]
+    for step in [0,64]:
+        path=tmp_path/f'sft-native-{step}.jsonl'
+        path.write_text(''.join(json.dumps(r['adapted'])+'\n' for r in pairs if r['step']==step))
+        spec['sources'].append(dict(method='sft',format='evaluation',step=step,responses=str(path),config=str(tmp_path/'source-config.json')))
+    write_json(selection,spec);root=tmp_path/'artifacts'
+    assert prepare(selection,root)==0;assert command('score',root)==0
+
+
+@pytest.mark.parametrize('damage',['duplicate','missing','baseline','item_alias','stored_score','configured_prompt','sampled_policy'])
+def test_source_validation_rejects_inconsistent_saved_evidence(tmp_path,damage):
+    selection=source_selection(tmp_path);gp=tmp_path/'grpo.jsonl'
+    rows=[json.loads(l) for l in gp.read_text().splitlines()]
+    if damage=='duplicate':rows.append(rows[0])
+    if damage=='missing':rows.pop()
+    if damage=='item_alias':rows[0]['group_id']='a different question'
+    if damage=='stored_score':rows[0]['strict']=dict(extracted='3',status='valid',correct=False)
+    gp.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    if damage=='baseline':
+        p=tmp_path/'sft.jsonl';pairs=[json.loads(l) for l in p.read_text().splitlines()]
+        pairs[-2]['baseline']['generated_text']='changed baseline'
+        p.write_text(''.join(json.dumps(r)+'\n' for r in pairs))
+    if damage in ['configured_prompt','sampled_policy']:
+        p=tmp_path/'source-config.json';cfg=json.loads(p.read_text())
+        if damage=='configured_prompt':cfg['items'][0]['prompt']='not the saved question'
+        else:cfg['policies'][0]['do_sample']=True
+        write_json(p,cfg)
+    root=tmp_path/'artifacts'
+    assert prepare(selection,root)==1
+    assert not (root/'runs/pilot-4/behaviour-breakdown/followup/results/results.json').exists()
