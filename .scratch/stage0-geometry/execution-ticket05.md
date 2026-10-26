@@ -13,6 +13,11 @@ Date: 2026-10-26. Software implemented and CPU tested; real-GPU collection pendi
   all ten verified PEFT variants attached. Fresh SFT/GRPO references share the
   runtime, exact prompt IDs and ordered generation schedule with every edit.
   No optimizer, training replay or model download occurs.
+- Each actual loaded adapter is checked against all 392 saved FP32 factor
+  tensors before generation and at the final full check. Exact values/mapping
+  and adapter version guards prevent a partial/wrong load from becoming
+  labelled intervention evidence. A separate failing-then-passing CPU test
+  covers missing keys and changed factors without importing PEFT/Torch.
 - `stage0_evaluation_records`: independent CPU token/EOS/cap validation,
   strict/flexible-v3 scoring and descriptive summaries. Raw generated IDs
   include EOS; content lengths exclude it. An EOS in the last permitted slot
@@ -66,13 +71,32 @@ passed separately (**1 passed in 0.10 seconds**). Limiting native CPU test threa
 does not change the frozen GPU protocol or acceptance gates. Python compilation,
 clean notebook code-cell AST checks and `git diff --check` pass.
 
+The final loaded-factor and concurrent-status hardening suite passed **13 tests
+in 12.48 seconds**. It additionally proves that completion appearing during a
+CPU status query yields complete counts instead of an inconsistent partial
+snapshot. Those two changes were implemented after their targeted tests failed.
+
+Final full-repository regression:
+
+`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m pytest -q`
+
+Result: **533 passed, 35 skipped, four warnings in 1689.47 seconds**. Skips and
+warnings include the existing unavailable local Torch shared library; the run
+does not establish model-backed CUDA correctness. The earlier run retained a
+pre-change notebook assertion that forbade GPU setup; the updated check keeps
+CPU setup lightweight and requires explicit optional setup in the GPU notebook.
+The final full run passed, and the final 13-test runner suite covers the added
+loaded-factor and concurrent-status cases.
+
 ## Durable validation and remaining execution
 
 `artifacts/validation/stage0-ticket05/verification.json` records structured
-software evidence. The same directory retains `paired-fixture-v1/`, an
-explicitly synthetic complete 1,500-response result, copied and independently
-verified under its canonical retained path. These adapters and outputs are CPU
-fixtures, not trained-model results or real GPU qualification.
+software evidence. The same directory retains an explicitly synthetic complete
+1,500-response result at `paired-fixture-v3/`, copied
+and independently verified through the CPU CLI under its canonical retained path.
+Earlier fixture snapshots are preserved with their source pin or patch. These
+adapters and outputs are CPU fixtures, not trained-model results or real GPU
+qualification.
 
 Before real execution, publish the tested notebook release, complete the actual
 source/cache/edit workflows and the real Ticket 04 diagnostic, approve its

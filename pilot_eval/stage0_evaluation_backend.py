@@ -14,6 +14,22 @@ class EvaluationDependencies(QualificationDependencies):
         return EvaluationEngine(config,root)
 
 
+def verify_loaded_adapter(model,variant,directory):
+    """Check every actual PEFT factor against its saved FP32 tensor payload."""
+    import numpy as np
+    from peft import get_peft_model_state_dict
+    from safetensors.numpy import load_file
+    expected=load_file(str(directory/'adapter_model.safetensors'))
+    actual=get_peft_model_state_dict(model,adapter_name=variant)
+    if set(actual)!=set(expected):
+        raise ValueError(f'Actual adapter mapping differs from saved payload: {variant}')
+    for name,value in actual.items():
+        array=value.detach().cpu().numpy()
+        if array.dtype!=np.float32 or not np.array_equal(array,expected[name]):
+            raise ValueError(f'Actual loaded adapter factor differs from saved payload: {variant}; {name}')
+    return dict(variant=variant,tensor_count=len(expected),exact_payload_match=True)
+
+
 class EvaluationEngine:
     def __init__(self,config,root):
         os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
@@ -45,22 +61,31 @@ class EvaluationEngine:
         self.model.eval();self.model.config.use_cache=True
         if any(p.dtype!=torch.float32 for p in self.model.parameters()):
             raise ValueError('All base and adapter weights must be FP32.')
+        self.loaded_adapter_checks=[verify_loaded_adapter(self.model,v,inside(self.root,config['variants'][v]['adapter_path']))
+                                    for v in order]
         self.initial_base=frozen_weight_hash(self.model)
         if self.initial_base!=config['model_identity']['base_sha256']:
             raise ValueError('Loaded model base hash differs from the audited source.')
-        self.guard=self._versions();self.inputs={}
+        self.guard=self._versions();self.adapter_guard=self._versions(adapters=True);self.inputs={}
         print(f'Stage 0 greedy: one FP32 model loaded; {len(order)} verified adapters attached.',flush=True)
 
-    def _versions(self):
+    def _versions(self,*,adapters=False):
         return {name:(id(p),p.data_ptr(),tuple(p.shape),p.dtype,str(p.device),p._version)
-                for name,p in self.model.named_parameters() if 'lora_' not in name}
+                for name,p in self.model.named_parameters() if ('lora_' in name)==adapters}
 
     def check_integrity(self,*,full=False):
         same=self._versions()==self.guard
+        adapters=self._versions(adapters=True)==self.adapter_guard
         if full:
             from pilot_eval.sft_backend import frozen_weight_hash
             same=same and frozen_weight_hash(self.model)==self.initial_base
-        return dict(base_unchanged=same,kind='full-base-sha256' if full else 'parameter-identity-version-guard')
+            try:
+                for v in self.config['variant_order']:
+                    verify_loaded_adapter(self.model,v,inside(self.root,self.config['variants'][v]['adapter_path']))
+            except ValueError:
+                adapters=False
+        return dict(base_unchanged=same,adapters_unchanged=adapters,
+                    kind='full-base-sha256-and-adapter-payloads' if full else 'parameter-identity-version-guard')
 
     def prepare_inputs(self,rows):
         result=[]

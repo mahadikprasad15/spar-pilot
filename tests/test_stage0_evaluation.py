@@ -306,3 +306,46 @@ def test_generation_prompt_ids_must_match_the_qualified_inputs(tmp_path):
     write_json(tmp_path/'qualified.json',dict(sequences=qualified))
     with pytest.raises(ValueError,match='prompt IDs'):
         _inputs(TinyEvaluation(),config,tmp_path)
+
+
+def test_loaded_adapter_factors_must_equal_the_saved_payload(monkeypatch,tmp_path):
+    import sys
+    from types import SimpleNamespace
+    import numpy as np
+    from pilot_eval.stage0_evaluation_backend import verify_loaded_adapter
+    expected={'linear.lora_A.weight':np.array([[1.,2.]],dtype=np.float32),
+              'linear.lora_B.weight':np.array([[3.],[4.]],dtype=np.float32)}
+    class Tensor:
+        def __init__(self,value):self.value=value
+        def detach(self):return self
+        def cpu(self):return self
+        def numpy(self):return self.value
+    actual={k:Tensor(v.copy()) for k,v in expected.items()};selected=[]
+    def state(model,adapter_name):selected.append(adapter_name);return actual
+    monkeypatch.setitem(sys.modules,'peft',SimpleNamespace(get_peft_model_state_dict=state))
+    monkeypatch.setitem(sys.modules,'safetensors.numpy',SimpleNamespace(load_file=lambda path:expected))
+    result=verify_loaded_adapter(object(),'V4',tmp_path)
+    assert selected==['V4'] and result==dict(variant='V4',tensor_count=2,exact_payload_match=True)
+    actual['linear.lora_B.weight'].value[0,0]=0
+    with pytest.raises(ValueError,match='loaded adapter'):
+        verify_loaded_adapter(object(),'V4',tmp_path)
+    del actual['linear.lora_B.weight']
+    with pytest.raises(ValueError,match='mapping'):
+        verify_loaded_adapter(object(),'V4',tmp_path)
+
+
+def test_status_reconciles_counts_if_collection_finishes_during_inspection(monkeypatch,tmp_path):
+    import pilot_eval.stage0_evaluation as workflow
+    config=dict(units=[{}]*10,execution_kind='synthetic-cpu-fixture')
+    write_json(tmp_path/'complete.json',{})
+    write_json(tmp_path/'meta/status.json',dict(state='running'))
+    monkeypatch.setattr(workflow,'_load',lambda *args:(config,{},tmp_path))
+    # The reader saw no sealed units, then the collector published completion.
+    monkeypatch.setattr(workflow,'_saved',lambda *args:[None]*10)
+    monkeypatch.setattr(workflow,'_verify',lambda *args:dict(response_count=1500))
+    monkeypatch.setattr(workflow,'budget_status',lambda *args:{})
+    monkeypatch.setattr(workflow,'reservations',lambda *args:{})
+    result=workflow.status(tmp_path/'plan.json',tmp_path)
+    assert result['measurement_complete']
+    assert result['completed_batches']==result['total_batches']==10
+    assert result['completed_responses']==result['total_responses']==1500

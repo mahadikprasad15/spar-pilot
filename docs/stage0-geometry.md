@@ -319,7 +319,9 @@ and integrity checks are saved; an interrupted unsealed unit is repeated.
 Fixtures may use larger inference batches but cannot qualify CUDA batching.
 
 The runner loads one local-files-only FP32 model and attaches all ten standard
-PEFT adapters. It evaluates V0a/V0b and each edit within each ordered cohort
+PEFT adapters. Before generation it compares all 392 actual loaded factor
+tensors per adapter against the saved payload, including exact values and
+mapping. It evaluates V0a/V0b and each edit within each ordered cohort
 group. The originals are generated afresh in the same qualified runtime, not
 joined to old GPU scores. It records prompt IDs, masks/positions, rendered
 prompts, responses, content and raw generated tokens, EOS/cap status, scorer
@@ -338,9 +340,10 @@ Every attempt checks the global 20-unit ceiling before loading a model. A
 runtime/session mismatch is rejected; there is no automatic cross-session
 compatibility claim.
 
-Base weights are SHA256 checked on load and at clean attempt completion, with
-parameter identity/storage/version guards around each generation unit. Known
-full-hash failures invalidate that attempt's sealed batches. Writer ownership
+Base weights are SHA256 checked on load and at clean attempt completion; adapter
+payloads are compared again at the end. Parameter identity/storage/version guards
+cover base and adapter parameters around each generation unit. Known final
+integrity failures invalidate that attempt's sealed batches. Writer ownership
 is exclusive. After confirming that a stale writer has stopped, use the saved
 token and notes with `stage0-evaluation-recover-writer`; recovery does not erase
 responses, release reservations or clear failed integrity evidence.
@@ -351,6 +354,7 @@ Outputs are under the frozen `runs/stage0/<qualification-name>/paired-evaluation
 |---|---|
 | `config.json`, `meta/run_manifest.json` | Exact source, variant, scheduling and output identity |
 | `inputs/tokenized-prompts.json`, `meta/runtime.json` | Common inputs and qualified runtime |
+| `meta/loaded-adapters.json` | Actual loaded-factor comparison for every variant |
 | `units/<key>/responses.jsonl`, `metadata.json`, `complete.json` | Durable response group, scores and integrity evidence |
 | `attempts/<id>/start.json`, `timing.json`, `final-integrity.json` | Reservation, measured attempt time and final check |
 | `results/responses.jsonl` | All 1,500 verified raw automatic response records |

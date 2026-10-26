@@ -176,6 +176,21 @@ def _identity(config,unit,runtime_digest,input_digest):
     return dict(config_sha256=_hash(config),runtime_sha256=runtime_digest,input_sha256=input_digest,key=unit['key'])
 
 
+def _intact(config,proof):
+    return proof.get('base_unchanged') is True and (config['execution_kind']!='real-cuda' or proof.get('adapters_unchanged') is True)
+
+
+def _loaded_checks(config,directory):
+    value=json.loads((directory/'meta/loaded-adapters.json').read_text())
+    if value['execution_kind']!=config['execution_kind']:
+        raise ValueError('Loaded-adapter evidence has the wrong execution kind.')
+    if config['execution_kind']=='real-cuda':
+        checks=value['checks']
+        if (len(checks)!=len(config['variants']) or {r['variant'] for r in checks}!=set(config['variants'])
+                or any(r['exact_payload_match'] is not True or r['tensor_count']!=392 for r in checks)):
+            raise ValueError('Real collection requires exact in-memory checks for all 392 factors of every adapter.')
+
+
 def _read_unit(config,directory,unit,items,runtime_digest,input_digest,attempt_cache):
     folder=directory/'units'/unit['key'];marker=folder/'complete.json'
     if not marker.exists():return None
@@ -186,7 +201,7 @@ def _read_unit(config,directory,unit,items,runtime_digest,input_digest,attempt_c
     for name,digest in seal['files'].items():
         if file_hash(folder/name)!=digest:raise ValueError('Evaluation batch payload changed.')
     metadata=json.loads((folder/'metadata.json').read_text())
-    if metadata['integrity'].get('base_unchanged') is not True or metadata['unit_key']!=unit['key']:
+    if not _intact(config,metadata['integrity']) or metadata['unit_key']!=unit['key']:
         raise ValueError('Evaluation batch lacks successful model integrity evidence.')
     attempt=directory/'attempts'/metadata['attempt_id']
     if metadata['attempt_id'] not in attempt_cache:
@@ -196,8 +211,8 @@ def _read_unit(config,directory,unit,items,runtime_digest,input_digest,attempt_c
         if timing is not None and timing['final_integrity_sha256'] is not None:
             if not final.exists() or file_hash(final)!=timing['final_integrity_sha256']:
                 raise ValueError('Attempt final-integrity evidence changed.')
-        if final.exists() and json.loads(final.read_text()).get('base_unchanged') is not True:
-            raise ValueError('A full base-integrity failure invalidates batches from that attempt; preserve this comparison.')
+        if final.exists() and not _intact(config,json.loads(final.read_text())):
+            raise ValueError('A full model-integrity failure invalidates batches from that attempt; preserve this comparison.')
         attempt_cache[metadata['attempt_id']]=start_hash
     if attempt_cache[metadata['attempt_id']]!=metadata['attempt_start_sha256']:
         raise ValueError('Batch attempt-start identity changed.')
@@ -232,6 +247,7 @@ def _saved(config,directory,root):
         return [None]*len(config['units'])
     if json.loads(runtime_path.read_text())!=config['runtime']:
         raise ValueError('Saved evaluation runtime identity changed.')
+    _loaded_checks(config,directory)
     inputs=json.loads(input_path.read_text())['sequences']
     if [r['id'] for r in inputs]!=config['item_ids']:
         raise ValueError('Saved tokenized input order changed.')
@@ -293,7 +309,7 @@ def _finish(config,directory,root):
         '\n'.join(f'| {k} | {v["n"]} | {v["flexible_accuracy"]:.3f} | {v["strict_accuracy"]:.3f} | {v["cap_rate"]:.3f} | {v["mean_content_tokens"]:.1f} |'
                   for k,v in summary['variants'].items())+
         '\n\nRaw automatic scores; no human review overlay or non-inferiority claim. '+summary['interpretation']+'\n')
-    paths=['config.json','meta/runtime.json','inputs/tokenized-prompts.json','results/responses.jsonl',
+    paths=['config.json','meta/runtime.json','meta/loaded-adapters.json','inputs/tokenized-prompts.json','results/responses.jsonl',
            'results/results.json','results/summary.csv','results/results.md','meta/final-integrity.json']
     paths += [f'units/{u["key"]}/complete.json' for u in config['units']]
     _write_json(directory/'complete.json',dict(config_sha256=_hash(config),files={p:file_hash(directory/p) for p in paths}))
@@ -327,6 +343,10 @@ def run(path,output_root,*,dependencies=None,max_new_units=None,approval_path=No
                 if hasattr(deps,'preflight'):deps.preflight(config,root)
                 _save_frozen(directory/'meta/runtime.json',runtime)
                 engine=deps.engine(config,root)
+                _save_frozen(directory/'meta/loaded-adapters.json',dict(execution_kind=config['execution_kind'],
+                    checks=getattr(engine,'loaded_adapter_checks',[]),
+                    scope='actual in-memory FP32 payload comparison' if config['execution_kind']=='real-cuda' else 'synthetic fixture; no real model load'))
+                _loaded_checks(config,directory)
                 _save_frozen(directory/'inputs/tokenized-prompts.json',_inputs(engine,config,root))
                 saved=_saved(config,directory,root)
                 items={r['id']:r for r in _items(root,config['cohort_path'])}
@@ -335,8 +355,9 @@ def run(path,output_root,*,dependencies=None,max_new_units=None,approval_path=No
                     if saved[index] is not None:continue
                     if max_new_units is not None and new>=max_new_units:break
                     deadline();begin=time.monotonic()
-                    if engine.check_integrity().get('base_unchanged') is not True:
-                        raise ValueError('Base parameter integrity failed before generation.')
+                    before=engine.check_integrity()
+                    if not _intact(config,before):
+                        raise ValueError(f'Base/adapter parameter integrity failed before generation: {before}')
                     rows=[items[i] for i in unit['ids']]
                     outputs=[]
                     for generation in unit['generation_batches']:
@@ -346,8 +367,8 @@ def run(path,output_root,*,dependencies=None,max_new_units=None,approval_path=No
                     deadline()
                     batch=records(config,unit,rows,outputs,runtime_sha256=runtime_digest,input_sha256=input_digest)
                     integrity=engine.check_integrity()
-                    if integrity.get('base_unchanged') is not True:
-                        raise ValueError('Base parameter integrity failed after generation.')
+                    if not _intact(config,integrity):
+                        raise ValueError(f'Base/adapter parameter integrity failed after generation: {integrity}')
                     folder=directory/'units'/unit['key'];_jsonl(folder/'responses.jsonl',batch)
                     _write_json(folder/'metadata.json',dict(unit_key=unit['key'],attempt_id=attempt.name,
                         attempt_start_sha256=file_hash(attempt/'start.json'),
@@ -360,8 +381,8 @@ def run(path,output_root,*,dependencies=None,max_new_units=None,approval_path=No
                         f'{state["completed_responses"]}/1500 responses; {unit["variant"]}; batch {config["batch_size"]}.',flush=True)
                 deadline();integrity=engine.check_integrity(full=True);deadline()
                 _write_json(attempt/'final-integrity.json',integrity)
-                if integrity.get('base_unchanged') is not True:
-                    raise ValueError('Full frozen-base integrity failed; preserve this failed attempt for investigation.')
+                if not _intact(config,integrity):
+                    raise ValueError(f'Full frozen-base/adapter integrity failed; preserve this attempt: {integrity}')
                 if all(batch is not None for batch in saved):
                     _write_json(directory/'meta/final-integrity.json',dict(**integrity,attempt_id=attempt.name))
                     return _finish(config,directory,root)
@@ -389,14 +410,14 @@ def _progress(directory,config,saved,state,**extra):
 
 def _verify(config,directory,root):
     marker=json.loads((directory/'complete.json').read_text())
-    required={'config.json','meta/runtime.json','inputs/tokenized-prompts.json','results/responses.jsonl',
+    required={'config.json','meta/runtime.json','meta/loaded-adapters.json','inputs/tokenized-prompts.json','results/responses.jsonl',
               'results/results.json','results/summary.csv','results/results.md','meta/final-integrity.json'}
     required|={f'units/{u["key"]}/complete.json' for u in config['units']}
     if marker.get('config_sha256')!=_hash(config) or set(marker.get('files',{}))!=required:
         raise ValueError('Paired evaluation completion receipt is inconsistent.')
     for relative,digest in marker['files'].items():
         if file_hash(inside(directory,relative))!=digest:raise ValueError('Paired evaluation completion payload changed.')
-    if json.loads((directory/'meta/final-integrity.json').read_text()).get('base_unchanged') is not True:
+    if not _intact(config,json.loads((directory/'meta/final-integrity.json').read_text())):
         raise ValueError('Completion lacks a full final base-integrity check.')
     batches=_saved(config,directory,root)
     if any(b is None for b in batches):raise ValueError('Missing paired evaluation batches.')
@@ -418,8 +439,8 @@ def status(path,output_root):
     root=Path(output_root).resolve();config,_,directory=_load(path,root);saved=_saved(config,directory,root)
     summary=_verify(config,directory,root) if (directory/'complete.json').exists() else None
     owner=directory/'writer.json'
-    return dict(completed_batches=sum(b is not None for b in saved),total_batches=len(saved),
-        completed_responses=sum(len(b) for b in saved if b is not None),total_responses=1500,
+    return dict(completed_batches=len(saved) if summary is not None else sum(b is not None for b in saved),total_batches=len(saved),
+        completed_responses=summary['response_count'] if summary is not None else sum(len(b) for b in saved if b is not None),total_responses=1500,
         measurement_complete=summary is not None,execution_kind=config['execution_kind'],
         budget=budget_status(root),summary=summary,writer=json.loads(owner.read_text()) if owner.exists() else None,
         lifecycle=json.loads((directory/'meta/status.json').read_text()),

@@ -52,3 +52,20 @@ The local validation directory is
 full test log, runtime, documentation checks and validation script. This change
 updates documentation only; it does not revalidate live Drive artifacts or alter
 scientific execution settings.
+
+## Recorded Stage 0 collection validation
+
+26 October 2026, local Python 3.12 CPU validation:
+
+- Full repository regression: **533 passed, 35 skipped, four warnings**.
+- Final Ticket 05 runner checks: **13 passed**, covering collection/resume,
+  source/runtime rejection, loaded factors, scoring, budget, ownership and
+  concurrent completion/status behavior.
+- Skips/warnings include the existing unavailable local Torch shared library.
+  These checks do not qualify CUDA inference or establish a real Stage 0 result.
+- Structured evidence and explicitly synthetic retained response fixtures:
+  `artifacts/validation/stage0-ticket05/verification.json`.
+
+The implementation boundary and real-execution prerequisites are described in
+[the Stage 0 guide](stage0-geometry.md). Real Colab qualification and collection
+remain pending.

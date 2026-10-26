@@ -25,9 +25,10 @@ through the shared command boundary without a model download. See
 execution-ticket05.md and docs/stage0-geometry.md for evidence and operation.
 
 Real model collection remains pending; this ticket does not include Ticket 06
-KL/effective writes or Ticket 07's paired inference and human-review overlays.
+KL/effective writes or Ticket 07's paired intervals and human-review overlays.
 
 ## Comments
 
 - 2026-10-26: User approved this slice, its blocking edges and the shared public workflow test boundary. No real GPU completion is implied.
 - 2026-10-26: Implemented public prepare/run/status/verify/recover-writer commands, a lazy local-only FP32 PEFT runner, raw response reconstruction and both shared notebook flows. The affected suite passed 100 tests; an additional common-input identity check passed separately. Real qualification, production approvals and collection remain pending. See execution-ticket05.md.
+- 2026-10-26: Final full regression passed 533 tests with 35 skips; the final targeted runner suite passed all 13 cases, including actual loaded-factor verification and concurrent status/completion consistency. No real GPU model execution occurred.
