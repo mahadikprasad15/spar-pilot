@@ -249,17 +249,53 @@ zero-total cases require explicit undefined flags; no artificial denominator.
   value before and after editing. Log skipped modules with reasons, distinguishing
   undecidable from determinate modules with no flagged directions.
 - Add V6c per edited arm: in the same modules, halve the same number of
-  non-flagged directions whose singular values are nearest to the flagged ones.
-  Matching must be deterministic and save its selected indices and distances.
-  Candidate pool, assignment/tie-breaking and insufficient-control handling
-  require an explicit rule before building these variants.
+  non-flagged directions from the new top-40. Detection remains on the top-20;
+  evaluate the same overlap predicate on control candidates too, so directions
+  21-40 are not treated as non-flagged merely because detection did not scan them.
+  Exclude undecidable modules. Select distinct controls by minimizing total
+  absolute singular-value difference, breaking assignment ties by index.
+- Record sigma_control/sigma_flagged for every pair, alongside indices and
+  absolute differences. In addition to the main matched comparison, repeat with
+  only matched pairs whose ratios are in [0.8, 1.25], applying the same retained
+  pair mask to V6 and V6c. Do not rematch after filtering. Report retained pair
+  and module counts. Zero-denominator ratio handling remains an explicit edge
+  case to settle before implementation.
+- Modules short of eligible controls are excluded from both interventions in
+  the matched comparison. Keep full V6 separately, including its full eligible
+  flagged set. Full V6, matched V6/V6c and ratio-restricted sensitivity therefore
+  need distinct variant identities and saved edit manifests.
 - Before halving, validate the mixed loader using un-halved merged matrices
-  against the original adapter model: identical greedy tokens and logit agreement
-  around 1e-5 as requested. Exact absolute/relative interpretation, compared
-  positions and calibration cohort remain to be specified; do not silently
-  choose or relax this gate after running it.
+  against the original adapter model using the bounded diagnostic below.
 - Do not merge the adapter again when loading already edited matrices. Preserve
   W0, original adapter, singular-value selection, correction factors and hashes
   separately. Other rank-one variants retain their PEFT representation.
 - This is a different intervention representation, not an approximation forced
   back into rank one. No external-paper equivalence has been verified here.
+
+### Merged-loader bounded diagnostic and gate approval
+
+- Use 16 fixed held-out sequences in the same runtime for the adapter reference
+  and un-halved mixed merged loader. Save cohort IDs and token/mask identities
+  before execution. Measure max absolute full-vocabulary logit error at each
+  answer-prediction position and the overall maximum E. Save worst coordinates.
+- Also compare greedy generated token sequences on the same 16 prompts. The
+  user allows a mismatch to be labelled a near-tie only when the top-two logit
+  margin at the divergence position is strictly less than measured error.
+  Evaluate this at a shared prefix, before divergent generations change the
+  context. Store reference and loader logits, their top candidates, margins and
+  error at divergence. A near-tie exception is descriptive, not exact greedy
+  equivalence. Which error statistic and reference margin govern this exception
+  must be pinned before execution; do not use later divergent contexts.
+- Negative control: deliberately apply the original adapter twice in the
+  merged modules, leaving other modules unchanged. Its measured error must be
+  at least 1000 times the real loader's. Save both errors and use an explicit
+  zero-error status rather than silently dividing by zero. The intended negative
+  control failure must remain distinguishable from real-loader qualification.
+- Hard stop if observed E > 1e-3. Otherwise propose absolute-logit allowance
+  3E and present the evidence for user approval; do not automatically qualify
+  the loader. This is a calibration-derived allowance, not independent validation
+  on the same observations. Save the diagnostic and approved gate as separate
+  products bound to the runtime, source hashes and loader implementation.
+- A greedy mismatch not meeting the approved near-tie rule fails qualification.
+  A failed hard stop or negative-control check cannot be repaired by silently
+  increasing a tolerance.

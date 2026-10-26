@@ -30,14 +30,22 @@
 - V6 halves all primary-flagged directions for either arm with eligible flags.
   Edited modules disable their adapters; other modules keep theirs. V6c matches
   counts and nearby singular values using non-flagged directions in the same modules.
+- V6c control candidates are new top-40; detection stays top-20. Minimum total
+  absolute singular-value difference with index tie-break; log pair ratios and
+  repeat matched edits with only ratios in [0.8, 1.25]. Short-control modules
+  excluded from both matched edits; full V6 remains separately reported.
+- Merged loader: bounded 16-sequence logit/greedy diagnostic, double-adapter
+  negative control with >=1000x error, hard stop above 1e-3; propose allowance
+  3x observed maximum for user approval. Near-tie exceptions require common-prefix
+  margin evidence and do not constitute exact token agreement.
 
 ## Fog
 
 - Primary claim is settled; scope/budget details still need specification.
 - Agreement-gate definition, confidence interval targets and correctness-probability
   aggregation need clarification.
-- Gap edge cases, deterministic V6c matching and exact merged-loader acceptance
-  metric/cohort need specification.
+- Gap/zero-ratio edge cases and exact near-tie error/margin convention need
+  specification. Control matching and loader calibration policy are settled.
 - Source availability and historical settings are being checked from saved files.
 - Scope, justified acceptance gates, measured budget and notebook handoff details
   follow these decisions.
