@@ -21,6 +21,36 @@ The first four steps provide descriptive evidence. The fifth tests effects of
 specified interventions; it does not by itself identify all causes of the
 historical SFT/GRPO difference.
 
+### Approved priority
+
+E0.4 is the main result. The gradient/data/geometry explanatory chain is
+supporting evidence. Run supporting experiments when the GPU session has room;
+their completion does not block the primary intervention result. Their costs
+remain estimates until measured; do not assume they are cheap or extend a paid
+session without the agreed budget.
+
+Distinguish optional explanatory analyses from intervention prerequisites:
+
+- Required for interpretable E0.4: verified source adapters and evaluation
+  protocol, base singular bases needed to construct the selected edits, edit
+  identity/loader validation, paired unedited references, selected controls,
+  and the declared accuracy/length/KL outcomes.
+- E0.3 primary intruder classification is required only to decide eligibility
+  and direction selection for conditional V6/V6c. It does not block principal
+  projection variants V1-V5. Always compute rotation and intruder measurements
+  when executing E0.3; optional status does not reinstate the small-update skip.
+- Full rollout completion R0, E0.6a, E0.5, trajectory/sensitivity expansions and
+  the historical drift-versus-size analysis are supporting work. Their absence
+  must be stated but does not invalidate completed intervention comparisons.
+- New KL and accompanying effective-write measurements required by the approved
+  within-session policy remain part of the primary outcome collection; the
+  separate historical multi-checkpoint E0.6b explanatory analysis is optional.
+
+The previous proposal's all-jobs-before-downstream stop order must be revised
+in the execution specification so missing optional work cannot stall E0.4.
+Predictions for supporting analyses must still be frozen before their results
+are inspected; optional scheduling is not permission for retrospective prediction.
+
 ## Proposed execution structure
 
 Two readable notebooks call shared repository modules: GPU computation and CPU
@@ -68,7 +98,7 @@ behavioral follow-up, not the proposal's unverified count of 13.
 
 Frontier:
 
-1. Primary objective and minimum useful experiment versus optional extensions.
+1. Primary objective settled: E0.4 intervention, with optional supporting chain.
 2. Define E0.6a confidence-interval target and aggregation of per-problem
    neg_log_p_correct; measure interpretation has been settled below.
 3. Resolve the agreement-check definition and disjoint-cohort fallback under the

@@ -8,6 +8,10 @@
 
 ## Decisions so far
 
+- E0.4 intervention is the main result. Supporting experiments run if the GPU
+  session has room and do not block it. Necessary edit construction, validation,
+  controls and outcome measurements remain prerequisites. Conditional V6/V6c
+  requires E0.3 classification, not completion of the whole supporting chain.
 - Preserve the supplied proposal separately from review findings.
 - No new Stage 0 GPU execution has started.
 - User amended E0.6a: NLL primary, descriptive excess surprise secondary,
@@ -29,7 +33,7 @@
 
 ## Fog
 
-- Primary claim needs explanation before a decision.
+- Primary claim is settled; scope/budget details still need specification.
 - Agreement-gate definition, confidence interval targets and correctness-probability
   aggregation need clarification.
 - Gap edge cases, deterministic V6c matching and exact merged-loader acceptance
