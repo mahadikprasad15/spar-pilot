@@ -18,8 +18,9 @@
   separate whole-answer negative-log correctness probability; retained +/-0.02
   own_all acceptance threshold.
 - User amended GPU policy: available suitable GPU, FP32/TF32-off, within-session
-  pairing, new write measurements alongside new KL. Agreement gate details and
-  the disjoint-cohort reward-rate fallback need clarification.
+  pairing, new write measurements alongside new KL. Common-input compatibility
+  replaces the disjoint-cohort reward-rate gate; absent an applicable independent
+  envelope, historical and new results are reported separately.
 - Always measure subspace rotation/intruders; add update-to-gap ratio. Intruder
   overlap uses m = max(k50, 40), with k30/k70 sensitivities also floored at 40;
   norm threshold 0.5 primary, 0.3-0.7 sweep. Mark thresholds at/below sqrt(m/d_out)
@@ -39,13 +40,16 @@
   3x observed maximum for user approval. Near-tie exceptions require common-prefix
   margin evidence and do not constitute exact token agreement.
 
-## Fog
+- All six final proposals approved: Pilot 4 evaluation/targeted audit; lower
+  95% bound > -5pp for non-inferiority; per-module V1 and V2 size controls;
+  common-input historical checks; measured budgets with a TOTAL 20-unit ceiling;
+  numerical/reporting conventions. See design.md final approval section.
 
-- Primary claim is settled; scope/budget details still need specification.
-- Agreement-gate definition, confidence interval targets and correctness-probability
-  aggregation need clarification.
-- Gap/zero-ratio edge cases and exact near-tie error/margin convention need
-  specification. Control matching and loader calibration policy are settled.
-- Source availability and historical settings are being checked from saved files.
-- Scope, justified acceptance gates, measured budget and notebook handoff details
-  follow these decisions.
+## Remaining evidence and specification work
+
+- No unanswered design-preference questions currently block drafting the spec.
+- Verify source tensors, cohort membership, runtime metadata and KL completion.
+- Translate decisions into schemas, resume/ownership rules, notebook stages and
+  tests; write preregistration before relevant result inspection.
+- Numerical qualification and measured job budgets retain their explicit approval
+  stop points. Design approval is not evidence that those gates have passed.

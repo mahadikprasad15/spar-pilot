@@ -1,6 +1,7 @@
 # Stage 0: geometry of existing rank-1 adapters
 
-Status: design review; not an approved execution specification.
+Status: design decisions approved on 2026-10-26; ready for specification.
+The execution specification and implementation tickets have not yet been approved.
 
 ## Source and scope
 
@@ -70,12 +71,12 @@ after the scientific decisions. Existing workflow mechanisms should be reused.
   Excess surprisal can be descriptive, with averaging and sampling conditions
   declared. Its proposed relationship to -log P(correct) mixes token and sequence
   quantities and is not an acceptance identity.
-- E0.2, E0.3, E0.5 and V6 have explicit user corrections below. Remaining
-  choices include the old top-m subspace and intruder overlap threshold.
+- E0.2, E0.3, E0.5 and V6 have explicit user corrections below, including the
+  approved old top-m subspace and intruder overlap threshold.
 - KL is distributional drift, not established behavioral damage. Comparing
   observational trajectories at similar update sizes does not isolate direction.
-- Hardware policy was amended by the user on 2026-10-26; see below. The proposed
-  agreement procedures still need operational clarification.
+- Hardware and compatibility policy were amended by the user on 2026-10-26;
+  the final six approvals below supersede earlier disputed proposals.
 - New and old disjoint rollout cohorts need not have reward means within five
   points. Cohort diagnostics should not substitute for procedure verification.
 - Several exact-zero, random-band and finite-difference acceptance rules need
@@ -96,20 +97,11 @@ behavioral follow-up, not the proposal's unverified count of 13.
 
 ## Decision tree
 
-Frontier:
-
-1. Primary objective settled: E0.4 intervention, with optional supporting chain.
-2. Define E0.6a confidence-interval target and aggregation of per-problem
-   neg_log_p_correct; measure interpretation has been settled below.
-3. Resolve the agreement-check definition and disjoint-cohort fallback under the
-   user's amended GPU policy.
-
-Dependent decisions:
-
-- Source audit -> reuse/regenerate rollouts; historical versus controlled gradients.
-- Objective + source audit -> checkpoint matrix, intervention matrix and budget.
-- Estimands -> aggregation, hypotheses, intervals and justified numerical gates.
-- Scope + budget -> notebook stages, resumable work units and handoff contract.
+Design interview frontier is closed by the user's six final approvals below.
+Source audits, evidence-derived qualification gates and measured budgets remain
+execution prerequisites, not unanswered design-preference questions. Translate
+approved requirements into explicit notebook stages, saved-workflow interfaces,
+schemas and tests; preserve any evidence-based stop points.
 
 No implementation tickets or execution specification are approved yet.
 
@@ -299,3 +291,79 @@ zero-total cases require explicit undefined flags; no artificial denominator.
 - A greedy mismatch not meeting the approved near-tie rule fails qualification.
   A failed hard stop or negative-control check cannot be repaired by silently
   increasing a tolerance.
+
+## Final six approvals, 2026-10-26
+
+This section supersedes conflicting provisional wording above and in the original
+proposal. The user approved all six decisions explicitly.
+
+### 1. Evaluation and targeted review
+
+Use the Pilot 4 evaluation protocol: same 150 held-out items, recorded chat
+template and prompt, greedy decoding, 1024-token cap, flexible-v3 primary and
+strict alongside. Bind exact source configuration and tokenization in the audit.
+Re-evaluate unedited SFT and GRPO in the same runtime as interventions. Reuse
+human labels only for identical response text. Target new review at answer-changing
+cases and suspected extraction failures; strict-only disagreement does not itself
+require manual review. Keep raw scorer results and reviewed overlays distinct.
+
+### 2. Accuracy-preservation claim
+
+Declare accuracy preserved only if the lower 95% paired-bootstrap bound for
+edited-minus-reference accuracy strictly exceeds -0.05. Report the full interval
+and distinguish an inconclusive bound from evidence of loss. A statistically
+detectable loss smaller than five points can still meet this non-inferiority
+criterion; do not treat statistical difference and non-inferiority as opposites.
+Use the existing declared 10000 resamples and seed 42. The preregistration must
+explicitly warn that n=150 can yield an inconclusive non-inferiority result.
+
+### 3. Magnitude controls
+
+V4 scales the original SFT update to V1's effective-update norm separately in
+each module, using ||b|| ||a|| (saved scaling is one), preserving direction.
+Add the analogous per-module size control for V2. Report each of the three random
+subspace draws separately; three draws do not constitute a calibrated null.
+Every control receives its own immutable variant identity and edit provenance.
+
+### 4. Historical compatibility
+
+Remove the old128/new384 five-point reward-rate gate. Cohort reward rates are
+descriptive only. Regenerate recorded historical prompts/seeds on common inputs
+for compatibility checks. Use an existing independent numerical envelope only
+where applicable to that metric/procedure. If none applies, report historical
+and new results separately. Do not derive an envelope from the same old/new
+differences being tested. New paired intervention comparisons need not wait for
+historical numerical compatibility to be established.
+
+### 5. Measured budget and hard ceiling
+
+Measure required preparation and a bounded timing workload before presenting the
+primary intervention budget. Optional supporting jobs use only remaining approved
+budget. Stop and ask before exceeding 20 Colab compute units TOTAL for Stage 0,
+across sessions, diagnostics, primary and supporting computation; not 20 per job
+or notebook. Persist a cumulative usage ledger with observed unit readings and
+forecast costs. An unknown remaining balance is not permission to exceed the cap.
+
+Retain completed artifacts after interruption. Before joining an unfinished
+comparison across sessions, restore the recorded environment and pass applicable
+compatibility checks; otherwise use a separately named execution. Never silently
+mix incompatible sessions to finish a paired comparison.
+
+### 6. Numerical and reporting conventions
+
+- Zero spectral gap with nonzero update: infinite sensitivity ratio. Zero over
+  zero: undefined. Preserve reason/status; never replace with an arbitrary epsilon.
+- Zero energy denominator: undefined.
+- Zero flagged singular value: log the undefined control ratio and exclude that
+  pair from ratio-restricted sensitivity comparisons.
+- Near-tie decision uses the reference model's top-two margin and measured logit
+  error at the same common prefix. Preserve both the diagnostic and exact greedy
+  mismatch. No comparison of unrelated post-divergence contexts.
+- E0.6a ci_low/ci_high refer to primary NLL. Add explicitly named fields for
+  excess-surprise intervals rather than overloading the primary interval.
+- Retain per-problem neg_log_p_correct and report an equal-problem average over
+  eligible problems, separately from per-token measurements.
+
+Implementation must preserve these approved numbers. Where source facts or
+bounded measurements are still unavailable, record a pending state and the
+required evidence rather than inventing a value or claiming qualification.
