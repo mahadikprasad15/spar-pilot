@@ -69,3 +69,21 @@ scientific execution settings.
 The implementation boundary and real-execution prerequisites are described in
 [the Stage 0 guide](stage0-geometry.md). Real Colab qualification and collection
 remain pending.
+
+## Recorded Stage 0 fixed-context validation
+
+26 October 2026, Ticket 06:
+
+- Focused fixed-context suite: **16 passed in 20.80s**.
+- Affected Stage 0 regression (drift, evaluation, qualification, workflow):
+  **49 passed in 55.42s**.
+- Session-start full baseline interrupted in legacy activation measurement after
+  **253 passed, 24 skipped, four existing warnings in 795.34s**. No failure had
+  been reported at interruption. This is not a full-suite pass.
+- Independent FP64 KL and dense-write oracles, actual hook/chunk backend exercised
+  with a tiny CPU NumPy model, zero controls, corruption, changed runtime/source,
+  restart/resume, writer recovery and 20-unit budget rejection are covered.
+- Both notebook source pins and code syntax checked. No real CUDA qualification,
+  model download, training, Drive upload or scientific measurement occurred.
+- Local structured validation and a labelled synthetic fixed-context fixture:
+  `artifacts/validation/stage0-ticket06/verification.json`.

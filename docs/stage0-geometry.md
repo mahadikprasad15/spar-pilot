@@ -416,7 +416,8 @@ No allocation bypasses the shared **20-unit total ceiling**.
   No full `[batch, sequence, vocabulary]` array is produced or saved. Tiny signed
   KL roundoff is retained under the existing analytic FP64 bound, never clipped.
 - **Writes:** actual direct LoRA branch on the adapted module's input `x`,
-  compared to that module's actual base output `W x` on the same input. Write
+  compared to that module's actual base output on the same input, including
+  any existing linear-layer bias. Write
   positions are unshifted and may include position zero. Save per-document,
   view and module: `sum ||delta W x||²`, `sum ||W x||²`, and
   `sum (||delta W x|| / ||W x||)`, with token counts from the frozen masks.

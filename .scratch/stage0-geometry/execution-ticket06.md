@@ -48,5 +48,13 @@ controls plus one SFT group, inspect actual time, then finish within an approved
 remaining bound. Ticket 07 will compute paired intervals and human-review-aware
 combined findings.
 
-The notebook source pin will be recorded at release closeout. No GitHub push or
-Drive upload is implied by this record.
+Notebook implementation pin: `651d9c3aa9941314374bcf1927860dd2ae2473b6`.
+No GitHub push or Drive upload is implied by this record.
+
+- The session-start full baseline was interrupted after 253 passed, 24 skipped,
+  four existing Torch warnings in 795.34s. No test failure had been reported;
+  interruption was in the legacy activation-measurement integration work.
+  This is not a full-suite pass. Affected Stage 0 regression is recorded separately.
+
+- Final affected regression: 49 passed in 55.42s. Both notebook release pins
+  point to the tested scientific implementation; source content and AST checks pass.
