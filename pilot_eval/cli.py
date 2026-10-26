@@ -15,6 +15,20 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare', 'run', 'verify', 'report']:
+        spectral = commands.add_parser('stage0-spectral-'+operation, help='CPU spectral cache and explicit overlap reveal')
+        spectral.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            spectral.add_argument('--audit', type=Path, required=True)
+            spectral.add_argument('--weights-dir', type=Path, required=True)
+            spectral.add_argument('--name', required=True)
+        else:
+            spectral.add_argument('--config', type=Path, required=True)
+        if operation == 'run':
+            spectral.add_argument('--max-new-units', type=int)
+        if operation == 'report':
+            spectral.add_argument('--review', type=Path, required=True)
+            spectral.add_argument('--name', required=True)
     for operation in ['prepare', 'audit', 'status', 'budget-record', 'recover-writer']:
         stage0 = commands.add_parser('stage0-'+operation, help='CPU Stage 0 source readiness and cumulative budget')
         stage0.add_argument('--output-root', type=Path, required=True)
@@ -355,7 +369,19 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-'):
+        if args.command.startswith('stage0-spectral-'):
+            from pilot_eval.stage0_spectral import prepare, run, verify, report
+            if args.command == 'stage0-spectral-prepare':
+                print(prepare(args.audit, args.weights_dir, args.output_root, args.name, dependencies=dependencies))
+            else:
+                if args.command == 'stage0-spectral-run':
+                    result=run(args.config,args.output_root,dependencies=dependencies,max_new_units=args.max_new_units)
+                elif args.command == 'stage0-spectral-report':
+                    result=report(args.config,args.output_root,args.name,args.review)
+                else:
+                    result=verify(args.config,args.output_root)
+                print(json.dumps({key:value for key,value in result.items() if key!='module_results'},indent=2))
+        elif args.command.startswith('stage0-'):
             from pilot_eval.stage0_workflow import prepare, audit, status, record_budget, recover_writer, console_summary
             if args.command == 'stage0-prepare':
                 print(prepare(args.selection, args.output_root, args.name))

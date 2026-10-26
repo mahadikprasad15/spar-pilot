@@ -29,7 +29,7 @@ def tensor_file(path, arrays):
     path.write_bytes(len(encoded).to_bytes(8, 'little') + encoded + b''.join(chunks))
 
 
-def sources(root, *, changed_a=False):
+def sources(root, *, changed_a=False, width=2, output=3):
     selected = {}
     projections = ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
     for arm in ['sft', 'grpo']:
@@ -44,8 +44,10 @@ def sources(root, *, changed_a=False):
                 for projection in projections:
                     kind = 'self_attn' if projection in projections[:4] else 'mlp'
                     stem = f'base_model.model.model.layers.{layer}.{kind}.{projection}'
-                    arrays[stem+'.lora_A.weight'] = np.array([[1., 2. + (changed_a and arm == 'grpo')]], dtype=np.float32)
-                    arrays[stem+'.lora_B.weight'] = np.full((3, 1), step/64, dtype=np.float32)
+                    arrays[stem+'.lora_A.weight'] = np.arange(1, width+1, dtype=np.float32)[None, :]
+                    if changed_a and arm == 'grpo':
+                        arrays[stem+'.lora_A.weight'][0,-1] += 1
+                    arrays[stem+'.lora_B.weight'] = np.full((output, 1), step/64, dtype=np.float32)
             tensor_file(directory/'adapter_model.safetensors', arrays)
             hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.iterdir()}
             write_json(directory/'complete.json', dict(step=step, files=hashes))

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Track:** Primary.
 
@@ -16,3 +16,5 @@
 ## Comments
 
 - 2026-10-26: User approved this slice, its blocking edges and the shared public workflow test boundary. No real GPU completion is implied.
+- 2026-10-26: Implementation started; no GPU execution. Ticket 01 and its
+  existing workflow regression checks are green (68 passed).
