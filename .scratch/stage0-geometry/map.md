@@ -5,6 +5,11 @@
 - Original proposal: `sources/stage0-design-supplied-2026-10-26.md`.
 - Working design and decision tree: `design.md`.
 - User requested grill-with-docs before implementation/specification.
+- User subsequently invoked to-spec and to-tickets. Synthesis is in
+  `spec.draft.md`; dependency proposal is in `ticket-proposal.md`.
+- Publication is pending the skills' explicit confirmations: public saved-workflow
+  test boundary, then slice granularity and dependency edges. No implementation
+  issues have been published yet.
 
 ## Decisions so far
 
