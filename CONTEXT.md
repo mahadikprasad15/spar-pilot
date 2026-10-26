@@ -103,3 +103,20 @@ _Avoid_: Newly acquired ability, inferred from a zero-to-positive sampled count
 A saved set of intended-answer labels bound to specified responses before gold
 answers and scorer decisions are revealed to the reviewer.
 _Avoid_: Independent reviewer agreement, when only one person labelled the responses
+
+**Initial adapter push**:
+The negative loss gradient of the adapter's write factor at its saved zero-update
+initialization, under a declared loss and reduction. It is a local descent
+direction, not the historical optimizer update.
+_Avoid_: Actual training update, when only a gradient was measured
+
+**Principal activation-energy fraction**:
+The principal input-component energy divided by the sum of principal and
+complementary component energies, excluding their cross term; defined only
+when that sum is positive.
+_Avoid_: Fraction of total activation energy, when components can interfere
+
+**Subspace intruder**:
+A new leading singular direction whose projection onto a declared old leading
+singular subspace is below a declared overlap threshold.
+_Avoid_: New direction, inferred only from low overlap with individual old vectors
