@@ -9,10 +9,14 @@ def compare_logits(reference, merged, negative, positions):
         raise ValueError('Logits must be finite, equally shaped answer-position matrices.')
     real=np.abs(arrays[1]-arrays[0]);bad=np.abs(arrays[2]-arrays[0])
     p,v=np.unravel_index(np.argmax(real),real.shape)
+    np_,nv=np.unravel_index(np.argmax(bad),bad.shape)
     return dict(max_absolute_error=float(real.max()),negative_max_absolute_error=float(bad.max()),
-        position_max_errors=real.max(axis=1).tolist(),positions=list(positions),
+        position_max_errors=real.max(axis=1).tolist(),
+        negative_position_max_errors=bad.max(axis=1).tolist(),positions=list(positions),
         worst=dict(position=int(positions[p]),vocabulary_id=int(v)),
-        worst_values=dict(reference=float(arrays[0][p,v]),merged=float(arrays[1][p,v])))
+        worst_values=dict(reference=float(arrays[0][p,v]),merged=float(arrays[1][p,v])),
+        negative_worst=dict(position=int(positions[np_]),vocabulary_id=int(nv)),
+        negative_worst_values=dict(reference=float(arrays[0][np_,nv]),negative=float(arrays[2][np_,nv])))
 
 
 def divergence(reference_tokens,merged_tokens,reference_logits,merged_logits,*,prefix):
@@ -33,9 +37,14 @@ def assess(rows):
     if not rows:raise ValueError('No diagnostic evidence.')
     error=max(r['teacher']['max_absolute_error'] for r in rows)
     hard=error>1e-3
-    sensitivity={arm:dict(real=max(r['teacher']['max_absolute_error'] for r in rows if r['arm']==arm),
-        negative=max(r['teacher']['negative_max_absolute_error'] for r in rows if r['arm']==arm))
-        for arm in sorted({r['arm'] for r in rows})}
+    sensitivity={}
+    for arm in sorted({r['arm'] for r in rows}):
+        real=max(r['teacher']['max_absolute_error'] for r in rows if r['arm']==arm)
+        negative=max(r['teacher']['negative_max_absolute_error'] for r in rows if r['arm']==arm)
+        ratio=('infinite' if negative>0 else None) if real==0 else negative/real
+        sensitivity[arm]=dict(real=real,negative=negative,ratio=ratio,
+            ratio_status='infinite-real-error-zero' if real==0 and negative>0 else
+                         'undefined-both-zero' if real==0 else 'finite')
     sensitive=all(v['negative']>0 and v['negative']>=1000*v['real'] for v in sensitivity.values())
     greedy=all(r['greedy']['exact'] or r['greedy']['near_tie'] for r in rows)
     eligible=not hard and sensitive and greedy

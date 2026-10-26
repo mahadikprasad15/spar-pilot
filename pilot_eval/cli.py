@@ -38,6 +38,21 @@ def main(argv=None, *, dependencies=None):
         if operation == 'report':
             spectral.add_argument('--review', type=Path, required=True)
             spectral.add_argument('--name', required=True)
+    for operation in ['prepare', 'runtime', 'run', 'verify', 'approve', 'freeze']:
+        qualification = commands.add_parser('stage0-qualification-' + operation,
+            help='bounded mixed-loader qualification and measured budget freeze')
+        qualification.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            qualification.add_argument('--edits', type=Path, required=True)
+            qualification.add_argument('--cohort', type=Path)
+            qualification.add_argument('--name', required=True)
+        else:
+            qualification.add_argument('--config', type=Path, required=True)
+        if operation == 'run':
+            qualification.add_argument('--approval', type=Path, required=True)
+            qualification.add_argument('--max-new-units', type=int)
+        if operation in ['approve', 'freeze']:
+            qualification.add_argument('--review', type=Path, required=True)
     for operation in ['prepare', 'audit', 'status', 'budget-record', 'recover-writer']:
         stage0 = commands.add_parser('stage0-'+operation, help='CPU Stage 0 source readiness and cumulative budget')
         stage0.add_argument('--output-root', type=Path, required=True)
@@ -54,6 +69,9 @@ def main(argv=None, *, dependencies=None):
             stage0.add_argument('--owner-token', required=True)
             stage0.add_argument('--review-notes', required=True)
             stage0.add_argument('--product', choices=['audit', 'budget'], default='audit')
+    budget_settle = commands.add_parser('stage0-budget-settle', help='reconcile one Stage 0 GPU reservation from a newer cumulative usage reading')
+    budget_settle.add_argument('--output-root', type=Path, required=True)
+    budget_settle.add_argument('--reservation-id', required=True)
     findings=commands.add_parser('behaviour-findings',help='CPU combined behavioural findings and evidence handoff')
     findings.add_argument('--config',type=Path,required=True)
     findings.add_argument('--transitions',type=Path,required=True)
@@ -378,7 +396,28 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-edits-'):
+        if args.command == 'stage0-budget-settle':
+            from pilot_eval.stage0_budget import settle
+            result=settle(args.output_root.resolve(),args.reservation_id)
+            print(json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-qualification-'):
+            from pilot_eval.stage0_qualification import prepare, runtime, run, verify, approve, freeze
+            operation = args.command.removeprefix('stage0-qualification-')
+            if operation == 'prepare':
+                result = prepare(args.edits, args.cohort, args.output_root, args.name)
+            elif operation == 'runtime':
+                result = runtime(args.config, args.output_root, dependencies=dependencies)
+            elif operation == 'run':
+                result = run(args.config, args.output_root, args.approval,
+                             dependencies=dependencies, max_new_units=args.max_new_units)
+            elif operation == 'verify':
+                result = verify(args.config, args.output_root)
+            elif operation == 'approve':
+                result = approve(args.config, args.output_root, args.review)
+            else:
+                result = freeze(args.config, args.output_root, args.review)
+            print(result if isinstance(result, (str, Path)) else json.dumps(result, indent=2))
+        elif args.command.startswith('stage0-edits-'):
             from pilot_eval.stage0_edits import prepare,run,verify
             if args.command=='stage0-edits-prepare':
                 print(prepare(args.spectral,args.output_root,args.name))

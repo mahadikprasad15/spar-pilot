@@ -255,3 +255,43 @@ for complete 196-module production edits. The real path requires all selected
 modules from the verified base cache. Catalogue completion means CPU construction
 only: `gpu_qualified` and `measurement_complete` remain false. V6/V6c merged-weight
 interventions are a separate conditional extension and are not in this catalogue.
+
+## Ticket 04: bounded loader qualification and measured freeze
+
+The GPU notebook now exposes the Ticket 04 workflow through the public CLI. First,
+`stage0-qualification-prepare` binds the Ticket 03 catalogue to the exact ordered
+Pilot 4 held-out evaluation config and selects its first 16 items. It records the
+SFT V1 and GRPO V5 source adapters, tokenizer files, decoding settings, and a
+partial merge over alternating adapted modules. This is a calibration sample for
+the loader, not the production evaluation cohort.
+
+`stage0-qualification-runtime` checks one visible CUDA device, the pinned
+dependencies, stable runtime identity and Drive readback without loading a model.
+The operator records current cumulative Colab usage and a bounded wall-time/rate
+approval before `stage0-qualification-run` loads the already staged local model.
+The run compares adapter versus unhalved partial-merged logits at every gold
+answer-prediction position for both arms, records greedy completions, and checks a
+deliberate double-application negative control. Each of 32 arm/prompt units is
+sealed independently. A matching same-session resume reuses sealed units. If a
+run is interrupted, its reservation remains active until the operator records a
+new cumulative usage reading and calls `stage0-budget-settle`.
+
+The numerical report proposes `3 × observed maximum absolute logit error`; it does
+not approve that tolerance. `stage0-qualification-approve` requires a separate
+review bound to the exact diagnostic receipt. The diagnostic hard-stops above
+1e-3; a greedy token mismatch is accepted as a near-tie only when the reference
+top-two margin at the first shared-prefix divergence is strictly smaller than
+the measured local logit error. A separate production-budget review is required
+to freeze the ten-variant × 150-item paired greedy plan. Its forecast covers only
+greedy evaluation; KL and effective-write jobs require their own reservations.
+
+Outputs live under `runs/stage0/<qualification-name>/qualification/`:
+`meta/runtime.json`, `meta/tokenized-inputs.json`, per-unit results/seals,
+`results/diagnostic.json`, review receipts, logs, reservation IDs and status.
+The frozen plan is under `plans/<qualification-name>/stage0.execution.json`.
+CPU fixtures exercise the public workflow, interruption/resume, source and seal
+rejection, threshold gates, and budget reconciliation without loading weights.
+They cannot qualify a real GPU loader. Implementation completion, synthetic
+fixture approval, real-CUDA qualification, and scientific measurement are four
+separate states. The 20-unit ceiling is shared across Stage 0 sessions and
+notebooks.

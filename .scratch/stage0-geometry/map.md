@@ -53,9 +53,9 @@
 
 ## Implementation frontier and remaining evidence
 
-- Tickets 01-03 are resolved; see their execution records. Ticket 04 is the next
-  primary implementation ticket; conditional Ticket 08 and optional Ticket 11
-  are also software-unblocked. Primary path:
+- Tickets 01-03 are implemented; see their execution records. Ticket 04 software
+  is implemented and locally tested; real Colab qualification and its evidence
+  reviews remain pending. Primary path:
   01 -> 02 -> 03 -> 04 -> (05,06) -> 07.
 - Conditional intruder extension: 02 -> 08; (03,08) -> 09; (07,09) -> 10.
 - Optional branches: 01 -> 11 -> 12; (02,11) -> 13; (02,04) -> 14;

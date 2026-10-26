@@ -4,16 +4,17 @@
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** implemented; real-Colab evidence pending
 
 **Track:** Primary.
 
-- [ ] Sixteen-sequence common-prefix diagnostics, negative control, hard 1e-3 stop, proposed 3E gate, >=1000x sensitivity, near-tie exceptions and separate approval receipts follow the spec. Un-halved partial merges never double-apply the adapter. Credit reservations include diagnostics and total prior usage; unsafe jobs are refused before spending beyond the ceiling. Real-Colab evidence is distinct from mocked CPU checks. Test fixtures exercise all gates without a model download.
-- [ ] The behavior is reachable through the public saved-workflow commands used by the applicable shared notebook, with visible inputs, outputs and resource requirements.
-- [ ] CPU-only public-boundary tests use tiny fixtures or replaceable backends, include an independent oracle where applicable, and cover interrupted resume and changed-source rejection without a model download.
-- [ ] Persist configuration, source identities, structured results, status and completion evidence; keep real execution/qualification status separate from software implementation status.
-- [ ] Model-backed execution requires the applicable recorded approvals and cumulative budget checks; total Stage 0 usage cannot exceed 20 Colab compute units without further user approval.
+- [x] Sixteen-sequence common-prefix diagnostics, negative control, hard 1e-3 stop, proposed 3E gate, >=1000x sensitivity, near-tie exceptions and separate approval receipts follow the spec. Un-halved partial merges never double-apply the adapter. Credit reservations include diagnostics and total prior usage; unsafe jobs are refused before spending beyond the ceiling. Real-Colab evidence is distinct from mocked CPU checks. Test fixtures exercise all gates without a model download.
+- [x] The behavior is reachable through the public saved-workflow commands used by the applicable shared notebook, with visible inputs, outputs and resource requirements.
+- [x] CPU-only public-boundary tests use tiny fixtures or replaceable backends, include an independent oracle where applicable, and cover interrupted resume and changed-source rejection without a model download.
+- [x] Persist configuration, source identities, structured results, status and completion evidence; keep real execution/qualification status separate from software implementation status.
+- [x] Model-backed execution requires the applicable recorded approvals and cumulative budget checks; total Stage 0 usage cannot exceed 20 Colab compute units without further user approval.
 
 ## Comments
 
 - 2026-10-26: User approved this slice, its blocking edges and the shared public workflow test boundary. No real GPU completion is implied.
+- 2026-10-26: Public workflow, CPU tests and GPU notebook are implemented. Real Colab run, evidence-derived numerical approval and production-budget approval are still pending; do not treat this ticket status as scientific qualification.

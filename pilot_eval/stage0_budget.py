@@ -68,8 +68,8 @@ def settle(root,reservation_id):
         if usage['state'] not in ['observed','ceiling-reached'] or usage['last_sha256']==row['starting_ledger_sha256']:
             raise ValueError('A newer cumulative observation is required to release a reservation.')
         latest=json.loads((_directory(root)/'ledger.jsonl').read_text().splitlines()[-1])
-        if latest['session_id']!=row['approval']['session_id']:
-            raise ValueError('Reconcile the reservation session explicitly.')
         return _append(root,{k:v for k,v in dict(row,state='settled',settled_at=_now(),
-            ending_ledger_sha256=usage['last_sha256'],observed_units=usage['spent_units']-row['starting_units']).items()
+            ending_ledger_sha256=usage['last_sha256'],observed_session_id=latest['session_id'],
+            observed_units=usage['spent_units']-row['starting_units'],
+            observation_scope='cumulative Stage 0 usage delta; session may differ after interruption').items()
             if k not in ['sha256','previous_sha256']})
