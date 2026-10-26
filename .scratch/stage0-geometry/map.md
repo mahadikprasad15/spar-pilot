@@ -9,8 +9,8 @@
   `spec.md`; the approved slice breakdown is in `ticket-proposal.md`.
 - The user approved the public saved-workflow test boundary, all 15 slices and
   their dependency edges on 2026-10-26. Spec and individual `ready-for-agent`
-  issues are published in this local tracker. Ticket 01 is implemented; real
-  source execution remains separately pending.
+  issues are published in this local tracker. Tickets 01-02 are implemented;
+  real source/weight execution remains separately pending.
 
 ## Decisions so far
 
@@ -53,8 +53,9 @@
 
 ## Implementation frontier and remaining evidence
 
-- Ticket 01 is resolved; see `execution-ticket01.md`. Ticket 02 is the next primary
-  implementation ticket; optional Ticket 11 is also unblocked. Primary path:
+- Tickets 01-02 are resolved; see their execution records. Ticket 03 is the next
+  primary implementation ticket; conditional Ticket 08 and optional Ticket 11
+  are also software-unblocked. Primary path:
   01 -> 02 -> 03 -> 04 -> (05,06) -> 07.
 - Conditional intruder extension: 02 -> 08; (03,08) -> 09; (07,09) -> 10.
 - Optional branches: 01 -> 11 -> 12; (02,11) -> 13; (02,04) -> 14;
