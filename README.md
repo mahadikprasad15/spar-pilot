@@ -24,6 +24,12 @@ for saved-answer transitions, sampling reliability and intended-answer review.
 Its [local notebook](notebooks/pilot-4-behaviour-breakdown.ipynb) ends with the
 combined findings report; it does not repeat model inference.
 
+[Stage 0 geometry experiments](docs/stage0-geometry.md) reuse the existing
+adapters for controlled interventions. The [CPU notebook](notebooks/stage-0-cpu-colab.ipynb)
+prepares edits and inspects saved results; the [GPU notebook](notebooks/stage-0-gpu-colab.ipynb)
+qualifies the loader and collects paired responses. Implementation is in progress;
+real Stage 0 qualification and results are still pending.
+
 See [execution and result status](docs/experiments/status.md),
 [measurement conventions](docs/methods.md), and [domain terminology](CONTEXT.md).
 The status record distinguishes software validation, saved scientific evidence

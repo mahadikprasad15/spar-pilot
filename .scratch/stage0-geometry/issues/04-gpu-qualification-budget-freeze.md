@@ -4,7 +4,9 @@
 
 **Blocked by:** 03.
 
-**Status:** implemented; real-Colab evidence pending
+**Status:** resolved
+
+**Execution:** real-Colab qualification and evidence reviews pending.
 
 **Track:** Primary.
 
@@ -13,6 +15,13 @@
 - [x] CPU-only public-boundary tests use tiny fixtures or replaceable backends, include an independent oracle where applicable, and cover interrupted resume and changed-source rejection without a model download.
 - [x] Persist configuration, source identities, structured results, status and completion evidence; keep real execution/qualification status separate from software implementation status.
 - [x] Model-backed execution requires the applicable recorded approvals and cumulative budget checks; total Stage 0 usage cannot exceed 20 Colab compute units without further user approval.
+
+## Answer
+
+Software and CPU validation are complete; see execution-ticket04.md. Public
+commands and the shared GPU notebook implement bounded qualification, numerical
+review and measured-budget freeze. This resolves the implementation slice only;
+it does not establish real-CUDA qualification or authorize an unreviewed run.
 
 ## Comments
 

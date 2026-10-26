@@ -15,6 +15,23 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run','verify','status','recover-writer']:
+        evaluation=commands.add_parser('stage0-evaluation-'+operation,
+            help='saved paired greedy intervention evaluation')
+        evaluation.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            evaluation.add_argument('--execution',type=Path,required=True)
+            evaluation.add_argument('--batch-size',type=int,default=1)
+            evaluation.add_argument('--batches-per-unit',type=int,default=8)
+        else:
+            evaluation.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            evaluation.add_argument('--approval',type=Path)
+            evaluation.add_argument('--max-new-units',type=int)
+            evaluation.add_argument('--no-progress',action='store_true')
+        if operation=='recover-writer':
+            evaluation.add_argument('--owner-token',required=True)
+            evaluation.add_argument('--review-notes',required=True)
     for operation in ['prepare', 'run', 'verify']:
         edits=commands.add_parser('stage0-edits-'+operation,help='CPU principal edits and matched controls')
         edits.add_argument('--output-root',type=Path,required=True)
@@ -396,7 +413,20 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == 'stage0-budget-settle':
+        if args.command.startswith('stage0-evaluation-'):
+            from pilot_eval.stage0_evaluation import prepare,run,verify,status,recover_writer
+            operation=args.command.removeprefix('stage0-evaluation-')
+            if operation=='prepare':
+                result=prepare(args.execution,args.output_root,batch_size=args.batch_size,batches_per_unit=args.batches_per_unit)
+            elif operation=='run':
+                result=run(args.config,args.output_root,dependencies=dependencies,
+                    max_new_units=args.max_new_units,approval_path=args.approval,progress=not args.no_progress)
+            elif operation=='recover-writer':
+                result=recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:
+                result=(verify if operation=='verify' else status)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command == 'stage0-budget-settle':
             from pilot_eval.stage0_budget import settle
             result=settle(args.output_root.resolve(),args.reservation_id)
             print(json.dumps(result,indent=2))

@@ -1,18 +1,20 @@
 # Stage 0 geometry experiments
 
 Stage 0 uses existing rank-one SFT/GRPO adapters. Its main result will be paired
-intervention comparisons. Tickets 01-03 implement source readiness, fresh-process
+intervention comparisons. Tickets 01-05 implement source readiness, fresh-process
 restoration, budget observations, a resumable CPU spectral cache, explicit
-trained-overlap reporting and principal-edit construction. Generation, gradients,
-KL and GPU qualification are later stages.
+trained-overlap reporting, principal-edit construction, bounded qualification and
+paired greedy collection. Real-source and real-GPU execution evidence remains
+pending. Gradients, KL and the combined findings report are later slices.
 
 ## Notebooks
 
 - `notebooks/stage-0-cpu-colab.ipynb`: setup, select existing sources, prepare,
   audit/resume, status, spectral cache, optional projection reveal and edit
-  construction/verification. Use CPU.
-- `notebooks/stage-0-gpu-colab.ipynb`: the shared setup/status entrypoint only at
-  this stage. Do not allocate a GPU for its current cells.
+  construction/verification and saved greedy-result inspection. Use CPU.
+- `notebooks/stage-0-gpu-colab.ipynb`: explicit pinned dependency setup/import
+  checks, bounded qualification and reviews, followed by paired greedy collection.
+  GPU inference occurs only in the diagnostic and collection run cells.
 
 Both select the same artifact root and plan name. The dedicated Colab checkout
 uses a recorded release commit and refuses to switch a dirty checkout. The
@@ -85,8 +87,8 @@ The ledger is shared across every Stage 0 plan under
 `artifacts/runs/stage0/budget/ledger.jsonl`; `budget` is a reserved run name.
 The ceiling is **20 compute units total**, not per notebook or session. No
 initial zero is assumed. Before the first observation, spent and remaining units
-are unknown and no GPU work is authorized. Ticket 04 will add measured job-cost
-reservations and production authorization; Ticket 01 only records observations.
+are unknown and no GPU work is authorized. Ticket 04 adds measured job-cost
+reservations and production authorization; Ticket 01 records observations.
 
 An observation is a JSON object with these fields:
 
@@ -295,3 +297,70 @@ They cannot qualify a real GPU loader. Implementation completion, synthetic
 fixture approval, real-CUDA qualification, and scientific measurement are four
 separate states. The 20-unit ceiling is shared across Stage 0 sessions and
 notebooks.
+
+## Ticket 05: paired greedy collection
+
+GPU notebook sections 12–15 and CPU notebook sections 13–14 expose the saved
+collection workflow. The commands are `stage0-evaluation-prepare`,
+`stage0-evaluation-run`, `stage0-evaluation-status`, `stage0-evaluation-verify`
+and `stage0-evaluation-recover-writer`. Preparation consumes the exact frozen
+Ticket 04 `stage0.execution.json` and writes `stage0.evaluation.json` beside it.
+It verifies the qualification, numerical approval, production freeze, original
+cohort, and all ten adapter payloads before defining the work.
+
+The current real qualification uses singleton inputs, so inference batch size is
+1. Larger real batches are refused until separately qualified. Storage units
+group eight sequential inference calls by default (`--batches-per-unit 8`),
+giving 190 durable variant/group units for 1,500 generated responses. The final
+group has six examples. This grouping changes save boundaries, not the model's
+numerical batch: every method sees identical prompt IDs and the same ordered
+`42 + inference-batch-index` seed schedule. A unit seals after all its outputs
+and integrity checks are saved; an interrupted unsealed unit is repeated.
+Fixtures may use larger inference batches but cannot qualify CUDA batching.
+
+The runner loads one local-files-only FP32 model and attaches all ten standard
+PEFT adapters. It evaluates V0a/V0b and each edit within each ordered cohort
+group. The originals are generated afresh in the same qualified runtime, not
+joined to old GPU scores. It records prompt IDs, masks/positions, rendered
+prompts, responses, content and raw generated tokens, EOS/cap status, scorer
+versions, strict/flexible extraction, rewards, source hashes and unit/runtime
+identities. EOS is removed from the content-token count but retained in raw
+generated IDs; EOS in the final allowed generation slot is an EOS stop. A
+response reaching the cap without EOS is invalid and has reward zero.
+
+The first run consumes the active reservation created by Ticket 04's freeze.
+Same-session retries deduct previous attempt seconds from that reservation;
+they do not receive a new wall-time allowance automatically. After settling a
+reservation, `run --approval <review.json>` requires a new explicit bounded
+allocation. A process killed before timing publication has unknown duration:
+reconcile actual cumulative usage and approve a new allocation before resuming.
+Every attempt checks the global 20-unit ceiling before loading a model. A
+runtime/session mismatch is rejected; there is no automatic cross-session
+compatibility claim.
+
+Base weights are SHA256 checked on load and at clean attempt completion, with
+parameter identity/storage/version guards around each generation unit. Known
+full-hash failures invalidate that attempt's sealed batches. Writer ownership
+is exclusive. After confirming that a stale writer has stopped, use the saved
+token and notes with `stage0-evaluation-recover-writer`; recovery does not erase
+responses, release reservations or clear failed integrity evidence.
+
+Outputs are under the frozen `runs/stage0/<qualification-name>/paired-evaluation/`:
+
+| Product | Purpose |
+|---|---|
+| `config.json`, `meta/run_manifest.json` | Exact source, variant, scheduling and output identity |
+| `inputs/tokenized-prompts.json`, `meta/runtime.json` | Common inputs and qualified runtime |
+| `units/<key>/responses.jsonl`, `metadata.json`, `complete.json` | Durable response group, scores and integrity evidence |
+| `attempts/<id>/start.json`, `timing.json`, `final-integrity.json` | Reservation, measured attempt time and final check |
+| `results/responses.jsonl` | All 1,500 verified raw automatic response records |
+| `results/results.json`, `summary.csv`, `results.md` | Descriptive accuracy, invalid/cap and length summaries |
+| `meta/status.json`, `checkpoints/progress.json`, `logs/*`, `complete.json` | Counts, lifecycle, errors and content-bound completion |
+
+CPU verification reconstructs scores and summaries from sealed records and
+reconciles them with the aggregate JSONL. A fresh process can verify and inspect
+them without importing Torch, PEFT or Transformers. This ticket publishes raw
+automatic results. Targeted human answer overlays, paired intervals and the
+approved non-inferiority claim remain Ticket 07 work; KL/effective writes remain
+Ticket 06. A synthetic fixture is explicitly labelled and never reported as a
+real model finding.

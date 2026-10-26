@@ -9,7 +9,7 @@
   `spec.md`; the approved slice breakdown is in `ticket-proposal.md`.
 - The user approved the public saved-workflow test boundary, all 15 slices and
   their dependency edges on 2026-10-26. Spec and individual `ready-for-agent`
-  issues are published in this local tracker. Tickets 01-03 are implemented;
+  issues are published in this local tracker. Tickets 01-05 are implemented;
   real source/weight execution remains separately pending.
 
 ## Decisions so far
@@ -55,7 +55,9 @@
 
 - Tickets 01-03 are implemented; see their execution records. Ticket 04 software
   is implemented and locally tested; real Colab qualification and its evidence
-  reviews remain pending. Primary path:
+  reviews remain pending. Ticket 05 implements paired greedy collection and CPU
+  raw-result verification; real collection remains pending. Ticket 06 is the
+  next primary software slice. Primary path:
   01 -> 02 -> 03 -> 04 -> (05,06) -> 07.
 - Conditional intruder extension: 02 -> 08; (03,08) -> 09; (07,09) -> 10.
 - Optional branches: 01 -> 11 -> 12; (02,11) -> 13; (02,04) -> 14;

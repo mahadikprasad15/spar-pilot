@@ -275,13 +275,17 @@ def test_interrupted_budget_head_publication_recovers_with_same_observation(tmp_
     assert len((tmp_path/'runs/stage0/budget/ledger.jsonl').read_text().splitlines())==1
 
 
-def test_notebook_cells_are_clean_public_commands_with_no_gpu_setup():
+def test_notebook_cells_are_clean_public_commands_and_cpu_setup_stays_lightweight():
     import ast
     for name in ['stage-0-cpu-colab.ipynb', 'stage-0-gpu-colab.ipynb']:
         notebook = json.loads((Path('notebooks')/name).read_text())
         code = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code')
         assert "run_stage0('status', '--config', PLAN)" in code
-        assert 'torch' not in code and 'pip install' not in code
+        if name=='stage-0-cpu-colab.ipynb':
+            assert 'torch' not in code and 'pip install' not in code
+        else:
+            assert 'INSTALL_GPU_DEPENDENCIES = False' in code
+            assert 'check_environment(require_gpu=False)' in code
         assert 'RELEASE_COMMIT' in code and 'checkout' in code
         for cell in notebook['cells']:
             if cell['cell_type']=='code':
