@@ -1,14 +1,15 @@
 # Stage 0 geometry experiments
 
 Stage 0 uses existing rank-one SFT/GRPO adapters. Its main result will be paired
-intervention comparisons. Ticket 01 currently implements source readiness,
-fresh-process restoration and a cumulative budget ledger. It does not perform
-SVD, generation, gradients, KL, edits or GPU qualification.
+intervention comparisons. Tickets 01-02 implement source readiness, fresh-process
+restoration, budget observations, a resumable CPU spectral cache and explicit
+trained-overlap reporting. Generation, gradients, KL, edits and GPU qualification
+are not implemented by these two tickets.
 
 ## Notebooks
 
 - `notebooks/stage-0-cpu-colab.ipynb`: setup, select existing sources, prepare,
-  audit/resume, and inspect status. Use a CPU runtime.
+  audit/resume, status, spectral cache and optional projection reveal. Use CPU.
 - `notebooks/stage-0-gpu-colab.ipynb`: the shared setup/status entrypoint only at
   this stage. Do not allocate a GPU for its current cells.
 
@@ -133,3 +134,72 @@ CPU fixture tests establish software behavior. A verified real Drive audit, targ
 GPU qualification and completed scientific measurements require their own saved
 evidence. The source audit has not been executed on the actual checkpoint tensors
 merely because these commands and notebooks exist.
+
+## Ticket 02: pinned weights and CPU SVD
+
+The CPU notebook's sections 5-8 consume a completed source audit and a local
+snapshot containing `config.json` and single/sharded safetensor weights. No model
+is instantiated. The reader reconstructs the historical PEFT named-parameter hash
+from FP32 tensor values, including adapted-module `base_layer` names and tied
+embedding deduplication. It must equal the audited frozen base hash before the
+cache is prepared. A different or incomplete snapshot stops preparation.
+
+Place the weights under `artifacts/inputs/models/<audited-model-revision>/`.
+Reuse existing files when possible. If a download is needed, use the audited
+model revision explicitly, for example with the current Hugging Face CLI:
+
+```sh
+hf download Qwen/Qwen2.5-1.5B-Instruct --revision AUDITED_REVISION --include '*.safetensors' '*.safetensors.index.json' config.json --local-dir artifacts/inputs/models/AUDITED_REVISION
+```
+
+Replace both occurrences of `AUDITED_REVISION` with the source audit's exact
+revision. This is optional staging, not an instruction to download another model
+when a compatible snapshot already exists. Unit tests never download weights.
+
+The four public spectral commands are `stage0-spectral-prepare`,
+`stage0-spectral-run`, `stage0-spectral-verify` and `stage0-spectral-report`.
+Preparation takes `--audit`, `--weights-dir`, `--name`, and `--output-root`.
+Run/verify/report take the saved spectral `--config` and `--output-root`.
+Report additionally requires `--review` and its own `--name`.
+
+Run once with `--max-new-units 1` before the full cache. The first timing is a
+measurement of that module, not a promise that the entire decomposition takes
+minutes. Modules differ substantially in shape and CPU SVD can be expensive.
+Run without the limit to finish; all previously sealed units are reused.
+Large input shards are verified at command entry, not once per module. Full
+SVD computations are not repeated to inspect a verified cache.
+
+The cache contains all singular values and U/V columns through at least
+`max(k70, 40)`. Ranks are the smallest reaching 30/50/70 percent squared singular
+energy. Full decomposition is float64; retained bases are float32 with separate
+post-conversion orthogonality checks. Retain both full and stored numerical
+errors. The supplied reconstruction and orthogonality limits remain `1e-6`.
+
+Outputs live under `runs/stage0/<spectral-name>/spectral/`: per-module `basis.npz`,
+result/seal JSON, measured times/bytes, progress/errors, and a verified cache
+summary. No trained-factor projection is computed by cache creation or verify.
+An independently supplied synthetic backend is labelled `synthetic-cpu-fixture`;
+it is never evidence that real Qwen weights were measured.
+
+## Trained-overlap reveal
+
+Section 9 is disabled by default. Existing bases can feed Ticket 03 without it.
+Before reporting, save a review JSON with `reveal_trained_overlaps: true`,
+nonempty `notes`, and `prediction_status` equal to `exploratory` or
+`frozen-before-reveal`. The latter also requires `prediction_path`, relative to
+the artifact root, pointing to retained frozen predictions. Do not label an
+already viewed result a prospective prediction. This is an operator review
+boundary, not a technical access-control or human-blinding guarantee.
+
+The report records exposure before computing trained overlaps. It produces
+all 30/50/70-percent rows for available step-zero/64 factors, chance k/d,
+100-Gaussian seed-42 control bands, and the existing random adapter if available.
+Zero-factor projection is undefined. Shared draws across same-dimensional bases
+are disclosed; modules are not independent experimental replicates.
+
+The unchanged Gaussian gate requires the 100-draw mean within 10 percent of
+k/d per module/side/energy level. A failure saves diagnostics and stops reporting;
+it does not silently retry random seeds or destroy the verified SVD cache.
+The report includes projection JSONL/CSV, gaps, a summary, Markdown explanation,
+SVG/PNG figures and a hash-bound completion receipt. Geometry differences alone
+are descriptive and do not establish the proposed causal explanation.

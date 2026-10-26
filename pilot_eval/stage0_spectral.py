@@ -102,7 +102,9 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
         if (directory/'complete.json').exists():return _verify_cache(config,directory)
         rows=[];created=0
         try:
-            adapter=factors(inside(root,audit['sources']['sft']['checkpoints']['64']['path']))
+            adapters=[factors(inside(root,cp['path'])) for source in audit['sources'].values()
+                      for cp in source.get('checkpoints',{}).values()
+                      if cp.get('state')=='verified-adapter-payload']
             for module,entry in config['inventory']['modules'].items():
                 row=_unit(directory,config,module)
                 if row is None:
@@ -112,9 +114,10 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
                     start=time.monotonic()
                     print(f'Stage 0 SVD: {len(rows)}/{len(config["inventory"]["modules"])} sealed; decomposing {_module_id(module)}.',flush=True)
                     matrix=deps.matrix({**entry,'path':str(inside(root,entry['path']))})
-                    a,b=adapter[module]
-                    if matrix.shape!=(b.shape[0],a.shape[1]):
-                        raise ValueError('Base weight and audited adapter dimensions differ.')
+                    for adapter in adapters:
+                        a,b=adapter[module]
+                        if matrix.shape!=(b.shape[0],a.shape[1]):
+                            raise ValueError('Base weight and audited adapter dimensions differ.')
                     arrays,evidence=decompose(matrix)
                     folder=directory/'units'/_module_id(module);folder.mkdir(parents=True,exist_ok=True)
                     temporary=folder/'basis.tmp.npz'
@@ -177,7 +180,8 @@ def report(path,output_root,name,review_path):
         parents[str(prediction.relative_to(root))]=file_hash(prediction)
     directory=root/'reports'/name
     with _writer(directory):
-        identity=dict(config_sha256=_hash(config),review=review,parents=parents)
+        identity=dict(config_sha256=_hash(config),review=review,parents=parents,
+                      plot_implementation=file_hash(Path(__file__).with_name('stage0_spectral_plot.py')))
         _save_frozen(directory/'exposure.json',identity)
         if (directory/'complete.json').exists():
             seal=json.loads((directory/'complete.json').read_text())
@@ -203,6 +207,7 @@ def report(path,output_root,name,review_path):
                             a,b=adapter[module]
                             rows.append(dict(module=module,module_id=_module_id(module),arm=arm,step=step,
                                 energy_level=level,k=k,pi_out=projection(b,u),pi_in=projection(a,v),
+                                boundary_gap=evidence['gaps'][str(level)],
                                 undefined_out_reason='zero factor' if not np.any(b) else None,
                                 undefined_in_reason='zero factor' if not np.any(a) else None,
                                 chance_out=k/u.shape[0],chance_in=k/v.shape[0],
@@ -216,10 +221,24 @@ def report(path,output_root,name,review_path):
             draw_overlap(rows,directory/'plots/principal-overlap.svg')
             summary=dict(state='complete',rows=len(rows),modules=cache['modules'],prediction_status=review['prediction_status'],
                          execution_kind=config['inventory']['execution_kind'],gaussian_draws=100,
+                         controls=dict(random_adapter='included' if ('random',64) in selected else 'unavailable',
+                                       initialization=[arm for arm,step in selected if step==0],
+                                       gaussian_seed=42,gaussian_policy='same fixed 100 draws per input/output dimension'),
                          limits=['one saved training seed per arm','random adapter is one reference, not a null distribution'])
             _write_json(results/'summary.json',summary)
+            (directory/'report.md').write_text(
+                '# Stage 0 principal projections\n\n'
+                f"Execution: {summary['execution_kind']}. Prediction status: {review['prediction_status']}.\n\n"
+                f"Modules: {cache['modules']}; rows: {len(rows)}; energy thresholds: 30%, 50%, 70%.\n\n"
+                'The figure compares endpoint SFT and GRPO projection energies against equal overlap. '
+                'Zero-factor projections are undefined. Per-row chance is k/d; Gaussian controls retain '
+                '100 draws and the unchanged 10% mean-agreement gate. Boundary gaps are retained in the raw rows.\n\n'
+                f"Existing random adapter: {summary['controls']['random_adapter']}.\n\n"
+                'Data: results/projections.jsonl and results/projections.csv. '
+                'A projection difference is descriptive geometry, not a causal result.\n')
             _write_json(directory/'complete.json',dict(identity=identity,files={str(p.relative_to(directory)):file_hash(p)
-                for p in [results/'projections.jsonl',results/'projections.csv',results/'summary.json',directory/'plots/principal-overlap.svg']}))
+                for p in [results/'projections.jsonl',results/'projections.csv',results/'summary.json',
+                          directory/'report.md',directory/'plots/principal-overlap.svg',directory/'plots/principal-overlap.png']}))
             _state(directory,'complete',len(cache['module_results']),len(cache['module_results']))
             return summary
         except (ValueError,OSError,RuntimeError,ImportError) as exc:

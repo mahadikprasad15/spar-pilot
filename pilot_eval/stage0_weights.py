@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 
 from pilot_eval.activation_prepare import PROJECTIONS
-from pilot_eval.stage0_sources import inside
 from pilot_eval.trace_readout_assets import read_weight, weight_header
 from pilot_eval.training import file_hash
 

@@ -196,3 +196,17 @@ def test_weight_identity_mismatch_refuses_cache_before_svd(tmp_path):
     assert main(['stage0-spectral-prepare','--audit',str(audit),'--weights-dir',str(weights),
                  '--name','bad-basis','--output-root',str(tmp_path)])==1
     assert not (tmp_path/'plans/bad-basis/stage0.spectral.json').exists()
+
+
+def test_cpu_notebook_adds_separate_cache_timing_and_reveal_commands():
+    import ast
+    notebook=json.loads(Path('notebooks/stage-0-cpu-colab.ipynb').read_text())
+    code='\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code')
+    for operation in ['spectral-prepare','spectral-run','spectral-verify','spectral-report']:
+        assert "run_stage0('"+operation+"'" in code
+    assert "'--max-new-units', 1" in code
+    assert 'REVEAL_TRAINED_OVERLAPS = False' in code
+    for cell in notebook['cells']:
+        if cell['cell_type']=='code':
+            ast.parse(''.join(cell['source']))
+            assert cell['outputs']==[] and cell['execution_count'] is None

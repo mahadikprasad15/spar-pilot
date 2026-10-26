@@ -32,4 +32,5 @@ def draw_overlap(rows, path):
     if handles:fig.legend(handles,labels,loc='outside lower center',ncol=4,frameon=False,fontsize=8)
     fig.suptitle('Stage 0 · checkpoint 64 · base k50 subspaces',fontsize=12)
     fig.savefig(path,format='svg',metadata={'Description':'All finite primary endpoint module projections; diagonal is equal overlap.'})
+    fig.savefig(path.with_suffix('.png'),dpi=150)
     plt.close(fig)

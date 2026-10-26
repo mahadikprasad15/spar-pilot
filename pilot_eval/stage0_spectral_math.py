@@ -15,6 +15,9 @@ def decompose(matrix):
     error = float(np.linalg.norm(w - (u*sigma)@vt)/norm)
     if not error < 1e-6:
         raise ValueError(f'SVD reconstruction gate failed: {error}.')
+    full_orth=max(float(np.max(np.abs(b.T@b-np.eye(len(sigma))))) for b in [u,vt.T])
+    if full_orth>1e-6:
+        raise ValueError(f'Full-SVD orthogonality gate failed: {full_orth}.')
     energy = np.cumsum(sigma**2)
     ranks = {f'k{level}': min(len(sigma), int(np.searchsorted(energy, energy[-1]*level/100)+1))
              for level in LEVELS}
@@ -26,7 +29,8 @@ def decompose(matrix):
         raise ValueError(f'Retained-basis orthogonality gate failed: {orth}.')
     return dict(sigma=sigma, u=left, v=right), dict(**ranks, d_out=w.shape[0], d_in=w.shape[1],
         retained_columns=retained, reconstruction_relative_error=error,
-        retained_orthogonality_error=orth, energy_top1=float(sigma[0]**2/energy[-1]),
+        full_orthogonality_error=full_orth,retained_orthogonality_error=orth,
+        energy_top1=float(sigma[0]**2/energy[-1]),
         gaps={str(level): float(sigma[k-1]-sigma[k]) if k<len(sigma) else None
               for level,k in [(level,ranks[f'k{level}']) for level in LEVELS]})
 
