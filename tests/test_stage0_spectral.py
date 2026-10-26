@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 
 from pilot_eval.cli import main
-from test_stage0_workflow import command, sources, write_json
+from test_stage0_workflow import command, sources, tensor_file, write_json
+from pilot_eval.workflow import _hash
 
 
 MODULES = ['base_model.model.model.layers.0.self_attn.q_proj',
@@ -132,3 +133,66 @@ def test_cache_verification_rejects_changed_retained_basis(tmp_path):
     row=json.loads((run/'results/cache.json').read_text())['module_results'][0]
     (run/row['arrays_path']).write_bytes(b'not a basis')
     assert spectral(tmp_path,'verify',plan)==1
+
+
+def local_snapshot(root):
+    """Known PEFT parameter names and FP32 bytes, independent of the inventory code."""
+    selection=sources(root,width=64,output=64)
+    weights=root/'local-weights';weights.mkdir()
+    arrays={};named={}
+    source=json.loads((root/'inputs/sft/activation.prepared.json').read_text())
+    for layer in range(28):
+        for projection in ['q_proj','k_proj','v_proj','o_proj','gate_proj','up_proj','down_proj']:
+            group='self_attn' if projection in ['q_proj','k_proj','v_proj','o_proj'] else 'mlp'
+            base=f'model.layers.{layer}.{group}.{projection}'
+            value=np.eye(64,dtype=np.float32)
+            arrays[base+'.weight']=value
+            named[f'base_model.model.model.layers.{layer}.{group}.{projection}.base_layer.weight']=value
+    bias=np.arange(64,dtype=np.float32)
+    arrays['model.layers.0.self_attn.q_proj.bias']=bias
+    named['base_model.model.model.layers.0.self_attn.q_proj.base_layer.bias']=bias
+    embedding=np.ones((5,64),dtype=np.float32)
+    arrays['model.embed_tokens.weight']=embedding
+    arrays['lm_head.weight']=embedding.copy()
+    named['base_model.model.model.embed_tokens.weight']=embedding
+    norm=np.ones(64,dtype=np.float32)
+    arrays['model.norm.weight']=norm
+    named['base_model.model.model.norm.weight']=norm
+    digest=hashlib.sha256()
+    for name,value in sorted(named.items()):
+        digest.update(name.encode()+b'\0');digest.update(str(value.shape).encode());digest.update(value.tobytes())
+    base_hash=digest.hexdigest()
+    tensor_file(weights/'model.safetensors',arrays)
+    write_json(weights/'config.json',dict(model_type='qwen2',num_hidden_layers=28,tie_word_embeddings=True))
+    for arm in ['sft','grpo']:
+        path=root/'inputs'/arm/'activation.prepared.json'
+        config=json.loads(path.read_text());config['source_evidence']['base_sha256']=base_hash
+        write_json(path,config)
+        write_json(path.parent/'prepare-complete.json',dict(config_sha256=_hash(config),
+            files={str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest()}))
+    assert command(root,'prepare','--selection',selection,'--name','real-reader')==0
+    audit=root/'plans/real-reader/stage0.plan.json'
+    assert command(root,'audit','--config',audit)==0
+    return weights,audit,base_hash
+
+
+def test_actual_local_weight_reader_matches_peft_parameter_hash_without_torch(tmp_path):
+    weights,audit,expected=local_snapshot(tmp_path)
+    assert main(['stage0-spectral-prepare','--audit',str(audit),'--weights-dir',str(weights),
+                 '--name','local-basis','--output-root',str(tmp_path)])==0
+    plan=tmp_path/'plans/local-basis/stage0.spectral.json'
+    cfg=json.loads(plan.read_text())
+    assert cfg['inventory']['base_sha256']==expected
+    assert cfg['inventory']['parameters_hashed']==199
+    assert len(cfg['inventory']['modules'])==196
+    assert spectral(tmp_path,'run',plan,'--max-new-units',1)==0
+    assert not (tmp_path/'runs/stage0/local-basis/spectral/complete.json').exists()
+
+
+def test_weight_identity_mismatch_refuses_cache_before_svd(tmp_path):
+    weights,audit,_=local_snapshot(tmp_path)
+    with (weights/'model.safetensors').open('r+b') as stream:
+        stream.seek(-4,2);stream.write(np.float32(2).tobytes())
+    assert main(['stage0-spectral-prepare','--audit',str(audit),'--weights-dir',str(weights),
+                 '--name','bad-basis','--output-root',str(tmp_path)])==1
+    assert not (tmp_path/'plans/bad-basis/stage0.spectral.json').exists()

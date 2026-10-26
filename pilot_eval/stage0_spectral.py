@@ -36,7 +36,7 @@ def prepare(audit_path, weights_dir, output_root, name, *, dependencies=None):
     path=root/'plans'/name/'stage0.spectral.json'
     with _writer(path.parent):
         if path.exists():
-            config=_load(path,root)
+            config,_=_load(path,root)
             if config['audit_path']!=str(audit_path.relative_to(root)) or config['weights_dir']!=str(inside(root,weights_dir).relative_to(root)):
                 raise ValueError('Spectral selection changed; use a new name.')
             return path
@@ -76,9 +76,10 @@ def _load(path,root):
     if manifest['config_sha256']!=_hash(config):
         raise ValueError('Spectral frozen plan mismatch.')
     _verify_parents(root,config['parents'])
-    if not status(inside(root,config['audit_path']),root)['audit']:
+    audit=status(inside(root,config['audit_path']),root)['audit']
+    if not audit:
         raise ValueError('Source audit is no longer complete.')
-    return config
+    return config,audit
 
 
 def _unit(directory,config,module):
@@ -94,14 +95,13 @@ def _unit(directory,config,module):
 
 
 def run(path,output_root,*,dependencies=None,max_new_units=None):
-    root=Path(output_root).resolve();config=_load(path,root);directory=inside(root,config['run_path'])
+    root=Path(output_root).resolve();(config,audit)=_load(path,root);directory=inside(root,config['run_path'])
     if max_new_units is not None and max_new_units<0:raise ValueError('Invalid maximum new units.')
     deps=dependencies or LocalWeights()
     with _writer(directory):
-        if (directory/'complete.json').exists():return verify(path,root)
+        if (directory/'complete.json').exists():return _verify_cache(config,directory)
         rows=[];created=0
         try:
-            audit=status(inside(root,config['audit_path']),root)['audit']
             adapter=factors(inside(root,audit['sources']['sft']['checkpoints']['64']['path']))
             for module,entry in config['inventory']['modules'].items():
                 row=_unit(directory,config,module)
@@ -145,7 +145,11 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
 
 
 def verify(path,output_root):
-    root=Path(output_root).resolve();config=_load(path,root);directory=inside(root,config['run_path'])
+    root=Path(output_root).resolve();config,_=_load(path,root);directory=inside(root,config['run_path'])
+    return _verify_cache(config,directory)
+
+
+def _verify_cache(config,directory):
     seal=json.loads((directory/'complete.json').read_text())
     expected=dict(config_sha256=_hash(config),files={'results/cache.json':file_hash(directory/'results/cache.json')},
                   modules=list(config['inventory']['modules']))
@@ -158,7 +162,8 @@ def verify(path,output_root):
 
 
 def report(path,output_root,name,review_path):
-    root=Path(output_root).resolve();config=_load(path,root);cache=verify(path,root);safe_name(name)
+    root=Path(output_root).resolve();config,audit=_load(path,root)
+    cache=_verify_cache(config,inside(root,config['run_path']));safe_name(name)
     review=json.loads(Path(review_path).read_text())
     if (review.get('reveal_trained_overlaps') is not True
             or review.get('prediction_status') not in ['exploratory','frozen-before-reveal']
@@ -181,7 +186,6 @@ def report(path,output_root,name,review_path):
                 if file_hash(directory/relative)!=digest:raise ValueError('Projection report payload changed.')
             return json.loads((directory/'results/summary.json').read_text())
         try:
-            audit=status(inside(root,config['audit_path']),root)['audit']
             selected={}
             for arm,source in audit['sources'].items():
                 for step,cp in source.get('checkpoints',{}).items():
