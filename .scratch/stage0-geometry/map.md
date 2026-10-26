@@ -6,10 +6,10 @@
 - Working design and decision tree: `design.md`.
 - User requested grill-with-docs before implementation/specification.
 - User subsequently invoked to-spec and to-tickets. Synthesis is in
-  `spec.draft.md`; dependency proposal is in `ticket-proposal.md`.
-- Publication is pending the skills' explicit confirmations: public saved-workflow
-  test boundary, then slice granularity and dependency edges. No implementation
-  issues have been published yet.
+  `spec.md`; the approved slice breakdown is in `ticket-proposal.md`.
+- The user approved the public saved-workflow test boundary, all 15 slices and
+  their dependency edges on 2026-10-26. Spec and individual `ready-for-agent`
+  issues are published in this local tracker; implementation has not started.
 
 ## Decisions so far
 
@@ -50,11 +50,16 @@
   common-input historical checks; measured budgets with a TOTAL 20-unit ceiling;
   numerical/reporting conventions. See design.md final approval section.
 
-## Remaining evidence and specification work
+## Implementation frontier and remaining evidence
 
-- No unanswered design-preference questions currently block drafting the spec.
+- Ticket 01 (source audit, restoration and budget status) is the initial unblocked
+  implementation ticket. Primary path: 01 -> 02 -> 03 -> 04 -> (05,06) -> 07.
+- Conditional intruder extension: 02 -> 08; (03,08) -> 09; (07,09) -> 10.
+- Optional branches: 01 -> 11 -> 12; (02,11) -> 13; (02,04) -> 14;
+  (02,06) -> 15. None gates the primary report.
 - Verify source tensors, cohort membership, runtime metadata and KL completion.
-- Translate decisions into schemas, resume/ownership rules, notebook stages and
-  tests; write preregistration before relevant result inspection.
+- Implement approved contracts through red/green CPU tests and incrementally
+  runnable shared notebooks; write/freeze the complete preregistration before
+  relevant result inspection.
 - Numerical qualification and measured job budgets retain their explicit approval
   stop points. Design approval is not evidence that those gates have passed.

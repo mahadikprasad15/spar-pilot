@@ -1,7 +1,7 @@
 # Stage 0 vertical-slice proposal
 
-Status: proposed; awaiting user approval of granularity and blocking edges.
-This document is not a published set of implementation issues.
+Status: approved by the user on 2026-10-26.
+All 15 individual ready-for-agent issues are published in the configured local tracker.
 
 Each slice adds public saved-workflow commands, durable verified outputs,
 CPU-only workflow tests and the applicable sections of the shared CPU/GPU
@@ -204,6 +204,6 @@ every ancestor's optional scientific workload on real data.
 - Supporting: 01 -> 11 -> 12; (02 and 11) -> 13;
   (02 and 04) -> 14; (02 and 06) -> 15.
 
-Approve or revise granularity, genuine blockers and any merges/splits before
-individual ready-for-agent issues are published. Source verification and real
-execution evidence remain separately tracked from software ticket completion.
+Granularity and dependency edges were approved before publication. Source
+verification and real execution evidence remain separately tracked from software
+ticket completion.

@@ -1,6 +1,7 @@
 # Stage 0: controlled interventions on existing rank-1 adapters
 
-Status: draft; awaiting confirmation of the public saved-workflow test boundary.
+Status: ready-for-agent
+Approval: public saved-workflow test boundary and 15-ticket dependency graph approved by the user on 2026-10-26.
 Date: 2026-10-26. Scientific design decisions are approved. No new GPU run or
 implementation is authorized merely by publication of this specification.
 
@@ -479,7 +480,7 @@ absence does not prevent a primary intervention report.
 
 ## Testing Decisions
 
-- Primary boundary, pending user confirmation: invoke the same public saved-workflow
+- Approved primary boundary: invoke the same public saved-workflow
   commands called by notebooks, using tiny CPU-only artifacts and replaceable
   model dependencies. Assert observable outputs, identities, numerical outcomes,
   statuses and resume behavior; avoid tests that merely repeat private loops.
