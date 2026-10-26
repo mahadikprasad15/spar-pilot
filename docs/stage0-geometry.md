@@ -1,10 +1,10 @@
 # Stage 0 geometry experiments
 
 Stage 0 uses existing rank-one SFT/GRPO adapters. Its main result will be paired
-intervention comparisons. Tickets 01-02 implement source readiness, fresh-process
-restoration, budget observations, a resumable CPU spectral cache and explicit
-trained-overlap reporting. Generation, gradients, KL, edits and GPU qualification
-are not implemented by these two tickets.
+intervention comparisons. Tickets 01-03 implement source readiness, fresh-process
+restoration, budget observations, a resumable CPU spectral cache, explicit
+trained-overlap reporting and principal-edit construction. Generation, gradients,
+KL and GPU qualification are later stages.
 
 ## Notebooks
 
@@ -203,3 +203,54 @@ it does not silently retry random seeds or destroy the verified SVD cache.
 The report includes projection JSONL/CSV, gaps, a summary, Markdown explanation,
 SVG/PNG figures and a hash-bound completion receipt. Geometry differences alone
 are descriptive and do not establish the proposed causal explanation.
+
+## Ticket 03: principal edits and controls
+
+CPU notebook sections 10-12 prepare, build/resume and verify the intervention
+catalogue from the spectral cache. The optional overlap-reveal cell is not a
+prerequisite. Commands are `stage0-edits-prepare`, `stage0-edits-run` and
+`stage0-edits-verify`. Prepare takes `--spectral`, `--name`, `--output-root`;
+run/verify take the saved edit `--config` and `--output-root`. Run supports
+`--max-new-units` for deliberately bounded construction/resume checks.
+
+| Variant | Source | Construction |
+|---|---|---|
+| V0a | SFT64 | Unedited reference; source config and tensors copied byte-for-byte |
+| V0b | GRPO64 | Unedited reference; source config and tensors copied byte-for-byte |
+| V1 | SFT64 | Remove b's base top-k50 output projection |
+| V2 | SFT64 | Remove a's base top-k50 input projection |
+| V3-0, V3-1, V3-2 | SFT64 | Remove k50 random orthonormal output directions; seeds 1000-1002 |
+| V4 | SFT64 | Scale the original b per module to V1's effective-update norm |
+| V4-input | SFT64 | Scale the original b per module to V2's effective-update norm |
+| V5 | GRPO64 | Same output projection removal as V1 |
+
+All targets remain plain rank-one alpha-one PEFT adapters. Magnitude controls
+preserve the original update direction. Random draws use a local NumPy PCG64
+generator with the declared draw seed reset per module, followed by reduced QR.
+Full random bases are retained, so reproducibility does not depend on a future
+QR implementation producing the same signs. No global RNG state is changed.
+
+Per-module edit units retain all variants' factors, before/after checks and the
+three random bases; each unit is sealed. A restart verifies/reuses those units,
+then assembles complete standard safetensor PEFT adapters. Final serialized
+factors are read back and compared with constructed factors. k=0 is byte-preserving
+for factor arrays; references additionally preserve the complete original files.
+
+Outputs live under `runs/stage0/<edit-name>/edits/`: `units`, `adapters/<variant>`,
+`results/catalogue.json`, `results/catalogue.md`, progress/errors and completion
+receipts. Each adapter includes its unchanged source adapter config, edited
+weights, `edit.json` and a hash-bound seal. Source checkpoint files are never
+modified. Changed cache, source, edited payload or frozen plan is rejected.
+
+Checks include the declared 1e-6 removed-component residual, basis orthogonality,
+and per-module effective-update norm agreement to 1e-6 relative. Failure records
+the affected stage and stops; it cannot silently alter a tolerance or retry random
+seeds. Zero update/target cases remain explicit. Construction does not emit the
+separate trained-overlap report, although edit manifests necessarily expose
+component-removal checks and update magnitudes needed to inspect the variants.
+
+Synthetic partial-module fixtures are explicitly tagged and cannot be mistaken
+for complete 196-module production edits. The real path requires all selected
+modules from the verified base cache. Catalogue completion means CPU construction
+only: `gpu_qualified` and `measurement_complete` remain false. V6/V6c merged-weight
+interventions are a separate conditional extension and are not in this catalogue.

@@ -15,6 +15,15 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare', 'run', 'verify']:
+        edits=commands.add_parser('stage0-edits-'+operation,help='CPU principal edits and matched controls')
+        edits.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            edits.add_argument('--spectral',type=Path,required=True)
+            edits.add_argument('--name',required=True)
+        else:
+            edits.add_argument('--config',type=Path,required=True)
+        if operation=='run':edits.add_argument('--max-new-units',type=int)
     for operation in ['prepare', 'run', 'verify', 'report']:
         spectral = commands.add_parser('stage0-spectral-'+operation, help='CPU spectral cache and explicit overlap reveal')
         spectral.add_argument('--output-root', type=Path, required=True)
@@ -369,7 +378,15 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-spectral-'):
+        if args.command.startswith('stage0-edits-'):
+            from pilot_eval.stage0_edits import prepare,run,verify
+            if args.command=='stage0-edits-prepare':
+                print(prepare(args.spectral,args.output_root,args.name))
+            else:
+                result=(run(args.config,args.output_root,max_new_units=args.max_new_units)
+                        if args.command=='stage0-edits-run' else verify(args.config,args.output_root))
+                print(json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-spectral-'):
             from pilot_eval.stage0_spectral import prepare, run, verify, report
             if args.command == 'stage0-spectral-prepare':
                 print(prepare(args.audit, args.weights_dir, args.output_root, args.name, dependencies=dependencies))
