@@ -134,6 +134,22 @@ def audit_source(root, label, path):
             raise ValueError('Prepared source payload hash mismatch.')
         parents[str(payload.relative_to(root))] = expected
     evidence = config.get('source_evidence', {})
+    for value, expected in evidence.get('files', {}).items():
+        payload = inside(root, value)
+        if not payload.is_file() or file_hash(payload) != expected:
+            raise ValueError('Recorded training metadata payload hash mismatch.')
+        parents[str(payload.relative_to(root))] = expected
+    training_metadata = dict(state='not-selected', scope='No training facts inferred from source name.')
+    if config.get('source_config_path'):
+        training_path = inside(root, config['source_config_path'])
+        training = bind(root, training_path, parents)
+        if evidence.get('source_config_sha256') != _hash(training):
+            raise ValueError('Recorded training configuration identity mismatch.')
+        fields = ['optimizer', 'settings', 'adapter', 'seed', 'dtype', 'runtime',
+                  'training_indices', 'prompt_template', 'max_length', 'packing',
+                  'gradient_checkpointing', 'implementation', 'hardware']
+        training_metadata = dict(state='verified-recorded-config', path=str(training_path.relative_to(root)),
+                                 **{key: training[key] for key in fields if key in training})
     identity = {k: config.get(k) for k in ['model', 'model_revision', 'tokenizer_revision', 'dtype']}
     identity['base_sha256'] = evidence.get('base_sha256')
     if not all(identity.values()):
@@ -141,7 +157,9 @@ def audit_source(root, label, path):
     checkpoints = {step: checkpoint(root, evidence.get('checkpoints', {}).get(step), step, parents)
                    for step in ['0', '64']}
     return dict(state='audited', identity=identity, path=relative, checkpoints=checkpoints,
-                available_checkpoint_steps=config.get('checkpoint_steps', []), parents=parents)
+                available_checkpoint_steps=config.get('checkpoint_steps', []), parents=parents,
+                training_metadata=training_metadata,
+                base_verification='hash declared by verified prepared evidence; no base weights loaded')
 
 
 def initialization(root, sources):

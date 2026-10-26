@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import platform
+import subprocess
+import sys
 import uuid
 
 from pilot_eval.run import _write_json
@@ -22,7 +24,18 @@ def _now():
 
 def _implementation():
     directory = Path(__file__).parent
-    return {name: file_hash(directory/name) for name in ['stage0_workflow.py', 'stage0_sources.py']}
+    return {name: file_hash(directory/name) for name in
+            ['stage0_workflow.py', 'stage0_sources.py', 'trace_readout_assets.py']}
+
+
+def _software():
+    repo = Path(__file__).resolve().parent.parent
+    try:
+        commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = None
+    return dict(git_commit=commit, python=sys.version, platform=platform.platform(),
+                scope='CPU files/tensor audit; no model-runtime import')
 
 
 @contextmanager
@@ -90,6 +103,8 @@ def prepare(selection_path, output_root, name):
         _save_frozen(path, config)
         directory = root/config['run_path']
         _save_frozen(directory/'meta/run_manifest.json', dict(config_path=str(path.relative_to(root)), config_sha256=_hash(config)))
+        if not (directory/'meta/software.json').exists():
+            _save_frozen(directory/'meta/software.json', _software())
         if not (directory/'meta/status.json').exists():
             _state(directory, 'prepared', 0, len(normalized))
     return path
@@ -206,7 +221,9 @@ def audit(path, output_root, *, max_new_units=None):
 
 def budget_status(root):
     ledger = root/'runs/stage0/budget/ledger.jsonl'
+    head_path = ledger.parent/'head.json'
     previous, total, ids = None, None, set()
+    prefixes = [dict(events=0, last_sha256=None, spent_units=None)]
     if ledger.exists():
         for line in ledger.read_text().splitlines():
             row = json.loads(line)
@@ -218,11 +235,22 @@ def budget_status(root):
                 raise ValueError('Stage 0 budget ledger integrity mismatch.')
             previous, total = digest, amount
             ids.add(row['event_id'])
+            prefixes.append(dict(events=len(ids), last_sha256=previous, spent_units=total))
+    published = json.loads(head_path.read_text()) if head_path.exists() else prefixes[0]
+    count = published.get('events')
+    if type(count) is not int or not 0 <= count < len(prefixes) or published != prefixes[count]:
+        raise ValueError('Stage 0 budget publication mismatch; ledger was truncated or changed.')
+    pending = count != len(ids)
     return dict(ceiling_units=CEILING, spent_units=total,
                 remaining_units=None if total is None else max(0, CEILING-total),
-                state='unknown' if total is None else ('ceiling-reached' if total >= CEILING else 'observed'),
+                state=('unpublished-observation' if pending else
+                       'unknown' if total is None else 'ceiling-reached' if total >= CEILING else 'observed'),
                 events=len(ids), last_sha256=previous,
                 gpu_authorized=False, scope='operator-recorded cumulative Stage 0 units; not an account-wide meter')
+
+
+def _publish_budget(directory, current):
+    _write_json(directory/'head.json', {key:current[key] for key in ['events', 'last_sha256', 'spent_units']})
 
 
 def record_budget(path, output_root, observation):
@@ -246,7 +274,8 @@ def record_budget(path, output_root, observation):
                 if row['event_id'] == value['event_id']:
                     if any(row[key] != value[key] for key in required):
                         raise ValueError('Budget event identity changed.')
-                    return current
+                    _publish_budget(directory, current)
+                    return budget_status(root)
         if current['spent_units'] is not None and amount < current['spent_units']:
             raise ValueError('Cumulative Stage 0 consumption cannot decrease.')
         row = dict(**value, previous_sha256=current['last_sha256'])
@@ -255,6 +284,7 @@ def record_budget(path, output_root, observation):
             stream.write(json.dumps(row)+'\n')
             stream.flush()
             os.fsync(stream.fileno())
+        _publish_budget(directory, budget_status(root))
         return budget_status(root)
 
 

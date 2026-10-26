@@ -213,6 +213,66 @@ def test_reserved_budget_name_cannot_collide_with_global_ledger(tmp_path):
     assert command(tmp_path, 'prepare', '--selection', selection, '--name', 'budget') == 1
 
 
+def test_training_metadata_is_verified_and_preserved_without_replaying_optimizer_states(tmp_path):
+    selection = sources(tmp_path)
+    training = tmp_path/'inputs/sft/training.json'
+    train_config = dict(optimizer={'learning_rate': 0.0001}, seed=42, dtype='float32',
+                        training_indices=[10,20], prompt_template={'name':'fixture'})
+    write_json(training, train_config)
+    source = tmp_path/'inputs/sft/activation.prepared.json'
+    config = json.loads(source.read_text())
+    config['source_config_path'] = str(training.relative_to(tmp_path))
+    config['source_evidence']['source_config_sha256'] = _hash(train_config)
+    config['source_evidence']['files'] = {str(training.relative_to(tmp_path)): hashlib.sha256(training.read_bytes()).hexdigest()}
+    write_json(source, config)
+    write_json(source.parent/'prepare-complete.json', dict(config_sha256=_hash(config),
+        files={str(source.relative_to(tmp_path)):hashlib.sha256(source.read_bytes()).hexdigest()}))
+    assert command(tmp_path,'prepare','--selection',selection,'--name','metadata') == 0
+    plan = tmp_path/'plans/metadata/stage0.plan.json'
+    assert command(tmp_path,'audit','--config',plan) == 0
+    result = json.loads((tmp_path/'runs/stage0/metadata/results/source-audit.json').read_text())
+    assert result['sources']['sft']['training_metadata']['optimizer'] == {'learning_rate':0.0001}
+    training.write_text('{}')
+    assert command(tmp_path,'status','--config',plan) == 1
+
+
+def test_explicit_recovery_refuses_a_live_same_host_writer(tmp_path):
+    import os
+    import platform
+    plan = prepared(tmp_path)
+    marker=tmp_path/'runs/stage0/example/writer.json'
+    write_json(marker,dict(token='live',pid=os.getpid(),host=platform.node()))
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','live',
+                   '--review-notes','Attempted while active.') == 1
+    assert marker.exists()
+
+
+def test_removing_last_budget_event_cannot_lower_known_consumption(tmp_path):
+    plan=prepared(tmp_path)
+    observation=tmp_path/'observation.json'
+    for i,amount in enumerate([2,8]):
+        write_json(observation,dict(event_id=str(i),session_id='session',total_units=amount,
+                                   observed_at='2026-10-26T12:00:00+00:00',note='Observed total'))
+        assert command(tmp_path,'budget-record','--config',plan,'--observation',observation)==0
+    ledger=tmp_path/'runs/stage0/budget/ledger.jsonl'
+    ledger.write_text(ledger.read_text().splitlines()[0]+'\n')
+    assert command(tmp_path,'status','--config',plan)==1
+
+
+def test_interrupted_budget_head_publication_recovers_with_same_observation(tmp_path):
+    plan=prepared(tmp_path)
+    observation=tmp_path/'observation.json'
+    write_json(observation,dict(event_id='reading',session_id='session',total_units=2,
+                               observed_at='2026-10-26T12:00:00+00:00',note='Observed total'))
+    assert command(tmp_path,'budget-record','--config',plan,'--observation',observation)==0
+    (tmp_path/'runs/stage0/budget/head.json').unlink()
+    from pilot_eval.stage0_workflow import status
+    assert status(plan,tmp_path)['budget']['state']=='unpublished-observation'
+    assert command(tmp_path,'budget-record','--config',plan,'--observation',observation)==0
+    assert status(plan,tmp_path)['budget']['state']=='observed'
+    assert len((tmp_path/'runs/stage0/budget/ledger.jsonl').read_text().splitlines())==1
+
+
 def test_notebook_cells_are_clean_public_commands_with_no_gpu_setup():
     import ast
     for name in ['stage-0-cpu-colab.ipynb', 'stage-0-gpu-colab.ipynb']:
@@ -220,6 +280,7 @@ def test_notebook_cells_are_clean_public_commands_with_no_gpu_setup():
         code = '\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code')
         assert "run_stage0('status', '--config', PLAN)" in code
         assert 'torch' not in code and 'pip install' not in code
+        assert 'RELEASE_COMMIT' in code and 'checkout' in code
         for cell in notebook['cells']:
             if cell['cell_type']=='code':
                 ast.parse(''.join(cell['source']))
