@@ -146,8 +146,18 @@ scope changes or settle the remaining mathematical and execution questions.
   subspace does not constitute rotation of that subspace.
 - Replace best overlap with any individual old vector by overlap with the whole
   old top-m left singular subspace. For a new unit vector u, retain both
-  ||U_old,m^T u|| and its square. Flagging requires an approved choice of m and
-  overlap threshold, with its norm-versus-squared convention explicit.
+  ||U_old,m^T u|| and its square. Primary m = max(k50, 40); sensitivity m values
+  are max(k30, 40) and max(k70, 40). Each basis must exist within the matrix's
+  available singular directions; validate dimensions rather than silently clip.
+- Primary intruder threshold is projection norm < 0.5. Retain a 0.3-0.7 sweep
+  on projection norm, not squared projection energy.
+- Report sqrt(m/d_out) beside every overlap as the user-defined chance reference.
+  Its square is the isotropic expected projected energy; sqrt(m/d_out) is the
+  root-mean-square projection norm, not exactly its mean. This descriptive
+  reference does not establish a calibrated null for new leading directions.
+- A module is undecidable at any threshold <= sqrt(m/d_out). Preserve numerical
+  overlaps but exclude that module from determinate flag/no-flag counts at that
+  threshold. V6 eligibility requires 0.5 > sqrt(m/d_out) and a primary flag.
 - Retain the proposed top-20 new candidate directions, subject to valid matrix
   dimensions. Degenerate clusters at the candidate boundary can still make
   individual candidate membership ambiguous; report boundary gaps.
@@ -195,12 +205,29 @@ zero-total cases require explicit undefined flags; no artificial denominator.
 
 - Run only if the approved E0.3 intruder rule finds intruders.
 - Merge the original adapter into W, apply the SVD edit, and save full edited
-  matrices for affected modules or a factored delta relative to W0. Evaluate
-  through a loader with explicit merged-weight support.
+  matrices for affected modules. Evaluate through a loader with explicit
+  merged-weight support. In edited modules, use that matrix with the adapter
+  disabled; keep the original adapter active in all other modules.
 - For one singular-value edit, W_edit - W0 equals the original rank-one adapter
   plus one rank-one SVD correction, so its rank is at most two. Editing several
-  singular values generally requires more than rank two. The number of selected
-  directions and storage representation therefore remain an explicit choice.
+  singular values generally requires more than rank two. Full edited matrices
+  avoid an artificial rank-two restriction.
+- Halve all primary-flagged singular values in eligible modules. The primary
+  rule is m = max(k50, 40), norm overlap < 0.5, and 0.5 above the module's chance
+  reference. Apply this independently to SFT and GRPO if either has flags.
+- Log every selected direction, its overlap, m, chance reference and singular
+  value before and after editing. Log skipped modules with reasons, distinguishing
+  undecidable from determinate modules with no flagged directions.
+- Add V6c per edited arm: in the same modules, halve the same number of
+  non-flagged directions whose singular values are nearest to the flagged ones.
+  Matching must be deterministic and save its selected indices and distances.
+  Candidate pool, assignment/tie-breaking and insufficient-control handling
+  require an explicit rule before building these variants.
+- Before halving, validate the mixed loader using un-halved merged matrices
+  against the original adapter model: identical greedy tokens and logit agreement
+  around 1e-5 as requested. Exact absolute/relative interpretation, compared
+  positions and calibration cohort remain to be specified; do not silently
+  choose or relax this gate after running it.
 - Do not merge the adapter again when loading already edited matrices. Preserve
   W0, original adapter, singular-value selection, correction factors and hashes
   separately. Other rank-one variants retain their PEFT representation.
