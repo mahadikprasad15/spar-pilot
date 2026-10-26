@@ -48,14 +48,17 @@ From the repository checkout:
 
 ```sh
 python -m pilot_eval stage0-prepare --selection artifacts/notebook/stage0-geometry-v1/source-selection.json --name stage0-geometry-v1 --output-root artifacts
-python -m pilot_eval stage0-audit --config artifacts/plans/stage0-geometry-v1/stage0.plan.json --output-root artifacts
-python -m pilot_eval stage0-status --config artifacts/plans/stage0-geometry-v1/stage0.plan.json --output-root artifacts
+python -m pilot_eval stage0-audit --config plans/stage0-geometry-v1/stage0.plan.json --output-root artifacts
+python -m pilot_eval stage0-status --config plans/stage0-geometry-v1/stage0.plan.json --output-root artifacts
 ```
 
 All notebook cells call this boundary. A fresh kernel needs only the storage and
 checkout cell before `status`. An audit can be deliberately bounded using
 `--max-new-units 1`; rerun the same command without the limit to finish. Completed
 source units are verified and reused.
+
+Saved-plan paths are absolute or relative to `--output-root`, as in the audit
+and status examples above. The notebooks pass absolute paths.
 
 ## Outputs and interpretation
 
@@ -109,7 +112,7 @@ Replace the example value with verified usage. Persist the observation under the
 artifact root and submit it with:
 
 ```sh
-python -m pilot_eval stage0-budget-record --config artifacts/plans/stage0-geometry-v1/stage0.plan.json --observation artifacts/notebook/stage0-geometry-v1/budget-observation.json --output-root artifacts
+python -m pilot_eval stage0-budget-record --config plans/stage0-geometry-v1/stage0.plan.json --observation artifacts/notebook/stage0-geometry-v1/budget-observation.json --output-root artifacts
 ```
 
 Events are hash chained and idempotent by ID. Repeating the same event is safe;

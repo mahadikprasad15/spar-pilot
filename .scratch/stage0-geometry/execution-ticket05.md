@@ -98,6 +98,10 @@ Earlier fixture snapshots are preserved with their source pin or patch. These
 adapters and outputs are CPU fixtures, not trained-model results or real GPU
 qualification.
 
+Implementation release pin: `a6272b0a57ec7ff7f4865186489b77afdf6fedc2`.
+Both shared notebooks select that tested source commit. The source release is
+local until explicitly published; a notebook pin is not a publication receipt.
+
 Before real execution, publish the tested notebook release, complete the actual
 source/cache/edit workflows and the real Ticket 04 diagnostic, approve its
 measured numerical gate and production budget, then collect with the same
