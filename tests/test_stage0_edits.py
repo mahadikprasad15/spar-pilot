@@ -1,5 +1,7 @@
 """Complete CPU edit catalogue through the saved command boundary."""
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +60,14 @@ def test_catalogue_reconstructs_principal_edits_size_controls_and_reference_iden
         for x,y in zip(output[variant][untouched],source[untouched]):np.testing.assert_array_equal(x,y)
     assert edits(tmp_path,'verify',plan)==0
     assert not list((run/'results').glob('*projection*'))
+    script='''
+import sys
+from pilot_eval.stage0_edits import verify
+result=verify(sys.argv[1],sys.argv[2])
+assert len(result['variants'])==10
+assert not any(name in sys.modules for name in ['torch','transformers','peft'])
+'''
+    subprocess.run([sys.executable,'-c',script,str(plan),str(tmp_path)],check=True)
 
 
 def test_interruption_reuses_module_units_and_damaged_adapter_is_rejected(tmp_path):
@@ -97,6 +107,37 @@ def test_changed_source_or_cache_cannot_be_used_for_edit_resume(tmp_path):
     basis=next((tmp_path/'runs/stage0/basis/spectral/units').glob('*/basis.npz'))
     basis.write_bytes(b'invalid')
     assert edits(tmp_path,'run',plan)==1
+
+
+def test_size_controls_handle_zero_updates_and_random_qr_is_orthogonal():
+    from pilot_eval.stage0_edit_math import edit_module
+    a=np.array([[1.,2.,3.]],dtype=np.float32);b=np.zeros((2,1),dtype=np.float32)
+    u=np.array([[1.],[0.]],dtype=np.float32);v=np.array([[1.],[0.],[0.]],dtype=np.float32)
+    output,evidence,bases=edit_module(a,b,u,v)
+    assert all(row['update_norm']==0 for row in evidence.values())
+    for q in bases.values():np.testing.assert_allclose(q.T@q,np.eye(1),atol=1e-6)
+    assert evidence['V4']['original_update_norm']==0
+
+
+def test_serialized_edit_can_be_read_by_independent_safetensors_implementation(tmp_path):
+    import pytest
+    safetensors=pytest.importorskip('safetensors.numpy')
+    from pilot_eval.stage0_edits import _save_tensors
+    values={'example.lora_A.weight':np.array([[1.,2.]],dtype=np.float32),
+            'example.lora_B.weight':np.array([[3.],[-4.]],dtype=np.float32)}
+    path=tmp_path/'edited.safetensors'
+    _save_tensors(path,values)
+    loaded=safetensors.load_file(str(path))
+    assert set(loaded)==set(values)
+    for key in values:np.testing.assert_array_equal(loaded[key],values[key])
+
+
+def test_owned_catalogue_refuses_second_writer_before_mutation(tmp_path):
+    plan=prepared(tmp_path)
+    run=tmp_path/'runs/stage0/edits/edits'
+    marker=run/'writer.json';marker.write_text(json.dumps({'token':'other-notebook'}))
+    assert edits(tmp_path,'run',plan)==1
+    assert marker.exists() and not (run/'units').exists()
 
 
 def test_cpu_notebook_has_public_edit_prepare_run_and_verify_cells():

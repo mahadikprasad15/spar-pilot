@@ -9,7 +9,8 @@ KL and GPU qualification are later stages.
 ## Notebooks
 
 - `notebooks/stage-0-cpu-colab.ipynb`: setup, select existing sources, prepare,
-  audit/resume, status, spectral cache and optional projection reveal. Use CPU.
+  audit/resume, status, spectral cache, optional projection reveal and edit
+  construction/verification. Use CPU.
 - `notebooks/stage-0-gpu-colab.ipynb`: the shared setup/status entrypoint only at
   this stage. Do not allocate a GPU for its current cells.
 

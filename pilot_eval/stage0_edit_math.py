@@ -42,6 +42,8 @@ def edit_module(a,b,u,v):
             q,_=np.linalg.qr(rng.normal(size=(b.shape[0],k)),mode='reduced')
             q=q.astype(np.float32)
         else:q=np.zeros((b.shape[0],0),dtype=np.float32)
+        if k and np.max(np.abs(q.astype(np.float64).T@q-np.eye(k)))>1e-6:
+            raise ValueError('Random control basis orthogonality gate failed.')
         bases[f'V3-{draw}']=q
         output[f'V3-{draw}']=(a.copy(),_remove(b,q))
     output['V4']=_matched(a,b,_norm(*output['V1']))
@@ -51,7 +53,9 @@ def edit_module(a,b,u,v):
         if not np.isfinite(va).all() or not np.isfinite(vb).all():
             raise ValueError('Nonfinite edited factor.')
         checks[variant]=dict(update_norm=_norm(va,vb),a_norm=float(np.linalg.norm(va.astype(np.float64))),
-                             b_norm=float(np.linalg.norm(vb.astype(np.float64))))
+                             b_norm=float(np.linalg.norm(vb.astype(np.float64))),
+                             original_update_norm=_norm(a,b),original_a_norm=float(np.linalg.norm(a.astype(np.float64))),
+                             original_b_norm=float(np.linalg.norm(b.astype(np.float64))))
     for variant,vector,q in [('V1',output['V1'][1],u),('V2',output['V2'][0],v)]+[
             (key,output[key][1],q) for key,q in bases.items()]:
         norm=float(np.linalg.norm(vector.astype(np.float64)))
