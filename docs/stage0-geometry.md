@@ -1,11 +1,12 @@
 # Stage 0 geometry experiments
 
 Stage 0 uses existing rank-one SFT/GRPO adapters. Its main result will be paired
-intervention comparisons. Tickets 01-05 implement source readiness, fresh-process
+intervention comparisons. Tickets 01-06 implement source readiness, fresh-process
 restoration, budget observations, a resumable CPU spectral cache, explicit
-trained-overlap reporting, principal-edit construction, bounded qualification and
-paired greedy collection. Real-source and real-GPU execution evidence remains
-pending. Gradients, KL and the combined findings report are later slices.
+trained-overlap reporting, principal-edit construction, bounded qualification,
+paired greedy collection and fixed-context KL/effective writes. Real-source and
+real-GPU execution evidence remains pending. Gradients and the combined findings
+report are later slices.
 
 ## Notebooks
 
@@ -14,7 +15,8 @@ pending. Gradients, KL and the combined findings report are later slices.
   construction/verification and saved greedy-result inspection. Use CPU.
 - `notebooks/stage-0-gpu-colab.ipynb`: explicit pinned dependency setup/import
   checks, bounded qualification and reviews, followed by paired greedy collection.
-  GPU inference occurs only in the diagnostic and collection run cells.
+  Fixed-context KL/write collection follows under its own bounded allocation.
+  GPU inference occurs only in diagnostic and collection run cells.
 
 Both select the same artifact root and plan name. The dedicated Colab checkout
 uses a recorded release commit and refuses to switch a dirty checkout. The
@@ -371,3 +373,99 @@ automatic results. Targeted human answer overlays, paired intervals and the
 approved non-inferiority claim remain Ticket 07 work; KL/effective writes remain
 Ticket 06. A synthetic fixture is explicitly labelled and never reported as a
 real model finding.
+
+## Fixed-context KL and effective writes (Ticket 06)
+
+This is a separate measured workload after loader qualification. It uses the
+**same frozen execution/runtime and all ten primary variants**, on the original
+**150 GSM8K gold + 150 FineWeb sequences** from the audited SFT prepared product.
+There is no new training or generation. Three instrument controls (untuned,
+SFT-zero, GRPO-zero) use the first two documents of each corpus, four each.
+
+GPU notebook sections **16–19** prepare, collect, reconcile usage and verify.
+CPU notebook sections **15–16** inspect saved progress and verify. Each real
+forward is singleton: saving eight documents per durable unit does not create an
+inference batch of eight. Defaults produce **380 primary units + 3 control units**.
+The main workload contains 3,000 variant/document combinations. Cached untuned
+references, switching/restoration passes and bounded repeat/chunk diagnostics add
+forwards; this is not a claim of only 3,000 total model calls. No completion time
+is inferred from greedy decoding speed.
+
+```sh
+python -m pilot_eval stage0-drift-prepare --execution plans/<qualification>/stage0.execution.json --inputs plans/pilot3-inputs-v1/activation.prepared.json --name stage0-geometry-v1-fixed-context-v1 --output-root artifacts
+python -m pilot_eval stage0-drift-run --config plans/stage0-geometry-v1-fixed-context-v1/stage0.drift.json --approval /absolute/path/drift-budget-review.json --max-new-units 4 --output-root artifacts
+python -m pilot_eval stage0-drift-status --config plans/stage0-geometry-v1-fixed-context-v1/stage0.drift.json --output-root artifacts
+python -m pilot_eval stage0-drift-verify --config plans/stage0-geometry-v1-fixed-context-v1/stage0.drift.json --output-root artifacts
+```
+
+The first bounded four-unit attempt covers the three controls and first SFT group.
+Inspect `units/*/attempt.json` for measured group seconds and `attempts/*/timing.json`
+for whole-attempt time, including model loading. An explicit conservative rate and
+wall-time bound use the same budget-review fields as other Stage 0 GPU jobs.
+The greedy reservation must be reconciled first; it cannot fund this workload.
+Rerunning without `--approval` uses the remaining time in the matching active
+allocation. A new allocation requires reconciliation and a new explicit review.
+No allocation bypasses the shared **20-unit total ceiling**.
+
+### Measurement definitions
+
+- **KL:** full-vocabulary `KL(p_variant || p_untuned)` in nats, from FP32 logits
+  with FP64 log-softmax/reduction. The target's view/mask belongs to token `t`;
+  the compared logits come from `t-1`. Target zero is excluded. The output head
+  projects at most 32 contexts at once under a declared 512 MiB workspace budget.
+  No full `[batch, sequence, vocabulary]` array is produced or saved. Tiny signed
+  KL roundoff is retained under the existing analytic FP64 bound, never clipped.
+- **Writes:** actual direct LoRA branch on the adapted module's input `x`,
+  compared to that module's actual base output `W x` on the same input. Write
+  positions are unshifted and may include position zero. Save per-document,
+  view and module: `sum ||delta W x||²`, `sum ||W x||²`, and
+  `sum (||delta W x|| / ||W x||)`, with token counts from the frozen masks.
+  A zero denominator is undefined and stops collection with evidence.
+- **Magnitude:** save every module's actual FP64 `||b|| ||a||` and its sum.
+  This primary catalogue has rank-one, alpha-one adapters. Conditional merged
+  V6/V6c collection belongs to its later slice; a general dense-write oracle
+  already tests the mathematical definition without inventing rank-one factors.
+- **Aggregates:** corpus/view cells separate token-weighted and equal-document
+  means. The RMS ratio `sqrt(sum update² / sum base²)` is labelled separately
+  from the mean of per-token ratios. Individual random draws remain distinct.
+
+The same local-only loader verifies all 392 factors of each loaded adapter,
+including both zero controls. Base hashes, parameter guards and final payload
+checks retain the qualification identity. Every variant switch checks the
+untuned final hidden reference exactly; restoration is checked again afterward.
+The first document of each variant's first group additionally checks strict
+repeat agreement (including raw diagnostic coefficients) and alternate KL chunks.
+Inherited Pilot 4 agreement and rank-one reconstruction limits are unchanged.
+Zero controls require exact zero KL and direct writes across their full mappings.
+No raw coefficient batch-sensitivity relaxation is generalized to these gates.
+
+### Saved product and resume
+
+Under `artifacts/runs/stage0/<drift-name>/fixed-context/`:
+
+| File | Content |
+|---|---|
+| `config.json`, `meta/run_manifest.json` | Frozen source/runtime/tokenizer/settings and work inventory |
+| `inputs/module-factor-norms.json` | Actual module-by-variant factor-norm products |
+| `units/<key>/arrays.npz` | FP64 scalar KL vector; FP64 `[documents, 3 views, modules, 3 sums]` writes |
+| `units/<key>/result.json` | Exact KL/write positions, tokens, examples, views, module order and numeric checks |
+| `units/<key>/attempt.json`, `complete.json` | Timing, integrity, attempt identity and payload seal |
+| `attempts/<id>/observations/` | Observations retained before validation, including rejected payloads |
+| `attempts/<id>/start.json`, `timing.json`, `timing.complete.json` | Bounded allocation and elapsed-time evidence |
+| `results/per-document.jsonl`, `results/results.json` | Reconstructed document/corpus/view/module results |
+| `meta/status.json`, `checkpoints/progress.json`, `logs/` | Progress and failures |
+| `complete.json` | Verified completion for this product; not a behavioral conclusion |
+
+Incomplete writes are unsealed and recomputed. Valid sealed units are checked and
+skipped. Altered inputs, adapters, reviews, runtime or implementation are rejected;
+known full-integrity failure invalidates the affected attempt. Missing elapsed
+measurement requires budget reconciliation. A stale writer is released only by
+`stage0-drift-recover-writer --owner-token ... --review-notes ...`; a live local
+writer is refused and all recovery evidence remains saved.
+
+Historical KL/write values are **not inputs** to these new measurements. This
+slice records the paired execution and runtime provenance required by Ticket 07;
+it does not itself join historical values or behavioral results. KL on supplied
+contexts is a distributional change, not by itself behavioral harm or evidence
+of a causal mechanism. Real CUDA qualification/collection remains unexecuted in
+the local software fixtures.

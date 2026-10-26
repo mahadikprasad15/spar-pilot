@@ -16,6 +16,25 @@ def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
     for operation in ['prepare','run','verify','status','recover-writer']:
+        drift=commands.add_parser('stage0-drift-'+operation,help='paired fixed-context KL and direct effective writes')
+        drift.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            drift.add_argument('--execution',type=Path,required=True)
+            drift.add_argument('--inputs',type=Path,required=True)
+            drift.add_argument('--name',required=True)
+            drift.add_argument('--batch-size',type=int,default=1)
+            drift.add_argument('--batches-per-unit',type=int,default=8)
+            drift.add_argument('--context-chunk',type=int,default=32)
+            drift.add_argument('--workspace-bytes',type=int,default=536870912)
+        else:drift.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            drift.add_argument('--approval',type=Path)
+            drift.add_argument('--max-new-units',type=int)
+            drift.add_argument('--no-progress',action='store_true')
+        if operation=='recover-writer':
+            drift.add_argument('--owner-token',required=True)
+            drift.add_argument('--review-notes',required=True)
+    for operation in ['prepare','run','verify','status','recover-writer']:
         evaluation=commands.add_parser('stage0-evaluation-'+operation,
             help='saved paired greedy intervention evaluation')
         evaluation.add_argument('--output-root',type=Path,required=True)
@@ -413,7 +432,22 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-evaluation-'):
+        if args.command.startswith('stage0-drift-'):
+            from pilot_eval.stage0_drift import prepare,run,verify,status,recover_writer
+            operation=args.command.removeprefix('stage0-drift-')
+            if operation=='prepare':
+                result=prepare(args.execution,args.inputs,args.output_root,args.name,batch_size=args.batch_size,
+                    batches_per_unit=args.batches_per_unit,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
+            elif operation=='run':
+                result=run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,
+                    max_new_units=args.max_new_units,progress=not args.no_progress)
+            elif operation=='recover-writer':result=recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:result=(verify if operation=='verify' else status)(args.config,args.output_root)
+            if isinstance(result,dict) and 'per_document' in result:
+                result={k:v for k,v in result.items() if k not in ['per_document','cells']}
+                result['detail']='Full document/module results are saved under the canonical result directory.'
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-evaluation-'):
             from pilot_eval.stage0_evaluation import prepare,run,verify,status,recover_writer
             operation=args.command.removeprefix('stage0-evaluation-')
             if operation=='prepare':
