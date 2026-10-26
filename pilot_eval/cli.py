@@ -15,6 +15,22 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare', 'audit', 'status', 'budget-record', 'recover-writer']:
+        stage0 = commands.add_parser('stage0-'+operation, help='CPU Stage 0 source readiness and cumulative budget')
+        stage0.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            stage0.add_argument('--selection', type=Path, required=True)
+            stage0.add_argument('--name', required=True)
+        else:
+            stage0.add_argument('--config', type=Path, required=True)
+        if operation == 'audit':
+            stage0.add_argument('--max-new-units', type=int)
+        if operation == 'budget-record':
+            stage0.add_argument('--observation', type=Path, required=True)
+        if operation == 'recover-writer':
+            stage0.add_argument('--owner-token', required=True)
+            stage0.add_argument('--review-notes', required=True)
+            stage0.add_argument('--product', choices=['audit', 'budget'], default='audit')
     findings=commands.add_parser('behaviour-findings',help='CPU combined behavioural findings and evidence handoff')
     findings.add_argument('--config',type=Path,required=True)
     findings.add_argument('--transitions',type=Path,required=True)
@@ -339,7 +355,22 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command=='behaviour-findings':
+        if args.command.startswith('stage0-'):
+            from pilot_eval.stage0_workflow import prepare, audit, status, record_budget, recover_writer, console_summary
+            if args.command == 'stage0-prepare':
+                print(prepare(args.selection, args.output_root, args.name))
+            else:
+                if args.command == 'stage0-audit':
+                    result = audit(args.config, args.output_root, max_new_units=args.max_new_units)
+                elif args.command == 'stage0-budget-record':
+                    result = record_budget(args.config, args.output_root, args.observation)
+                elif args.command == 'stage0-recover-writer':
+                    result = recover_writer(args.config, args.output_root, args.owner_token,
+                                            args.review_notes, product=args.product)
+                else:
+                    result = status(args.config, args.output_root)
+                print(json.dumps(console_summary(result), indent=2))
+        elif args.command=='behaviour-findings':
             from pilot_eval.behaviour_findings import build_findings
             result=build_findings(args.config,args.transitions,args.sampling,args.output_root,args.name,
                                   audit_path=args.audit_config,assisted_report=args.assisted_report,

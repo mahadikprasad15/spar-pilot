@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Track:** Primary.
 
@@ -16,3 +16,5 @@
 ## Comments
 
 - 2026-10-26: User approved this slice, its blocking edges and the shared public workflow test boundary. No real GPU completion is implied.
+- 2026-10-26: Implementation started. Session baseline: 485 passed, 35 skipped,
+  4 warnings; model-backed skips include the local Torch library failure.
