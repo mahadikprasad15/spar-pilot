@@ -15,6 +15,19 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run','verify','status','audit-prepare','audit-status','audit-save','audit-freeze','audit-reveal','report']:
+        findings=commands.add_parser('stage0-findings-'+operation,help='CPU paired Stage 0 findings and targeted intended-answer review')
+        findings.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            findings.add_argument('--evaluation',type=Path,required=True)
+            findings.add_argument('--drift',type=Path,required=True)
+            findings.add_argument('--name',required=True)
+        else:findings.add_argument('--config',type=Path,required=True)
+        if operation=='run':findings.add_argument('--max-new-units',type=int)
+        if operation=='audit-prepare':
+            findings.add_argument('--reuse-audit',type=Path)
+            findings.add_argument('--reuse-revision')
+        if operation=='audit-save':findings.add_argument('--labels',type=Path,required=True)
     for operation in ['prepare','run','verify','status','recover-writer']:
         drift=commands.add_parser('stage0-drift-'+operation,help='paired fixed-context KL and direct effective writes')
         drift.add_argument('--output-root',type=Path,required=True)
@@ -432,7 +445,23 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-drift-'):
+        if args.command.startswith('stage0-findings-'):
+            from pilot_eval import stage0_findings as workflow
+            operation=args.command.removeprefix('stage0-findings-')
+            if operation=='prepare':result=workflow.prepare(args.evaluation,args.drift,args.output_root,args.name)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,max_new_units=args.max_new_units)
+            elif operation.startswith('audit-'):
+                from pilot_eval import stage0_findings_review as review
+                action=operation.removeprefix('audit-')
+                if action=='prepare':result=review.prepare(args.config,args.output_root,reuse_audit=args.reuse_audit,reuse_revision=args.reuse_revision)
+                elif action=='save':result=review.save(args.config,args.output_root,args.labels)
+                else:result=getattr(review,action)(args.config,args.output_root)
+            else:result=getattr(workflow,operation)(args.config,args.output_root)
+            if isinstance(result,dict) and 'contrasts' in result:
+                result={k:v for k,v in result.items() if k!='contrasts'}
+                result['detail']='All contrast tables, raw pairs and plots are saved in the findings directory.'
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-drift-'):
             from pilot_eval.stage0_drift import prepare,run,verify,status,recover_writer
             operation=args.command.removeprefix('stage0-drift-')
             if operation=='prepare':
