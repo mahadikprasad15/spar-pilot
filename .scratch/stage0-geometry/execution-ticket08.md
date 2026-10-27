@@ -82,3 +82,5 @@ verified result, not inferred from missing execution.
 - Synthetic validation snapshot and independent diagonal-oracle results are
   persisted under `artifacts/validation/stage0-ticket08/`.
 - No real adapter geometry, GPU job, training, Drive upload or GitHub push.
+
+- Notebook scientific implementation pin: `b27dbf94761a24dd292a432b4a7981b2ff6e4585`.
