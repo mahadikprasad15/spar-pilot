@@ -20,7 +20,10 @@ def cosine(a,b):
 
 def orient_endpoint(a,b,a0):
     dot=float(np.asarray(a,dtype=float).reshape(-1)@np.asarray(a0,dtype=float).reshape(-1))
-    return (None if dot==0 else np.asarray(b,dtype=float).reshape(-1)*(1 if dot>0 else -1)),dict(dot_a64_a0=dot,flipped=dot<0,defined=dot!=0,a64_a0_cosine=cosine(np.asarray(a).reshape(-1),np.asarray(a0).reshape(-1)))
+    raw_cosine=cosine(np.asarray(a).reshape(-1),np.asarray(a0).reshape(-1))
+    return (None if dot==0 else np.asarray(b,dtype=float).reshape(-1)*(1 if dot>0 else -1)),dict(
+        raw_dot_a64_a0=dot,oriented_dot_a64_a0=None if dot==0 else abs(dot),flipped=dot<0,defined=dot!=0,
+        raw_a64_a0_cosine=raw_cosine,a64_a0_cosine=None if dot==0 or raw_cosine is None else abs(raw_cosine))
 
 
 def summarize_vectors(gradients,tokens,counts):
@@ -59,5 +62,6 @@ def instrument_check():
     dead=not np.any(group_advantages([0]*8+[1]*8))
     passed=relative<1e-5 and fd<1e-3 and a_zero and micro and dead
     return dict(passed=passed,gradient_relative_error=relative,directional_relative_error=fd,epsilon=epsilon,
+        torch_version=torch.__version__,numpy_version=np.__version__,
         a_gradient_exact_zero=a_zero,microbatch_global_denominator_passed=micro,dead_group_zero_passed=dead,
         scope='tiny independent CPU FP64 software oracle; not real-model/GPU qualification',reconstruction_gate=1e-5,directional_gate=1e-3)

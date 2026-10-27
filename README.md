@@ -32,7 +32,9 @@ writes. The CPU notebook also produces paired primary findings and targeted
 answer-review snapshots. The primary software path is implemented; real Stage 0
 qualification and experimental results are still pending. The optional CPU
 rotation/intruder branch is also implemented; it supplies eligibility evidence
-for later conditional edits.
+for later conditional edits. Optional initial-gradient collection and CPU
+push/endpoint alignment reports are implemented as well; real collection is
+pending.
 
 See [execution and result status](docs/experiments/status.md),
 [measurement conventions](docs/methods.md), and [domain terminology](CONTEXT.md).

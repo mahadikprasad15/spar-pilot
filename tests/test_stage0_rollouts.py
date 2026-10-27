@@ -21,10 +21,10 @@ def output(row,draw):
                 generated_token_ids=[7 if correct else 8,99],stop_reason='eos')
 
 
-def sources(root,*,gold_eos=11):
+def sources(root,*,gold_eos=11,**dimensions):
     from test_stage0_workflow import sources as audit_sources,command
     from pilot_eval.grpo_baseline import _score
-    selected=audit_sources(root)
+    selected=audit_sources(root,**dimensions)
     assert command(root,'prepare','--selection',selected,'--name','audit')==0
     audit=root/'plans/audit/stage0.plan.json'
     assert command(root,'audit','--config',audit)==0

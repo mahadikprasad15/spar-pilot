@@ -597,3 +597,10 @@ final partial batch. Exclude partial batches from consistency. Token-weighted
 pooled push is secondary. Orient each endpoint pair by sign(a64 dot A0), flipping
 a and b together when negative; zero dot is undefined. Report flipped-module
 counts (expected none), rather than assuming orientation.
+
+Implementation follows the approved within-session comparison policy: freeze
+the first gradient profile runtime for all subsequent gradient objectives/resumes.
+The completed R0 token cohort is source data with its sampling runtime retained;
+using it does not join historical gradient values. A new gradient comparison may
+start in a later suitable GPU session; changing session after its own profile
+requires a separately named comparison, absent an approved compatibility check.

@@ -83,3 +83,14 @@ It always measures all module/arm units and distinguishes chance-undecidable
 modules from modules with no intruders. Real-weight execution is pending.
 Ticket 09 will construct the conditional merged V6/V6c edits from verified
 eligibility evidence; no such edit or behavioral result is established here.
+
+### Optional initial pushes — 27 October2026
+
+Ticket13 software is implemented: source-hashed initializations, matched CE
+batches, initial GRPO gradients, bounded profile/production allocations,
+resumable gradient artifacts, and CPU prediction-bound endpoint reports.
+All10 ticket tests and42 existing affected regression tests passed across the
+recorded CPU environments. Three actual Torch tests ran separately because the
+regular local Torch installation is incomplete. No real GPU collection or
+scientific alignment result is implied. CPU34–36 / GPU32–37 expose this branch;
+see the [execution record](../../.scratch/stage0-geometry/execution-ticket13.md).

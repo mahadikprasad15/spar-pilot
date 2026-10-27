@@ -15,6 +15,17 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','check','runtime','run','status','forecast','freeze','verify-measurement','report','predict','reveal','verify','recover-writer']:
+        push=commands.add_parser('stage0-pushes-'+operation,help='optional initial-gradient pushes; CPU summaries and bounded GPU collection')
+        push.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            push.add_argument('--spectral',type=Path,required=True);push.add_argument('--rollouts',type=Path,required=True)
+            push.add_argument('--name',required=True);push.add_argument('--context-chunk',type=int,default=16)
+        else:push.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            push.add_argument('--approval',type=Path);push.add_argument('--max-new-units',type=int);push.add_argument('--no-progress',action='store_true')
+        if operation in ['freeze','predict']:push.add_argument('--review',type=Path,required=True)
+        if operation=='recover-writer':push.add_argument('--owner-token',required=True);push.add_argument('--review-notes',required=True)
     for operation in ['prepare','runtime','run','status','forecast','freeze','verify-measurement','report','verify','recover-writer']:
         distance=commands.add_parser('stage0-distance-'+operation,help='optional teacher-forced NLL/entropy measurement')
         distance.add_argument('--output-root',type=Path,required=True)
@@ -510,7 +521,21 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-distance-'):
+        if args.command.startswith('stage0-pushes-'):
+            from pilot_eval import stage0_pushes as workflow
+            operation=args.command.removeprefix('stage0-pushes-')
+            if operation=='prepare':result=workflow.prepare(args.spectral,args.rollouts,args.output_root,args.name,context_chunk=args.context_chunk)
+            elif operation=='runtime':result=workflow.runtime(args.config,args.output_root,dependencies=dependencies)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
+            elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
+            elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            elif operation in ['report','predict','reveal','verify']:
+                from pilot_eval import stage0_push_report as reports
+                result=reports.predict(args.config,args.output_root,args.review) if operation=='predict' else getattr(reports,operation)(args.config,args.output_root)
+            else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
+            if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['rows','modules','comparisons']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-distance-'):
             from pilot_eval import stage0_distance as workflow
             operation=args.command.removeprefix('stage0-distance-')
             if operation=='prepare':result=workflow.prepare(args.rollouts,args.output_root,args.name,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)

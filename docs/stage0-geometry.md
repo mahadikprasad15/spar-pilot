@@ -1160,3 +1160,88 @@ membership multiplicity. Bootstrap still resamples whole problems: all answers
 of a selected problem move together, and the sensitivity denominator is the
 number of answers, not the number of problems. Primary token-weighted estimates
 and the own_all gate are unchanged.
+
+## Optional initial pushes (Ticket13)
+
+This branch asks whether the **initial negative gradient** points toward the
+trained adapter's output factor and the base weight's principal output subspace.
+It does not reconstruct AdamW, and it does not establish a causal effect on
+behavior. It never constructs an optimizer or changes a model weight.
+
+Use CPU section34 after the base spectral cache and completed R0 cohorts exist.
+The public `stage0-pushes-prepare` command derives a source-bound initialization
+receipt from the exact saved A₀ tensor bytes. Identical hashes give three
+conditions (gold CE, own-correct-one CE, initial GRPO); differing hashes give
+three conditions at each A₀. Objectives are compared only within one A₀.
+
+Gold and own-correct-one share the same eligible problems and seed42 batches of
+eight. GRPO retains all512 problems and all eight draws per problem. Its detached
+advantages use the recorded binary training reward where available, otherwise
+the frozen R0 flexible-v3 reward, cap reward zero, sample SD and epsilon1e-4.
+The initial DAPO surrogate differentiates the current/old policy ratio at one;
+its derivative is the weighted log-probability gradient. Each microbatch uses
+the complete question-batch token denominator. Dead-group tokens remain in that
+denominator; their gradient contribution is exactly zero. Gold preserves saved
+SFT loss-bearing tokens and EOS; samples preserve actual generated IDs and EOS.
+
+GPU setup1–4 and sections32–37 expose the execution path:
+
+1. `pushes-runtime` inspects the environment without loading a model;
+   `pushes-check` runs the tiny CPU reconstruction/finite-difference oracle.
+2. A separately approved profile measures one batch per A₀/objective. It is
+   bounded to three or six condition batches before any production freeze.
+3. `pushes-forecast` records condition-specific measured costs and the missing
+   work. Its squared-sequence-length extrapolation is a planning estimate, not
+   a promised runtime. Reconcile actual usage and settle the profile allocation.
+4. `pushes-freeze` binds a separate reviewed production budget to that forecast.
+   `pushes-run` measures only missing batches; `pushes-status` and
+   `pushes-verify-measurement` distinguish partial and completed collection.
+5. Reconcile actual usage again before returning to CPU35–36.
+
+The first gradient profile freezes **its own** session/GPU/runtime. It can use
+saved R0 tokens from an earlier session because these are immutable input data;
+no historical gradient numbers are joined. All gradient objectives and resumes
+must match the frozen gradient session. A changed session requires a separately
+named comparison unless a future explicit compatibility workflow is approved.
+This branch shares the single cumulative20-unit budget, not another ticket's
+reservation.
+
+The collector loads one local FP32 model, verifies saved zero adapters, disables
+TF32/autocast and enables gradients only for selected LoRA factors. One sequence
+per memory microbatch bounds body memory; checkpointed output-head chunks avoid
+retaining full sequence×vocabulary graphs. Output-gradient hooks independently
+accumulate G·A₀ in FP64. Every saved batch requires relative reconstruction error
+<1e-5, exact-zero A-gradients, finite arrays and unchanged base/adapter evidence.
+The independent tiny CPU directional check keeps epsilon1e-4 and relative error
+<1e-3. A failed gate stops and preserves evidence; no tolerance is fitted.
+
+Canonical products live under `runs/stage0/<name>/e05_pushes/`:
+
+- `config.json`, `inputs/batches.jsonl`, `inputs/initialization-audit.json`:
+  sources, token masks, advantages, denominator, cohorts and A₀ hashes.
+- `units/<batch>/gradients.npz`: raw A/B gradients, negative B-gradient pushes and
+  independent FP64 reconstructions; adjacent metadata/seals bind the attempt.
+- `checks/`, `attempts/`, `meta/`, `logs/`: instrument results, runtime, timings,
+  integrity, progress, errors and budget references.
+- `results/summary.json`, `summary.csv`, `modules.jsonl`, `directions.jsonl`,
+  `mean-pushes.npz`: CPU summaries and retained mean vectors.
+- `predictions.json`, `exposure.json`, `results/endpoints.json`: the separate
+  conditional-prediction and endpoint-reveal record.
+
+`pushes-report` computes the primary batch-mean push both with and without the
+last partial batch, a token-weighted pooled secondary push, consistency using
+only full batches, π_out with chance k50/d_out, and direction-only objective
+comparisons. Raw norms are descriptive within a condition and must not be
+compared across objectives. Zero vectors yield undefined values, not zero cosine.
+
+After reading the initial summaries, use `pushes-predict` to freeze conditional
+predictions and declare prior exposure, then `pushes-reveal`. Saved earlier
+trained-overlap exposure or declared inspection makes the interpretation
+exploratory. The endpoint pair (a64,b64) is oriented so a64·A₀>0, flipping both
+signs together; zero dot is undefined. The report retains raw/oriented A alignment,
+counts flipped/undefined modules, and compares ordinary/sign pushes with endpoint
+b and100 seeded Gaussian direction controls. `pushes-verify` reconstructs the
+artifact/integrity chain on CPU without importing model libraries.
+
+Implementation and CPU-fixture success are separate from real GPU execution.
+This optional branch does not block the primary intervention result.
