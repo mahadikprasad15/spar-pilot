@@ -21,9 +21,9 @@ PACKET_FILES = ['config.json', 'reviewer/packet.json', 'reviewer/review.html', '
 
 
 def _parent(path, root):
-    from pilot_eval.stage0_findings import _load, _verify
+    from pilot_eval.stage0_findings import _load, _verified_files
     config, directory = _load(path, root)
-    _verify(config, directory, root)
+    _verified_files(config, directory, root)
     rows = [json.loads(line) for line in (directory/'inputs/responses.jsonl').read_text().splitlines()]
     return config, directory, rows
 
@@ -81,6 +81,8 @@ def identical_label(row, candidates):
 def prepare(path, output_root, *, reuse_audit=None, reuse_revision=None):
     root = Path(output_root).resolve(); config, directory, rows = _parent(path, root)
     audit = directory/'audit'; reasons = selection(rows, config['contrasts'])
+    if reuse_revision is not None and reuse_audit is None:
+        raise ValueError('A historical revision requires an explicit audit configuration.')
     candidates, history = _historical(root, reuse_audit, reuse_revision)
     with _writer(audit):
         if (audit/'packet.complete.json').exists():
@@ -114,6 +116,18 @@ def prepare(path, output_root, *, reuse_audit=None, reuse_revision=None):
                 mapping.append(dict(response_id=response_id, record_ids=[r['record_id'] for r in members]))
             secrets.SystemRandom().shuffle(packet)
             _save_frozen(construction, dict(source=source, reasons=reasons, reused=reused, packet=packet, mapping=mapping))
+        # Validate an interrupted preparation checkpoint before creating its publication seal.
+        expected = sorted(sorted(r['record_id'] for r in members) for members in groups.values())
+        if (sorted(sorted(g['record_ids']) for g in mapping) != expected
+                or len({g['response_id'] for g in mapping}) != len(mapping)
+                or {p['response_id'] for p in packet} != {g['response_id'] for g in mapping}):
+            raise ValueError('Blinded packet checkpoint mapping changed.')
+        row_by_id = {r['record_id']: r for r in rows}
+        packet_by_id = {p['response_id']: p for p in packet}
+        for group in mapping:
+            sample = row_by_id[group['record_ids'][0]]
+            if packet_by_id[group['response_id']] != dict(response_id=group['response_id'], question=sample['prompt'], response=sample['text']):
+                raise ValueError('Blinded packet question/response changed.')
         packet_hash = hashlib.sha256(_json_bytes(packet)).hexdigest()
         audit_config = dict(packet_sha256=packet_hash, findings_sha256=source['findings_sha256'], historical_source=history)
         _save_frozen(audit/'config.json', audit_config)
@@ -203,6 +217,7 @@ def status(path, output_root):
     return dict(state='labels-frozen' if frozen else 'awaiting-review', revision=draft['revision'],
         unique_responses=len(ids), label_counts=counts, selected_records=len(json.loads((audit/'private/selection.json').read_text())),
         reused_records=len(json.loads((audit/'private/reused.json').read_text())), scope=LIMITS,
+        reviewer=draft['reviewer'], reviewer_count=1 if draft['reviewer'] is not None else 0,
         reviewer_page=str(audit/'reviewer/review.html'), saved_draft=str(audit/'reviewer/draft.json'))
 
 
@@ -217,12 +232,13 @@ def overlay(path, output_root):
         current = by_id[row['record_id']]
         if current['text'] != row['text'] or current['prompt'] != row['prompt']:
             raise ValueError('Confirmed label response text no longer matches exactly.')
-        confirmed.append(dict(record_id=row['record_id'], label=row['label'], origin='identical-text historical reuse', source=row['source']))
+        confirmed.append(dict(record_id=row['record_id'], label=row['label'], reviewer=row['reviewer'], origin='identical-text historical reuse', source=row['source']))
     if summary['state'] == 'labels-frozen':
-        labels = {r['response_id']: r for r in _frozen(value, audit)['labels']}
+        frozen = _frozen(value, audit)
+        labels = {r['response_id']: r for r in frozen['labels']}
         for group in json.loads((audit/'private/mapping.json').read_text()):
             for record_id in group['record_ids']:
-                confirmed.append(dict(record_id=record_id, label=labels[group['response_id']], origin='new frozen intended-answer review',
+                confirmed.append(dict(record_id=record_id, label=labels[group['response_id']], reviewer=frozen['reviewer'], origin='new frozen intended-answer review',
                     source=dict(response_id=group['response_id'], packet_sha256=value['packet_sha256'],
                                 frozen_sha256=file_hash(audit/'labels/frozen.json'))))
     scores = {}; evidence = []

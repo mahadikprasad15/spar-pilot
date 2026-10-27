@@ -50,7 +50,8 @@ def prepare(evaluation_path, drift_path, output_root, name):
             if config['evaluation_path'] != str(ep.relative_to(root)) or config['drift_path'] != str(dp.relative_to(root)):
                 raise ValueError('Analysis name already binds another collection.')
             return path
-        started = any(any((d/'units').glob('*/complete.json')) for d in [edir, ddir])
+        started = any(any((d/'units').glob('*/complete.json')) or any((d/'attempts').glob('*/start.json'))
+                      or (d/'writer.json').exists() for d in [edir, ddir])
         config = dict(schema_version=1, protocol='stage0-primary-findings-v1', name=name,
             run_path=str(directory.relative_to(root)), evaluation_path=str(ep.relative_to(root)),
             evaluation_sha256=file_hash(ep), drift_path=str(dp.relative_to(root)), drift_sha256=file_hash(dp),
@@ -235,7 +236,8 @@ def run(path, output_root, *, max_new_units=None):
             raise
 
 
-def _verify(config, directory, root):
+
+def _verified_files(config, directory, root):
     rows, measurement, seals = _sources(config, root)
     marker = json.loads((directory/'complete.json').read_text())
     required = {'report.html', 'results/results.json', 'results/behaviour.csv', 'results/length.csv',
@@ -248,7 +250,11 @@ def _verify(config, directory, root):
             raise ValueError('Primary report payload changed: '+relative)
     if json.loads((directory/'inputs/source-seals.json').read_text()) != seals:
         raise ValueError('Collected source completion evidence changed.')
-    result = json.loads((directory/'results/results.json').read_text())
+    return json.loads((directory/'results/results.json').read_text()), rows, measurement, seals
+
+
+def _verify(config, directory, root):
+    result, rows, measurement, seals = _verified_files(config, directory, root)
     values = []
     for contrast in config['contrasts']:
         saved = _unit(directory, contrast)
@@ -277,3 +283,42 @@ def status(path, output_root):
     if complete: _verify(config, directory, root)
     return dict(analysis_complete=complete, completed_units=completed, total_units=len(CONTRASTS),
         execution_kind=config['execution_kind'], registration=config['registration'], report=str(directory/'report.html'))
+
+
+def report(path, output_root):
+    """Publish an immutable review-status snapshot; preserve the original raw report."""
+    root = Path(output_root).resolve(); config, directory = _load(path, root)
+    raw = _verify(config, directory, root)
+    from pilot_eval.stage0_findings_review import overlay
+    review, scores, evidence = overlay(path, root)
+    identity = dict(raw_report_sha256=file_hash(directory/'complete.json'), review=review,
+                    evidence_sha256=_hash(evidence))
+    target = directory/'reports'/('review-'+_hash(identity)[:20])
+    with _writer(target):
+        if (target/'complete.json').exists():
+            seal = json.loads((target/'complete.json').read_text())
+            if seal.get('identity') != identity: raise ValueError('Review report identity changed.')
+            for p, digest in seal['files'].items():
+                if file_hash(inside(target, p)) != digest: raise ValueError('Review report payload changed.')
+            return dict(report=str(target/'report.html'), review=review, reused=True)
+        result = json.loads(json.dumps(raw)); result['review'] = review
+        if scores:
+            rows = [json.loads(line) for line in (directory/'inputs/responses.jsonl').read_text().splitlines()]
+            groups = _groups(rows, lambda r: r['variant'])
+            for c in result['contrasts']:
+                before, after = groups[c['reference']], groups[c['edited']]
+                ids = sorted(before); indices, _ = _bootstrap(directory, ids)
+                c['behaviour'] = behaviour(before, after, ids, indices, overlay=scores)
+        _save_frozen(target/'config.json', dict(**config, review_snapshot=identity))
+        _write_json(target/'results/results.json', result)
+        _jsonl(target/'results/review-evidence.jsonl', evidence)
+        import shutil
+        shutil.copyfile(directory/'results/paired-items.jsonl', target/'results/paired-items.jsonl')
+        _tables(target, result)
+        from pilot_eval.stage0_findings_render import render
+        render(config, result, target)
+        files = {str(p.relative_to(target)): file_hash(p) for p in target.rglob('*')
+                 if p.is_file() and 'writer.json' != p.name}
+        _write_json(target/'complete.json', dict(identity=identity, files=files))
+        _state(target, 'complete', 1, 1, human_review=review['state'])
+    return dict(report=str(target/'report.html'), review=review, original_raw_report=str(directory/'report.html'))

@@ -95,3 +95,74 @@ def test_statistics_match_independent_draws_and_boundary():
     draws=np.random.default_rng(42).integers(0,3,(10000,3))
     assert paired(a,b,draws,statistic='median')['estimate']==1
     assert np.median(b)-np.median(a)==99
+
+
+def test_blinded_review_saved_revisions_freeze_and_report_overlay(source):
+    assert command(source,'run','--config',plan(source))==0
+    directory=source/'runs/stage0/primary/findings'
+    raw=(directory/'report.html').read_bytes()
+    assert command(source,'audit-prepare','--config',plan(source))==0
+    audit=directory/'audit'
+    packet=json.loads((audit/'reviewer/packet.json').read_text())
+    assert packet and all(set(r)=={'response_id','question','response'} for r in packet)
+    assert len({r['response_id'] for r in packet})==len(packet)
+    assert len(packet)<len(json.loads((audit/'private/selection.json').read_text()))
+    snapshot=(audit/'reviewer/packet.json').read_bytes()
+    assert command(source,'audit-prepare','--config',plan(source))==0
+    assert snapshot==(audit/'reviewer/packet.json').read_bytes()
+    assert command(source,'audit-reveal','--config',plan(source))==1
+    draft=json.loads((audit/'reviewer/draft.json').read_text())
+    draft['reviewer']='human-fixture'
+    draft['labels']=[dict(response_id=r['response_id'],status='numeric',answer='2',evidence='#### 2',note='') for r in packet]
+    path=source/'labels.json';write_json(path,draft)
+    assert command(source,'audit-save','--config',plan(source),'--labels',path)==0
+    assert command(source,'audit-save','--config',plan(source),'--labels',path)==0 # exact retry is idempotent
+    stale={**draft,'labels':[dict(draft['labels'][0],answer='9')]};write_json(path,stale)
+    assert command(source,'audit-save','--config',plan(source),'--labels',path)==1
+    assert command(source,'audit-freeze','--config',plan(source))==0
+    assert command(source,'audit-reveal','--config',plan(source))==0
+    revealed=json.loads((audit/'reveal/results.json').read_text())
+    assert revealed['confirmed_evidence'] and not revealed['reasoning_validated']
+    # Every fixture review is capped: numeric intended answer must not bypass the cap rule.
+    assert all(r['capped'] and r['overlay_correct']==0 for r in revealed['confirmed_evidence'])
+    assert command(source,'report','--config',plan(source))==0
+    assert (directory/'report.html').read_bytes()==raw
+    snapshots=list((directory/'reports').glob('*/results/results.json'))
+    assert len(snapshots)==1
+    combined=json.loads(snapshots[0].read_text())
+    assert combined['review']['state']=='labels-frozen'
+    for c in combined['contrasts']:
+        assert c['behaviour']['targeted_overlay']['preservation_claim'] is False
+    assert command(source,'report','--config',plan(source))==0
+    assert len(list((directory/'reports').glob('*/complete.json')))==1
+
+
+def test_partial_review_report_does_not_apply_draft_labels(source):
+    assert command(source,'run','--config',plan(source))==0
+    assert command(source,'audit-prepare','--config',plan(source))==0
+    audit=source/'runs/stage0/primary/findings/audit'
+    draft=json.loads((audit/'reviewer/draft.json').read_text());draft['reviewer']='test'
+    draft['labels']=[dict(draft['labels'][0],status='numeric',answer='2')]
+    file=source/'partial.json';write_json(file,draft)
+    assert command(source,'audit-save','--config',plan(source),'--labels',file)==0
+    assert command(source,'audit-freeze','--config',plan(source))==1
+    assert command(source,'report','--config',plan(source))==0
+    report=next((audit.parent/'reports').glob('*/results/results.json'))
+    result=json.loads(report.read_text())
+    assert result['review']['state']=='awaiting-review'
+    assert result['review']['numeric_overlay_records']==0
+    assert all('targeted_overlay' not in c['behaviour'] for c in result['contrasts'])
+
+
+def test_identical_text_reuse_does_not_normalize_or_copy_across_questions():
+    from pilot_eval.stage0_findings_review import identical_label
+    row=dict(prompt='Question A',text='Final answer: 2.')
+    candidate=dict(question='Question A',response='Final answer: 2.',
+        label=dict(response_id='old',status='numeric',answer='2',evidence='2',note=''),
+        reviewer='Prasad',source={'confirmed':'source'})
+    assert identical_label(row,[candidate]) is candidate
+    assert identical_label(dict(row,text='Final answer: 2. '),[candidate]) is None
+    assert identical_label(dict(row,prompt='Question B'),[candidate]) is None
+    conflict={**candidate,'label':dict(candidate['label'],answer='3')}
+    with pytest.raises(ValueError,match='Conflicting'):
+        identical_label(row,[candidate,conflict])
