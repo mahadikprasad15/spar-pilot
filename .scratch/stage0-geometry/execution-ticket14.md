@@ -100,3 +100,5 @@ Final regression results, validation locations and release pin follow below.
   in46.32s**. The skipped actual hook test passed separately; fresh verification
   of `artifacts/validation/stage0-ticket14/final-passing/` passed. No scientific
   result is implied by the synthetic snapshot.
+
+- Scientific implementation/shared-notebook release pin: `3fb71062111e8c7c1dd29c15ac7650ae3ec1a6fe`.
