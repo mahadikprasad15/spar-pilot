@@ -42,7 +42,7 @@ def prepare(rollouts_path,output_root,name,*,context_chunk=16,workspace_bytes=53
         unique_answer_ids=[a['answer_id'] for a in answers],answers_sha256=_hash(answers),memberships_sha256=_hash(memberships),
         mask='saved SFT prompt masked; gold through supervised EOS; sampled generated IDs including observed EOS, no artificial EOS on cap',
         units='nats per answer token',primary='nll',excess_surprise='nll minus model entropy; descriptive, not KL',
-        rank='1 + vocabulary logits strictly greater than target; ties share rank',own_all_gate=.02,budget_ceiling_units=20,
+        rank='1 + vocabulary logits strictly greater than target; ties share rank',position_windows='disjoint first32/middle/last32; first32 precedence on answers shorter than64',own_all_gate=.02,budget_ceiling_units=20,
         statistics=dict(draws=10000,seed=42,percentiles=[2.5,97.5],unit='whole problem',weighting='ratio of summed token surprise to summed token count'),
         premise=dict(sampled_distribution='HF temperature1, topk0, topp1',score_model='identical audited untuned weights',
             runtime='same sampled production session',stopping='observed EOS included; cap gets no synthetic EOS',

@@ -1062,7 +1062,7 @@ At target answer token t, use the model distribution at context t−1:
 - **Surprise:** −log p(target), in nats.
 - **Entropy:** −sum_v p(v) log p(v), over the full vocabulary.
 - **Rank:** one plus the number of logits strictly greater than the target logit;
-  ties share rank (proposed convention pending execution review).
+  ties share rank (explicit implementation convention).
 
 Primary dataset NLL is total surprise divided by counted answer tokens. Model
 entropy uses the same positions and weighting. Their difference is **excess
@@ -1139,5 +1139,10 @@ ratio has no exact finite-sample zero identity. Failed gates preserve the report
 and mark `failed-gate`; they do not authorize wider tolerances. This gate is not
 claimed to establish a valid KL identity or a reasoning-quality result.
 
-Positional window summaries are pending a separate convention decision; complete
-per-token evidence is retained so they need no additional model forwards.
+Positional summaries use disjoint first32/middle/last32 windows. First32 takes
+precedence on answers shorter than64, avoiding duplicate counting; empty windows
+are absent. `results/position-windows.csv` retains NLL and separately named
+excess-surprise intervals. These reporting defaults were stated explicitly after
+the optional convention question remained unanswered; they are implementation
+choices, not a separately claimed user approval. Complete token evidence permits
+CPU-only revisions without additional model forwards.

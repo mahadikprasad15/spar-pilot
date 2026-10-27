@@ -48,3 +48,9 @@ def check_arrays(arrays,answer):
     if arrays['surprise'].dtype!=np.float64 or arrays['entropy'].dtype!=np.float64 or not np.issubdtype(arrays['rank'].dtype,np.integer):raise ValueError('Token score precision differs.')
     if np.any(arrays['surprise']<0) or np.any(arrays['entropy']<0) or np.any(arrays['rank']<1):raise ValueError('Invalid token surprise, entropy or rank.')
     return arrays
+
+
+def position_windows(size):
+    """Disjoint summaries; first32 takes precedence for sequences shorter than64."""
+    if type(size) is not int or size<1:raise ValueError('Positive answer length required.')
+    return ['first32' if i<32 else ('last32' if i>=size-32 else 'middle') for i in range(size)]

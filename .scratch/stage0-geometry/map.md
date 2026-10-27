@@ -9,7 +9,7 @@
   `spec.md`; the approved slice breakdown is in `ticket-proposal.md`.
 - The user approved the public saved-workflow test boundary, all 15 slices and
   their dependency edges on 2026-10-26. Spec and individual `ready-for-agent`
-  issues are published in this local tracker. Tickets 01-11 are implemented;
+  issues are published in this local tracker. Tickets 01-12 are implemented;
   real source/weight execution remains separately pending.
 
 ## Decisions so far
@@ -73,7 +73,7 @@
 
 - Ticket 07 execution/validation record: `execution-ticket07.md`; 73 affected
   tests passed on 2026-10-27. Ticket 08 implements rotation/intruder geometry;
-  its real CPU execution is pending. Conditional Ticket 09 is now implemented; Ticket 10 is also implemented; optional Ticket 12 is the next implementation
+  its real CPU execution is pending. Conditional Ticket 09 is now implemented; Ticket 10 is also implemented; optional Ticket 13 is the next implementation
   frontier. Neither conditional nor supporting work is required to run the primary path.
 
 - Ticket 08: CPU rotation/intruder geometry implemented; `execution-ticket08.md`.
@@ -99,3 +99,10 @@
   implemented. CPU 29–31 / GPU 20–25. `execution-ticket11.md` records 53 affected
   passing tests; real source recovery and GPU execution remain pending. Ticket 12
   consumes verified memberships for optional per-answer NLL/entropy measurements.
+
+- Ticket 12: unique-answer teacher-forced NLL, entropy/rank/excess-surprise
+  collection and CPU reports are implemented, with SFT/end-token mapping,
+  separately frozen measured budgets, same-sampled-runtime enforcement, saved
+  problem bootstraps, positional summaries and unchanged ±0.02 gate. CPU32–33 /
+  GPU26–31. `execution-ticket12.md` separates software validation from pending
+  real GPU scoring and scientific gate evaluation. Ticket13 is next.

@@ -562,3 +562,14 @@ absence does not prevent a primary intervention report.
 - Keep a claim/evidence map for the primary report. Missing optional output,
   not-applicable V6, pending review and failed qualifications are explicit report
   states, not omissions to conceal.
+
+### Ticket12 reporting implementation conventions (27 October2026)
+
+The implementation uses target rank = 1 + number of vocabulary logits strictly
+greater than the target (ties share rank). Position summaries are disjoint
+first32/middle/last32 windows; first32 takes precedence for short answers. Primary
+dataset point estimates remain token-weighted ratios with whole-problem resampling.
+These defaults were stated after an optional clarification remained unanswered,
+not represented as a separate user approval. Original per-token data and
+positions remain available for CPU-only reporting revisions. No numerical
+acceptance threshold or original user-approved statistical claim is changed.

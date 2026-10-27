@@ -188,3 +188,11 @@ def test_token_weighted_point_estimate_and_problem_bootstrap_have_distinct_units
     assert (own['ci_low'],own['ci_high'])==(1.,3.) # resampling whole problems, not individual tokens
     assert own['neg_log_p_correct']==.5 # equal problem average, whole-answer units
     assert own['excess_surprise_ci_low']==.5 and own['excess_surprise_ci_high']==2.
+
+
+def test_position_windows_are_disjoint_and_short_answers_do_not_duplicate_tokens():
+    from pilot_eval.stage0_distance_math import position_windows
+    assert position_windows(5)==['first32']*5
+    assert position_windows(40)==['first32']*32+['last32']*8
+    assert position_windows(70)==['first32']*32+['middle']*6+['last32']*32
+    with pytest.raises(ValueError):position_windows(0)
