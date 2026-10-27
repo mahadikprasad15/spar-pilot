@@ -94,8 +94,9 @@ def _configuration(execution_path,inputs_path,root,name,batch_size,batches_per_u
     diagnostic_ids=[r['id'] for c in ['gsm8k','fineweb'] for r in [r for r in rows if r['corpus']==c][:2]]
     units=[dict(key='control-'+v,variant=v,ids=diagnostic_ids,diagnostic=True) for v in controls]
     width=batch_size*batches_per_unit
+    conditional=qualification.get('qualification_kind')=='conditional-intruders'
     for start in range(0,len(rows),width):
-        for variant in VARIANTS:
+        for variant in execution['variants']:
             units.append(dict(key=f'batch-{start//width:04d}-{variant}',variant=variant,
                 ids=[r['id'] for r in rows[start:start+width]],diagnostic=start==0))
     config=dict(schema_version=1,protocol='stage0-fixed-context-v1',name=name,
@@ -115,6 +116,13 @@ def _configuration(execution_path,inputs_path,root,name,batch_size,batches_per_u
         diagnostic_scope='all four zero-control documents; first document of the first group for each variant; strict repeat/chunk checks',
         coefficient_batch_policy='no batched production coefficients retained; prior descriptive policy unchanged',
         historical_values_used=False,budget_ceiling_units=20)
+    if conditional:
+        config.update(collection_kind='conditional-intruders',mixed_catalogue_path=qualification['mixed_catalogue_path'],
+            mixed_catalogue_sha256=qualification['mixed_catalogue_sha256'],
+            write_definition='direct full operator (edited W minus W0) on adapted module inputs; original branches elsewhere',
+            factor_norm_scope='rank-one norm products unavailable for mixed full-matrix edits; original reference factors only')
+        for variant,row in variants.items():
+            if row.get('representation')=='mixed-full-matrices':config['factor_norm_sums'][variant]=None
     return config
 
 
@@ -125,7 +133,7 @@ def prepare(execution_path,inputs_path,output_root,name,*,batch_size=1,batches_p
     with _writer(directory):
         _save_frozen(path,config);_save_frozen(directory/'config.json',config)
         _save_frozen(directory/'meta/run_manifest.json',dict(config_sha256=_hash(config),
-            main_sequence_forwards=3000,control_sequence_forwards=12,total_units=len(config['units']),
+            main_sequence_forwards=300*(len(config['variants'])-2),control_sequence_forwards=12,total_units=len(config['units']),
             resource='one qualified CUDA GPU for run; CPU prepare/status/verify',
             extra_calls='reference/switch restoration and bounded repeat/chunk checks; forecast from measured attempts',
             full_vocabulary_arrays_saved=False,execution_kind=config['execution_kind']))
@@ -237,7 +245,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         if max_new_units==0:return _progress(config,directory,saved,'incomplete')
         from pilot_eval.stage0_drift_backend import DriftDependencies
         from pilot_eval.stage0_qualification_backend import deadline_guard
-        deps=dependencies or DriftDependencies();runtime=deps.runtime()
+        deps=dependencies or _dependencies(config);runtime=deps.runtime()
         if runtime!=config['runtime']:raise ValueError('Drift requires the exact qualified runtime/session; do not silently join a new environment.')
         reservation,remaining=_reservation(config,directory,root,runtime,approval_path)
         attempt=directory/'attempts'/uuid.uuid4().hex
@@ -354,3 +362,11 @@ def recover_writer(path,output_root,owner_token,review_notes):
             stream.flush();os.fsync(stream.fileno())
         marker.unlink()
     return dict(state='ownership-released',scope='writer only; reservation and sealed measurements retained')
+
+
+def _dependencies(config):
+    if config.get('collection_kind')=='conditional-intruders':
+        from pilot_eval.stage0_mixed_drift_backend import MixedDriftDependencies
+        return MixedDriftDependencies()
+    from pilot_eval.stage0_drift_backend import DriftDependencies
+    return DriftDependencies()

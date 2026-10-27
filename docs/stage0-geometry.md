@@ -827,3 +827,114 @@ greedy engine interface, but remains `gpu_qualified: false`. Ticket 10 must run
 and review bounded unhalved logit/greedy checks, reconcile the cumulative
 20-unit budget and freeze the conditional evaluation before real inference.
 No CPU catalogue or synthetic test substitutes for that qualification.
+
+## Conditional evaluation and findings (Ticket 10)
+
+Ticket 10 uses the shared saved workflows, with the verified Ticket 09 catalogue
+as the qualification source. Primary products keep their names and are not
+replaced. In both notebooks, `CONDITIONAL_EXTENSION = False` remains the default.
+
+### Execution sequence
+
+1. **CPU notebook 23–28:** complete geometry and the conditional catalogue. Check
+   each arm's applicability. A verified not-applicable catalogue stops this
+   extension before any model load or budget reservation.
+2. **GPU notebook 1–4:** select `CONDITIONAL_EXTENSION = True`, restore the
+   pinned environment, audit and **existing cumulative** Stage 0 usage ledger.
+3. **GPU notebook 5–9:** prepare with `--catalogue`, inspect the frozen scope,
+   record observed usage and explicitly bound the loader diagnostic. Test the
+   unhalved saved matrices against the original adapter, using the same 16
+   held-out sequences for each required arm/mask layout. Retain all answer-position
+   maximum errors, worst coordinates, greedy outputs and double-adapter controls.
+4. **GPU notebook 9A–11:** reconcile actual diagnostic usage, review the numerical
+   evidence, approve exactly the proposed `3E` gate, and separately approve/freeze
+   the measured production reservation. `E > 1e-3`, an insensitive negative control
+   or an unaccepted greedy mismatch prevents qualification. A near-tie exception
+   is explicitly recorded and does not become exact token agreement.
+5. **GPU notebook 12–15:** prepare and collect paired greedy responses with both
+   original references freshly evaluated in this same recorded runtime. Empty
+   sensitivity variants are omitted from inference, while their reasons remain
+   in the catalogue. Reconcile actual usage after stopping or completing.
+6. **GPU notebook 12A and 16–19:** freeze the comparison family before collection,
+   prepare fixed contexts, separately reserve a bounded KL/write attempt, measure
+   and reconcile it. The first bounded units provide an actual throughput measure;
+   a forecast is not a completion guarantee.
+7. **CPU notebook, flag True, sections 17–22:** compute the extension statistics,
+   prepare the targeted blinded intended-answer review, save/freeze/reveal labels,
+   and publish a report snapshot. Unfinished review is reported honestly; raw
+   automatic findings remain accessible.
+
+The GPU model remains singleton FP32 with TF32/autocast off. Grouping eight calls
+into a durable unit is storage grouping, not larger inference batching. A changed
+session cannot resume the old paired collection: retain it and perform a newly
+qualified, separately named comparison. References are rerun rather than joining
+historical results without agreement evidence. Confirmed labels are reused only
+for identical prompt/response text through the existing review workflow.
+
+### Public commands and artifact identities
+
+Use the same command families as the primary path:
+
+```bash
+python -m pilot_eval stage0-qualification-prepare \
+  --catalogue artifacts/plans/stage0-geometry-v1-intruder-edits-v1/stage0.intruder-edits.json \
+  --name stage0-geometry-v1-intruder-qualification-v1 --output-root artifacts
+```
+
+`--edits` and `--catalogue` are mutually exclusive. Then use
+`stage0-qualification-{runtime,run,verify,approve,freeze}` with that qualification
+config; `stage0-evaluation-{prepare,run,status,verify}` with its frozen execution;
+`stage0-drift-{prepare,run,status,verify}` for its separately budgeted fixed
+contexts; and `stage0-findings-*` / `stage0-findings-audit-*` for its CPU analysis.
+The existing collection writer-recovery commands retain exact owner-token/notes
+requirements. Never reset the ledger or release an active reservation simply to
+start this branch; observe the new cumulative usage and settle it explicitly.
+
+Default extension products are distinct from the primary path:
+
+| Product | Canonical location below artifacts/ |
+|---|---|
+| Qualification and frozen execution | `plans/<Stage0>-intruder-qualification-v1/stage0.{qualification,execution}.json` |
+| Diagnostic units, review receipts and forecasts | `runs/stage0/<Stage0>-intruder-qualification-v1/qualification/` |
+| All generated responses, token IDs and scores | `runs/stage0/<Stage0>-intruder-qualification-v1/paired-evaluation/` |
+| Scalar KL arrays and direct-write sufficient sums | `runs/stage0/<Stage0>-intruder-fixed-context-v1/fixed-context/` |
+| Registered family, paired intervals, review and figures | `runs/stage0/<Stage0>-intruder-findings-v1/findings/` |
+
+The cumulative ceiling remains **20 Colab units for all Stage 0 work**, including
+primary and conditional diagnostics, failed attempts and resumed runs. Each job
+needs a current observed usage and a bounded reservation. No model-backed action
+is authorized by merely preparing or CPU-testing a plan.
+
+### What differs from the primary analysis
+
+- Every executable full, matched, matched-control, ratio and ratio-control variant
+  is compared with its own original adapter. Matched V6 is additionally compared
+  directly with matched V6c; the same is done for retained ratio pairs.
+- Full/matched/ratio identities and module masks never collapse into one result.
+  Arms without eligible flags, chance-undecidable modules, short-control exclusions
+  and empty ratio masks remain visible. Shared identical matrices may reuse a
+  payload, but their declared comparisons remain separate.
+- Intervals use the existing saved 10,000 paired bootstrap draws, seed 42 and
+  pointwise 95% percentiles. “Accuracy preserved” still requires the lower bound
+  to be strictly above −5 percentage points; n=150 may be inconclusive. These
+  conditional results do not replace or silently extend the primary family.
+- Full-vocabulary KL is still `KL(variant || untuned)` on the original 150 GSM8K
+  and 150 FineWeb fixed sequences, with corpus/view denominators preserved.
+- In merged modules, the effective write is the full `(W_edit − W0)x` on the
+  adapted model's module inputs. Untouched modules retain their real LoRA branch.
+  The implementation computes the direct matrix action in FP64; it does not
+  subtract rounded module outputs or label the full edit rank one. The denominator
+  uses the original base module output, including its unchanged bias.
+- `sum_factor_norm_products` is null for full-matrix variants because a single
+  pair of rank-one factors no longer represents that operator. Original reference
+  factor statistics remain available. Null is not zero, and the report explains
+  its scope. No new proxy norm or acceptance tolerance is introduced.
+- The loader retains a read-only CPU matrix cache for the current variant. It
+  releases that cache on variant changes and on close, preserves original base
+  parameter objects, and verifies the frozen mixed source catalogue at load and
+  full attempt-end integrity checks. A source change invalidates the attempt's
+  evidence rather than silently producing mixed-source results.
+
+Implementation validation uses CPU synthetic fixtures and mathematical oracles.
+Only a separately approved real-CUDA diagnostic establishes GPU qualification;
+software completion does not establish a scientific finding.

@@ -21,7 +21,7 @@ def runner_variants(catalogue):
 
 
 @contextmanager
-def merged_scope(model,definition,root,torch,*,adapter_name,negative_double_adapter=False):
+def merged_scope(model,definition,root,torch,*,adapter_name,negative_double_adapter=False,matrix_cache=None):
     """Swap parameter objects, never mutate W0; restore on every exit path.
 
     This preserves the original base parameter identity/version guards. Loading a
@@ -44,8 +44,13 @@ def merged_scope(model,definition,root,torch,*,adapter_name,negative_double_adap
         for layer,_ in flags:layer._disable_adapters=False
         for name in mask:
             descriptor=modules[name];path=inside(Path(root).resolve(),descriptor['path'])
-            if file_hash(path)!=descriptor['sha256']:raise ValueError('Saved merged matrix payload changed.')
-            matrix=np.load(path,allow_pickle=False)
+            key=(str(path),descriptor['sha256'])
+            matrix=None if matrix_cache is None else matrix_cache.get(key)
+            if matrix is None:
+                if file_hash(path)!=descriptor['sha256']:raise ValueError('Saved merged matrix payload changed.')
+                matrix=np.load(path,allow_pickle=False)
+                if matrix_cache is not None:
+                    matrix.flags.writeable=False;matrix_cache[key]=matrix
             if matrix.dtype!=np.float32 or list(matrix.shape)!=descriptor['shape'] or not np.isfinite(matrix).all():
                 raise ValueError('Saved merged matrix precision/shape/finiteness differs.')
             layer=model.get_submodule(name)
@@ -54,7 +59,7 @@ def merged_scope(model,definition,root,torch,*,adapter_name,negative_double_adap
             original=layer.base_layer.weight
             if original.dtype!=torch.float32 or tuple(original.shape)!=matrix.shape:
                 raise ValueError('Actual base module shape/FP32 dtype differs from the full matrix.')
-            parameter=torch.nn.Parameter(torch.from_numpy(matrix).to(device=original.device,dtype=torch.float32),requires_grad=False)
+            parameter=torch.nn.Parameter(torch.from_numpy(matrix.copy()).to(device=original.device,dtype=torch.float32),requires_grad=False)
             saved.append((layer,original,parameter,getattr(parameter,'_version',None)))
             layer.base_layer.weight=parameter
             layer._disable_adapters=not negative_double_adapter
@@ -81,13 +86,43 @@ class MergedEvaluationEngine(EvaluationEngine):
         from pilot_eval.stage0_intruder_edits import verify
         catalogue=verify(config['mixed_catalogue_path'],root)
         expected=runner_variants(catalogue)
+        if config.get('collection_kind')=='conditional-intruders' and 'controls' in config:
+            from pilot_eval.stage0_intruder_edits import _load
+            from pilot_eval.stage0_edits import _load as load_edits
+            self_root=Path(root).resolve()
+            frozen,_,_,_=_load(config['mixed_catalogue_path'],self_root)
+            _,_,audit,_=load_edits(self_root/frozen['edits_path'],self_root)
+            for arm in ['sft','grpo']:
+                source=audit['sources'][arm]['checkpoints']['0']
+                if not source['b_exact_zero']:raise ValueError('Mixed drift zero control is not zero.')
+                expected[arm+'-zero']=dict(arm=arm,operation='zero-control',adapter_path=source['path'])
+
         if (config['model_identity']!=catalogue['model_identity'] or config['weights_dir']!=catalogue['weights_dir']
                 or any(name not in expected or value!=expected[name] for name,value in config['variants'].items())
                 or set(config['variant_order'])!=set(config['variants'])
                 or len(config['variant_order'])!=len(config['variants'])):
             raise ValueError('Runner variants/model identity differ from the verified mixed catalogue.')
         if catalogue['execution_kind']=='synthetic-cpu-fixture':raise ValueError('Synthetic matrix construction does not qualify a real GPU runner.')
+        self._matrix_cache={};self._cached_variant=None
         super().__init__(config,root)
+
+    def matrix_cache(self,variant):
+        if variant!=self._cached_variant:
+            self._matrix_cache.clear();self._cached_variant=variant
+        return self._matrix_cache
+
+    def check_integrity(self,*,full=False):
+        proof=super().check_integrity(full=full)
+        if full:
+            from pilot_eval.stage0_intruder_edits import verify
+            try:verify(self.config['mixed_catalogue_path'],self.root)
+            except (ValueError,OSError):proof['base_unchanged']=False;proof['mixed_sources_unchanged']=False
+            else:proof['mixed_sources_unchanged']=True
+        return proof
+
+    def close(self):
+        self._matrix_cache.clear()
+        super().close()
 
     def generate(self,rows,variant,seed):
         if variant not in self.config['variants']:raise ValueError('Variant is outside the frozen conditional runner.')
@@ -95,7 +130,7 @@ class MergedEvaluationEngine(EvaluationEngine):
         if definition.get('representation')!='mixed-full-matrices':
             return super().generate(rows,variant,seed)
         from transformers import set_seed
-        with merged_scope(self.model,definition,self.root,self.torch,adapter_name=variant):
+        with merged_scope(self.model,definition,self.root,self.torch,adapter_name=variant,matrix_cache=self.matrix_cache(variant)):
             self.model.eval();set_seed(seed)
             sequences=[self.inputs[r['id']] for r in rows];width=max(map(len,sequences))
             policy=self.config['decoding'];pad=policy['pad_token_id'];eos=policy['eos_token_id']

@@ -42,6 +42,7 @@ def prepare(evaluation_path, drift_path, output_root, name):
     root = Path(output_root).resolve(); safe_name(name)
     ep, dp = inside(root, evaluation_path), inside(root, drift_path)
     evaluation, measurement, edir, ddir = _parents(ep, dp, root)
+    contrasts,extension=_family(evaluation,root)
     path = root/'plans'/name/'stage0.findings.json'
     directory = root/f'runs/stage0/{name}/findings'
     with _writer(directory):
@@ -56,7 +57,7 @@ def prepare(evaluation_path, drift_path, output_root, name):
             run_path=str(directory.relative_to(root)), evaluation_path=str(ep.relative_to(root)),
             evaluation_sha256=file_hash(ep), drift_path=str(dp.relative_to(root)), drift_sha256=file_hash(dp),
             execution_sha256=evaluation['execution_sha256'], runtime=evaluation['runtime'],
-            execution_kind=evaluation['execution_kind'], contrasts=CONTRASTS, statistics=STATISTICS,
+            execution_kind=evaluation['execution_kind'], contrasts=contrasts, statistics=STATISTICS,
             noninferiority_margin=-.05, hypotheses=PREDICTIONS, limitations=LIMITS,
             registration=dict(recorded_at=_now(), status='after-collection-start; exploratory' if started else 'before-collection',
                 n150_risk='Non-inferiority may be inconclusive with 150 paired items.',
@@ -64,17 +65,18 @@ def prepare(evaluation_path, drift_path, output_root, name):
             implementation=_implementation(),
             optional_work='not required; absent products do not block primary findings',
             conditional_v6='not included; applicability has not been inferred from missing evidence')
+        config.update(extension)
         _save_frozen(path, config); _save_frozen(directory/'config.json', config)
         _save_frozen(directory/'meta/run_manifest.json', dict(config_sha256=_hash(config),
-            model_calls=0, resources='CPU only', total_units=len(CONTRASTS)))
-        _state(directory, 'prepared', 0, len(CONTRASTS))
+            model_calls=0, resources='CPU only', total_units=len(config['contrasts'])))
+        _state(directory, 'prepared', 0, len(config['contrasts']))
     return path
 
 
 def _load(path, root):
     config = json.loads(inside(root, path).read_text())
     if (config.get('protocol') != 'stage0-primary-findings-v1' or config.get('implementation') != _implementation()
-            or config.get('statistics') != STATISTICS or config.get('contrasts') != CONTRASTS
+            or config.get('statistics') != STATISTICS or config.get('contrasts') != _expected_contrasts(config,root)
             or config.get('noninferiority_margin') != -.05):
         raise ValueError('Analysis code/statistics changed; retain evidence and use a new named plan.')
     directory = inside(root, config['run_path'])
@@ -198,7 +200,7 @@ def run(path, output_root, *, max_new_units=None):
                 value = _unit(directory, contrast)
                 if value is None:
                     if max_new_units is not None and new >= max_new_units:
-                        return _state(directory, 'incomplete', len(summaries), len(CONTRASTS))
+                        return _state(directory, 'incomplete', len(summaries), len(config['contrasts']))
                     value, items, docs = _comparison(contrast, rows, measurement, directory)
                     folder = directory/'units'/contrast['id']
                     _write_json(folder/'result.json', value)
@@ -207,17 +209,18 @@ def run(path, output_root, *, max_new_units=None):
                         files={p: file_hash(folder/p) for p in ['result.json', 'paired-items.jsonl', 'paired-documents.jsonl']}))
                     new += 1
                 summaries.append(value)
-                _state(directory, 'running', len(summaries), len(CONTRASTS))
-                print(f'Stage 0 findings: {len(summaries)}/{len(CONTRASTS)} comparisons sealed; {contrast["id"]}.', flush=True)
-            result = dict(schema_version=1, mode='stage0-primary-findings', analysis_complete=True,
+                _state(directory, 'running', len(summaries), len(config['contrasts']))
+                print(f'Stage 0 findings: {len(summaries)}/{len(config["contrasts"])} comparisons sealed; {contrast["id"]}.', flush=True)
+            result = dict(schema_version=1, mode='stage0-conditional-intruder-findings' if config.get('analysis_kind') else 'stage0-primary-findings', analysis_complete=True,
                 real_gpu_measurement=config['execution_kind'] == 'real-cuda', execution_kind=config['execution_kind'],
                 registration=config['registration'], statistics=config['statistics'], contrasts=summaries,
                 review=dict(state='not-prepared', scope='raw automatic scores; targeted review pending'),
                 source_seals=seals, analysis_runtime=dict(numpy_version=np.__version__, resource='CPU statistics'),
                 limitations=LIMITS, optional_work=config['optional_work'], conditional_v6=config['conditional_v6'])
+            if config.get('analysis_kind'):result['catalogue_scope']=config['catalogue_scope']
             _write_json(directory/'results/results.json', result)
             pairs = []
-            for contrast in CONTRASTS:
+            for contrast in config['contrasts']:
                 for line in (directory/'units'/contrast['id']/'paired-items.jsonl').read_text().splitlines():
                     pairs.append(dict(contrast=contrast['id'], **json.loads(line)))
             _jsonl(directory/'results/paired-items.jsonl', pairs)
@@ -228,10 +231,10 @@ def run(path, output_root, *, max_new_units=None):
                 for sub in ['inputs', 'units', 'results', 'plots', 'bootstrap'] for p in (directory/sub).rglob('*') if p.is_file()}
             files['report.html'] = file_hash(directory/'report.html')
             _write_json(directory/'complete.json', dict(config_sha256=_hash(config), files=files))
-            _state(directory, 'complete', len(CONTRASTS), len(CONTRASTS), human_review='pending')
+            _state(directory, 'complete', len(config['contrasts']), len(config['contrasts']), human_review='pending')
             return result
         except (Exception, KeyboardInterrupt) as exc:
-            _state(directory, 'failed', len(summaries), len(CONTRASTS), error=str(exc))
+            _state(directory, 'failed', len(summaries), len(config['contrasts']), error=str(exc))
             log = directory/'logs/errors.jsonl'; log.parent.mkdir(parents=True, exist_ok=True)
             with log.open('a') as stream:
                 stream.write(json.dumps(dict(error=str(exc), type=type(exc).__name__))+'\n')
@@ -265,6 +268,8 @@ def _verified_files(config, directory, root):
             or result.get('analysis_complete') is not True or result.get('registration') != config['registration']
             or result.get('limitations') != LIMITS):
         raise ValueError('Analysis execution/registration/claim scope differs from the frozen plan.')
+    if config.get('analysis_kind') and (result.get('mode')!='stage0-conditional-intruder-findings' or result.get('catalogue_scope')!=config['catalogue_scope']):
+        raise ValueError('Conditional extension claim scope changed.')
     return result, rows, measurement, seals
 
 
@@ -293,10 +298,10 @@ def verify(path, output_root):
 
 def status(path, output_root):
     root = Path(output_root).resolve(); config, directory = _load(path, root)
-    completed = sum(_unit(directory, c) is not None for c in CONTRASTS)
+    completed = sum(_unit(directory, c) is not None for c in config['contrasts'])
     complete = (directory/'complete.json').exists()
     if complete: _verify(config, directory, root)
-    return dict(analysis_complete=complete, completed_units=completed, total_units=len(CONTRASTS),
+    return dict(analysis_complete=complete, completed_units=completed, total_units=len(config['contrasts']),
         execution_kind=config['execution_kind'], registration=config['registration'], report=str(directory/'report.html'))
 
 
@@ -337,3 +342,23 @@ def report(path, output_root):
         _write_json(target/'complete.json', dict(identity=identity, files=files))
         _state(target, 'complete', 1, 1, human_review=review['state'])
     return dict(report=str(target/'report.html'), review=review, original_raw_report=str(directory/'report.html'))
+
+
+def _family(evaluation,root):
+    if evaluation.get('collection_kind')!='conditional-intruders':return CONTRASTS,{}
+    from pilot_eval.stage0_conditional import binding,contrasts
+    frozen=binding(evaluation['mixed_catalogue_path'],root)
+    return contrasts(evaluation['variants']),dict(analysis_kind='conditional-intruders',
+        variant_definitions=evaluation['variants'],catalogue_scope=frozen['catalogue_scope'],
+        hypotheses=['Halving flagged directions may change behavioral outcomes and fixed-context drift; compare each arm against its original adapter and matched controls.',
+                    'Report full, matched and original-pair ratio sensitivity as distinct comparisons; no automatic mechanism claim.'],
+        conditional_v6='Separately identified conditional extension; full/matched/ratio scopes remain distinct',
+        optional_work='Primary findings are independently runnable; this extension is not a primary-report prerequisite')
+
+
+def _expected_contrasts(config,root):
+    if config.get('analysis_kind')!='conditional-intruders':return CONTRASTS
+    evaluation,_,_=load_evaluation(inside(root,config['evaluation_path']),root)
+    family,extension=_family(evaluation,root)
+    if any(config.get(k)!=v for k,v in extension.items()):raise ValueError('Conditional findings family or scope changed.')
+    return family

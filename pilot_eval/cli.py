@@ -120,7 +120,9 @@ def main(argv=None, *, dependencies=None):
             help='bounded mixed-loader qualification and measured budget freeze')
         qualification.add_argument('--output-root', type=Path, required=True)
         if operation == 'prepare':
-            qualification.add_argument('--edits', type=Path, required=True)
+            source = qualification.add_mutually_exclusive_group(required=True)
+            source.add_argument('--edits', type=Path)
+            source.add_argument('--catalogue', type=Path)
             qualification.add_argument('--cohort', type=Path)
             qualification.add_argument('--name', required=True)
         else:
@@ -545,7 +547,7 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval.stage0_qualification import prepare, runtime, run, verify, approve, freeze
             operation = args.command.removeprefix('stage0-qualification-')
             if operation == 'prepare':
-                result = prepare(args.edits, args.cohort, args.output_root, args.name)
+                result = prepare(args.edits, args.cohort, args.output_root, args.name, catalogue_path=args.catalogue)
             elif operation == 'runtime':
                 result = runtime(args.config, args.output_root, dependencies=dependencies)
             elif operation == 'run':

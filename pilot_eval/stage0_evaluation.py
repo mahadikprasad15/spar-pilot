@@ -79,7 +79,9 @@ def _configuration(path,root,batch_size,batches_per_unit):
             or decoding.get('num_beams')!=1 or decoding.get('num_return_sequences')!=1
             or any(type(decoding.get(k)) is not int or decoding[k]<0 for k in ['eos_token_id','pad_token_id'])):
         raise ValueError('Frozen greedy decoding/EOS/PAD settings are incomplete or differ from the approved protocol.')
-    if set(execution['variants'])!=set(VARIANTS):
+    conditional=qualification.get('qualification_kind')=='conditional-intruders'
+    variant_order=list(execution['variants']) if conditional else list(VARIANTS)
+    if not conditional and set(execution['variants'])!=set(VARIANTS):
         raise ValueError('Paired evaluation requires the entire ten-variant catalogue including V0a/V0b.')
     units=[]
     unit_size=batch_size*batches_per_unit
@@ -88,7 +90,7 @@ def _configuration(path,root,batch_size,batches_per_unit):
         generation_batches=[dict(ids=[r['id'] for r in selected[offset:offset+batch_size]],
                                  seed=42+(start+offset)//batch_size)
                             for offset in range(0,len(selected),batch_size)]
-        for variant in VARIANTS:
+        for variant in variant_order:
             units.append(dict(key=f'batch-{index:04d}-{variant}',variant=variant,
                 ids=[r['id'] for r in selected],seed=generation_batches[0]['seed'],
                 generation_batches=generation_batches,
@@ -100,7 +102,7 @@ def _configuration(path,root,batch_size,batches_per_unit):
         run_path=execution['run_path'],execution_path=str(inside(root,path).relative_to(root)),
         execution_sha256=file_hash(path),implementation=_implementation(),execution_kind=kind,
         runtime=execution['runtime'],cohort_path=execution['cohort_path'],cohort_sha256=execution['cohort_sha256'],
-        item_ids=[r['id'] for r in items],variants=execution['variants'],variant_order=list(VARIANTS),
+        item_ids=[r['id'] for r in items],variants=execution['variants'],variant_order=variant_order,
         adapter_files=adapter_files,model_identity=qualification['model_identity'],
         qualification_inputs_path=str((qdir/'meta/tokenized-inputs.json').relative_to(root)),
         qualification_inputs_sha256=file_hash(qdir/'meta/tokenized-inputs.json'),
@@ -112,6 +114,9 @@ def _configuration(path,root,batch_size,batches_per_unit):
         real_batch_qualification='singleton only; larger CPU fixture batches do not qualify CUDA batching',
         integrity_policy='base SHA256 at load and clean attempt end; parameter identity/version guards at each sealed batch',
         human_review_status='not-applied',budget_ceiling_units=20)
+    if conditional:
+        config.update(mixed_catalogue_path=qualification['mixed_catalogue_path'],
+            mixed_catalogue_sha256=qualification['mixed_catalogue_sha256'],collection_kind='conditional-intruders')
     return config,execution,qdir
 
 
@@ -123,11 +128,11 @@ def prepare(execution_path,output_root,*,batch_size=1,batches_per_unit=8):
         _save_frozen(path,config)
         _save_frozen(directory/'config.json',config)
         _save_frozen(directory/'meta/run_manifest.json',dict(config_path=str(path.relative_to(root)),
-            config_sha256=_hash(config),expected_responses=1500,total_batches=len(config['units']),
+            config_sha256=_hash(config),expected_responses=_count(config),total_batches=len(config['units']),
             resources='one qualified CUDA GPU for run; CPU for prepare/status/verify',
             execution_kind=config['execution_kind'],scope='frozen collection manifest; completion is recorded separately'))
         if not (directory/'meta/status.json').exists():
-            _state(directory,'prepared',0,len(config['units']),completed_responses=0,total_responses=1500)
+            _state(directory,'prepared',0,len(config['units']),completed_responses=0,total_responses=_count(config))
     return path
 
 
@@ -294,7 +299,7 @@ def _finish(config,directory,root):
     saved=_saved(config,directory,root)
     if any(batch is None for batch in saved):raise ValueError('Evaluation is incomplete.')
     rows=[r for batch in saved for r in batch]
-    if len(rows)!=1500 or len({r['record_id'] for r in rows})!=1500:
+    if len(rows)!=_count(config) or len({r['record_id'] for r in rows})!=_count(config):
         raise ValueError('Missing or duplicate paired responses.')
     summary=summarize(config,rows)
     _jsonl(directory/'results/responses.jsonl',rows)
@@ -313,7 +318,7 @@ def _finish(config,directory,root):
            'results/results.json','results/summary.csv','results/results.md','meta/final-integrity.json']
     paths += [f'units/{u["key"]}/complete.json' for u in config['units']]
     _write_json(directory/'complete.json',dict(config_sha256=_hash(config),files={p:file_hash(directory/p) for p in paths}))
-    _state(directory,'complete',len(saved),len(saved),completed_responses=1500,total_responses=1500)
+    _state(directory,'complete',len(saved),len(saved),completed_responses=_count(config),total_responses=_count(config))
     return summary
 
 
@@ -327,7 +332,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None,approval_path=No
         if max_new_units==0:return _progress(directory,config,saved,'incomplete')
         from pilot_eval.stage0_evaluation_backend import EvaluationDependencies
         from pilot_eval.stage0_qualification_backend import deadline_guard
-        deps=dependencies or EvaluationDependencies();runtime=deps.runtime()
+        deps=dependencies or _dependencies(config);runtime=deps.runtime()
         if runtime!=config['runtime']:
             raise ValueError('Paired evaluation requires the exact qualified runtime/session; preserve this comparison on a change.')
         reservation,remaining=_reservation(config,execution,directory,root,runtime,approval_path)
@@ -378,7 +383,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None,approval_path=No
                     saved[index]=batch;new+=1
                     state=_progress(directory,config,saved,'running',reservation_id=reservation['reservation_id'])
                     if progress:print(f'Stage 0 greedy: {state["completed"]}/{state["total"]} sealed batches; '
-                        f'{state["completed_responses"]}/1500 responses; {unit["variant"]}; batch {config["batch_size"]}.',flush=True)
+                        f'{state["completed_responses"]}/{_count(config)} responses; {unit["variant"]}; batch {config["batch_size"]}.',flush=True)
                 deadline();integrity=engine.check_integrity(full=True);deadline()
                 _write_json(attempt/'final-integrity.json',integrity)
                 if not _intact(config,integrity):
@@ -405,7 +410,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None,approval_path=No
 
 def _progress(directory,config,saved,state,**extra):
     return _state(directory,state,sum(b is not None for b in saved),len(saved),
-        completed_responses=sum(len(b) for b in saved if b is not None),total_responses=1500,**extra)
+        completed_responses=sum(len(b) for b in saved if b is not None),total_responses=_count(config),**extra)
 
 
 def _verify(config,directory,root):
@@ -423,7 +428,7 @@ def _verify(config,directory,root):
     if any(b is None for b in batches):raise ValueError('Missing paired evaluation batches.')
     rows=[r for batch in batches for r in batch]
     aggregate=[json.loads(line) for line in (directory/'results/responses.jsonl').read_text().splitlines()]
-    if len(rows)!=1500 or len({r['record_id'] for r in rows})!=1500 or rows!=aggregate:
+    if len(rows)!=_count(config) or len({r['record_id'] for r in rows})!=_count(config) or rows!=aggregate:
         raise ValueError('Aggregate response identities/counts do not reconcile with batches.')
     summary=json.loads((directory/'results/results.json').read_text())
     if summary!=summarize(config,rows):raise ValueError('Saved summary differs from raw-response reconstruction.')
@@ -440,7 +445,7 @@ def status(path,output_root):
     summary=_verify(config,directory,root) if (directory/'complete.json').exists() else None
     owner=directory/'writer.json'
     return dict(completed_batches=len(saved) if summary is not None else sum(b is not None for b in saved),total_batches=len(saved),
-        completed_responses=summary['response_count'] if summary is not None else sum(len(b) for b in saved if b is not None),total_responses=1500,
+        completed_responses=summary['response_count'] if summary is not None else sum(len(b) for b in saved if b is not None),total_responses=_count(config),
         measurement_complete=summary is not None,execution_kind=config['execution_kind'],
         budget=budget_status(root),summary=summary,writer=json.loads(owner.read_text()) if owner.exists() else None,
         lifecycle=json.loads((directory/'meta/status.json').read_text()),
@@ -464,3 +469,14 @@ def recover_writer(path,output_root,owner_token,review_notes):
             stream.flush();os.fsync(stream.fileno())
         marker.unlink()
     return dict(state='ownership-released',scope='writer only; reservation and sealed responses retained')
+
+
+def _count(config):return len(config['item_ids'])*len(config['variants'])
+
+
+def _dependencies(config):
+    if config.get('collection_kind')=='conditional-intruders':
+        from pilot_eval.stage0_merged_backend import MergedEvaluationDependencies
+        return MergedEvaluationDependencies()
+    from pilot_eval.stage0_evaluation_backend import EvaluationDependencies
+    return EvaluationDependencies()

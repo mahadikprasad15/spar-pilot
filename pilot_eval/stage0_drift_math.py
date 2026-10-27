@@ -64,7 +64,8 @@ def check(result,rows,config,variant,diagnostic):
         for v,view in enumerate(VIEWS):
             if not any(row['masks'][view]) and np.any(arrays['write_sums'][e,v]):
                 raise ValueError('Empty view has effective-write values.')
-    required={'reference_invariant','rank1_passed','finite','mapping_exact'}
+    operator_gate='operator_passed' if config.get('collection_kind')=='conditional-intruders' else 'rank1_passed'
+    required={'reference_invariant',operator_gate,'finite','mapping_exact'}
     if any(gates.get(key) is not True for key in required):raise ValueError('Drift numerical/integrity gate failed.')
     if not 0<=gates.get('reconstruction_max_fraction',float('inf'))<=1:
         raise ValueError('Drift rank-one reconstruction gate failed.')

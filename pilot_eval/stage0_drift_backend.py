@@ -70,6 +70,33 @@ class DriftEngine(EvaluationEngine):
                 values.extend(kl.cpu().tolist())
         return np.asarray(values,dtype=np.float64),max_sum
 
+    def _module_write(self,m,x,output,base,c,variant,mapping,capture_coefficients):
+        torch=self.torch;fraction=0.;coefficient=None
+        self._finite(x,base,output)
+        if variant=='untuned':
+            branch=torch.zeros_like(base)
+        else:
+            scalar=c.pop('coefficient');branch=c.pop('branch')*m.scaling[variant]
+            a=m.lora_A[variant].weight;b=m.lora_B[variant].weight
+            if a.shape[0]!=1 or b.shape[1]!=1 or m.scaling[variant]!=1:
+                raise ValueError('Drift hook requires audited rank-one alpha-one factors.')
+            self._finite(scalar,branch)
+            selected=[p['position'] for p in mapping['writes']]
+            if selected:
+                dot=(x[0,selected].double()*a[0].double()).sum(-1)
+                actual=scalar[0,selected,0].double()
+                frac=float(((dot-actual).abs()/(1e-6+1e-5*dot.abs())).max())
+                expected=scalar[0,selected].double()*b[:,0].double()*m.scaling[variant]
+                frac=max(frac,float(((branch[0,selected].double()-expected).abs()/(1e-6+1e-5*expected.abs())).max()))
+                fraction=frac
+                if frac>1:raise ValueError('Signed coefficient/direct branch reconstruction failed.')
+                if capture_coefficients:coefficient=actual.cpu().numpy()
+        if not torch.equal(output,base+branch):
+            raise ValueError('Module output does not reconstruct from actual base and adapter branches.')
+        return base,branch,coefficient,fraction
+
+    def variant_scope(self,variant):return nullcontext()
+
     def _one(self,row,variant,*,capture_coefficients=False):
         torch=self.torch;inputs=self._inputs(row);key=_hash(row)
         if key not in self.cache:self.cache[key]=self._hidden(inputs,disabled=True)
@@ -82,7 +109,7 @@ class DriftEngine(EvaluationEngine):
             raise ValueError('Disabled-adapter reference changed after switching.')
         mapping=positions([row]);sums=np.zeros((1,len(VIEWS),len(self.modules),3),dtype=np.float64)
         coefficients=[];seen=set();fraction=0.
-        with ExitStack() as stack:
+        with self.variant_scope(variant), ExitStack() as stack:
             for mi,module in enumerate(self.modules):
                 captured={}
                 def capture_base(m,args,output,c=captured):c['base']=output
@@ -94,27 +121,9 @@ class DriftEngine(EvaluationEngine):
                     seen.add(mi);x=args[0];base=c.pop('base')
                     if x.shape[:2]!=inputs['input_ids'].shape or output.shape!=base.shape:
                         raise ValueError('Actual module/input token mapping differs.')
-                    self._finite(x,base,output)
-                    if variant=='untuned':
-                        branch=torch.zeros_like(base)
-                    else:
-                        scalar=c.pop('coefficient');branch=c.pop('branch')*m.scaling[variant]
-                        a=m.lora_A[variant].weight;b=m.lora_B[variant].weight
-                        if a.shape[0]!=1 or b.shape[1]!=1 or m.scaling[variant]!=1:
-                            raise ValueError('Drift hook requires audited rank-one alpha-one factors.')
-                        self._finite(scalar,branch)
-                        selected=[p['position'] for p in mapping['writes']]
-                        if selected:
-                            dot=(x[0,selected].double()*a[0].double()).sum(-1)
-                            actual=scalar[0,selected,0].double()
-                            frac=float(((dot-actual).abs()/(1e-6+1e-5*dot.abs())).max())
-                            expected=scalar[0,selected].double()*b[:,0].double()*m.scaling[variant]
-                            frac=max(frac,float(((branch[0,selected].double()-expected).abs()/(1e-6+1e-5*expected.abs())).max()))
-                            fraction=max(fraction,frac)
-                            if frac>1:raise ValueError('Signed coefficient/direct branch reconstruction failed.')
-                            if capture_coefficients:coefficients.append(actual.cpu().numpy())
-                    if not torch.equal(output,base+branch):
-                        raise ValueError('Module output does not reconstruct from actual base and adapter branches.')
+                    base,branch,coefficient,frac=self._module_write(m,x,output,base,c,variant,mapping,capture_coefficients)
+                    fraction=max(fraction,frac)
+                    if coefficient is not None:coefficients.append(coefficient)
                     for vi,view in enumerate(VIEWS):
                         selected=[p['position'] for p in mapping['writes'] if p['view']==view]
                         if not selected:continue

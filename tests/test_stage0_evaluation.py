@@ -336,7 +336,8 @@ def test_loaded_adapter_factors_must_equal_the_saved_payload(monkeypatch,tmp_pat
 
 def test_status_reconciles_counts_if_collection_finishes_during_inspection(monkeypatch,tmp_path):
     import pilot_eval.stage0_evaluation as workflow
-    config=dict(units=[{}]*10,execution_kind='synthetic-cpu-fixture')
+    config=dict(units=[{}]*10,execution_kind='synthetic-cpu-fixture',
+                item_ids=[str(i) for i in range(150)],variants={str(i):{} for i in range(10)})
     write_json(tmp_path/'complete.json',{})
     write_json(tmp_path/'meta/status.json',dict(state='running'))
     monkeypatch.setattr(workflow,'_load',lambda *args:(config,{},tmp_path))

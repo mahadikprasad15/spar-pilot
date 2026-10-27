@@ -25,8 +25,12 @@ def _implementation():
                                            'stage0_budget.py','stage0_qualification_backend.py']}
 
 
-def prepare(edits_path,cohort_path,output_root,name):
-    root=Path(output_root).resolve();safe_name(name);edits_path=inside(root,edits_path)
+def prepare(edits_path,cohort_path,output_root,name,*,catalogue_path=None):
+    root=Path(output_root).resolve();safe_name(name);conditional={}
+    if catalogue_path is not None:
+        from pilot_eval.stage0_conditional import binding
+        conditional=binding(catalogue_path,root);edits_path=conditional['edits_path']
+    edits_path=inside(root,edits_path)
     edits,spectral,audit,_=load_edits(edits_path,root)
     catalogue=verify_edits(edits,inside(root,edits['run_path']),root)
     # The checked-in Pilot 4 evaluation config contains the exact ordered cohort.
@@ -78,12 +82,18 @@ def prepare(edits_path,cohort_path,output_root,name):
             ['protocol_version','prompt_template','settings','seed','scorer','strict_scorer','cap_reward']
             if key in cohort_config}
         config['evaluation_config_sha256']=_hash(cohort_config)
+    if conditional:
+        from pilot_eval.stage0_conditional import implementation
+        config.update(conditional);config['total_units']=16*len(config['arms'])
+        config['conditional_implementation']=implementation()
+        config['merged_modules']={arm:row['adapter_disable_modules'] for arm,row in config['diagnostic_variants'].items()}
+        config['merge_selection']='exact catalogue module masks; unhalved saved matrices'
     path=root/'plans'/name/'stage0.qualification.json'
     with _writer(path.parent):
         _save_frozen(path,config)
         directory=root/config['run_path']
         _save_frozen(directory/'meta/manifest.json',dict(config_sha256=_hash(config),software=_software()))
-        if not (directory/'meta/status.json').exists():_state(directory,'prepared',0,32)
+        if not (directory/'meta/status.json').exists():_state(directory,'prepared',0,config['total_units'])
     return path
 
 
@@ -100,6 +110,10 @@ def _load(path,root):
             raise ValueError('Pinned tokenizer payload changed.')
     edits,_,_,_=load_edits(root/config['edits_path'],root)
     verify_edits(edits,inside(root,edits['run_path']),root)
+    if config.get('qualification_kind')=='conditional-intruders':
+        from pilot_eval.stage0_conditional import validate,implementation
+        validate(config,root)
+        if config.get('conditional_implementation')!=implementation():raise ValueError('Conditional backend implementation changed.')
     return config,directory
 
 
@@ -121,7 +135,14 @@ def _unit(directory,key,config,runtime):
         raise ValueError('Diagnostic unit identity changed.')
     if saved.get('files')!={'result.json':file_hash(folder/'result.json')}:
         raise ValueError('Diagnostic result changed.')
-    return json.loads((folder/'result.json').read_text())
+    value=json.loads((folder/'result.json').read_text())
+    if config.get('qualification_kind')=='conditional-intruders':
+        from pilot_eval.stage0_conditional import validate_observation
+        token_sequence=None
+        if runtime['execution_kind']=='real-cuda':
+            token_sequence=next(r for r in json.loads((directory/'meta/tokenized-inputs.json').read_text())['sequences'] if r['id']==value['id'])
+        validate_observation(value,token_sequence)
+    return value
 
 
 def _verify(config,directory):
@@ -144,14 +165,18 @@ def _verify(config,directory):
                         json.dumps(identity,separators=(',',':')).encode()).hexdigest()):
                 raise ValueError('Tokenized input/mask identity changed.')
     rows=[]
-    for arm in ['sft','grpo']:
+    for arm in config.get('arms',['sft','grpo']):
         for i in range(16):
             value=_unit(directory,f'{arm}-{i:02d}',config,runtime)
             if value is None:raise ValueError('Incomplete 16-sequence diagnostic.')
             rows.append(value)
     result=json.loads((directory/'results/diagnostic.json').read_text())
-    if result['assessment']!=assess(rows) or result['completed_units']!=32:
+    if result['assessment']!=assess(rows) or result['completed_units']!=config['total_units']:
         raise ValueError('Diagnostic summary disagrees with sealed units.')
+    if config.get('qualification_kind')=='conditional-intruders' and runtime['execution_kind']=='real-cuda':
+        proof=result.get('final_integrity') or {}
+        if proof.get('base_unchanged') is not True or proof.get('adapters_unchanged') is not True:
+            raise ValueError('Conditional qualification lacks a successful full final integrity check.')
     return result
 
 
@@ -164,7 +189,7 @@ def runtime(path,output_root,*,dependencies=None):
     """Record session identity and artifact readback without loading the model."""
     root=Path(output_root).resolve();config,directory=_load(path,root)
     from pilot_eval.stage0_qualification_backend import QualificationDependencies
-    deps=dependencies or QualificationDependencies()
+    deps=dependencies or _dependencies(config)
     info=deps.runtime()
     storage=deps.preflight(config,root) if hasattr(deps,'preflight') else dict(passed=True,scope='fixture')
     result=dict(runtime=info,storage=storage,budget=budget_status(root),
@@ -179,7 +204,7 @@ def run(path,output_root,approval_path,*,dependencies=None,max_new_units=None):
     root=Path(output_root).resolve();config,directory=_load(path,root)
     if max_new_units is not None and max_new_units<0:raise ValueError('Invalid new-unit limit.')
     from pilot_eval.stage0_qualification_backend import QualificationDependencies, deadline_guard
-    deps=dependencies or QualificationDependencies()
+    deps=dependencies or _dependencies(config)
     with _writer(directory):
         if (directory/'complete.json').exists():return _verify(config,directory)
         runtime=deps.runtime()
@@ -191,9 +216,9 @@ def run(path,output_root,approval_path,*,dependencies=None,max_new_units=None):
         approval=json.loads(Path(approval_path).read_text())
         if approval.get('session_id')!=runtime['session_id']:raise ValueError('Budget approval session differs from current runtime.')
         _save_frozen(directory/'meta/runtime.json',runtime)
-        units=[(arm,i,row) for arm in ['sft','grpo'] for i,row in enumerate(_rows(config,root))]
+        units=[(arm,i,row) for arm in config.get('arms',['sft','grpo']) for i,row in enumerate(_rows(config,root))]
         completed=[_unit(directory,f'{arm}-{i:02d}',config,runtime) for arm,i,row in units]
-        if max_new_units==0:return dict(state='incomplete',completed=sum(x is not None for x in completed),total=32)
+        if max_new_units==0:return dict(state='incomplete',completed=sum(x is not None for x in completed),total=config['total_units'])
         if hasattr(deps,'preflight'):
             preflight=deps.preflight(config,root)
             _write_json(directory/'meta/preflight.json',dict(config_sha256=_hash(config),**preflight))
@@ -211,9 +236,9 @@ def run(path,output_root,approval_path,*,dependencies=None,max_new_units=None):
                 rows_by_id={row['id']:row for row in _rows(config,root)}
                 if hasattr(engine,'prepare_inputs'):
                     token_manifest=engine.prepare_inputs([rows_by_id[i] for i in config['sequence_ids']])
-                    _write_json(directory/'meta/tokenized-inputs.json',token_manifest)
+                    _save_frozen(directory/'meta/tokenized-inputs.json',token_manifest)
                 elif runtime['execution_kind']=='synthetic-cpu-fixture':
-                    _write_json(directory/'meta/tokenized-inputs.json',dict(scope='synthetic fixture only',
+                    _save_frozen(directory/'meta/tokenized-inputs.json',dict(scope='synthetic fixture only',
                         sequences=[dict(id=i,prompt_sha256=_hash(rows_by_id[i]['prompt']),gold_sha256=_hash(rows_by_id[i]['gold']))
                                    for i in config['sequence_ids']]))
                 for j,(arm,i,row) in enumerate(units):
@@ -226,39 +251,48 @@ def run(path,output_root,approval_path,*,dependencies=None,max_new_units=None):
                     value=dict(id=row['id'],arm=arm,teacher=teacher,greedy=data['greedy'],
                                seconds=time.monotonic()-begin,greedy_seconds=data.get('greedy_seconds'),
                                generated_tokens=data.get('generated_tokens'),integrity=True)
+                    if config.get('qualification_kind')=='conditional-intruders':
+                        from pilot_eval.stage0_conditional import validate_observation
+                        validate_observation(value)
                     folder=directory/'units'/f'{arm}-{i:02d}'
                     _write_json(folder/'result.json',value)
                     _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),runtime_sha256=_hash(runtime),key=f'{arm}-{i:02d}'),
                         files={'result.json':file_hash(folder/'result.json')}))
                     completed[j]=value;new+=1
                     count=sum(x is not None for x in completed)
-                    _state(directory,'running',count,32,reservation_id=reservation['reservation_id'])
-                    print(f'Stage 0 loader diagnostic: {count}/32 sealed; {arm}; {row["id"]}.',flush=True)
+                    _state(directory,'running',count,config['total_units'],reservation_id=reservation['reservation_id'])
+                    print(f'Stage 0 loader diagnostic: {count}/{config["total_units"]} sealed; {arm}; {row["id"]}.',flush=True)
                     if teacher['max_absolute_error']>1e-3:raise ValueError('Merged-loader error exceeds hard 1e-3 stop; preserved failed evidence.')
                 if any(x is None for x in completed):
-                    return _state(directory,'incomplete',sum(x is not None for x in completed),32,
+                    return _state(directory,'incomplete',sum(x is not None for x in completed),config['total_units'],
                                   reservation_id=reservation['reservation_id'])
+                final_integrity=None
+                if config.get('qualification_kind')=='conditional-intruders' and runtime['execution_kind']=='real-cuda':
+                    deadline();final_integrity=engine.check_integrity(full=True);deadline()
+                    if not final_integrity['base_unchanged'] or not final_integrity['adapters_unchanged']:
+                        raise ValueError('Conditional full base/adapter integrity failed before diagnostic publication.')
                 assessment=assess(completed)
                 # Conservative extrapolation; approval is still a hard wall-time bound, not a guarantee of completion.
                 per_sequence=max(max(r['seconds'],(r.get('greedy_seconds') or 0)*1024/max(1,r.get('generated_tokens') or 1)) for r in completed)
                 estimate=dict(workload='greedy paired evaluation only; KL/write workload needs its own measured budget',
-                    variants=10,prompts=150,sequences=1500,conservative_seconds=per_sequence*1500,
+                    variants=len(config['variants']),prompts=150,sequences=150*len(config['variants']),conservative_seconds=per_sequence*150*len(config['variants']),
                     model_load_seconds=model_load_seconds,
-                    conservative_total_seconds=model_load_seconds+per_sequence*1500,
-                    method='one measured model load plus 1,500 times the worse of full diagnostic-unit seconds or 1,024-token greedy extrapolation',
-                    storage_bytes_estimate=max(len(json.dumps(r).encode()) for r in completed)*1500,
+                    conservative_total_seconds=model_load_seconds+per_sequence*150*len(config['variants']),
+                    method='one measured model load plus 150 times variant count times the worse of full diagnostic-unit seconds or 1,024-token greedy extrapolation',
+                    storage_bytes_estimate=max(len(json.dumps(r).encode()) for r in completed)*150*len(config['variants']),
                     forecast_is_not_completion_guarantee=True)
-                result=dict(**assessment,assessment=assessment,completed_units=32,runtime=runtime,
+                result=dict(**assessment,assessment=assessment,completed_units=config['total_units'],runtime=runtime,
                     execution_kind=runtime['execution_kind'],
                     production_estimate=estimate,reservation_id=reservation['reservation_id'])
+                if config.get('qualification_kind')=='conditional-intruders':result['final_integrity']=final_integrity
                 _write_json(directory/'results/diagnostic.json',result)
                 required=['results/diagnostic.json','meta/runtime.json','meta/tokenized-inputs.json']
                 _write_json(directory/'complete.json',dict(config_sha256=_hash(config),files={p:file_hash(directory/p) for p in required}))
-                _state(directory,'awaiting-review' if assessment['eligible_for_review'] else 'failed',32,32)
+                _state(directory,'awaiting-review' if assessment['eligible_for_review'] else 'failed',config['total_units'],config['total_units'])
                 if not assessment['eligible_for_review']:raise ValueError('Qualification evidence failed; review failed diagnostic.')
                 return result
         except (ValueError,RuntimeError,OSError) as exc:
-            _state(directory,'failed',sum(x is not None for x in completed),32,error=str(exc),reservation_id=reservation['reservation_id'])
+            _state(directory,'failed',sum(x is not None for x in completed),config['total_units'],error=str(exc),reservation_id=reservation['reservation_id'])
             with (directory/'logs/errors.jsonl').open('a') as stream:stream.write(json.dumps(dict(error=str(exc)))+'\n')
             raise
         finally:
@@ -277,7 +311,7 @@ def approve(path,output_root,review_path):
         raise ValueError('Approve the exact evidence-derived 3E gate, with reviewer and diagnostic identity.')
     receipt=dict(config_sha256=_hash(config),review=review,runtime=result['runtime'],
         qualified=True,real_gpu_qualified=result['execution_kind']=='real-cuda',
-        scope='bounded partial-merge diagnostic; calibration, not independent validation')
+        scope='bounded saved unhalved mixed-matrix diagnostic; calibration, not independent validation' if config.get('qualification_kind') else 'bounded partial-merge diagnostic; calibration, not independent validation')
     target=directory/'reviews'/_hash(review)/'qualification.json'
     with _writer(directory):_save_frozen(target,receipt)
     return target
@@ -319,3 +353,11 @@ def freeze(path,output_root,review_path):
         _save_frozen(target,frozen)
         _write_json(directory/'production-freeze.json',dict(path=str(target.relative_to(root)),sha256=file_hash(target)))
     return target
+
+
+def _dependencies(config):
+    if config.get('qualification_kind')=='conditional-intruders':
+        from pilot_eval.stage0_mixed_qualification_backend import MixedQualificationDependencies
+        return MixedQualificationDependencies()
+    from pilot_eval.stage0_qualification_backend import QualificationDependencies
+    return QualificationDependencies()
