@@ -61,3 +61,17 @@ KL/coefficient supplement.
 
 See [workflow and evidence guide](../pilot4-behaviour-breakdown.md) and the
 [Ticket 05 execution record](../../.scratch/pilot4-behaviour-breakdown/execution-ticket05.md).
+
+## Stage 0 primary path — 27 October 2026
+
+Tickets 01–07 implement source readiness, CPU spectral/edit preparation, bounded
+loader qualification, paired greedy collection, fixed-context KL/effective writes,
+and the CPU primary findings/review/report workflow. Implementation checks use
+synthetic CPU fixtures. No real Stage 0 source/weight execution, GPU qualification,
+paired collection or scientific finding is established by those tests.
+
+The primary report can complete with targeted review pending and optional work
+absent. Raw automatic scores and confirmed-case overlays are separately labelled.
+The conditional intruder and optional explanatory branches remain separate
+implementation/execution work. See [the Stage 0 guide](../stage0-geometry.md) and
+[Ticket 07 execution record](../../.scratch/stage0-geometry/execution-ticket07.md).

@@ -54,19 +54,61 @@ def selection(rows, contrasts):
     return {k: sorted(v) for k, v in sorted(reasons.items())}
 
 
-def _historical(root, path, revision):
+def _historical(root, path, revision, assisted=None):
     if path is None: return [], None
-    from pilot_eval.behaviour_audit import _load, _frozen, _revealed_source
-    config, directory = _load(inside(root, path), root)
+    from pilot_eval.behaviour_audit import _frozen, _revealed_source, _parent
+    from pilot_eval.behaviour_findings import _audit
+    # Read an older frozen artifact contract; do not rerun its repaired UI code.
+    # _audit independently verifies sealed inputs, label chains and case-level results.
+    config = json.loads(inside(root, path).read_text())
+    if config.get('protocol') != 'pilot4-blinded-answer-audit-v1':
+        raise ValueError('Unsupported historical intended-answer audit contract.')
+    directory = inside(root, config['run_path'])
+    transitions = inside(root, config['transitions_path'])
+    _, pairs = _parent(transitions, root)
+    _audit(inside(root, path), inside(root, assisted) if assisted is not None else None, transitions, pairs, root)
+    if assisted is not None:
+        if revision is not None: raise ValueError('Choose either a frozen revision or a confirmed assisted report.')
+        from pilot_eval.behaviour_audit import _parent
+        from pilot_eval.behaviour_findings import _audit
+        transitions = inside(root, config['transitions_path'])
+        _, pairs = _parent(transitions, root)
+        assisted = inside(root, assisted)
+        _, inputs, correction = _audit(inside(root, path), assisted, transitions, pairs, root)
+        if correction is None or correction['unconfirmed_proposals_used'] != 0:
+            raise ValueError('Historical assisted reuse requires reconciled confirmed-only answers.')
+        reviewers = set()
+        for relative in inputs:
+            source = inside(root, relative)
+            if source.name.startswith('confirmations-') or (source.name == 'results.json' and 'assistance' in source.parts):
+                person = json.loads(source.read_text()).get('reviewer')
+                if isinstance(person, str) and person.strip(): reviewers.add(person.strip())
+        if len(reviewers) != 1: raise ValueError('Confirmed assisted labels require one recorded reviewer identity.')
+        reviewer = reviewers.pop()
+        mapping = {g['response_id']: g for g in json.loads((directory/'private/mapping.json').read_text())}
+        answers = {r['response_id']: r['intended_answer'] for r in correction['confirmed_references']}
+        digest = file_hash(assisted/'results.json')
+        identity = dict(config_path=str(inside(root, path).relative_to(root)), revision=None,
+            assisted_report=str(assisted.relative_to(root)), result_sha256=digest, provenance_sha256=_hash(inputs),
+            recorded_source_implementation=config['implementation'])
+        rows = []
+        for identifier, answer in answers.items():
+            record = mapping[identifier]['references'][0]['record']
+            rows.append(dict(question=record['prompt'], response=record['generated_text'], reviewer=reviewer,
+                label=dict(response_id=identifier, status='numeric', answer=answer, evidence='', note=''),
+                source=dict(**identity, response_id=identifier, post_reveal_exposed=True,
+                            scope='confirmed assisted cases only; original full audit incomplete')))
+        return rows, identity
     _frozen(config, directory)
     result, digest = _revealed_source(directory, revision)
     rows = []
     for row in result['responses']:
         rows.append(dict(question=row['question'], response=row['response'], label=row['label'],
-            reviewer=result['reviewer'], source=dict(config_path=str(inside(root, path).relative_to(root)),
+            reviewer=result['reviewer'].strip(), source=dict(config_path=str(inside(root, path).relative_to(root)),
                 revision=revision, result_sha256=digest, response_id=row['response_id'],
                 post_reveal_exposed=result['post_reveal_revision'])))
-    return rows, dict(config_path=str(inside(root, path).relative_to(root)), revision=revision, result_sha256=digest)
+    return rows, dict(config_path=str(inside(root, path).relative_to(root)), revision=revision, result_sha256=digest,
+                     recorded_source_implementation=config['implementation'])
 
 
 def identical_label(row, candidates):
@@ -78,12 +120,12 @@ def identical_label(row, candidates):
     return matches[0]
 
 
-def prepare(path, output_root, *, reuse_audit=None, reuse_revision=None):
+def prepare(path, output_root, *, reuse_audit=None, reuse_revision=None, reuse_assisted_report=None):
     root = Path(output_root).resolve(); config, directory, rows = _parent(path, root)
     audit = directory/'audit'; reasons = selection(rows, config['contrasts'])
-    if reuse_revision is not None and reuse_audit is None:
+    if (reuse_revision is not None or reuse_assisted_report is not None) and reuse_audit is None:
         raise ValueError('A historical revision requires an explicit audit configuration.')
-    candidates, history = _historical(root, reuse_audit, reuse_revision)
+    candidates, history = _historical(root, reuse_audit, reuse_revision, reuse_assisted_report)
     with _writer(audit):
         if (audit/'packet.complete.json').exists():
             _load(config, directory, root)
@@ -150,7 +192,7 @@ def _load(config, directory, root):
         raise ValueError('Audit source report changed.')
     if value['historical_source'] is not None:
         history = value['historical_source']
-        _, current = _historical(root, history['config_path'], history['revision'])
+        _, current = _historical(root, history['config_path'], history['revision'], history.get('assisted_report'))
         if current != history: raise ValueError('Confirmed historical label source changed.')
     return value, audit
 
@@ -165,6 +207,10 @@ def save(path, output_root, labels_path):
             or type(patch.get('base_revision')) is not int
             or ('revision' in patch and patch['revision'] != patch['base_revision'])):
         raise ValueError('Labels require the exact packet, reviewer and saved base revision.')
+    patch['reviewer'] = patch['reviewer'].strip()
+    reused = json.loads((audit/'private/reused.json').read_text())
+    if any(r['reviewer'].strip() != patch['reviewer'] for r in reused):
+        raise ValueError('New labels must retain the confirmed source reviewer under this single-reviewer design.')
     with _writer(audit):
         if (audit/'labels/frozen.complete.json').exists():
             raise ValueError('Labels are frozen; preserve them and start an explicitly exposed new audit for corrections.')
@@ -214,10 +260,12 @@ def status(path, output_root):
     frozen = (audit/'labels/frozen.complete.json').exists()
     if frozen: _frozen(value, audit)
     counts = {s: sum(r['status'] == s for r in draft['labels']) for s in ['numeric', 'absent', 'ambiguous', 'pending']}
+    reviewers = {r['reviewer'].strip() for r in json.loads((audit/'private/reused.json').read_text())}
+    if draft['reviewer'] is not None: reviewers.add(draft['reviewer'].strip())
     return dict(state='labels-frozen' if frozen else 'awaiting-review', revision=draft['revision'],
         unique_responses=len(ids), label_counts=counts, selected_records=len(json.loads((audit/'private/selection.json').read_text())),
         reused_records=len(json.loads((audit/'private/reused.json').read_text())), scope=LIMITS,
-        reviewer=draft['reviewer'], reviewer_count=1 if draft['reviewer'] is not None else 0,
+        reviewer=draft['reviewer'], reviewer_count=len(reviewers), reviewer_identities=sorted(reviewers),
         reviewer_page=str(audit/'reviewer/review.html'), saved_draft=str(audit/'reviewer/draft.json'))
 
 

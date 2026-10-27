@@ -24,7 +24,7 @@ def _plot(directory, name, series, xlabel, title, *, margin=False):
         ax.axvline(0, color='#a4aaa8', linewidth=1)
         if margin: ax.axvline(-5, color='#9d7564', linestyle='--', label='Non-inferiority boundary: −5 pp')
         ax.set_xlabel(xlabel); ax.set_title(title, loc='left', fontsize=12, pad=14)
-        if margin: ax.legend(frameon=False, loc='lower right', fontsize=9)
+        if margin: ax.legend(frameon=False, loc='upper center', bbox_to_anchor=(.5, -.16), fontsize=9)
         buffer = io.BytesIO(); fig.savefig(buffer, format='svg', metadata={'Date': None})
         png = io.BytesIO(); fig.savefig(png, format='png', dpi=120, metadata={'Software': 'Stage 0 findings'})
         plt.close(fig)

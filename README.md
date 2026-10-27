@@ -28,8 +28,9 @@ combined findings report; it does not repeat model inference.
 adapters for controlled interventions. The [CPU notebook](notebooks/stage-0-cpu-colab.ipynb)
 prepares edits and inspects saved results; the [GPU notebook](notebooks/stage-0-gpu-colab.ipynb)
 qualifies the loader and collects paired responses plus fixed-context KL/effective
-writes. Implementation is in progress;
-real Stage 0 qualification and results are still pending.
+writes. The CPU notebook also produces paired primary findings and targeted
+answer-review snapshots. The primary software path is implemented; real Stage 0
+qualification and experimental results are still pending.
 
 See [execution and result status](docs/experiments/status.md),
 [measurement conventions](docs/methods.md), and [domain terminology](CONTEXT.md).

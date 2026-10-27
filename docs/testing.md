@@ -87,3 +87,23 @@ remain pending.
   model download, training, Drive upload or scientific measurement occurred.
 - Local structured validation and a labelled synthetic fixed-context fixture:
   `artifacts/validation/stage0-ticket06/verification.json`.
+
+## Recorded Stage 0 primary-findings validation
+
+27 October 2026:
+
+- Starting Stage 0 affected baseline: **49 passed in 58.13s**.
+- Final affected regression: **73 passed in 193.02s** (findings, drift, greedy
+  evaluation, qualification, workflow and existing behavioral-findings checks).
+- Independent paired statistics, exact non-inferiority boundary, McNemar and
+  median-paired-change oracle; document weighting and fixed-ID pairing.
+- Interrupted resume, modified source and re-sealed altered estimates rejected;
+  late/in-flight collection cannot masquerade as preregistration; verified
+  historical label sources and exact-text/single-reviewer constraints checked.
+- Raw-versus-review snapshots, partial labels, stale draft rejection, freeze before
+  reveal, cap preservation, CPU-only fresh-process verification and notebook AST
+  checks. SVG/PNG inspected. No new GPU run or scientific finding.
+- Local labelled synthetic evidence:
+  `artifacts/validation/stage0-ticket07/verification.json`.
+
+The recorded result is an affected-suite pass, not a new full-suite pass.

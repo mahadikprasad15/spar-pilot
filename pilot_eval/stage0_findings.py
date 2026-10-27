@@ -22,7 +22,7 @@ def _implementation():
     folder = Path(__file__).parent
     return {n: file_hash(folder/n) for n in ['stage0_findings.py', 'stage0_findings_math.py',
         'stage0_findings_render.py', 'stage0_findings_review.py', 'behaviour_audit.py',
-        'behaviour_audit_ui.py', 'behaviour_transitions.py']}
+        'behaviour_audit_ui.py', 'behaviour_transitions.py', 'behaviour_findings.py', 'behaviour_assisted_report.py']}
 
 
 def _parents(evaluation_path, drift_path, root):

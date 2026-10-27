@@ -250,3 +250,41 @@ def test_notebooks_expose_cpu_findings_and_precollection_registration():
     for notebook in [cpu,gpu]:
         for c in notebook['cells']:
             if c['cell_type']=='code':ast.parse(''.join(c['source']));assert c['execution_count'] is None and c['outputs']==[]
+
+
+def test_historical_audit_loader_requires_its_real_frozen_receipts(tmp_path):
+    from test_behaviour_audit import audit_parent,prepare,action
+    from pilot_eval.stage0_findings_review import _historical
+    base=tmp_path/'history';base.mkdir()
+    root,parent=audit_parent(base,count=4)
+    assert prepare(root,parent)==0
+    config_path=root/'plans/audit/behaviour.audit.json'
+    config=json.loads(config_path.read_text());directory=root/config['run_path']
+    packet=json.loads((directory/'reviewer/packet.json').read_text())
+    labels=base/'labels.json'
+    write_json(labels,dict(packet_sha256=config['packet_sha256'],reviewer='fixture-reviewer',base_revision=0,
+        labels=[dict(response_id=r['response_id'],status='absent',answer=None,evidence='',note='') for r in packet]))
+    assert action('save',root,'--labels',str(labels))==0
+    assert action('freeze',root)==0 and action('reveal',root)==0
+    candidates,identity=_historical(root,config_path,None)
+    assert len(candidates)==len(packet) and len(identity['result_sha256'])==64
+    (directory/'labels/frozen.json').write_text('{}')
+    with pytest.raises(ValueError,match='changed'):_historical(root,config_path,None)
+
+
+def test_reused_labels_keep_the_approved_single_reviewer_identity(source,monkeypatch):
+    import pilot_eval.stage0_findings_review as review
+    assert command(source,'run','--config',plan(source))==0
+    row=dict(question='question 3',response='#### 2',
+        label=dict(response_id='old',status='numeric',answer='2',evidence='#### 2',note=''),
+        reviewer='Prasad',source=dict(result_sha256='a'*64,response_id='old',post_reveal_exposed=True))
+    # Public saved-workflow action, with a controlled historical-source backend.
+    monkeypatch.setattr(review,'_historical',lambda *args:([row],None))
+    assert command(source,'audit-prepare','--config',plan(source))==0
+    audit=source/'runs/stage0/primary/findings/audit'
+    draft=json.loads((audit/'reviewer/draft.json').read_text());draft['reviewer']='different reviewer'
+    draft['labels']=[dict(draft['labels'][0],status='absent')]
+    patch=source/'new-labels.json';write_json(patch,draft)
+    assert command(source,'audit-save','--config',plan(source),'--labels',patch)==1
+    state=review.status(plan(source),source)
+    assert state['reviewer_count']==1 and state['reviewer_identities']==['Prasad']

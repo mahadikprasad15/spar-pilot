@@ -27,6 +27,7 @@ def main(argv=None, *, dependencies=None):
         if operation=='audit-prepare':
             findings.add_argument('--reuse-audit',type=Path)
             findings.add_argument('--reuse-revision')
+            findings.add_argument('--reuse-assisted-report',type=Path)
         if operation=='audit-save':findings.add_argument('--labels',type=Path,required=True)
     for operation in ['prepare','run','verify','status','recover-writer']:
         drift=commands.add_parser('stage0-drift-'+operation,help='paired fixed-context KL and direct effective writes')
@@ -453,7 +454,7 @@ def main(argv=None, *, dependencies=None):
             elif operation.startswith('audit-'):
                 from pilot_eval import stage0_findings_review as review
                 action=operation.removeprefix('audit-')
-                if action=='prepare':result=review.prepare(args.config,args.output_root,reuse_audit=args.reuse_audit,reuse_revision=args.reuse_revision)
+                if action=='prepare':result=review.prepare(args.config,args.output_root,reuse_audit=args.reuse_audit,reuse_revision=args.reuse_revision,reuse_assisted_report=args.reuse_assisted_report)
                 elif action=='save':result=review.save(args.config,args.output_root,args.labels)
                 else:result=getattr(review,action)(args.config,args.output_root)
             else:result=getattr(workflow,operation)(args.config,args.output_root)

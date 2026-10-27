@@ -546,12 +546,14 @@ it omits variant/checkpoint, gold and scorer fields. Its scope is intended-answe
 identification, not reasoning validation. Browser storage is a convenience cache:
 download drafts, save them through the public command and import the resulting
 `reviewer/draft.json` before continuing. Saved drafts have an explicit revision
-chain and a single reviewer identity. Unknown IDs, malformed numeric labels,
+chain and a single reviewer identity, retained across reused and new labels. Unknown IDs, malformed numeric labels,
 wrong packets and stale revisions are rejected.
 
 An explicitly selected historical audit may supply confirmed labels, including
-an explicitly named exposed revision. Its original audit, frozen labels and
-reveal/revision receipts are verified. Reuse requires **exact prompt and response
+an explicitly named exposed revision, or a verified confirmed-only assisted
+report. Its original audit receipts and case-level label evidence are verified;
+the recorded historical implementation remains provenance, without requiring
+that an older saved UI equal the current repaired UI code. Reuse requires **exact prompt and response
 text**, without whitespace normalization or fuzzy matching, and records the old
 response ID, reviewer, result hash and exposure status. Conflicting labels on
 identical text stop reuse. Historical numeric answers are not copied onto new
@@ -587,6 +589,11 @@ same command resumes verified units. `findings-status` inspects analysis progres
 `findings-audit-status` inspects durable label progress. `audit-prepare` optionally
 accepts `--reuse-audit <behaviour.audit.json> --reuse-revision <revision-name>`;
 omitting the revision selects that historical audit's original frozen reveal.
+For the prior partial assisted workflow, select `--reuse-assisted-report` alongside
+the audit config instead of a revision. Its sealed report is reconciled against
+the original mapping, proposal sources and explicit human confirmation files.
+Only confirmed numeric answers are imported; unconfirmed LLM proposals are never
+imported. Historical source evidence stays unchanged.
 
 ### Output tree
 

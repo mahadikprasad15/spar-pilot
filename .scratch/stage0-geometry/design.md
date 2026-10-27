@@ -1,14 +1,16 @@
 # Stage 0: geometry of existing rank-1 adapters
 
-Status: design decisions approved on 2026-10-26; ready for specification.
-The execution specification and implementation tickets have not yet been approved.
+Status: design decisions, execution specification and ticket dependencies approved
+on 2026-10-26. See `spec.md`, `map.md` and the per-ticket execution records for
+current software and experimental execution status.
 
 ## Source and scope
 
 The supplied proposal is preserved unchanged in
 `sources/stage0-design-supplied-2026-10-26.md`. This working design records
-review findings and subsequent decisions; it does not supersede the source
-until approved. No new training is proposed. No Stage 0 GPU job has launched.
+review findings and approved amendments. `spec.md` is the execution contract;
+the original proposal remains available for comparison. No new training is
+proposed. No Stage 0 GPU job has launched.
 
 The proposed research chain is:
 
@@ -103,7 +105,8 @@ execution prerequisites, not unanswered design-preference questions. Translate
 approved requirements into explicit notebook stages, saved-workflow interfaces,
 schemas and tests; preserve any evidence-based stop points.
 
-No implementation tickets or execution specification are approved yet.
+The approved specification and 15 implementation slices are published in this
+folder; `map.md` records the current implementation frontier.
 
 ## User amendments, 2026-10-26
 
