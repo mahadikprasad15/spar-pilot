@@ -9,7 +9,7 @@
   `spec.md`; the approved slice breakdown is in `ticket-proposal.md`.
 - The user approved the public saved-workflow test boundary, all 15 slices and
   their dependency edges on 2026-10-26. Spec and individual `ready-for-agent`
-  issues are published in this local tracker. Tickets 01-07 are implemented;
+  issues are published in this local tracker. Tickets 01-09 are implemented;
   real source/weight execution remains separately pending.
 
 ## Decisions so far
@@ -73,11 +73,16 @@
 
 - Ticket 07 execution/validation record: `execution-ticket07.md`; 73 affected
   tests passed on 2026-10-27. Ticket 08 implements rotation/intruder geometry;
-  its real CPU execution is pending. Conditional Ticket 09 and optional Ticket 11 are independent remaining
-  frontiers; neither is required to run the primary path.
+  its real CPU execution is pending. Conditional Ticket 09 is now implemented; Ticket 10 and optional Ticket 11 are
+  independent remaining frontiers; neither is required to run the primary path.
 
 - Ticket 08: CPU rotation/intruder geometry implemented; `execution-ticket08.md`.
   No small-update skip, top-20 detection/top-40 matching pool, floored subspaces,
   chance-aware eligibility and explicit degeneracies. Ticket 09 consumes this
   verified output for conditional edit construction; no V6 run is implied.
   Final affected regression: 44 tests passed on 2026-10-27.
+
+- Ticket 09: conditional full/matched/ratio merged matrices and the mixed-loader
+  interface are implemented; see `execution-ticket09.md`. Real construction,
+  mixed-loader numerical qualification and edited-model execution remain pending.
+  CPU notebook sections 26–28 expose preparation, bounded resume and verification.

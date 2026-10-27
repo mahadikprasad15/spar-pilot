@@ -732,3 +732,98 @@ full reconstruction/orthogonality evidence remains hash-bound in each unit.
 Changed source weights/adapters, altered settings, corrupted payloads or changed
 reported eligibility are rejected. Real-weight geometry is distinct from model
 inference, and synthetic fixtures never count as research findings.
+
+## Conditional merged intruder catalogues (Ticket 09; CPU)
+
+This branch consumes completed principal edits and updated-weight geometry. It
+builds matrices for the conditional intervention; it does not evaluate a model.
+Use CPU notebook sections **26–28** after sections **23–25**. The primary
+intervention/report path remains independent of this extension.
+
+```bash
+python -m pilot_eval stage0-intruder-edits-prepare \
+  --edits artifacts/plans/stage0-geometry-v1-principal-edits-v1/stage0.edits.json \
+  --geometry artifacts/plans/stage0-geometry-v1-intruder-geometry-v1/stage0.intruders.json \
+  --name stage0-geometry-v1-intruder-edits-v1 --output-root artifacts
+python -m pilot_eval stage0-intruder-edits-run \
+  --config artifacts/plans/stage0-geometry-v1-intruder-edits-v1/stage0.intruder-edits.json \
+  --max-new-units 1 --output-root artifacts
+```
+
+Inspect the first unit's time and disk bytes before dropping `--max-new-units` to
+finish. `stage0-intruder-edits-status` and `stage0-intruder-edits-verify` take the
+same config and output root. In a fresh kernel, run CPU section 1, restore the
+paths in 26, then resume 27. No earlier model inference is repeated. Each
+module/arm is independently sealed; unsealed partial files are recomputed, and
+sealed units are validated before reuse. A changed source, setting or
+implementation requires a separately named plan. Writer recovery is explicit:
+`stage0-intruder-edits-recover-writer --config ... --owner-token ...
+--review-notes ... --output-root ...`. An active same-host writer cannot be
+released by that command.
+
+### Operators and matched comparisons
+
+For each applicable arm, form the trained merged weight `M = W0 + B A` and use
+its saved singular directions from Ticket 08. Halving a set S means saving the
+full FP32 matrix
+
+`M_edit = M − 0.5 × sum(i in S) sigma_i u_i v_i^T`.
+
+Construction and subtraction use FP64; retained singular vectors remain at the
+precision declared by the geometry cache. The inherited relative reconstruction
+gate is `< 1e-6`. A module may contain multiple flagged directions, so this is a
+full matrix edit, without an artificial rank-two restriction.
+
+| Catalogue mode | Directions halved | Module scope |
+|---|---|---|
+| `unhalved` | None; saves M | All modules with eligible primary flags; loader qualification control |
+| `full` (V6) | All eligible primary flags | All eligible modules |
+| `matched` (V6) | Eligible primary flags | Modules with enough distinct controls |
+| `control` (V6c) | Matched non-flagged directions | Exactly the same modules as matched V6 |
+| `ratio` / `ratio-control` | Original pairs with sigma_control / sigma_flagged in [0.8, 1.25] | Same retained pairs on both sides; no rematching |
+
+Primary detection is still new top-20, overlap norm `< 0.5` against the old
+`max(k50,40)` subspace, and only where `0.5 > sqrt(m/d_out)`. Control candidates
+come from the new top-40 and must independently have overlap norm `>= 0.5`.
+Choose distinct controls minimizing total absolute singular-value difference;
+resolve equal objectives by control index. A short-control module is excluded
+from **both matched edits**, while full V6 retains its flags. Pair ratios with a
+zero flagged singular value are undefined and excluded from the sensitivity;
+unrepresentable ratios are recorded explicitly, never as JSON Infinity.
+
+An arm with no eligible flags is **not applicable**, rather than an empty
+successful experiment. If both arms are inapplicable, verification still
+publishes its receipt and the runner schedules no extension inference. Empty
+matched/ratio variants have their own not-applicable states. Both arms use the
+same rules; GRPO flags are not silently discarded.
+
+### Saved objects and loader contract
+
+Under `artifacts/runs/stage0/<name>/intruder-edits/`:
+
+- `config.json`, `meta/run_manifest.json`: parent identities, selection/matching
+  rules, implementation/NumPy identity and upper disk estimate.
+- `units/<module>-<arm>/matrices/*.npy`: full FP32 matrices. Identical selection
+  masks share a payload within the unit; source weights and adapters are intact.
+- `units/<module>-<arm>/result.json`, `complete.json`: selections, before/after
+  singular values, reconstruction errors, timing, bytes and payload hashes.
+- `results/catalogue.json`: separate full/matched/ratio identities, original
+  references, matrix paths and exact per-module adapter-disable masks.
+- `results/matching.csv`: every matched pair, singular values, ratio and
+  sensitivity inclusion. Excluded modules remain in the catalogue.
+- `report.html`, `results/catalogue.md`, `meta/status.json`, `logs/`: inspectable
+  summary, completion/resume state and errors.
+
+Verification reconstructs each saved operator from frozen base weights,
+adapter factors and singular components. Rehashing an altered matrix is not
+enough to make it valid. CPU verification imports no Torch/Transformers/PEFT.
+
+The mixed loader replaces the base parameter object only while a variant is in
+use. It disables the adapter **in edited modules**, retaining the original source
+adapter everywhere else, and restores original objects and flags on exit,
+including errors. A deliberate double-adapter mode is restricted to the
+unhalved negative-control diagnostic. The catalogue implements the existing
+greedy engine interface, but remains `gpu_qualified: false`. Ticket 10 must run
+and review bounded unhalved logit/greedy checks, reconcile the cumulative
+20-unit budget and freeze the conditional evaluation before real inference.
+No CPU catalogue or synthetic test substitutes for that qualification.

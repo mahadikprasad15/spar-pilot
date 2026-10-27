@@ -105,10 +105,29 @@ def test_verified_not_applicable_publishes_no_matrices(tmp_path):
     assert not list(directory.rglob('*.npy'))
     assert command(tmp_path,'verify','--config',plan)==0
     assert command(tmp_path,'run','--config',plan,dependencies=NoMatrix())==0
+    from test_stage0_workflow import write_json
+    import os,platform
+    owner=directory/'writer.json'
+    write_json(owner,dict(token='known',host=platform.node(),pid=os.getpid()))
+    assert command(tmp_path,'run','--config',plan,dependencies=NoMatrix())==1
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','known','--review-notes','inspect')==1
+    write_json(owner,dict(token='known',host='departed-host',pid=123))
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','wrong','--review-notes','stopped')==1
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','known','--review-notes','stopped')==0
+    assert command(tmp_path,'verify','--config',plan)==0
 
 
 def test_eligible_arm_full_matched_and_sensitivity_catalogues_resume(tmp_path):
     plan,deps=public_sources(tmp_path,True)
+    class Broken:
+        def matrix(self,entry):raise RuntimeError('injected matrix read failure')
+    assert command(tmp_path,'run','--config',plan,dependencies=Broken())==1
+    directory=tmp_path/'runs/stage0/conditional/intruder-edits'
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='failed'
+    from pilot_eval.stage0_intruders import _key
+    first=next(row for row in json.loads(plan.read_text())['selections'] if row['flagged_indices'])
+    partial=directory/'units'/_key(first['module'],first['arm'])/'matrices/full.npy'
+    partial.parent.mkdir(parents=True,exist_ok=True);partial.write_bytes(b'unsealed partial')
     assert command(tmp_path,'run','--config',plan,'--max-new-units',1,dependencies=deps)==0
     directory=tmp_path/'runs/stage0/conditional/intruder-edits'
     unit=next((directory/'units').glob('*/complete.json'));before=unit.read_bytes()
@@ -132,6 +151,44 @@ def test_eligible_arm_full_matched_and_sensitivity_catalogues_resume(tmp_path):
     assert value.dtype==np.float32 and value[100,100]==75.5
     assert variant['adapter_disable_modules']==sorted(variant['merged_modules'])
     assert (directory/'report.html').exists()
+    from pilot_eval.training import file_hash
+    from test_stage0_workflow import write_json
+    from pilot_eval.stage0_intruder_edits import verify
+    # Rehashing a changed matrix is not sufficient: verification rebuilds W0+BA
+    # and the intended halving operator from frozen independent source factors.
+    target=tmp_path/matrix['path'];original=target.read_bytes()
+    altered=value.copy();altered[0,0]+=1;np.save(target,altered,allow_pickle=False)
+    with pytest.raises(ValueError,match='payload changed'):verify(plan,tmp_path)
+    folder=target.parent.parent;row=json.loads((folder/'result.json').read_text())
+    row_before=(folder/'result.json').read_bytes();seal_before=(folder/'complete.json').read_bytes()
+    root_before=(directory/'complete.json').read_bytes()
+    for descriptor in row['matrices'].values():
+        if folder/descriptor['file']==target:descriptor['sha256']=file_hash(target)
+    write_json(folder/'result.json',row)
+    seal=json.loads(seal_before)
+    for relative in seal['files']:seal['files'][relative]=file_hash(folder/relative)
+    write_json(folder/'complete.json',seal)
+    final=json.loads(root_before)
+    for relative in final['files']:final['files'][relative]=file_hash(directory/relative)
+    write_json(directory/'complete.json',final)
+    with pytest.raises(ValueError,match='intended source operator'):verify(plan,tmp_path)
+    target.write_bytes(original);(folder/'result.json').write_bytes(row_before)
+    (folder/'complete.json').write_bytes(seal_before);(directory/'complete.json').write_bytes(root_before)
+    assert verify(plan,tmp_path)==result
+    import subprocess,sys
+    code="""
+import sys
+class Reject:
+    def find_spec(self,name,*args):
+        if name.split('.')[0] in {'torch','transformers','peft'}:raise AssertionError(name)
+sys.meta_path.insert(0,Reject())
+from pilot_eval.stage0_intruder_edits import verify
+assert verify(sys.argv[1],sys.argv[2])['catalogue_complete']
+"""
+    subprocess.run([sys.executable,'-c',code,str(plan),str(tmp_path)],check=True)
+    adapter=tmp_path/result['references']['V0a']['adapter_path']/'adapter_model.safetensors'
+    adapter.write_bytes(adapter.read_bytes()+b'changed')
+    assert command(tmp_path,'verify','--config',plan)==1
 
 
 def test_mixed_scope_restores_exact_weights_flags_and_adapter_after_exception(tmp_path):
@@ -174,3 +231,46 @@ def test_mixed_scope_restores_exact_weights_flags_and_adapter_after_exception(tm
     with pytest.raises(KeyError):
         with merged_scope(model,broken,tmp_path,torch,adapter_name='sft'):pass
     assert layers['edited'].base_layer.weight is original and model.active_adapters==['old']
+
+
+def test_matching_ratio_boundaries_and_unrepresentable_ratio_are_explicit():
+    from pilot_eval.stage0_intruder_edit_math import match_controls,module_selection
+    assert match_controls([10.,8.],[0],[1])['pairs'][0]['ratio_retained']
+    assert match_controls([10.,8.],[1],[0])['pairs'][0]['ratio_retained']
+    pair=match_controls([1e300,1e-300],[1],[0])['pairs'][0]
+    assert pair['sigma_ratio'] is None and pair['ratio_status']=='overflow'
+    assert not pair['ratio_retained']
+    # Detection is top-20; controls 20--39 must independently pass overlap.
+    row=dict(primary=dict(status='eligible-intruders',eligible_indices=list(range(20))),
+        levels={'50':dict(chance_norm=.2,m=40)},
+        candidates=[dict(index=i,sigma=float(40-i),overlap_norm={'50':0. if i<39 else 1.}) for i in range(40)])
+    selection=module_selection(row)
+    assert selection['control_pool']==[39]
+    assert selection['selections']['full']==list(range(20))
+    assert selection['selections']['matched']==selection['selections']['control']==[]
+    assert selection['excluded_matched_reason']=='insufficient-controls'
+
+
+def test_assignment_random_spectra_agree_with_exhaustive_distinct_controls():
+    from pilot_eval.stage0_intruder_edit_math import match_controls
+    rng=np.random.default_rng(42)
+    for _ in range(40):
+        sigma=np.sort(rng.integers(0,30,size=8))[::-1].astype(float)
+        flags=sorted(rng.choice(8,size=3,replace=False).tolist())
+        controls=[i for i in range(8) if i not in flags]
+        expected=min((sum(abs(sigma[f]-sigma[c]) for f,c in zip(flags,p)),p)
+                     for p in itertools.permutations(controls,3))
+        got=match_controls(sigma,flags,controls)
+        assert (got['total_absolute_difference'],tuple(p['control_index'] for p in got['pairs']))==expected
+
+
+def test_cpu_notebook_conditional_handoff_is_thin_and_parseable():
+    import ast
+    notebook=json.loads(Path('notebooks/stage-0-cpu-colab.ipynb').read_text())
+    code='\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code')
+    for op in ['intruder-edits-prepare','intruder-edits-run','intruder-edits-status','intruder-edits-verify']:
+        assert op in code
+    for cell in notebook['cells']:
+        if cell['cell_type']=='code':
+            assert not cell.get('outputs') and cell.get('execution_count') is None
+            ast.parse(''.join(cell['source']))

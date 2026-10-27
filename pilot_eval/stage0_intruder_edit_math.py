@@ -1,6 +1,7 @@
 """Deterministic singular-value matching and full merged-matrix construction."""
 from fractions import Fraction
 from functools import lru_cache
+import math
 
 import numpy as np
 
@@ -43,9 +44,12 @@ def match_controls(sigma, flagged, controls):
     for flagged_index, control_index in zip(flags, assignment):
         sf, sc = float(values[flagged_index]), float(values[control_index])
         ratio = None if sf == 0 else sc/sf
+        ratio_status = 'undefined-zero-flagged-singular-value' if sf == 0 else 'finite'
+        if ratio is not None and not math.isfinite(ratio):
+            ratio, ratio_status = None, 'overflow'
         pairs.append(dict(flagged_index=flagged_index, control_index=control_index,
             sigma_flagged=sf, sigma_control=sc, absolute_difference=float(abs(exact[flagged_index]-exact[control_index])),
-            sigma_ratio=ratio, ratio_status='undefined-zero-flagged-singular-value' if sf == 0 else 'finite',
+            sigma_ratio=ratio, ratio_status=ratio_status,
             ratio_retained=ratio is not None and .8 <= ratio <= 1.25))
     return dict(status='matched' if flags else 'no-flags', pairs=pairs, total_absolute_difference=float(cost),
                 flagged_indices=flags, control_pool=candidates)
