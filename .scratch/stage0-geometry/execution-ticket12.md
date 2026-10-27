@@ -112,3 +112,5 @@ per-token outputs permit later positional summaries without extra GPU forwards.
   synthetic reports independently verified, including padded vocabulary receipts,
   answer-weighted sensitivities and short-answer/window counts. Evidence at
   `artifacts/validation/stage0-ticket12/approved-conventions-*`. No GPU run.
+
+- Approved-convention scientific source/notebook pin: `efe0352bb96262ea054ee18af913b1213438d096`.
