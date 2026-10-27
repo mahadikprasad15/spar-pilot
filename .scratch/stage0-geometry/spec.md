@@ -422,6 +422,14 @@ absence does not prevent a primary intervention report.
   and complete unique identities are verified. Preserve old/new origin per row.
   New seeds follow the audited ordered-batch scheme and are frozen explicitly;
   do not silently adopt the proposal's example source-index seed rule.
+- Ticket 11 amendment (2026-10-27): exact replay of two recorded historical
+  questions × eight draws, before production, may authorize the historical join
+  only with matching token IDs, text, stopping metadata and verified source/settings
+  identities/hashes. Use the original GPU type and software versions where
+  identifiable. Any mismatch or unrecoverable historical seed/order requires a
+  fresh uniform 512×8 cohort in the new session, not only a separate new 384.
+  Preserve the original 128 as a separately labelled historical product; no
+  reward-rate fallback or newly fitted numerical tolerance is allowed.
 - Historical sampling is HF FP32, temperature one, top-k zero, top-p one, cap
   1024, one question per eight-draw group. Recover all recorded settings before
   generation; do not substitute a different engine to satisfy a cost estimate.

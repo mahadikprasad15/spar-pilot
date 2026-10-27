@@ -15,6 +15,25 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['audit','prepare','profile','freeze','run','status','verify','recover-writer']:
+        rollout=commands.add_parser('stage0-rollouts-'+operation,help='optional audited untuned rollouts and derived cohorts')
+        rollout.add_argument('--output-root',type=Path,required=True)
+        if operation in ['audit','prepare']:
+            rollout.add_argument('--audit',type=Path,required=True)
+            rollout.add_argument('--baseline',type=Path,required=True)
+            rollout.add_argument('--name',required=True)
+            if operation=='prepare':rollout.add_argument('--weights-dir',type=Path,required=True)
+        else:rollout.add_argument('--config',type=Path,required=True)
+        if operation in ['profile','run']:
+            rollout.add_argument('--approval',type=Path)
+            rollout.add_argument('--max-new-units',type=int)
+            rollout.add_argument('--no-progress',action='store_true')
+        if operation=='freeze':rollout.add_argument('--review',type=Path,required=True)
+        if operation=='recover-writer':
+            rollout.add_argument('--phase',choices=['profile','collection'],required=True)
+            rollout.add_argument('--owner-token',required=True)
+            rollout.add_argument('--review-notes',required=True)
+
     for operation in ['prepare','run','verify','status','recover-writer']:
         conditional=commands.add_parser('stage0-intruder-edits-'+operation,help='CPU conditional merged V6/V6c catalogues')
         conditional.add_argument('--output-root',type=Path,required=True)
@@ -478,7 +497,18 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-intruder-edits-'):
+        if args.command.startswith('stage0-rollouts-'):
+            from pilot_eval import stage0_rollouts as workflow
+            operation=args.command.removeprefix('stage0-rollouts-')
+            if operation=='audit':result=workflow.audit(args.audit,args.baseline,args.output_root,args.name)
+            elif operation=='prepare':result=workflow.prepare(args.audit,args.baseline,args.weights_dir,args.output_root,args.name,dependencies=dependencies)
+            elif operation in ['profile','run']:result=getattr(workflow,operation)(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
+            elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
+            elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.phase,args.owner_token,args.review_notes)
+            else:result=getattr(workflow,operation)(args.config,args.output_root)
+            if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['parents','legacy','historical','training']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-intruder-edits-'):
             from pilot_eval import stage0_intruder_edits as workflow
             operation=args.command.removeprefix('stage0-intruder-edits-')
             if operation=='prepare':result=workflow.prepare(args.edits,args.geometry,args.output_root,args.name)

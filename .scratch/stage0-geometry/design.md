@@ -370,3 +370,13 @@ mix incompatible sessions to finish a paired comparison.
 Implementation must preserve these approved numbers. Where source facts or
 bounded measurements are still unavailable, record a pending state and the
 required evidence rather than inventing a value or claiming qualification.
+
+## Ticket 11 execution amendment, 27 October 2026
+
+User approved exact replay as the historical join criterion: two recorded
+questions × eight draws must match token IDs, text and stopping metadata, with
+source/settings identities and hashes verified. Replay precedes production, in
+the original GPU type/software versions where identifiable. Any mismatch or
+unrecoverable seed/order forbids joining and triggers a fresh uniform 512×8
+cohort in the new session under a frozen measured-budget plan. Preserve the
+original 128 groups separately. Reward-rate similarity never authorizes a join.
