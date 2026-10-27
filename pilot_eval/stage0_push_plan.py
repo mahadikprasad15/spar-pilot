@@ -19,6 +19,11 @@ from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash, _save_frozen
 
 
+def matching_execution_kinds(inventory_kind,run_kind):
+    """A CPU-only weight audit feeds CUDA measurement; fixtures stay separate."""
+    return {'cpu-local-pinned-weights':'real-cuda','synthetic-cpu-fixture':'synthetic-cpu-fixture'}.get(inventory_kind)==run_kind
+
+
 def batches(training,draws,datasets,cases):
     """Identical CE problem batches; GRPO keeps all groups, including dead ones."""
     by_id={r['id']:r for r in training};draw_map={(r['group_id'],r['draw_index']):r for r in draws}
@@ -62,7 +67,7 @@ def prepare(spectral_path,rollouts_path,output_root,name,*,context_chunk=16):
     sp,rp=inside(root,spectral_path),inside(root,rollouts_path)
     spectral,audit=_load(sp,root);_verify_cache(spectral,inside(root,spectral['run_path']))
     verify_rollouts(rp,root);rollout,source,training,_=load_rollouts(rp,root)
-    if spectral['audit_path']!=rollout['audit_path'] or spectral['weights_dir']!=rollout['weights_dir'] or spectral['inventory']['execution_kind']!=rollout['execution_kind']:
+    if spectral['audit_path']!=rollout['audit_path'] or spectral['weights_dir']!=rollout['weights_dir'] or not matching_execution_kinds(spectral['inventory']['execution_kind'],rollout['execution_kind']):
         raise ValueError('Spectral and R0 sources must use the same audited base and artifact inventory.')
     if type(context_chunk) is not int or context_chunk<1:raise ValueError('Positive context chunk required.')
     draws=[json.loads(x) for x in (source/'results/rollouts.jsonl').read_text().splitlines()]

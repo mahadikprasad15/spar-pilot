@@ -4,16 +4,23 @@
 
 **Blocked by:** 02, 04.
 
-**Status:** claimed
+**Status:** resolved
 
 **Track:** Optional supporting branch.
 
-- [ ] float64 sufficient sums and counts, correct token views, independent reconstruction, undefined zero denominators, base-input scope, and resumable verified units. All factors share captured base inputs rather than requiring separate arm forwards. Work runs only in approved spare budget.
-- [ ] The behavior is reachable through the public saved-workflow commands used by the applicable shared notebook, with visible inputs, outputs and resource requirements.
-- [ ] CPU-only public-boundary tests use tiny fixtures or replaceable backends, include an independent oracle where applicable, and cover interrupted resume and changed-source rejection without a model download.
-- [ ] Persist configuration, source identities, structured results, status and completion evidence; keep real execution/qualification status separate from software implementation status.
-- [ ] Model-backed execution requires the applicable recorded approvals and cumulative budget checks; total Stage 0 usage cannot exceed 20 Colab compute units without further user approval.
+Checkboxes describe implemented software and CPU-fixture validation. Real
+GPU collection, measured budgets and scientific findings remain pending.
+
+- [x] float64 sufficient sums and counts, correct token views, independent reconstruction, undefined zero denominators, base-input scope, and resumable verified units. All factors share captured base inputs rather than requiring separate arm forwards. Work runs only in approved spare budget.
+- [x] The behavior is reachable through the public saved-workflow commands used by the applicable shared notebook, with visible inputs, outputs and resource requirements.
+- [x] CPU-only public-boundary tests use tiny fixtures or replaceable backends, include an independent oracle where applicable, and cover interrupted resume and changed-source rejection without a model download.
+- [x] Persist configuration, source identities, structured results, status and completion evidence; keep real execution/qualification status separate from software implementation status.
+- [x] Model-backed execution requires the applicable recorded approvals and cumulative budget checks; total Stage 0 usage cannot exceed 20 Colab compute units without further user approval.
 
 ## Comments
 
 - 2026-10-26: User approved this slice, its blocking edges and the shared public workflow test boundary. No real GPU completion is implied.
+
+- 2026-10-27: User approved corrected atol1e-5/rtol1e-5 reconstruction and
+  normalized projection gates; independent total required. Implemented and
+  validated through public commands; see `../execution-ticket14.md`.

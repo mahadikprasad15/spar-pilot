@@ -7,6 +7,24 @@ from pilot_eval.stage0_drift_math import positions
 FIELDS=['parallel_squared_sum','rest_squared_sum','twice_cross_sum','total_squared_sum']
 
 
+def projection_check(a,parallel,basis,ticket02_pi_in,agreement,*,gram=None):
+    a,parallel,basis=(np.asarray(v,dtype=np.float64) for v in [a,parallel,basis])
+    rest=a-parallel;norm2=float(a@a)
+    gram=basis.T@basis if gram is None else gram
+    result=dict(gram_max_absolute_error=float(np.max(np.abs(gram-np.eye(gram.shape[0])))),
+        normalized_cross=None if norm2==0 else float(parallel@rest/norm2),
+        norm_partition=None if norm2==0 else float((parallel@parallel+rest@rest)/norm2),
+        principal_norm_fraction=None if norm2==0 else float(parallel@parallel/norm2),ticket02_pi_in=ticket02_pi_in,
+        zero_factor=norm2==0)
+    passed=np.allclose(gram,np.eye(len(gram)),**agreement)
+    if norm2:
+        passed=passed and np.isclose(result['normalized_cross'],0.,**agreement) and np.isclose(result['norm_partition'],1.,**agreement) and np.isclose(result['principal_norm_fraction'],ticket02_pi_in,**agreement)
+    elif ticket02_pi_in is not None:passed=False
+    result['passed']=bool(passed)
+    if not passed:raise ValueError('Normalized projection check failed: '+str(result))
+    return result
+
+
 def parallel_factors(a,basis):
     a=np.asarray(a,dtype=np.float64);basis=np.asarray(basis,dtype=np.float64)
     if a.ndim!=2 or basis.ndim!=2 or a.shape[1]!=basis.shape[0] or not np.isfinite(a).all() or not np.isfinite(basis).all():raise ValueError('Finite input factors and compatible principal basis required.')

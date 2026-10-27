@@ -238,3 +238,11 @@ def test_cpu_source_selection_runs_in_a_fresh_kernel(tmp_path):
     calls=[];namespace['ARTIFACT_ROOT']=tmp_path;namespace['run_stage0']=lambda *args:calls.append(args)
     exec(next(c for c in cells if 'SELECTION = ' in c),namespace)
     assert calls[0][0]=='prepare' and namespace['SELECTION'].is_file()
+
+
+def test_cpu_weight_inventory_is_compatible_with_real_cuda_execution():
+    from pilot_eval.stage0_push_plan import matching_execution_kinds
+    assert matching_execution_kinds('cpu-local-pinned-weights','real-cuda')
+    assert matching_execution_kinds('synthetic-cpu-fixture','synthetic-cpu-fixture')
+    assert not matching_execution_kinds('synthetic-cpu-fixture','real-cuda')
+    assert not matching_execution_kinds('cpu-local-pinned-weights','synthetic-cpu-fixture')

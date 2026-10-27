@@ -15,6 +15,17 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','predict','runtime','run','forecast','freeze','status','verify-measurement','report','verify','recover-writer']:
+        energy=commands.add_parser('stage0-energy-'+operation,help='optional base-input principal/rest/cross energy measurement')
+        energy.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            for option in ['spectral','qualification','inputs','random']:energy.add_argument('--'+option,type=Path,required=True)
+            energy.add_argument('--name',required=True);energy.add_argument('--batches-per-unit',type=int,default=8)
+        else:energy.add_argument('--config',type=Path,required=True)
+        if operation in ['freeze','predict']:energy.add_argument('--review',type=Path,required=True)
+        if operation=='run':
+            energy.add_argument('--approval',type=Path);energy.add_argument('--max-new-units',type=int);energy.add_argument('--no-progress',action='store_true')
+        if operation=='recover-writer':energy.add_argument('--owner-token',required=True);energy.add_argument('--review-notes',required=True)
     for operation in ['prepare','check','runtime','run','status','forecast','freeze','verify-measurement','report','predict','reveal','verify','recover-writer']:
         push=commands.add_parser('stage0-pushes-'+operation,help='optional initial-gradient pushes; CPU summaries and bounded GPU collection')
         push.add_argument('--output-root',type=Path,required=True)
@@ -521,7 +532,21 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-pushes-'):
+        if args.command.startswith('stage0-energy-'):
+            from pilot_eval import stage0_energy as workflow
+            operation=args.command.removeprefix('stage0-energy-')
+            if operation=='prepare':result=workflow.prepare(args.spectral,args.qualification,args.inputs,args.random,args.output_root,args.name,batches_per_unit=args.batches_per_unit)
+            elif operation=='predict':result=workflow.predict(args.config,args.output_root,args.review)
+            elif operation=='runtime':result=workflow.runtime(args.config,args.output_root,dependencies=dependencies)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
+            elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
+            elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            elif operation in ['report','verify']:
+                from pilot_eval import stage0_energy_report
+                result=getattr(stage0_energy_report,operation)(args.config,args.output_root)
+            else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-pushes-'):
             from pilot_eval import stage0_pushes as workflow
             operation=args.command.removeprefix('stage0-pushes-')
             if operation=='prepare':result=workflow.prepare(args.spectral,args.rollouts,args.output_root,args.name,context_chunk=args.context_chunk)

@@ -1245,3 +1245,93 @@ artifact/integrity chain on CPU without importing model libraries.
 
 Implementation and CPU-fixture success are separate from real GPU execution.
 This optional branch does not block the primary intervention result.
+
+## Optional activation-energy decomposition (Ticket14)
+
+A factor's geometric principal overlap says where `a` points. It does not say
+which parts of `a` fire on actual model inputs. This branch measures that
+activity on the original fixed150 GSM8K and150 FineWeb sequences.
+
+CPU37 prepares the measurement from the verified spectral cache, reviewed
+Ticket04 qualification, audited SFT/GRPO endpoints and zeros, and existing saved
+random control. CPU38 records predictions and prior exposure. GPU setup1–4 then
+38–43 handles the bounded profile, measured production budget, collection/resume
+and actual-usage reconciliation. Return to CPU39 for aggregation and plots.
+Neither optional energy collection nor its predictions block E0.4.
+
+For every module, factor and cutoff, decompose `a = a_parallel + a_rest`, where
+`a_parallel = V_k V_kᵀ a`. One untuned base body forward captures every module's
+input `x`; all five factors and three cutoffs contract those same inputs. The
+adapter is disabled during the forward. No tuned-model forward, backward pass,
+optimizer, generation or vocabulary-head projection is needed. Real inference
+is singleton under the existing batching convention; durable save groups hold
+eight sequences by default. There are300 body forwards for the full cohort,
+not300 per factor/cutoff. The first16 profile forwards are reused in production.
+
+For each counted view, save FP64 sufficient sums:
+
+- `parallel_squared_sum = sum((a_parallel·x)²)`;
+- `rest_squared_sum = sum((a_rest·x)²)`;
+- `twice_cross_sum = 2 sum((a_parallel·x)(a_rest·x))`;
+- `total_squared_sum = sum((a·x)²)`, computed independently.
+
+Count the original unshifted question/solution/user positions, including the
+last counted token; these are input coefficients rather than next-token scores.
+The saved per-example arrays have shape `[example, factor, cutoff, view, module,
+component]`. Retain the sequence/mask identities and derive exact view token
+counts from them. Full input activation tensors are deliberately not stored.
+
+The corrected approved gate is atol1e-5/rtol1e-5 on FP64 sums and normalized
+projection checks. Preparation checks the retained V basis Gram matrix, normalized
+parallel/rest dot product, normalized norm partition and principal norm fraction
+against Ticket02's π_in at the same module, checkpoint and cutoff. This matters
+because energy reconstruction alone holds even for an incorrect projection.
+Zero factors get undefined normalized quantities. Preparation failures save
+`diagnostics/projection-failure.json`; collection failures save failed sums and
+a structured coordinate/mapping record. Failures stop; tolerances never expand.
+
+`stage0-energy-run` initially permits only the first GSM8K and FineWeb save
+groups. Inspect `energy-forecast`: it includes observed reconstruction errors,
+fractions of the accepted allowance, per-corpus timings and remaining forwards.
+The time extrapolation is a planning estimate. Reconcile the actual cumulative
+credit reading and settle the profile allocation, then `energy-freeze` binds a
+separate numerical review and measured production budget. All work uses the
+existing cumulative20-unit ledger. Model loading is refused without a valid
+allocation or after the ceiling is reached.
+
+The first bounded profile freezes its own runtime/GPU/session. The prerequisite
+loader qualification's runtime is retained for provenance; historical energy
+values are not imported or joined. Remaining energy groups must match the frozen
+energy session. A changed session requires a separately named comparison absent
+an approved compatibility workflow. Resume verifies inputs, projected factors,
+code, runtime, hashes and integrity before skipping sealed units. One writer owns
+the product; exact-token writer recovery does not discard saved evidence.
+
+Canonical output: `runs/stage0/<name>/input-energy/`:
+
+- `inputs/items.jsonl`, `inputs/factors/*.npz`, `inputs/geometry.json` and
+  `checks/projections.json` bind tokens, factors, cutoffs and checks.
+- `units/<group>/arrays.npz` holds per-example FP64 sums; adjacent metadata and
+  seals bind scope, attempt, timing and immutable-weight checks.
+- `predictions.json`, `attempts/`, `meta/`, `logs/`, `diagnostics/` preserve
+  hypotheses, actual runtime, progress, errors and budget/integrity provenance.
+- `results/results.json`, `results/modules.csv`, `results/groups.csv` retain
+  raw sums, ratios, geometric context and descriptive layer/type summaries.
+- `report.html` and `plots/*.svg` present layer profiles and SFT-versus-GRPO
+  comparisons. Source configs and raw arrays remain inspectable.
+
+The headline is `parallel / (parallel + rest)`, bounded between zero and one
+when defined. Separately report `parallel/total`, `rest/total` and `cross/total`;
+these add to one when total is nonzero, but individual values can exceed one.
+Negative cross means cancellation, positive cross means reinforcement. Exact
+cancellation can give positive parts and zero total; the headline stays defined
+while total-normalized components are undefined. Zero parts makes the headline
+undefined. Pool counted tokens within each corpus/view/module; layer/type plots
+average defined module fractions equally and state that weighting explicitly.
+
+This measures factors on **base-model inputs**. It is not a measurement of
+adapted inputs, downstream causal use or behavioral damage. One adapter seed per
+arm and descriptive module/layer summaries do not establish population effects.
+`energy-verify-measurement` checks collection; `energy-report`/`energy-verify`
+produce and verify the CPU result without importing model libraries. Scientific
+execution remains separate from successful software fixtures.

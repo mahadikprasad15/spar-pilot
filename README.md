@@ -34,7 +34,8 @@ qualification and experimental results are still pending. The optional CPU
 rotation/intruder branch is also implemented; it supplies eligibility evidence
 for later conditional edits. Optional initial-gradient collection and CPU
 push/endpoint alignment reports are implemented as well; real collection is
-pending.
+pending. The optional base-input activation-energy branch also has collection
+and CPU component reports implemented; its real measurements remain pending.
 
 See [execution and result status](docs/experiments/status.md),
 [measurement conventions](docs/methods.md), and [domain terminology](CONTEXT.md).

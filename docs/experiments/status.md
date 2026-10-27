@@ -94,3 +94,13 @@ recorded CPU environments. Three actual Torch tests ran separately because the
 regular local Torch installation is incomplete. No real GPU collection or
 scientific alignment result is implied. CPU34–36 / GPU32–37 expose this branch;
 see the [execution record](../../.scratch/stage0-geometry/execution-ticket13.md).
+
+### Optional input energy — 27 October2026
+
+Ticket14 implements one untuned base forward per fixed sequence, shared by
+SFT/GRPO endpoint/zero and random input factors at three spectral cutoffs.
+FP64 principal/rest/cross/independent-total sums, approved normalized projection
+checks, bounded budgets/resume and CPU tables/plots are implemented. CPU37–39 /
+GPU38–43 expose the branch. Test artifacts are synthetic software evidence;
+real GPU measurements remain pending. See the
+[execution record](../../.scratch/stage0-geometry/execution-ticket14.md).

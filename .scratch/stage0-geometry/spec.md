@@ -604,3 +604,19 @@ The completed R0 token cohort is source data with its sampling runtime retained;
 using it does not join historical gradient values. A new gradient comparison may
 start in a later suitable GPU session; changing session after its own profile
 requires a separately named comparison, absent an approved compatibility check.
+
+### Ticket14 numerical checks approved 27 October2026
+
+The corrected approval supersedes the initially misstated absolute tolerance.
+Use atol1e-5 and rtol1e-5 for FP64 energy reconstruction and normalized projection
+checks. Compute total energy independently from a·x, never as the sum of the
+components. Check V_kᵀV_k against identity; (a_parallel·a_rest)/||a||² against zero;
+(||a_parallel||²+||a_rest||²)/||a||² against one; and
+||a_parallel||²/||a||² against Ticket02's π_in for the same module, factor/checkpoint
+and cutoff. Zero-factor normalized quantities remain undefined. Any failed check
+stops and saves diagnostics; no gate widening or post-hoc threshold fitting.
+
+Capture on the original150 GSM8K/150 FineWeb fixed inputs, preserving their
+unshifted question/solution/user masks. All selected factors contract the same
+untuned base inputs; one body forward supplies every factor and cutoff. Retain
+FP64 sufficient sums and per-example counts, not full activation tensors.
