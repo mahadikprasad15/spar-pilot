@@ -49,6 +49,7 @@ class Scores:
     def __init__(self,error=0.,session='session-a'):self.calls=[];self.loads=0;self.error=error;self.session=session
     def runtime(self):return dict(execution_kind='synthetic-cpu-fixture',session_id=self.session,device='tiny CPU')
     def engine(self,config,root):self.loads+=1;return self
+    def vocabulary(self):return dict(logit_vocabulary_size=128,tokenizer_vocabulary_size=120,padded_output_rows=8,includes_padded_rows=True,rank_and_softmax_same_full_vector=True)
     def score(self,answer):
         self.calls.append(answer['answer_id']);n=len(answer['target_ids'])
         return dict(surprise=np.full(n,1.+self.error,dtype=np.float64),entropy=np.ones(n,dtype=np.float64),rank=np.ones(n,dtype=np.int64))
@@ -101,6 +102,9 @@ def test_public_unique_scoring_resume_cpu_report_and_corruption_rejection(ready)
     assert own['n_answers']==4096 and own['n_tokens']==8192 and own['nll']==own['entropy']==1.
     assert own['ci_low']==own['ci_high']==1. and own['neg_log_p_correct'] is None
     assert (directory/'summary.parquet').exists()
+    vocabulary=json.loads((directory/'meta/vocabulary.json').read_text())
+    assert vocabulary['logit_vocabulary_size']==128 and vocabulary['padded_output_rows']==8
+    assert result['vocabulary']==vocabulary
     import subprocess,sys
     code='''
 import sys
@@ -186,6 +190,10 @@ def test_token_weighted_point_estimate_and_problem_bootstrap_have_distinct_units
     own=next(r for r in result['summaries'] if r['dataset']=='own_correct')
     assert own['nll']==2.5 and own['entropy']==.875 and own['excess_surprise']==1.625
     assert (own['ci_low'],own['ci_high'])==(1.,3.) # resampling whole problems, not individual tokens
+    assert own['answer_weighted_nll']==2. and own['answer_weighted_entropy']==.75
+    assert own['answer_weighted_excess_surprise']==1.25
+    assert own['n_answers_under_64']==2
+    assert own['first32_tokens']==4 and own['middle_tokens']==own['last32_tokens']==0
     assert own['neg_log_p_correct']==.5 # equal problem average, whole-answer units
     assert own['excess_surprise_ci_low']==.5 and own['excess_surprise_ci_high']==2.
 
@@ -196,3 +204,20 @@ def test_position_windows_are_disjoint_and_short_answers_do_not_duplicate_tokens
     assert position_windows(40)==['first32']*32+['last32']*8
     assert position_windows(70)==['first32']*32+['middle']*6+['last32']*32
     with pytest.raises(ValueError):position_windows(0)
+
+
+def test_answer_weighted_sensitivity_keeps_all_samples_together_by_problem(tmp_path,monkeypatch):
+    import pilot_eval.stage0_distance_report as report
+    arrays={k:dict(surprise=np.full(n,value),entropy=np.ones(n),rank=np.ones(n,dtype=np.int64))
+            for k,n,value in [('a',1,1.),('b',3,3.),('c',1,9.)]}
+    answers=[dict(answer_id=k,target_ids=[99]*len(v['surprise']),positions=list(range(len(v['surprise'])))) for k,v in arrays.items()]
+    members=[dict(problem_id=p,answer_id=a) for p,a in [('p1','a'),('p1','b'),('p2','c')]]
+    mapping={k:members for k in ['gold','own_all','own_correct','own_correct_one']}
+    (tmp_path/'inputs').mkdir();(tmp_path/'inputs/datasets.json').write_text(json.dumps(dict(neg_log_p_correct={'p1':.1,'p2':.9})))
+    monkeypatch.setattr(report,'read_unit',lambda c,d,a:arrays[a['answer_id']])
+    result=report.calculate(dict(statistics={},premise={},execution_kind='synthetic-cpu-fixture',scored_eos_token_id=99),tmp_path,answers,mapping)
+    row=result['summaries'][0]
+    assert row['answer_weighted_nll']==pytest.approx(13/3)
+    assert row['nll']==pytest.approx(19/5)
+    assert (row['answer_weighted_nll_ci_low'],row['answer_weighted_nll_ci_high'])==(2.,9.)
+    assert row['n_answers_under_64']==3 and row['first32_tokens']==5 and row['n_answers_without_end_of_turn']==0

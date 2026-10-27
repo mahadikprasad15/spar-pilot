@@ -43,6 +43,7 @@ def prepare(rollouts_path,output_root,name,*,context_chunk=16,workspace_bytes=53
         mask='saved SFT prompt masked; gold through supervised EOS; sampled generated IDs including observed EOS, no artificial EOS on cap',
         units='nats per answer token',primary='nll',excess_surprise='nll minus model entropy; descriptive, not KL',
         rank='1 + vocabulary logits strictly greater than target; ties share rank',position_windows='disjoint first32/middle/last32; first32 precedence on answers shorter than64',own_all_gate=.02,budget_ceiling_units=20,
+        scored_eos_token_id=eos,answer_weighted_sensitivity=True,conventions_approved='user 2026-10-27; full padded vocabulary, disjoint windows, token primary and answer sensitivity',
         statistics=dict(draws=10000,seed=42,percentiles=[2.5,97.5],unit='whole problem',weighting='ratio of summed token surprise to summed token count'),
         premise=dict(sampled_distribution='HF temperature1, topk0, topp1',score_model='identical audited untuned weights',
             runtime='same sampled production session',stopping='observed EOS included; cap gets no synthetic EOS',
@@ -85,7 +86,11 @@ def read_unit(config,directory,answer):
     timing=_attempt_timing(attempt,required=False);final=attempt/'final-integrity.json'
     if final.exists() and (json.loads(final.read_text()).get('base_unchanged') is not True or (timing is not None and timing['final_integrity_sha256']!=file_hash(final))):raise ValueError('Failed full scoring integrity invalidates this attempt.')
     with np.load(folder/'tokens.npz',allow_pickle=False) as saved:arrays={k:saved[k] for k in saved.files}
-    return check_arrays(arrays,answer)
+    arrays=check_arrays(arrays,answer)
+    vocabulary=json.loads((directory/'meta/vocabulary.json').read_text())
+    if meta.get('vocabulary_sha256')!=file_hash(directory/'meta/vocabulary.json') or np.any(arrays['rank']>vocabulary['logit_vocabulary_size']) or any(t>=vocabulary['logit_vocabulary_size'] for t in answer['target_ids']):
+        raise ValueError('Token rank/target or vocabulary identity differs from the scored full vector.')
+    return arrays
 
 
 def _deps():
@@ -125,16 +130,25 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
                 if hasattr(deps,'preflight'):deps.preflight(config,root)
                 if progress:print('Stage 0 distance: loading the local untuned FP32 model.',flush=True)
                 engine=deps.engine(config,root)
+                vocabulary=engine.vocabulary()
+                if (type(vocabulary.get('logit_vocabulary_size')) is not int or vocabulary['logit_vocabulary_size']<1
+                        or type(vocabulary.get('tokenizer_vocabulary_size')) is not int or vocabulary['tokenizer_vocabulary_size']<1
+                        or vocabulary.get('padded_output_rows')!=max(0,vocabulary['logit_vocabulary_size']-vocabulary['tokenizer_vocabulary_size'])
+                        or vocabulary.get('includes_padded_rows') is not True or vocabulary.get('rank_and_softmax_same_full_vector') is not True):
+                    raise ValueError('Record full scoring vocabulary including padded rows before scoring.')
+                _save_frozen(directory/'meta/vocabulary.json',vocabulary)
                 for n,answer in enumerate(answers):
                     if saved[n] is not None:continue
                     if max_new_units is not None and new>=max_new_units:break
                     deadline();begin=time.monotonic()
-                    arrays=check_arrays(engine.score(answer),answer);deadline();proof=engine.check_integrity()
+                    arrays=check_arrays(engine.score(answer),answer)
+                    if np.any(arrays['rank']>vocabulary['logit_vocabulary_size']) or any(t>=vocabulary['logit_vocabulary_size'] for t in answer['target_ids']):raise ValueError('Target ID or rank exceeds the full scored vocabulary.')
+                    deadline();proof=engine.check_integrity()
                     if proof.get('base_unchanged') is not True:raise ValueError('Scoring model integrity failed.')
                     folder=directory/'units'/answer['answer_id'];folder.mkdir(parents=True,exist_ok=True)
                     temporary=folder/'tokens.tmp.npz';np.savez(temporary,**arrays);temporary.replace(folder/'tokens.npz')
                     _write_json(folder/'metadata.json',dict(answer_id=answer['answer_id'],seconds=time.monotonic()-begin,
-                        attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=proof))
+                        attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=proof,vocabulary_sha256=file_hash(directory/'meta/vocabulary.json')))
                     _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),answer_sha256=_hash(answer)),files={k:file_hash(folder/k) for k in ['tokens.npz','metadata.json']}))
                     saved[n]=arrays;new+=1;_state(directory,'running',sum(v is not None for v in saved),len(answers),reservation_id=reservation['reservation_id'])
                     if progress:print(f'Stage 0 distance: {sum(v is not None for v in saved)}/{len(answers)} unique answers sealed; {len(answer["target_ids"])} supervised tokens.',flush=True)
@@ -143,7 +157,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
                 load(path,root)
                 if all(v is not None for v in saved):
                     _write_json(directory/'meta/final-integrity.json',dict(**proof,attempt_id=attempt.name))
-                    files=['config.json','meta/runtime.json','inputs/answers.jsonl','inputs/memberships.json','inputs/datasets.json','meta/final-integrity.json']+[str(p.relative_to(directory)) for p in (directory/'units').rglob('complete.json')]
+                    files=['config.json','meta/vocabulary.json','meta/runtime.json','inputs/answers.jsonl','inputs/memberships.json','inputs/datasets.json','meta/final-integrity.json']+[str(p.relative_to(directory)) for p in (directory/'units').rglob('complete.json')]
                     _write_json(directory/'measurement.complete.json',dict(config_sha256=_hash(config),files={p:file_hash(directory/p) for p in files}))
                     return _state(directory,'measurement-complete',len(answers),len(answers),reservation_id=reservation['reservation_id'],cpu_report_pending=True)
                 return _state(directory,'incomplete',sum(v is not None for v in saved),len(answers),reservation_id=reservation['reservation_id'])

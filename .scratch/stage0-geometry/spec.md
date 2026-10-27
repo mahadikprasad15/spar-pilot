@@ -563,13 +563,23 @@ absence does not prevent a primary intervention report.
   not-applicable V6, pending review and failed qualifications are explicit report
   states, not omissions to conceal.
 
-### Ticket12 reporting implementation conventions (27 October2026)
+### Ticket12 reporting conventions approved 27 October2026
 
-The implementation uses target rank = 1 + number of vocabulary logits strictly
-greater than the target (ties share rank). Position summaries are disjoint
-first32/middle/last32 windows; first32 takes precedence for short answers. Primary
-dataset point estimates remain token-weighted ratios with whole-problem resampling.
-These defaults were stated after an optional clarification remained unanswered,
-not represented as a separate user approval. Original per-token data and
-positions remain available for CPU-only reporting revisions. No numerical
-acceptance threshold or original user-approved statistical claim is changed.
+The user approved target rank = 1 + number of vocabulary logits strictly greater
+than the target, using the same full logit vector used for the NLL softmax.
+Record output-head vocabulary size including padded rows, tokenizer vocabulary
+size and padded-row count; do not trim the rank or softmax vocabulary.
+
+Position summaries are disjoint first32/middle/last32; first32 takes precedence
+for answers shorter than64 scored tokens. Report per dataset the number of
+answers under64 and token counts in all three windows, including zero counts.
+Gold tokens are exactly the saved Pilot2 loss-bearing tokens, preserving its
+template/formatting and supervised end-of-turn. Samples use generated token IDs,
+including the observed end-of-turn. Capped samples have no artificial token
+appended and their missing end-of-turn count is explicit.
+
+Primary means remain token-weighted. Add answer-weighted NLL, entropy and excess
+surprise as sensitivity estimates with separately named intervals. Both primary
+and sensitivity bootstrap whole problems, retaining all samples of each sampled
+problem together. Saved memberships retain draw multiplicity after deduplication.
+No numerical acceptance threshold changes.

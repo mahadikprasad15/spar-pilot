@@ -24,3 +24,8 @@ measured-budget approvals and the scientific own_all result remain pending.
 - 2026-10-27: Implemented saved unique-answer scoring, separate measured production
   freeze, per-token evidence and CPU reports. See `../execution-ticket12.md`.
   No model-backed execution or new scientific result is implied.
+
+- 2026-10-27: User explicitly approved rank/full padded vocabulary, disjoint
+  windows with short-answer/window counts, exact SFT/generated EOS treatment,
+  and answer-weighted sensitivity with whole-problem bootstrap. Implemented;
+  amended scoring suite11 passed in138.28s. No real execution.

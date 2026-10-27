@@ -1062,7 +1062,7 @@ At target answer token t, use the model distribution at context t−1:
 - **Surprise:** −log p(target), in nats.
 - **Entropy:** −sum_v p(v) log p(v), over the full vocabulary.
 - **Rank:** one plus the number of logits strictly greater than the target logit;
-  ties share rank (explicit implementation convention).
+  ties share rank (user-approved convention).
 
 Primary dataset NLL is total surprise divided by counted answer tokens. Model
 entropy uses the same positions and weighting. Their difference is **excess
@@ -1142,7 +1142,21 @@ claimed to establish a valid KL identity or a reasoning-quality result.
 Positional summaries use disjoint first32/middle/last32 windows. First32 takes
 precedence on answers shorter than64, avoiding duplicate counting; empty windows
 are absent. `results/position-windows.csv` retains NLL and separately named
-excess-surprise intervals. These reporting defaults were stated explicitly after
-the optional convention question remained unanswered; they are implementation
-choices, not a separately claimed user approval. Complete token evidence permits
-CPU-only revisions without additional model forwards.
+excess-surprise intervals. The user approved these conventions on27 October2026. Dataset summaries also
+record `n_answers_under_64`, all three window token counts (including zero), and
+`n_answers_without_end_of_turn`. Counts retain answer/draw multiplicity, not only
+unique forwards. Complete token evidence permits CPU-only reporting revisions.
+
+`meta/vocabulary.json` records the full output-head row count, tokenizer size and
+padded-row count, explicitly including padded rows. Rank and NLL use the same
+full FP64-promoted FP32 logit vector. Every unit binds the vocabulary receipt;
+verification rejects ranks or target IDs outside its full vocabulary. The final
+measurement seal covers this receipt and the report displays it.
+
+Summary Parquet/CSV include `answer_weighted_nll`, `answer_weighted_entropy` and
+`answer_weighted_excess_surprise`, with their own independently named95% interval
+fields. This sensitivity averages each answer's per-token mean equally, retaining
+membership multiplicity. Bootstrap still resamples whole problems: all answers
+of a selected problem move together, and the sensitivity denominator is the
+number of answers, not the number of problems. Primary token-weighted estimates
+and the own_all gate are unchanged.

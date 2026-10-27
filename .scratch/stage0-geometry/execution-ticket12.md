@@ -37,13 +37,12 @@
 
 ## Reporting conventions
 
-An optional clarification was sent for rank ties and positional windows. After
-allowing time for a reply, the agent explicitly stated the implementation defaults:
-one plus strictly-greater logits (ties share rank), and disjoint first32/middle/
-last32 windows with first32 precedence on short answers. These are recorded as
-implementation conventions, not as user approval. Per-token evidence permits
-changing either on CPU without repeating model inference. Window bootstrap
-indices and denominators are separately saved and verified.
+Initially implemented explicit defaults while the optional clarification was
+unanswered. The user subsequently approved all three conventions, with additions:
+full logit-vector rank/NLL vocabulary including padded rows, dataset short-answer
+and window counts, exact Pilot2 SFT/generated-token/end-turn treatment, and
+answer-weighted sensitivity with whole-problem bootstrap. Those additions are
+implemented and separately validated below; no longer a pending/default choice.
 
 ## Test evidence so far
 
@@ -88,3 +87,28 @@ per-token outputs permit later positional summaries without extra GPU forwards.
 - No real inference, numerical acceptance change, Colab use, Drive upload or push.
 
 - Verified scientific implementation/notebook release pin: `97b21a8bf5a3e0c5fe30454cc84abb138e997a01`.
+
+## Approved-convention extension, 27 October2026
+
+- Actual scoring vocabulary receipt records full output-head row count, tokenizer
+  size and padded rows. Rank uses the same promoted full vector as NLL softmax.
+  Every scoring unit binds the receipt; ranks/targets must be within its range.
+- Dataset summary records answers under64 scored tokens, first32/middle/last32
+  token counts including zero windows, and answers lacking observed end-of-turn.
+  Gold tokens preserve the exact saved loss-bearing SFT sequence. Generated
+  EOS is included; capped sequences receive no artificial EOS.
+- Answer-weighted NLL/entropy/excess-surprise sensitivity and separate95% bounds
+  reuse whole-problem bootstrap indices, retaining all samples/draw multiplicity.
+  Primary weighting and ±0.02 gate remain unchanged.
+- Baseline four math checks passed in0.11s. Uneven-length test red on missing
+  sensitivity field, then green. Two-problem/three-answer oracle confirms
+  sensitivity13/3 vs primary19/5, with problem-cluster sensitivity interval[2,9].
+  Both focused tests passed in0.22s. Final suite recorded below.
+- Previous validation snapshots/pins remain historical software evidence; the
+  amended implementation requires a newly named scoring plan when its identity
+  differs. No real scoring artifacts exist to redo.
+
+- Approved-convention final scoring suite: **11 passed in138.28s**. Both amended
+  synthetic reports independently verified, including padded vocabulary receipts,
+  answer-weighted sensitivities and short-answer/window counts. Evidence at
+  `artifacts/validation/stage0-ticket12/approved-conventions-*`. No GPU run.
