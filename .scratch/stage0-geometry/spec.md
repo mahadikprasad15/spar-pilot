@@ -583,3 +583,17 @@ surprise as sensitivity estimates with separately named intervals. Both primary
 and sensitivity bootstrap whole problems, retaining all samples of each sampled
 problem together. Saved memberships retain draw multiplicity after deduplication.
 No numerical acceptance threshold changes.
+
+### Ticket13 comparison conventions approved 27 October2026
+
+Decide distinct initializations by canonical A0 tensor hashes from the verified
+initialization audit, not seeds. Evaluate all three objectives at each distinct
+A0; compare objectives only within the same A0. Gold and own-correct-one use
+identical eligible IDs and batches. GRPO retains all512, with zero-advantage
+groups contributing zero gradient. Cross-objective comparisons are direction-only
+(cosines and principal overlap); do not compare raw push norms across objectives.
+Primary push is the mean of saved batch pushes, reported with and without the
+final partial batch. Exclude partial batches from consistency. Token-weighted
+pooled push is secondary. Orient each endpoint pair by sign(a64 dot A0), flipping
+a and b together when negative; zero dot is undefined. Report flipped-module
+counts (expected none), rather than assuming orientation.
