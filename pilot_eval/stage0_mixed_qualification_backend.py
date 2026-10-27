@@ -21,20 +21,22 @@ class MixedQualificationEngine(MergedEvaluationEngine,QualificationEngine):
 
     @contextmanager
     def _mixed(self,reference,negative=False):
-        arm={'V0a':'sft','V0b':'grpo'}[reference]
-        with merged_scope(self.model,self.config['diagnostic_variants'][arm],self.root,self.torch,
+        definition=self.config['diagnostic_variants'][self._case]
+        if reference!=definition['source_reference']:raise ValueError('Wrong original adapter for this diagnostic mask.')
+        with merged_scope(self.model,definition,self.root,self.torch,
                           adapter_name=reference,negative_double_adapter=negative,matrix_cache=self.matrix_cache(reference)):yield
 
     def _teacher(self,row,arm,mode):
-        return QualificationEngine._teacher(self,row,'V0a' if arm=='sft' else 'V0b',mode)
+        return QualificationEngine._teacher(self,row,self.config['diagnostic_variants'][arm]['source_reference'],mode)
 
     def _generate(self,row,arm,mode):
-        return QualificationEngine._generate(self,row,'V0a' if arm=='sft' else 'V0b',mode)
+        return QualificationEngine._generate(self,row,self.config['diagnostic_variants'][arm]['source_reference'],mode)
 
     def _next_logits(self,row,arm,mode,prefix):
-        return QualificationEngine._next_logits(self,row,'V0a' if arm=='sft' else 'V0b',mode,prefix)
+        return QualificationEngine._next_logits(self,row,self.config['diagnostic_variants'][arm]['source_reference'],mode,prefix)
 
     def diagnose(self,row,arm,check_deadline):
+        self._case=arm
         data=QualificationEngine.diagnose(self,row,arm,check_deadline)
         proof=self.check_integrity()
         data['integrity']=proof['base_unchanged'] and proof['adapters_unchanged']

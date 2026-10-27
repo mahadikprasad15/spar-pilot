@@ -361,3 +361,26 @@ def _dependencies(config):
         return MixedQualificationDependencies()
     from pilot_eval.stage0_qualification_backend import QualificationDependencies
     return QualificationDependencies()
+
+
+def status(path,output_root):
+    root=Path(output_root).resolve();config,directory=_load(path,root)
+    runtime_path=directory/'meta/runtime.json'
+    runtime=json.loads(runtime_path.read_text()) if runtime_path.exists() else None
+    if runtime is None and list((directory/'units').glob('*/complete.json')):
+        raise ValueError('Sealed qualification units are missing their runtime.')
+    completed=0
+    if runtime is not None:
+        completed=sum(_unit(directory,f'{case}-{i:02d}',config,runtime) is not None
+                      for case in config.get('arms',['sft','grpo']) for i in range(16))
+    result=_verify(config,directory) if (directory/'complete.json').exists() else None
+    return dict(diagnostic_complete=result is not None,completed_units=completed,total_units=config['total_units'],
+        eligible_for_review=result['eligible_for_review'] if result else False,qualified=False,
+        budget=budget_status(root),writer=json.loads((directory/'writer.json').read_text()) if (directory/'writer.json').exists() else None,
+        diagnostic=str(directory/'results/diagnostic.json'))
+
+
+def recover_writer(path,output_root,owner_token,review_notes):
+    root=Path(output_root).resolve();_,directory=_load(path,root)
+    from pilot_eval.stage0_evaluation import _recover_owner
+    return _recover_owner(directory,owner_token,review_notes)

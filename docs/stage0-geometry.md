@@ -882,11 +882,11 @@ python -m pilot_eval stage0-qualification-prepare \
 ```
 
 `--edits` and `--catalogue` are mutually exclusive. Then use
-`stage0-qualification-{runtime,run,verify,approve,freeze}` with that qualification
+`stage0-qualification-{runtime,run,status,verify,approve,freeze}` with that qualification
 config; `stage0-evaluation-{prepare,run,status,verify}` with its frozen execution;
 `stage0-drift-{prepare,run,status,verify}` for its separately budgeted fixed
 contexts; and `stage0-findings-*` / `stage0-findings-audit-*` for its CPU analysis.
-The existing collection writer-recovery commands retain exact owner-token/notes
+Qualification also exposes `stage0-qualification-recover-writer`. All writer-recovery commands retain exact owner-token/notes
 requirements. Never reset the ledger or release an active reservation simply to
 start this branch; observe the new cumulative usage and settle it explicitly.
 

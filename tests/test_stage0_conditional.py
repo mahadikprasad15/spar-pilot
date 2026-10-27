@@ -218,3 +218,16 @@ def test_notebooks_select_conditional_workflow_without_resetting_budget():
                 ast.parse(''.join(cell['source']))
                 assert not cell['outputs'] and cell['execution_count'] is None
 
+
+
+def test_qualification_status_and_explicit_owner_recovery(source):
+    import os,platform
+    plan=prepare(source)
+    assert cmd(source,'qualification-status','--config',plan)==0
+    directory=source/'runs/stage0/extension/qualification';marker=directory/'writer.json'
+    write_json(marker,dict(token='known',host=platform.node(),pid=os.getpid()))
+    assert cmd(source,'qualification-recover-writer','--config',plan,'--owner-token','known','--review-notes','checked')==1
+    write_json(marker,dict(token='known',host='departed-colab',pid=1234))
+    assert cmd(source,'qualification-recover-writer','--config',plan,'--owner-token','wrong','--review-notes','checked')==1
+    assert cmd(source,'qualification-recover-writer','--config',plan,'--owner-token','known','--review-notes','old runtime stopped')==0
+    assert not marker.exists() and (directory/'logs/ownership-recovery.jsonl').exists()

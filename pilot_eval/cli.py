@@ -115,7 +115,7 @@ def main(argv=None, *, dependencies=None):
         if operation == 'report':
             spectral.add_argument('--review', type=Path, required=True)
             spectral.add_argument('--name', required=True)
-    for operation in ['prepare', 'runtime', 'run', 'verify', 'approve', 'freeze']:
+    for operation in ['prepare', 'runtime', 'run', 'verify', 'approve', 'freeze', 'status', 'recover-writer']:
         qualification = commands.add_parser('stage0-qualification-' + operation,
             help='bounded mixed-loader qualification and measured budget freeze')
         qualification.add_argument('--output-root', type=Path, required=True)
@@ -132,6 +132,9 @@ def main(argv=None, *, dependencies=None):
             qualification.add_argument('--max-new-units', type=int)
         if operation in ['approve', 'freeze']:
             qualification.add_argument('--review', type=Path, required=True)
+        if operation == 'recover-writer':
+            qualification.add_argument('--owner-token', required=True)
+            qualification.add_argument('--review-notes', required=True)
     for operation in ['prepare', 'audit', 'status', 'budget-record', 'recover-writer']:
         stage0 = commands.add_parser('stage0-'+operation, help='CPU Stage 0 source readiness and cumulative budget')
         stage0.add_argument('--output-root', type=Path, required=True)
@@ -544,7 +547,7 @@ def main(argv=None, *, dependencies=None):
             result=settle(args.output_root.resolve(),args.reservation_id)
             print(json.dumps(result,indent=2))
         elif args.command.startswith('stage0-qualification-'):
-            from pilot_eval.stage0_qualification import prepare, runtime, run, verify, approve, freeze
+            from pilot_eval.stage0_qualification import prepare, runtime, run, verify, approve, freeze, status, recover_writer
             operation = args.command.removeprefix('stage0-qualification-')
             if operation == 'prepare':
                 result = prepare(args.edits, args.cohort, args.output_root, args.name, catalogue_path=args.catalogue)
@@ -555,6 +558,10 @@ def main(argv=None, *, dependencies=None):
                              dependencies=dependencies, max_new_units=args.max_new_units)
             elif operation == 'verify':
                 result = verify(args.config, args.output_root)
+            elif operation == 'status':
+                result = status(args.config, args.output_root)
+            elif operation == 'recover-writer':
+                result = recover_writer(args.config, args.output_root, args.owner_token, args.review_notes)
             elif operation == 'approve':
                 result = approve(args.config, args.output_root, args.review)
             else:

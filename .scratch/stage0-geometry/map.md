@@ -9,7 +9,7 @@
   `spec.md`; the approved slice breakdown is in `ticket-proposal.md`.
 - The user approved the public saved-workflow test boundary, all 15 slices and
   their dependency edges on 2026-10-26. Spec and individual `ready-for-agent`
-  issues are published in this local tracker. Tickets 01-09 are implemented;
+  issues are published in this local tracker. Tickets 01-10 are implemented;
   real source/weight execution remains separately pending.
 
 ## Decisions so far
@@ -73,8 +73,8 @@
 
 - Ticket 07 execution/validation record: `execution-ticket07.md`; 73 affected
   tests passed on 2026-10-27. Ticket 08 implements rotation/intruder geometry;
-  its real CPU execution is pending. Conditional Ticket 09 is now implemented; Ticket 10 and optional Ticket 11 are
-  independent remaining frontiers; neither is required to run the primary path.
+  its real CPU execution is pending. Conditional Ticket 09 is now implemented; Ticket 10 is also implemented; optional Ticket 11 is the next implementation
+  frontier. Neither conditional nor supporting work is required to run the primary path.
 
 - Ticket 08: CPU rotation/intruder geometry implemented; `execution-ticket08.md`.
   No small-update skip, top-20 detection/top-40 matching pool, floored subspaces,
@@ -86,3 +86,10 @@
   interface are implemented; see `execution-ticket09.md`. Real construction,
   mixed-loader numerical qualification and edited-model execution remain pending.
   CPU notebook sections 26–28 expose preparation, bounded resume and verification.
+
+- Ticket 10 connects conditional catalogue qualification to the existing paired
+  evaluation, fixed-context KL/effective-write, targeted review and report paths.
+  The extension has separate names/families and preserves the single cumulative
+  20-unit ledger. Each distinct merged mask uses the same frozen 16 prompts;
+  identical layouts are reused. Real qualification/measurement remain pending.
+  See `execution-ticket10.md` for software validation and execution boundaries.

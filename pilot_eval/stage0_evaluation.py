@@ -455,6 +455,10 @@ def status(path,output_root):
 
 def recover_writer(path,output_root,owner_token,review_notes):
     root=Path(output_root).resolve();_,_,directory=_load(path,root)
+    return _recover_owner(directory,owner_token,review_notes)
+
+
+def _recover_owner(directory,owner_token,review_notes):
     if not owner_token or not review_notes.strip():raise ValueError('Explicit owner token and recovery notes required.')
     with run_lock(directory):
         marker=directory/'writer.json';owner=json.loads(marker.read_text())

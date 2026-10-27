@@ -13,9 +13,9 @@ def binding(path,root):
         raise ValueError('Verified catalogue is not-applicable; no extension model execution is allowed.')
     arms=[arm for arm in ['sft','grpo'] if catalogue['arms'][arm]['status']=='applicable']
     variants={k:v for k,v in runner_variants(catalogue).items() if v.get('mode')!='unhalved'}
-    diagnostics={arm:catalogue['variants'][f'V6-{arm}-unhalved'] for arm in arms}
+    diagnostics=diagnostic_layouts(catalogue,arms)
     return dict(qualification_kind='conditional-intruders',mixed_catalogue_path=str(path.relative_to(root)),
-        mixed_catalogue_sha256=file_hash(path),arms=arms,variants=variants,diagnostic_variants=diagnostics,
+        mixed_catalogue_sha256=file_hash(path),source_arms=arms,arms=list(diagnostics),variants=variants,diagnostic_variants=diagnostics,
         edits_path=config['edits_path'],catalogue_scope=dict(arms=catalogue['arms'],matching=catalogue['matching'],
             limits=catalogue['limits'],variants=catalogue['variants']))
 
@@ -81,3 +81,22 @@ def validate_observation(value,token_sequence=None):
         margin,error=d['reference_top2_margin'],d['local_max_error']
         if not all(math.isfinite(v) and v>=0 for v in [margin,error]) or greedy['near_tie'] is not (margin<error):
             raise ValueError('Greedy near-tie claim contradicts measured shared-prefix error/margin.')
+
+
+def diagnostic_layouts(catalogue,source_arms):
+    """Sixteen shared prompts per distinct nonempty merged mask, without duplicate layouts."""
+    cases={}
+    for arm in source_arms:
+        full=catalogue['variants'][f'V6-{arm}-unhalved']
+        scopes={tuple(full['adapter_disable_modules']):[]}
+        for name,row in catalogue['variants'].items():
+            if row['source_arm']==arm and row['status']=='ready-for-qualification' and row['mode']!='unhalved':
+                scopes.setdefault(tuple(row['adapter_disable_modules']),[]).append(name)
+        for index,(mask,covered) in enumerate(scopes.items()):
+            if not mask or not set(mask)<=set(full['merged_modules']):
+                raise ValueError('Diagnostic mask must be a nonempty subset of the unhalved source modules.')
+            key=arm if index==0 else f'{arm}-mask-{index}'
+            cases[key]=dict(full,diagnostic_layout_id=key,covered_variants=sorted(covered),
+                adapter_disable_modules=list(mask),modules_edited=len(mask),
+                merged_modules={module:full['merged_modules'][module] for module in mask})
+    return cases
