@@ -139,6 +139,7 @@ def collect(path,output_root,phase,*,dependencies=None,approval_path=None,max_ne
                 deadline()
                 if hasattr(deps,'preflight'):deps.preflight(config,root)
                 _save_frozen(directory/'meta/runtime.json',runtime)
+                if progress:print(f'Stage 0 R0 {phase}: loading the pinned local FP32 untuned model; {len(units)} groups in this phase.',flush=True)
                 load_start=time.monotonic();engine=deps.engine(config,root);load_seconds=time.monotonic()-load_start
                 specials=engine.special_tokens() if hasattr(engine,'special_tokens') else {k:config['historical_runtime'][k] for k in ['eos_token_id','pad_token_id']}
                 if any(type(specials.get(k)) is not int for k in ['eos_token_id','pad_token_id']):raise ValueError('Actual tokenizer EOS/PAD evidence is missing.')
@@ -170,6 +171,7 @@ def collect(path,output_root,phase,*,dependencies=None,approval_path=None,max_ne
                         files={k:file_hash(folder/k) for k in ['responses.jsonl','metadata.json']}))
                     saved[n]=rows;new+=1;_state(directory,'running',sum(v is not None for v in saved),len(units),reservation_id=reservation['reservation_id'])
                     if progress:print(f'Stage 0 R0 {phase}: {sum(v is not None for v in saved)}/{len(units)} sealed groups; {unit["id"]}; seed {unit["seed"]}.',flush=True)
+                if progress:print(f'Stage 0 R0 {phase}: checking the full untuned base hash before publication.',flush=True)
                 deadline();full_start=time.monotonic();integrity=engine.check_integrity(full=True);full_seconds=time.monotonic()-full_start;deadline()
                 _write_json(attempt/'final-integrity.json',integrity)
                 if integrity.get('base_unchanged') is not True:raise ValueError('Full untuned base hash failed; preserve this attempt.')

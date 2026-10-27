@@ -66,6 +66,8 @@ def finish(config,base,execution,saved,training,historical,root):
     files += [str(p.relative_to(base)) for p in (base/'collection/units').rglob('complete.json')]
     marker=dict(config_sha256=_hash(config),execution_sha256=_hash(execution),files={p:file_hash(base/p) for p in files})
     _write_json(base/'collection/complete.json',marker);_write_json(base/'complete.json',marker)
+    reservation=json.loads((base/'collection/meta/active-reservation.json').read_text())['reservation_id']
+    _state(base/'collection','complete',len(execution['units']),len(execution['units']),reservation_id=reservation)
     _state(base,'complete',512,512);return summary
 
 

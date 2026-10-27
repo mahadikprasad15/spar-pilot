@@ -15,7 +15,7 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
-    for operation in ['audit','prepare','profile','profile-verify','freeze','run','status','verify','recover-writer']:
+    for operation in ['audit','prepare','runtime','profile','profile-verify','freeze','run','status','verify','recover-writer']:
         rollout=commands.add_parser('stage0-rollouts-'+operation,help='optional audited untuned rollouts and derived cohorts')
         rollout.add_argument('--output-root',type=Path,required=True)
         if operation in ['audit','prepare']:
@@ -502,6 +502,7 @@ def main(argv=None, *, dependencies=None):
             operation=args.command.removeprefix('stage0-rollouts-')
             if operation=='audit':result=workflow.audit(args.audit,args.baseline,args.output_root,args.name)
             elif operation=='prepare':result=workflow.prepare(args.audit,args.baseline,args.weights_dir,args.output_root,args.name,dependencies=dependencies)
+            elif operation=='runtime':result=workflow.runtime(args.config,args.output_root,dependencies=dependencies)
             elif operation in ['profile','run']:result=getattr(workflow,operation)(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
             elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
             elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.phase,args.owner_token,args.review_notes)

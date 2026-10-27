@@ -34,10 +34,7 @@ def prepare(audit_path,baseline_path,weights_dir,output_root,name,*,dependencies
     for value,digest in inventory['parents'].items():parents[str(inside(root,value).relative_to(root))]=digest
     if inventory['base_sha256']!=source['identity']['base_sha256']:raise ValueError('Selected weights differ from the audited untuned base.')
     if not fixture:
-        for arm in ['sft','grpo']:
-            metadata=source['source_audit']['sources'][arm]['training_metadata']
-            if metadata['state']!='verified-recorded-config' or set(metadata.get('training_indices',[]))!={r['source_index'] for r in source['training']}:
-                raise ValueError('Both audited training configurations must establish the common 512 IDs.')
+        validate_training_membership(source,root)
         for name_ in ['tokenizer.json','tokenizer_config.json']:
             payload=weights/name_;parents[str(payload.relative_to(root))]=file_hash(payload)
     if source['seeds_recovered']:
@@ -93,9 +90,31 @@ def replay_policy(config,runtime):
     for key,value in old.get('versions',{}).items():
         if runtime.get('versions',{}).get(key)!=value:reasons.append('identified software version differs: '+key)
     if old.get('cuda') and old['cuda']!=runtime.get('cuda'):reasons.append('identified CUDA version differs')
+    if old.get('python') and old['python'].split()[0]!=runtime.get('python','').split(' ')[0]:reasons.append('identified Python version differs')
+    if old.get('dtype','float32')!='float32' or old.get('tf32',False) is not False:reasons.append('historical numerical precision policy differs')
     if not reasons:
         ids=config['historical_order'][:2];seeds=[b['seed'] for b in config['legacy']['batches'][:2]]
         units=[dict(key=f'profile-{n:04d}',id=i,seed=s,origin='profile') for n,(i,s) in enumerate(zip(ids,seeds))]
     else:units=[dict(u,key=f'profile-{n:04d}',origin='profile') for n,u in enumerate(config['uniform_units'][:2])]
     return dict(replay_eligible=not reasons,reasons=reasons,units=units,
         hardware_scope='original GPU/software enforced where recorded; unavailable metadata remains explicitly unknown')
+
+
+def validate_training_membership(source,root):
+    """SFT stores indices; GRPO stores its actual ordered eight-question groups."""
+    expected={r['source_index'] for r in source['training']}
+    for arm in ['sft','grpo']:
+        metadata=source['source_audit']['sources'][arm]['training_metadata']
+        if metadata['state']!='verified-recorded-config':raise ValueError('Both audited training configurations are required.')
+        path=inside(root,metadata['path'])
+        if file_hash(path)!=source['parents'].get(str(path.relative_to(root))):raise ValueError('Recorded training configuration changed.')
+        training=json.loads(path.read_text())
+        if any(training.get(k)!=v for k,v in source['identity'].items() if k in ['model','model_revision','tokenizer_revision','dtype']):
+            raise ValueError('Training model/tokenizer identity differs from the common cohort.')
+        if arm=='sft':
+            if len(training.get('training_indices',[]))!=512 or set(training['training_indices'])!=expected:
+                raise ValueError('SFT training indices differ from the common 512.')
+        else:
+            groups=training.get('optimizer_groups',[])
+            if len(groups)!=64 or any(not isinstance(g,list) or len(g)!=8 for g in groups) or [i for g in groups for i in g]!=source['training_order']:
+                raise ValueError('GRPO recorded optimizer groups differ from the common ordered 512.')

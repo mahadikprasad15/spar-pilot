@@ -181,10 +181,108 @@ def test_public_replay_route_generation_resume_and_verified_cohorts(ready,mismat
     assert origins==({'new-uniform'} if mismatch else {'historical','new-extension'})
     assert (directory/'results/historical/rollouts.jsonl').exists()
     assert (directory/'results/rollouts.parquet').exists()
+    assert json.loads((collection/'meta/status.json').read_text())['state']=='complete'
     first_new=engine.calls[2]
     assert first_new==('gsm8k:train:0',42) if mismatch else first_new==('gsm8k:train:128',170)
     calls=len(engine.calls);assert cmd(root,'run','--config',plan,dependencies=engine)==0 and len(engine.calls)==calls
     import pyarrow.parquet as pq
     assert pq.read_table(directory/'results/rollouts.parquet').num_rows==4096
+    assert cmd(root,'audit','--audit',root/'plans/audit/stage0.plan.json','--baseline',root/'plans/baseline/baseline.config.json','--name','r0')==0
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='complete'
     payload=root/'runs/historical/batches/0000.json';payload.write_text('[]')
     assert cmd(root,'verify','--config',plan)==1
+
+
+def test_missing_recorded_seeds_forces_uniform_route_and_reuses_timing_groups(ready):
+    root=ready;path=root/'plans/baseline/baseline.config.json';config=json.loads(path.read_text());config.pop('batches')
+    write_json(path,config);write_json(root/'runs/historical/config.json',config)
+    for marker in (root/'runs/historical/batches').glob('*.complete.json'):
+        value=json.loads(marker.read_text());value['config_sha256']=_hash(config);write_json(marker,value)
+    plan=prepare(root);engine=Sampling();profile=profile_and_freeze(root,plan,engine)
+    assert profile['route']=='uniform-fresh-512' and profile['profile_groups_reusable']==2
+    assert not profile['policy']['replay_eligible']
+    assert cmd(root,'run','--config',plan,'--max-new-units',1,dependencies=engine)==0
+    assert len(engine.calls)==2 # the first production group uses its sealed timing result
+
+
+def test_unknown_budget_and_changed_runtime_cannot_load_sampler(ready):
+    root=ready;plan=prepare(root);engine=Sampling()
+    assert cmd(root,'runtime','--config',plan,dependencies=engine)==0
+    review=root/'review.json';write_json(review,dict(reviewer='test',notes='bounded',session_id='session-a',source_reviewed=True,max_units_per_hour=1.,max_seconds=60.))
+    assert cmd(root,'profile','--config',plan,'--approval',review,dependencies=engine)==1
+    assert engine.loads==0
+    usage(root,'at-limit',19.99)
+    assert cmd(root,'profile','--config',plan,'--approval',review,dependencies=engine)==1 and engine.loads==0
+
+
+def test_full_integrity_failure_invalidates_already_sealed_groups(ready):
+    root=ready;plan=prepare(root);usage(root,'initial',2.)
+    review=root/'review.json';write_json(review,dict(reviewer='test',notes='bounded',session_id='session-a',source_reviewed=True,max_units_per_hour=1.,max_seconds=600.))
+    class Broken(Sampling):
+        def check_integrity(self,*,full=False):return dict(base_unchanged=not full)
+    assert cmd(root,'profile','--config',plan,'--approval',review,dependencies=Broken())==1
+    engine=Sampling()
+    assert cmd(root,'profile','--config',plan,dependencies=engine)==1 and engine.loads==0
+    assert not (root/'runs/stage0/r0/rollouts/profile/complete.json').exists()
+
+
+def test_historical_environment_mismatch_requires_fresh_uniform_timing():
+    from pilot_eval.stage0_rollout_plan import replay_policy
+    import pilot_eval.grpo_baseline as old
+    config=dict(seeds_recovered=True,policy_matches=True,legacy=dict(implementation_sha256=dict(sampling=file_hash(Path(old.__file__))),batches=[dict(seed=42),dict(seed=43)]),
+        historical_runtime=dict(device='original GPU',versions=dict(torch='2.9.0')),historical_order=['old-a','old-b'],
+        uniform_units=[dict(id='new-a',seed=42),dict(id='new-b',seed=43)])
+    result=replay_policy(config,dict(device='new GPU',versions=dict(torch='2.9.0')))
+    assert not result['replay_eligible'] and result['units'][0]['id']=='new-a'
+
+
+def test_notebooks_expose_r0_without_requiring_primary_gpu_execution():
+    import ast
+    cpu=json.loads(Path('notebooks/stage-0-cpu-colab.ipynb').read_text())
+    gpu=json.loads(Path('notebooks/stage-0-gpu-colab.ipynb').read_text())
+    for notebook,names in [(cpu,['rollouts-audit','rollouts-prepare','rollouts-verify']),
+                           (gpu,['rollouts-runtime','rollouts-profile','rollouts-freeze','rollouts-run','budget-settle'])]:
+        code='\n'.join(''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code')
+        for name in names:assert name in code
+        for c in notebook['cells']:
+            if c['cell_type']=='code':ast.parse(''.join(c['source']));assert c['outputs']==[] and c['execution_count'] is None
+
+
+def test_collection_rejects_new_session_before_model_load(ready):
+    plan=prepare(ready);profile_and_freeze(ready,plan,Sampling())
+    engine=Sampling(session='different-session')
+    assert cmd(ready,'run','--config',plan,dependencies=engine)==1 and engine.loads==0
+
+
+def test_recovery_is_explicit_and_cannot_release_a_live_writer(ready):
+    import os,platform
+    plan=prepare(ready);directory=ready/'runs/stage0/r0/rollouts/profile';directory.mkdir(parents=True)
+    owner=directory/'writer.json';write_json(owner,dict(token='known',host=platform.node(),pid=os.getpid()))
+    assert cmd(ready,'recover-writer','--config',plan,'--phase','profile','--owner-token','known','--review-notes','inspect')==1
+    write_json(owner,dict(token='known',host='departed-colab',pid=123))
+    assert cmd(ready,'recover-writer','--config',plan,'--phase','profile','--owner-token','wrong','--review-notes','stopped')==1
+    assert cmd(ready,'recover-writer','--config',plan,'--phase','profile','--owner-token','known','--review-notes','stopped')==0
+    assert not owner.exists() and (directory/'logs/ownership-recovery.jsonl').exists()
+
+
+def test_untuned_hash_names_match_the_audited_peft_parameter_convention():
+    from pilot_eval.stage0_rollout_backend import parameter_name
+    assert parameter_name('model.layers.0.self_attn.q_proj.weight')=='base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight'
+    assert parameter_name('model.layers.0.input_layernorm.weight')=='base_model.model.model.layers.0.input_layernorm.weight'
+    assert parameter_name('lm_head.weight')=='base_model.model.lm_head.weight'
+
+
+def test_real_sft_and_grpo_training_membership_use_their_actual_schemas(tmp_path):
+    from pilot_eval.stage0_rollout_plan import validate_training_membership
+    identity=dict(model='Qwen/Qwen2.5-1.5B-Instruct',model_revision='pinned',tokenizer_revision='pinned',dtype='float32')
+    order=[f'gsm8k:train:{i}' for i in range(512)]
+    sft=dict(identity,training_indices=list(range(512)))
+    grpo=dict(identity,optimizer_groups=[order[i:i+8] for i in range(0,512,8)])
+    write_json(tmp_path/'sft.json',sft);write_json(tmp_path/'grpo.json',grpo)
+    source=dict(identity=identity,training=[dict(id=i,source_index=n) for n,i in enumerate(order)],training_order=order,
+        source_audit=dict(sources={arm:dict(training_metadata=dict(state='verified-recorded-config',path=arm+'.json')) for arm in ['sft','grpo']}),
+        parents={arm+'.json':file_hash(tmp_path/(arm+'.json')) for arm in ['sft','grpo']})
+    validate_training_membership(source,tmp_path)
+    grpo['optimizer_groups'][0][0]=order[1];write_json(tmp_path/'grpo.json',grpo)
+    source['parents']['grpo.json']=file_hash(tmp_path/'grpo.json')
+    with pytest.raises(ValueError,match='GRPO|optimizer'):validate_training_membership(source,tmp_path)

@@ -938,3 +938,111 @@ is authorized by merely preparing or CPU-testing a plan.
 Implementation validation uses CPU synthetic fixtures and mathematical oracles.
 Only a separately approved real-CUDA diagnostic establishes GPU qualification;
 software completion does not establish a scientific finding.
+
+## Optional untuned rollout completion (Ticket 11; R0)
+
+This supporting branch depends only on the source audit (Ticket 01). It does not
+block primary interventions or the conditional intruder report. It recovers raw
+untuned sampling groups, freezes their generation identities and publishes answer
+memberships for later NLL/gradient stages. It does not train an adapter.
+
+### Route selection and execution
+
+1. **CPU 29:** select the original baseline configuration. Restore its raw batch
+   JSON/seals, runtime, referenced GRPO preparation and saved training inputs.
+   The audit reports missing files and verifies that all 128 groups belong to
+   the common 512 training problems. Aggregate baseline accuracy is insufficient.
+2. **CPU 30:** stage the pinned local base-weight/tokenizer snapshot and prepare.
+   This verifies actual base weights, freezes old groups and the common training
+   order, and records explicit seeds/settings. Parquet support is required before
+   GPU work; install the `stage0-rollouts` extra or PyArrow on CPU if absent.
+3. **GPU setup 1–4, then 20:** inspect the current recorded GPU/software and budget.
+   Use the original GPU type/software for replay when identified and available.
+   An identified mismatch disables the historical join and selects fresh-uniform
+   timing instead. Unknown metadata remains labelled unknown, not equal.
+4. **GPU 21:** explicitly approve a bounded two-question profile. With recoverable
+   old identities, replay the first two recorded groups at their saved seeds:
+   16 draws, not 16 independently chosen questions. Otherwise time the first two
+   frozen new-uniform groups. No production begins before profile completion.
+5. **GPU 22–23:** inspect exact evidence, reconcile actual cumulative usage and
+   separately approve/freeze the production route and measured forecast.
+6. **GPU 24:** collect one eight-draw group first, inspect throughput, then set the
+   limit to `None` to finish only missing units. Each group is sealed atomically.
+   Exact same-session profile draws are reused when their input/seed identities
+   match production. Stop/reconcile/renew an exhausted or unknown-time allocation.
+7. **GPU 25, CPU 31:** reconcile actual usage, release the GPU after collection,
+   and verify/inspect raw tables, memberships and the HTML report on CPU.
+
+User-approved route rule, 27 October 2026:
+
+- **Exact replay:** all 16 draws match token IDs, text, stopping metadata and
+  recorded identities/seeds, with source/settings hashes and procedure verified.
+  Reuse the 128 historical groups and generate only the remaining 384 groups.
+- **Any mismatch or unavailable historical seed/order:** do not join or substitute
+  a reward-rate test. Generate a **fresh uniform 512×8 cohort in the new session**.
+  Preserve the original 128 as a separately labelled historical product.
+- Old/new reward rates are descriptive. No five-point rate gate or tolerance
+  fitted to replay errors is used. Same GPU model alone is not compatibility.
+
+Historical seeds are `42 + recorded batch index`, not `42 + GSM8K source index`.
+For an extension, retain the historical 128 ordering/seeds, append remaining
+questions in the saved optimizer order and continue the ordered-batch sequence
+at 170. A fresh-uniform route uses the complete saved optimizer order and its
+explicit frozen seed sequence from 42. Both routes use HF, untuned FP32, TF32 off,
+no autocast, temperature 1, top-p 1, top-k 0, cap 1024, one question and eight
+prompt copies per generation group. Do not change engines to meet a timing guess.
+
+### Commands and durable products
+
+Public family: `stage0-rollouts-{audit,prepare,runtime,profile,profile-verify,
+freeze,run,status,verify,recover-writer}`. All accept `--output-root`; audit/prepare
+select `--audit`, `--baseline`, `--name`, and prepare also selects `--weights-dir`.
+Other operations consume `--config` pointing to `stage0.rollouts.json`.
+
+```bash
+python -m pilot_eval stage0-rollouts-audit \
+  --audit artifacts/plans/stage0-geometry-v1/stage0.plan.json \
+  --baseline artifacts/plans/pilot4-untuned-sampling-v1/baseline.config.json \
+  --name stage0-geometry-v1-untuned-rollouts-v1 --output-root artifacts
+```
+
+The immutable preparation/frozen execution live under
+`artifacts/plans/<R0-name>/stage0.rollouts{,.execution}.json`. Products live under
+`artifacts/runs/stage0/<R0-name>/rollouts/`:
+
+| Product | Contents |
+|---|---|
+| `inputs/source-audit.json` | Verified old groups, missing raw inputs, seed recovery and source hashes |
+| `inputs/{training,historical}.jsonl` | Frozen training/gold inputs and old draw snapshots |
+| `profile/units/`, `profile/results/profile.json` | Replayed/timing groups, exact differences, route, measured cap-extrapolated forecast |
+| `collection/units/` | Eight raw draws per completed group, identity/hash/integrity/attempt receipts |
+| `profile/attempts/`, `collection/attempts/` | Reservation, elapsed time, final integrity and interrupted-attempt evidence |
+| `results/rollouts.jsonl` | All 4096 target draws, tokens, seeds, origin, three scorers and cap outcomes |
+| `results/rollouts.parquet` | Flat problem/draw/source/seed/text/token/score columns for analysis |
+| `results/datasets.json` | Gold, own_all, own_correct, own_correct_one, k/8, dropped IDs and selection rule |
+| `results/gold.jsonl`, `results/groups.csv` | Full saved gold rows and per-question correctness counts |
+| `results/historical/` | Separately labelled original 128 groups and their memberships |
+| `report.html`, `results/results.json` | Human-readable counts/route and structured summary |
+
+`own_correct` uses current flexible-v3 correctness and excludes capped draws;
+strict and flexible-v2 are retained alongside it. Historical training rewards
+remain separately recorded. Every question has eight unique target draws.
+Zero-success questions remain in own_all, receive observed k/8 = 0 and appear in
+`dropped`; this does not establish zero true success probability. Select one
+correct draw uniformly with a dedicated NumPy PCG64 seed 42, saved question order
+and sorted draw indices. Negative-log(k/8) is a whole-answer quantity for eligible
+questions, not per-token KL or NLL. Later tickets score each unique answer once
+and aggregate via these memberships.
+
+Reservations use the **same cumulative Stage 0 20-unit ledger**. Unknown usage or
+another active reservation blocks model loading. Optional R0 cannot consume a
+primary reservation. Resume checks runtime/session, source hashes, prompt IDs,
+code, tokenization and group identities. Unknown prior elapsed time requires
+reconciliation; restarting never resets cost. Writer recovery takes
+`--phase profile|collection --owner-token ... --review-notes ...`, refuses a live
+same-host writer and retains all sealed evidence and budget charges.
+
+The forecast extrapolates measured eight-draw time to the 1024-step cap, with
+model-load/final-integrity costs; it is not a guaranteed runtime. No real runtime
+estimate has been established by the CPU synthetic tests. Numerical/source
+failures retain diagnostics and do not widen the frozen rules.
