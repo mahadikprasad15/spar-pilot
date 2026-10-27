@@ -89,7 +89,7 @@ eligibility evidence; no such edit or behavioral result is established here.
 Ticket13 software is implemented: source-hashed initializations, matched CE
 batches, initial GRPO gradients, bounded profile/production allocations,
 resumable gradient artifacts, and CPU prediction-bound endpoint reports.
-All10 ticket tests and42 existing affected regression tests passed across the
+All11 ticket/handoff tests and42 existing affected regression tests passed across the
 recorded CPU environments. Three actual Torch tests ran separately because the
 regular local Torch installation is incomplete. No real GPU collection or
 scientific alignment result is implied. CPU34–36 / GPU32–37 expose this branch;

@@ -83,3 +83,13 @@ its mandatory pinned dependencies; no local or GPU acceptance gate is widened.
   the snapshot. Generated artifacts remain local canonical validation data.
 - Both notebooks parse without outputs. Whitespace checks pass. No GPU run,
   model download, Colab spend, Drive upload or GitHub push.
+
+## Fresh-kernel handoff correction
+
+A final execution check (not just AST parsing) exposed an existing CPU section2
+NameError: QUALIFICATION_NAME was first defined in a later section. Defined it
+locally before source selection. The fresh-kernel test was red on that error;
+then three notebook/handoff tests passed in0.11s. This adds one unique passing
+test: **11 Ticket13/handoff tests, 53 unique affected tests** across the recorded
+runs. No experiment code, source product, numerical gate or saved measurement
+changed in this correction.

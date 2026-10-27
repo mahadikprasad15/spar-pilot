@@ -229,3 +229,12 @@ def test_notebooks_expose_push_profile_freeze_and_prediction_boundary():
         for operation in required:assert operation in code
         for c in n['cells']:
             if c['cell_type']=='code':ast.parse(''.join(c['source']));assert c['outputs']==[] and c['execution_count'] is None
+
+
+def test_cpu_source_selection_runs_in_a_fresh_kernel(tmp_path):
+    notebook=json.loads(Path('notebooks/stage-0-cpu-colab.ipynb').read_text())
+    cells=[''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code']
+    namespace={};exec(cells[0].replace("Path('/content').is_dir()",'False'),namespace)
+    calls=[];namespace['ARTIFACT_ROOT']=tmp_path;namespace['run_stage0']=lambda *args:calls.append(args)
+    exec(next(c for c in cells if 'SELECTION = ' in c),namespace)
+    assert calls[0][0]=='prepare' and namespace['SELECTION'].is_file()
