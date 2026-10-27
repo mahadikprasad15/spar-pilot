@@ -25,7 +25,10 @@ def _plot(directory, name, series, xlabel, title, *, margin=False):
         if margin: ax.axvline(-5, color='#9d7564', linestyle='--', label='Non-inferiority boundary: −5 pp')
         ax.set_xlabel(xlabel); ax.set_title(title, loc='left', fontsize=12, pad=14)
         if margin: ax.legend(frameon=False, loc='lower right', fontsize=9)
-        buffer = io.BytesIO(); fig.savefig(buffer, format='svg', metadata={'Date': None}); plt.close(fig)
+        buffer = io.BytesIO(); fig.savefig(buffer, format='svg', metadata={'Date': None})
+        png = io.BytesIO(); fig.savefig(png, format='png', dpi=120, metadata={'Software': 'Stage 0 findings'})
+        plt.close(fig)
+    _save_bytes(directory/'plots'/name.replace('.svg','.png'), png.getvalue())
     _save_bytes(directory/'plots'/name, buffer.getvalue())
 
 
@@ -102,6 +105,14 @@ def render(config, result, directory):
     sections.append('<h2>Scope and evidence</h2><ul>'+''.join('<li>'+html.escape(line)+'</li>' for line in result['limitations'])+'</ul>')
     sections.append('<p>'+html.escape(result['optional_work'])+'. '+html.escape(result['conditional_v6'])+'.</p>')
     sections.append('<p>Raw results and derivations: <a href="results/results.json">structured results</a> · <a href="results/behaviour.csv">accuracy CSV</a> · <a href="results/length.csv">length CSV</a> · <a href="results/kl.csv">KL CSV</a> · <a href="results/writes.csv">write CSV</a> · <a href="results/paired-items.jsonl">paired items</a> · <a href="plots/inputs.json">figure inputs</a> · <a href="config.json">frozen analysis plan</a>.</p>')
+    prefix = result.get('evidence_base', '')
+    sections.append('<h3>Comparison evidence</h3><p><a href="'+prefix+'inputs/responses.jsonl">Original response records</a> · <a href="'+prefix+'inputs/drift-documents.jsonl">Original document/module sums</a></p><ul>')
+    for c in result['contrasts']:
+        base = prefix+'units/'+c['id']+'/'
+        sections.append('<li>'+html.escape(c['id'])+': <a href="'+base+'paired-items.jsonl">paired question records</a> · <a href="'+base+'paired-documents.jsonl">paired documents</a> · <a href="'+base+'result.json">estimates and saved draw paths</a></li>')
+    sections.append('</ul>')
+    if result['review'].get('numeric_overlay_records', 0):
+        sections.append('<p><a href="results/review-evidence.jsonl">Exact confirmed-label source and response evidence</a></p>')
     sections.append('<details><summary>Source completion receipts and frozen hypotheses</summary><pre>'+html.escape(json.dumps(dict(source_seals=result['source_seals'],hypotheses=config['hypotheses'],registration=config['registration']),indent=2))+'</pre></details>')
     page='''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stage 0 primary findings</title><style>

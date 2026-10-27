@@ -470,3 +470,145 @@ it does not itself join historical values or behavioral results. KL on supplied
 contexts is a distributional change, not by itself behavioral harm or evidence
 of a causal mechanism. Real CUDA qualification/collection remains unexecuted in
 the local software fixtures.
+
+## Primary findings and intended-answer review (Ticket 07)
+
+Ticket 07 is CPU-only. It verifies the completed greedy and drift products,
+requires matching frozen execution/runtime/adapter identities and inference
+batch size, and builds an inspectable report from their raw records. Optional
+supporting work and the conditional V6 extension are not prerequisites.
+
+### Notebook sequence
+
+- **GPU 12A, before section 13:** prepare the drift plan and freeze the analysis
+  family/hypotheses. This loads no model and reserves no GPU allocation. If a
+  collection attempt or writer already exists, registration is conservatively
+  marked `after-collection-start; exploratory`; it is never backdated.
+- Finish the GPU collections and reconcile their usage as described above.
+- **CPU 17:** restore the frozen analysis plan. If registration was omitted,
+  preparation is still permitted, with its actual late timing recorded.
+- **CPU 18:** compute/resume the 14 declared comparisons and publish raw tables,
+  figures and HTML. A comparison is a sealed resumable unit.
+- **CPU 19–21:** optionally prepare the blinded answer packet, save successive
+  downloaded drafts, freeze complete labels and reveal the comparisons.
+- **CPU 22:** numerically verify the raw report and publish an immutable snapshot
+  with current review status. Pending review does not block the raw report.
+
+Statistical settings are frozen at preparation: 10,000 paired percentile
+resamples, seed 42, 95% intervals. The NumPy version used to generate those draws
+is recorded at the first CPU analysis run rather than inherited from GPU plan
+preparation. Resume/verification requires that recorded analysis version.
+
+### Declared family and statistics
+
+The family contains 14 edited/comparator-minus-reference contrasts:
+
+| Family | Contrasts |
+|---|---|
+| Edit versus its source arm | V1, V2, V3-0, V3-1, V3-2, V4, V4-input minus V0a; V5 minus V0b |
+| Unedited arms | V0b minus V0a |
+| Matched magnitude controls | V1 minus V4; V2 minus V4-input |
+| Individual random-subspace controls | V1 minus each of V3-0, V3-1, V3-2 |
+
+Flexible-v3 accuracy is primary; strict is shown alongside it. Save paired
+question IDs, correctness transitions, gross gains/losses, invalid and cap counts,
+exact two-sided McNemar probabilities and intervals on paired accuracy changes.
+“Accuracy preserved” requires the lower 95% bound to be **strictly above −0.05**.
+A bound equal to −0.05 is inconclusive; an upper bound below −0.05 establishes a
+loss beyond the margin. At 150 items, inconclusive intervals are plausible and
+this risk is recorded before collection. All intervals are **pointwise**, not
+simultaneous across the family; do not select a winner and describe the family
+as a confirmed mechanism.
+
+Length is the median of each question's edited-minus-reference token change,
+with its paired interval, shorter-response share and cap counts. It is not the
+difference of marginal medians. There is no new untuned greedy arm in this
+catalogue, so a length increase is not automatically a claim of restoring
+untuned performance or reasoning quality.
+
+KL is averaged within each corpus/view document before bootstrap. Token-weighted
+means are retained separately. Every resample carries the document's records
+together; modules/tokens are not independent subjects. Per-module effective-write
+changes are descriptive equal-document mean changes in per-token ratios, without
+invented module-level hypothesis tests. Direct write sums and magnitude metadata
+remain in Ticket 06's verified source product.
+
+### Review protocol
+
+Selection includes every changed extracted answer or correctness/validity bin
+across the declared family, every flexible-v3-unextractable endpoint, and every
+last-number diagnostic discrepancy. A wrong-to-wrong change in the extracted
+number is still selected. Strict-only format failure does not force manual
+review. Identical prompt/response strings are deduplicated across variants.
+
+The reviewer page contains opaque response IDs, questions and response text;
+it omits variant/checkpoint, gold and scorer fields. Its scope is intended-answer
+identification, not reasoning validation. Browser storage is a convenience cache:
+download drafts, save them through the public command and import the resulting
+`reviewer/draft.json` before continuing. Saved drafts have an explicit revision
+chain and a single reviewer identity. Unknown IDs, malformed numeric labels,
+wrong packets and stale revisions are rejected.
+
+An explicitly selected historical audit may supply confirmed labels, including
+an explicitly named exposed revision. Its original audit, frozen labels and
+reveal/revision receipts are verified. Reuse requires **exact prompt and response
+text**, without whitespace normalization or fuzzy matching, and records the old
+response ID, reviewer, result hash and exposure status. Conflicting labels on
+identical text stop reuse. Historical numeric answers are not copied onto new
+or merely similar model outputs.
+
+Draft labels do not affect scores. Complete new labels are frozen before reveal.
+Only confirmed numeric intended answers contribute score corrections, and capped
+responses retain zero reward. Absent/ambiguous labels are reported while raw
+scores are retained; no numeric answer is invented. A mixed confirmed-case overlay
+is labelled separately, retains automatic scores elsewhere, and does **not**
+claim whole-cohort human accuracy, reasoning validity or non-inferiority. Its
+intervals condition on those fixed targeted corrections, not on an exhaustive
+human review. The original raw report is never overwritten.
+
+### Public commands
+
+All plan paths below are relative to `--output-root`; label/reuse paths may be
+explicit absolute paths as shown in the notebooks.
+
+```sh
+python -m pilot_eval stage0-findings-prepare --evaluation plans/<qualification>/stage0.evaluation.json --drift plans/<drift-name>/stage0.drift.json --name stage0-geometry-v1-primary-findings-v1 --output-root artifacts
+python -m pilot_eval stage0-findings-run --config plans/stage0-geometry-v1-primary-findings-v1/stage0.findings.json --output-root artifacts
+python -m pilot_eval stage0-findings-audit-prepare --config plans/stage0-geometry-v1-primary-findings-v1/stage0.findings.json --output-root artifacts
+python -m pilot_eval stage0-findings-audit-save --config plans/stage0-geometry-v1-primary-findings-v1/stage0.findings.json --labels /absolute/path/downloaded-draft.json --output-root artifacts
+python -m pilot_eval stage0-findings-audit-freeze --config plans/stage0-geometry-v1-primary-findings-v1/stage0.findings.json --output-root artifacts
+python -m pilot_eval stage0-findings-audit-reveal --config plans/stage0-geometry-v1-primary-findings-v1/stage0.findings.json --output-root artifacts
+python -m pilot_eval stage0-findings-verify --config plans/stage0-geometry-v1-primary-findings-v1/stage0.findings.json --output-root artifacts
+python -m pilot_eval stage0-findings-report --config plans/stage0-geometry-v1-primary-findings-v1/stage0.findings.json --output-root artifacts
+```
+
+`findings-run --max-new-units 1` performs one missing comparison. Repeating the
+same command resumes verified units. `findings-status` inspects analysis progress;
+`findings-audit-status` inspects durable label progress. `audit-prepare` optionally
+accepts `--reuse-audit <behaviour.audit.json> --reuse-revision <revision-name>`;
+omitting the revision selects that historical audit's original frozen reveal.
+
+### Output tree
+
+Under `artifacts/runs/stage0/<findings-name>/findings/`:
+
+| Product | Content |
+|---|---|
+| `config.json`, `meta/run_manifest.json` | Frozen family, hypotheses, registration timing, source/settings identities |
+| `inputs/` | Verified source completion receipts, raw responses, document sums and CPU statistics runtime |
+| `bootstrap/*.npy`, `*.json` | Actual 10,000 index draws, ID ordering, generator and NumPy metadata |
+| `units/<contrast>/` | Sealed estimates, paired question rows and paired document rows |
+| `results/results.json`, `paired-items.jsonl` | Complete raw analysis and question-level derivations |
+| `results/{behaviour,length,kl,writes}.csv` | Independent table exports |
+| `plots/*.svg`, `*.png`, `inputs.json` | Exportable figures and their explicit numerical inputs |
+| `report.html` | Original raw report, including all comparisons and evidence links |
+| `audit/reviewer/` | Blinded review page, packet and current durable draft |
+| `audit/drafts/`, `labels/`, `reveal/` | Sealed revision history, frozen labels and revealed comparisons |
+| `audit/private/` | Selection reasons, source mapping, preparation checkpoint and verified historical reuse |
+| `reports/review-<digest>/` | Immutable report/table/figure snapshots with current review status and label evidence |
+
+Verification checks source receipts, reconciles copied inputs against the source
+records and recomputes estimates/intervals from actual saved paired records and
+draws. A changed source, altered result, changed registration scope or missing
+sealed artifact is rejected. The report labels synthetic fixtures prominently;
+software tests are not real GPU qualification or experimental findings.

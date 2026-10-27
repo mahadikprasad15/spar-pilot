@@ -166,3 +166,87 @@ def test_identical_text_reuse_does_not_normalize_or_copy_across_questions():
     conflict={**candidate,'label':dict(candidate['label'],answer='3')}
     with pytest.raises(ValueError,match='Conflicting'):
         identical_label(row,[candidate,conflict])
+
+
+def test_late_registration_and_changed_sources_are_reported(source):
+    assert command(source,'prepare','--evaluation',source/'plans/qualify/stage0.evaluation.json',
+                   '--drift',source/'plans/drift/stage0.drift.json','--name','late')==0
+    late=json.loads((source/'plans/late/stage0.findings.json').read_text())
+    assert late['registration']['status']=='after-collection-start; exploratory'
+    assert command(source,'run','--config',plan(source),'--max-new-units',1)==0
+    raw=source/'runs/stage0/qualify/paired-evaluation/results/responses.jsonl'
+    raw.write_text(raw.read_text()+'{}\n')
+    assert command(source,'run','--config',plan(source))==1
+    assert command(source,'audit-prepare','--config',plan(source))==1
+
+
+def test_incompatible_joins_and_inflight_registration_cannot_look_preregistered(monkeypatch,tmp_path):
+    import pilot_eval.stage0_findings as workflow
+    evaluation=dict(execution_sha256='same',runtime={'session_id':'one'},execution_kind='real-cuda',batch_size=1,
+        variants={'V0a':{}},adapter_files={'V0a':{'factor':'same'}})
+    drift={**evaluation,'runtime':{'session_id':'other'}}
+    monkeypatch.setattr(workflow,'load_evaluation',lambda *args:(evaluation,{},tmp_path/'evaluation'))
+    monkeypatch.setattr(workflow,'load_drift',lambda *args:(drift,tmp_path/'drift'))
+    with pytest.raises(ValueError,match='matching'):workflow._parents('a','b',tmp_path)
+    drift['runtime']=evaluation['runtime']
+    (tmp_path/'evaluation/attempts/active').mkdir(parents=True)
+    write_json(tmp_path/'evaluation/attempts/active/start.json',{'model_loading':True})
+    write_json(tmp_path/'evaluation.json',{});write_json(tmp_path/'drift.json',{})
+    saved=workflow.prepare('evaluation.json','drift.json',tmp_path,'inflight')
+    assert json.loads(saved.read_text())['registration']['status']=='after-collection-start; exploratory'
+
+
+def test_audit_selection_includes_wrong_to_wrong_answer_changes_but_not_format_only():
+    from pilot_eval.stage0_findings_review import selection
+    def row(v,text,answer,correct=False):
+        return dict(record_id=v+':q',variant=v,item_id='q',text=text,capped=False,
+            flexible=dict(status='valid',extracted=answer,correct=correct))
+    contrasts=[dict(id='V1-minus-V0a',edited='V1',reference='V0a')]
+    records=[row('V0a','#### 9','9'),row('V1','Final answer: 8','8')]
+    found=selection(records,contrasts)
+    assert set(found)=={'V0a:q','V1:q'}
+    same=[row('V0a','#### 2','2',True),row('V1',r'\boxed{2}','2',True)]
+    assert selection(same,contrasts)=={}
+
+
+def test_cpu_only_verifier_and_full_seal_reconciliation(source):
+    import subprocess,sys
+    assert command(source,'run','--config',plan(source))==0
+    code='''
+import sys
+class Reject:
+    def find_spec(self,name,*args):
+        if name.split('.')[0] in {'torch','transformers','peft'}:raise AssertionError(name)
+sys.meta_path.insert(0,Reject())
+from pilot_eval.stage0_findings import verify
+assert verify(sys.argv[1],sys.argv[2])['analysis_complete']
+'''
+    subprocess.run([sys.executable,'-c',code,str(plan(source)),str(source)],check=True)
+    directory=source/'runs/stage0/primary/findings'
+    # Even a locally re-sealed altered estimate must fail numeric reconstruction.
+    from pilot_eval.training import file_hash
+    import pilot_eval.stage0_findings as workflow
+    unit=directory/'units/V1-minus-V0a'
+    value=json.loads((unit/'result.json').read_text());value['behaviour']['flexible']['difference']['estimate']=.7
+    write_json(unit/'result.json',value)
+    receipt=json.loads((unit/'complete.json').read_text());receipt['files']['result.json']=file_hash(unit/'result.json')
+    write_json(unit/'complete.json',receipt)
+    marker=json.loads((directory/'complete.json').read_text())
+    marker['files']['units/V1-minus-V0a/result.json']=file_hash(unit/'result.json')
+    marker['files']['units/V1-minus-V0a/complete.json']=file_hash(unit/'complete.json')
+    write_json(directory/'complete.json',marker)
+    assert command(source,'verify','--config',plan(source))==1
+
+
+def test_notebooks_expose_cpu_findings_and_precollection_registration():
+    import ast
+    cpu=json.loads(Path('notebooks/stage-0-cpu-colab.ipynb').read_text())
+    gpu=json.loads(Path('notebooks/stage-0-gpu-colab.ipynb').read_text())
+    cpu_code='\n'.join(''.join(c['source']) for c in cpu['cells'] if c['cell_type']=='code')
+    for name in ['findings-run','findings-audit-prepare','findings-audit-save','findings-audit-freeze','findings-report']:
+        assert name in cpu_code
+    gpu_code='\n'.join(''.join(c['source']) for c in gpu['cells'] if c['cell_type']=='code')
+    assert gpu_code.index('findings-prepare')<gpu_code.index('evaluation-run')
+    for notebook in [cpu,gpu]:
+        for c in notebook['cells']:
+            if c['cell_type']=='code':ast.parse(''.join(c['source']));assert c['execution_count'] is None and c['outputs']==[]

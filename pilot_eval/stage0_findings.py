@@ -61,7 +61,7 @@ def prepare(evaluation_path, drift_path, output_root, name):
             registration=dict(recorded_at=_now(), status='after-collection-start; exploratory' if started else 'before-collection',
                 n150_risk='Non-inferiority may be inconclusive with 150 paired items.',
                 observed_collection_units=sum(len(list((d/'units').glob('*/complete.json'))) for d in [edir, ddir])),
-            implementation=_implementation(), numpy_version=np.__version__,
+            implementation=_implementation(),
             optional_work='not required; absent products do not block primary findings',
             conditional_v6='not included; applicability has not been inferred from missing evidence')
         _save_frozen(path, config); _save_frozen(directory/'config.json', config)
@@ -75,7 +75,7 @@ def _load(path, root):
     config = json.loads(inside(root, path).read_text())
     if (config.get('protocol') != 'stage0-primary-findings-v1' or config.get('implementation') != _implementation()
             or config.get('statistics') != STATISTICS or config.get('contrasts') != CONTRASTS
-            or config.get('noninferiority_margin') != -.05 or config.get('numpy_version') != np.__version__):
+            or config.get('noninferiority_margin') != -.05):
         raise ValueError('Analysis code/statistics changed; retain evidence and use a new named plan.')
     directory = inside(root, config['run_path'])
     if (json.loads((directory/'config.json').read_text()) != config
@@ -189,6 +189,7 @@ def run(path, output_root, *, max_new_units=None):
             return _verify(config, directory, root)
         rows, measurement, seals = _sources(config, root)
         _save_frozen(directory/'inputs/source-seals.json', seals)
+        _save_frozen(directory/'inputs/analysis-runtime.json', dict(numpy_version=np.__version__, resource='CPU statistics'))
         _jsonl(directory/'inputs/responses.jsonl', rows)
         _jsonl(directory/'inputs/drift-documents.jsonl', measurement['per_document'])
         summaries = []; new = 0
@@ -212,7 +213,8 @@ def run(path, output_root, *, max_new_units=None):
                 real_gpu_measurement=config['execution_kind'] == 'real-cuda', execution_kind=config['execution_kind'],
                 registration=config['registration'], statistics=config['statistics'], contrasts=summaries,
                 review=dict(state='not-prepared', scope='raw automatic scores; targeted review pending'),
-                source_seals=seals, limitations=LIMITS, optional_work=config['optional_work'], conditional_v6=config['conditional_v6'])
+                source_seals=seals, analysis_runtime=dict(numpy_version=np.__version__, resource='CPU statistics'),
+                limitations=LIMITS, optional_work=config['optional_work'], conditional_v6=config['conditional_v6'])
             _write_json(directory/'results/results.json', result)
             pairs = []
             for contrast in CONTRASTS:
@@ -242,7 +244,7 @@ def _verified_files(config, directory, root):
     marker = json.loads((directory/'complete.json').read_text())
     required = {'report.html', 'results/results.json', 'results/behaviour.csv', 'results/length.csv',
         'results/kl.csv', 'results/writes.csv', 'results/paired-items.jsonl', 'inputs/source-seals.json',
-        'inputs/responses.jsonl', 'inputs/drift-documents.jsonl'}
+        'inputs/responses.jsonl', 'inputs/drift-documents.jsonl', 'inputs/analysis-runtime.json'}
     if marker.get('config_sha256') != _hash(config) or not required <= marker.get('files', {}).keys():
         raise ValueError('Primary report completion identity differs.')
     for relative, digest in marker['files'].items():
@@ -250,7 +252,20 @@ def _verified_files(config, directory, root):
             raise ValueError('Primary report payload changed: '+relative)
     if json.loads((directory/'inputs/source-seals.json').read_text()) != seals:
         raise ValueError('Collected source completion evidence changed.')
-    return json.loads((directory/'results/results.json').read_text()), rows, measurement, seals
+    read = lambda name: [json.loads(line) for line in (directory/name).read_text().splitlines()]
+    if read('inputs/responses.jsonl') != rows or read('inputs/drift-documents.jsonl') != measurement['per_document']:
+        raise ValueError('Saved analysis input snapshots do not reconcile with the verified collections.')
+    runtime = json.loads((directory/'inputs/analysis-runtime.json').read_text())
+    if runtime['numpy_version'] != np.__version__:
+        raise ValueError('CPU statistics NumPy version differs from this saved analysis; use its recorded version.')
+    result = json.loads((directory/'results/results.json').read_text())
+    if result.get('analysis_runtime') != runtime: raise ValueError('Saved statistics runtime identity changed.')
+    if (result.get('execution_kind') != config['execution_kind']
+            or result.get('real_gpu_measurement') != (config['execution_kind'] == 'real-cuda')
+            or result.get('analysis_complete') is not True or result.get('registration') != config['registration']
+            or result.get('limitations') != LIMITS):
+        raise ValueError('Analysis execution/registration/claim scope differs from the frozen plan.')
+    return result, rows, measurement, seals
 
 
 def _verify(config, directory, root):
@@ -301,7 +316,7 @@ def report(path, output_root):
             for p, digest in seal['files'].items():
                 if file_hash(inside(target, p)) != digest: raise ValueError('Review report payload changed.')
             return dict(report=str(target/'report.html'), review=review, reused=True)
-        result = json.loads(json.dumps(raw)); result['review'] = review
+        result = json.loads(json.dumps(raw)); result['review'] = review; result['evidence_base'] = '../../'
         if scores:
             rows = [json.loads(line) for line in (directory/'inputs/responses.jsonl').read_text().splitlines()]
             groups = _groups(rows, lambda r: r['variant'])
