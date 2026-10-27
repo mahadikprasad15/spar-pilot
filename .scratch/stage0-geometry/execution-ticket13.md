@@ -93,3 +93,5 @@ then three notebook/handoff tests passed in0.11s. This adds one unique passing
 test: **11 Ticket13/handoff tests, 53 unique affected tests** across the recorded
 runs. No experiment code, source product, numerical gate or saved measurement
 changed in this correction.
+
+- Scientific source and shared-notebook release pin: `38482aee0a6aebda2bc17647a62dab8aed4d5951`.
