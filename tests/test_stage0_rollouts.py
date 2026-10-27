@@ -21,7 +21,7 @@ def output(row,draw):
                 generated_token_ids=[7 if correct else 8,99],stop_reason='eos')
 
 
-def sources(root):
+def sources(root,*,gold_eos=11):
     from test_stage0_workflow import sources as audit_sources,command
     from pilot_eval.grpo_baseline import _score
     selected=audit_sources(root)
@@ -29,7 +29,7 @@ def sources(root):
     audit=root/'plans/audit/stage0.plan.json'
     assert command(root,'audit','--config',audit)==0
     rows=[dict(id=f'gsm8k:train:{i}',source_index=i,source_split='train',prompt=f'question {i}',gold='#### 2',
-               input_ids=[10,i+1000,11],prompt_tokens=2,labels=[-100,-100,11]) for i in range(512)]
+               input_ids=[10,i+1000,gold_eos],prompt_tokens=2,labels=[-100,-100,gold_eos]) for i in range(512)]
     write_json(root/'training.json',rows)
     contract=dict(prompt_template='fixture',chat_template_sha256='template',attention_implementation='eager')
     plan=dict(protocol_version='pilot4-grpo-preparation-v1',model='Qwen/Qwen2.5-1.5B-Instruct',model_revision='pinned',

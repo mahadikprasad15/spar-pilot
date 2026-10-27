@@ -1046,3 +1046,98 @@ The forecast extrapolates measured eight-draw time to the 1024-step cap, with
 model-load/final-integrity costs; it is not a guaranteed runtime. No real runtime
 estimate has been established by the CPU synthetic tests. Numerical/source
 failures retain diagnostics and do not widen the frozen rules.
+
+## Optional teacher-forced answer measurement (Ticket 12; E0.6a)
+
+This branch consumes verified Ticket 11 rollouts and memberships. It scores the
+**untuned base model**, with no adapter or optimizer step. It does not recompute
+answers or generate new responses. Exact duplicate prompt/answer token sequences
+share one forward; repeated draws still contribute their original multiplicity
+when memberships are aggregated.
+
+### What is measured
+
+At target answer token t, use the model distribution at context t−1:
+
+- **Surprise:** −log p(target), in nats.
+- **Entropy:** −sum_v p(v) log p(v), over the full vocabulary.
+- **Rank:** one plus the number of logits strictly greater than the target logit;
+  ties share rank (proposed convention pending execution review).
+
+Primary dataset NLL is total surprise divided by counted answer tokens. Model
+entropy uses the same positions and weighting. Their difference is **excess
+surprise**, a descriptive statistic, **not** KL(data || model). Gold uses saved
+SFT input IDs/labels: mask the prompt and supervise through the existing EOS.
+Sampled answers use saved generated IDs, including observed EOS; capped answers
+get no invented EOS. Cap outcomes remain in own_all as observed samples.
+
+The model body runs once per unique answer. The output head projects bounded
+context chunks, with full-vocabulary FP64 reductions; no full [sequence,vocab]
+production logits are retained. Save per-token surprise/entropy/rank arrays,
+target IDs and prediction-position mappings. Whole-answer negative-log(k/8)
+remains separate from per-token statistics and receives no agreement test.
+
+### Workflow and storage
+
+- **CPU 32:** verify R0, gold masks/EOS and memberships; prepare unique scoring
+  inputs. This can run in a separate CPU notebook while the sampled GPU session
+  remains available. Do not disconnect/restart between R0 and scoring if keeping
+  this same-session contract.
+- **GPU setup 1–4, 26:** restore plan, inspect sampled-runtime agreement and the
+  existing cumulative Stage0 budget. No model loads during preflight.
+- **GPU 27:** explicitly reserve a bounded single-answer profile. One unique
+  answer is scored and sealed. Repeat bounded single units for broader timing
+  coverage if needed; no unbounded scoring is allowed yet.
+- **GPU 28:** build a forecast from measured per-answer time and total squared
+  sequence lengths; record actual cumulative usage and settle profile allocation.
+- **GPU 29:** separately review/freeze the measured production budget. The bound
+  must cover the saved forecast and fit the global **20-unit** limit.
+- **GPU 30–31:** score/resume missing unique answers, reconcile actual usage and
+  verify measurement completion. Full base-integrity failure invalidates that
+  attempt's sealed results. Changed sampled runtime/session is rejected.
+- **CPU 33:** aggregate and verify report/intervals. GPU is not needed for
+  bootstrap, report generation, or rechecking saved arrays.
+
+Public commands are `stage0-distance-{prepare,runtime,run,forecast,freeze,status,
+verify-measurement,report,verify,recover-writer}`. Preparation accepts `--rollouts`
+(the verified `stage0.rollouts.json`), `--name`, `--context-chunk` and
+`--workspace-bytes`; every command uses `--output-root`. Other commands consume
+`--config` pointing to `plans/<name>/stage0.distance.json`. `run` supports one
+bounded profile unit, frozen production, explicit renewed `--approval`, unit
+limits and progress suppression. `freeze` consumes a separate measured review.
+Writer recovery requires the exact recorded owner token and notes and cannot
+release a live same-host writer.
+
+Outputs are under `artifacts/runs/stage0/<name>/e06a_distance/`:
+
+| Product | Content |
+|---|---|
+| `config.json`, `meta/run_manifest.json` | R0/weight/runtime identities, masking and scoring policy, counts, code and NumPy identity |
+| `inputs/answers.jsonl` | One input/target/context-position mapping per unique answer |
+| `inputs/memberships.json`, `inputs/datasets.json` | Original problem/draw multiplicities, correct subsets, dropped IDs and probabilities |
+| `units/<answer-id>/tokens.npz` | FP64 surprise/entropy and integer rank, one entry per supervised token |
+| `units/<answer-id>/{metadata,complete}.json` | Runtime/attempt/integrity identity, seconds and payload hashes |
+| `attempts/`, `results/forecast.json`, `production-freeze.json` | Timing, bounded-credit identity, measured forecast and immutable production review |
+| `measurement.complete.json` | GPU collection receipt; CPU report can still be pending |
+| `summary.parquet`, `results/summary.csv` | Dataset NLL, entropy, excess surprise and separately named intervals |
+| `results/per-problem.csv` | Problem-level sufficient summaries and whole-answer negative-log correctness |
+| `results/top-gold-tokens.csv` | Top50 gold token occurrences by surprise, with IDs, positions, entropy and rank |
+| `bootstrap/*.npz` | Saved 10,000 whole-problem resampling index arrays, seed42 |
+| `results/results.json`, `report.html`, `complete.json` | Reconstructible report, gate status and final evidence receipt |
+
+`ci_low`/`ci_high` refer only to primary NLL. Excess-surprise bounds use
+`excess_surprise_ci_low/high`. Bootstrap resamples whole problem IDs while
+recomputing token-weighted ratios; it does not treat tokens or repeated draws as
+independent questions. Negative-log correctness averages eligible problems
+without weighting by number of correct samples. Empty correct cohorts are
+explicitly unavailable, rather than zero.
+
+The own_all excess-surprise gate remains **absolute value ≤0.02 nats/token**.
+The report states its premises: identical untuned distribution, supplied prefixes,
+observed stopping, and stated weighting. A finite stopped-sequence token-weighted
+ratio has no exact finite-sample zero identity. Failed gates preserve the report
+and mark `failed-gate`; they do not authorize wider tolerances. This gate is not
+claimed to establish a valid KL identity or a reasoning-quality result.
+
+Positional window summaries are pending a separate convention decision; complete
+per-token evidence is retained so they need no additional model forwards.

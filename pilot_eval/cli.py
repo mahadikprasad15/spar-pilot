@@ -15,6 +15,19 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','runtime','run','status','forecast','freeze','verify-measurement','report','verify','recover-writer']:
+        distance=commands.add_parser('stage0-distance-'+operation,help='optional teacher-forced NLL/entropy measurement')
+        distance.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            distance.add_argument('--rollouts',type=Path,required=True);distance.add_argument('--name',required=True)
+            distance.add_argument('--context-chunk',type=int,default=16);distance.add_argument('--workspace-bytes',type=int,default=536870912)
+        else:distance.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            distance.add_argument('--approval',type=Path);distance.add_argument('--max-new-units',type=int);distance.add_argument('--no-progress',action='store_true')
+        if operation=='recover-writer':
+            distance.add_argument('--owner-token',required=True);distance.add_argument('--review-notes',required=True)
+        if operation=='freeze':distance.add_argument('--review',type=Path,required=True)
+
     for operation in ['audit','prepare','runtime','profile','profile-verify','freeze','run','status','verify','recover-writer']:
         rollout=commands.add_parser('stage0-rollouts-'+operation,help='optional audited untuned rollouts and derived cohorts')
         rollout.add_argument('--output-root',type=Path,required=True)
@@ -497,7 +510,21 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-rollouts-'):
+        if args.command.startswith('stage0-distance-'):
+            from pilot_eval import stage0_distance as workflow
+            operation=args.command.removeprefix('stage0-distance-')
+            if operation=='prepare':result=workflow.prepare(args.rollouts,args.output_root,args.name,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
+            elif operation=='runtime':result=workflow.runtime(args.config,args.output_root,dependencies=dependencies)
+            elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
+            elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            elif operation in ['report','verify']:
+                from pilot_eval import stage0_distance_report
+                result=getattr(stage0_distance_report,operation)(args.config,args.output_root)
+            else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
+            if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-rollouts-'):
             from pilot_eval import stage0_rollouts as workflow
             operation=args.command.removeprefix('stage0-rollouts-')
             if operation=='audit':result=workflow.audit(args.audit,args.baseline,args.output_root,args.name)
