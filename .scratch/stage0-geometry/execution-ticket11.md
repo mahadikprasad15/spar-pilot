@@ -96,3 +96,5 @@ synthetic snapshots are retained; the final verified snapshots use v2 names.
   reconstructed JSONL/Parquet/memberships. Earlier v1 fixtures are retained as
   pre-schema-fix development evidence; v2 is the release validation source.
 - Both notebooks parse and contain no saved outputs; diff checks pass.
+
+- Verified scientific implementation/notebook pin: `ccf026eea7baa25b7a08963b7051c642ef928dfc`.
