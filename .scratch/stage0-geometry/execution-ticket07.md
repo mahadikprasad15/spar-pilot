@@ -91,3 +91,5 @@ training, source edits, Drive upload or GitHub publication is implied.
   under `artifacts/validation/stage0-ticket07/`. No Drive upload or GitHub push.
 - All primary Tickets 01–07 are software-complete; conditional/optional branches
   remain separate. No Stage 0 scientific execution is established by this record.
+
+- Notebook scientific implementation pin: `ebad4290a30e780ade3a0ecace4cb887e791024c`.
