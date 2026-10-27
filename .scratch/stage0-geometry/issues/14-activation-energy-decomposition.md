@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 04.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Track:** Optional supporting branch.
 
