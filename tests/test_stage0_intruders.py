@@ -97,3 +97,127 @@ def test_chance_boundary_and_strict_threshold_semantics():
     row=classify([.1,.5,.7],chance=.49,threshold=.5)
     assert row['eligible_indices']==[0] # .5 equality is not flagged
     assert classify([.1],chance=.49,threshold=.3)['eligible_indices']==[]
+
+
+def test_zero_gaps_full_rank_and_invalid_subspaces_are_explicit():
+    from pilot_eval.stage0_intruder_math import measure,diagnostics
+    w=np.eye(64);a=np.zeros((1,64));b=np.zeros((64,1));a[0,-1]=1
+    old=dict(sigma=np.ones(64),u=np.eye(64),v=np.eye(64))
+    ranks=dict(k30=20,k50=32,k70=45,d_out=64,d_in=64)
+    arrays,row=measure(w,a,b,old,ranks)
+    assert row['levels']['50']['update_over_gap']==dict(value=None,status='undefined-zero-over-zero')
+    assert row['levels']['50']['base_boundary']['status']=='exact-degeneracy'
+    assert row['levels']['50']['rotation']['unique_boundary'] is False
+    b[-1,0]=.01
+    _,positive=measure(w,a,b,old,ranks)
+    assert positive['levels']['50']['update_over_gap']==dict(value=None,status='infinite-positive-over-zero')
+    full={**ranks,'k70':64};_,row=measure(w,a,b,old,full)
+    assert row['levels']['70']['update_over_gap']['status']=='undefined-no-next-singular-value'
+    short={**old,'u':old['u'][:,:39],'v':old['v'][:,:39]}
+    with pytest.raises(ValueError,match='unavailable'):measure(w,a,b,short,ranks)
+    invalid={**ranks,'k70':65}
+    with pytest.raises(ValueError,match='clipping forbidden'):measure(w,a,b,old,invalid)
+    broken={**old,'u':np.eye(64)*2}
+    with pytest.raises(ValueError,match='orthogonality'):measure(w,a,b,broken,ranks)
+
+
+def test_degenerate_boundary_does_not_become_a_stable_vector_claim():
+    from pilot_eval.stage0_intruder_math import measure
+    # Equal-energy boundary: subspace mixing across the boundary is nonunique.
+    w=np.diag(np.r_[np.ones(40)*2,np.ones(24)])
+    old=dict(sigma=np.r_[np.ones(40)*2,np.ones(24)],u=np.eye(64),v=np.eye(64))
+    ranks=dict(k30=10,k50=20,k70=30,d_out=64,d_in=64)
+    a=np.zeros((1,64));b=np.zeros((64,1));a[0,0]=1
+    _,row=measure(w,a,b,old,ranks)
+    assert row['levels']['50']['base_boundary']['gap']==0
+    assert row['levels']['50']['rotation']['unique_boundary'] is False
+    assert any(r['numerically_degenerate'] for r in row['candidates'])
+    assert row['zero_update'] and row['small_update_skip'] is False
+
+
+def test_mid_unit_failure_resume_and_corruption_rejection(tmp_path):
+    plan,deps=prepared(tmp_path)
+    class Broken(TinyWeights):
+        def matrix(self,entry):raise RuntimeError('synthetic SVD input failure')
+    assert command(tmp_path,'run','--config',plan,'--max-new-units',1,dependencies=Broken())==1
+    directory=tmp_path/'runs/stage0/geometry/intruders'
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='failed'
+    assert not list((directory/'units').glob('*/complete.json'))
+    assert (directory/'logs/errors.jsonl').exists()
+    assert command(tmp_path,'run','--config',plan,'--max-new-units',1,dependencies=deps)==0
+    folder=next((directory/'units').iterdir())
+    # Partial payload in another unit is unsealed and can be recomputed.
+    other=directory/'units/L00.down_proj-grpo';other.mkdir(exist_ok=True,parents=True)
+    (other/'geometry.npz').write_bytes(b'unsealed')
+    assert command(tmp_path,'run','--config',plan,dependencies=deps)==0
+    (folder/'geometry.npz').write_bytes(b'corrupt')
+    assert command(tmp_path,'verify','--config',plan)==1
+
+
+def test_resealed_changed_geometry_metadata_does_not_verify(tmp_path):
+    from pilot_eval.training import file_hash
+    plan,deps=prepared(tmp_path)
+    assert command(tmp_path,'run','--config',plan,dependencies=deps)==0
+    directory=tmp_path/'runs/stage0/geometry/intruders';unit=next((directory/'units').iterdir())
+    row=json.loads((unit/'result.json').read_text());row['primary']['status']='no-intruders'
+    (unit/'result.json').write_text(json.dumps(row))
+    seal=json.loads((unit/'complete.json').read_text());seal['files']['result.json']=file_hash(unit/'result.json')
+    (unit/'complete.json').write_text(json.dumps(seal))
+    marker=json.loads((directory/'complete.json').read_text())
+    for p in ['result.json','complete.json']:marker['files'][str((unit/p).relative_to(directory))]=file_hash(unit/p)
+    (directory/'complete.json').write_text(json.dumps(marker))
+    assert command(tmp_path,'verify','--config',plan)==1
+
+
+def test_live_writer_and_explicit_recovery(tmp_path):
+    import os,platform
+    from test_stage0_workflow import write_json
+    plan,deps=prepared(tmp_path);directory=tmp_path/'runs/stage0/geometry/intruders'
+    owner=directory/'writer.json';write_json(owner,dict(token='known',host=platform.node(),pid=os.getpid()))
+    assert command(tmp_path,'run','--config',plan,dependencies=deps)==1
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','known','--review-notes','inspect')==1
+    write_json(owner,dict(token='known',host='stopped-colab',pid=1234))
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','wrong','--review-notes','stopped')==1
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','known','--review-notes','stopped')==0
+    assert command(tmp_path,'run','--config',plan,'--max-new-units',1,dependencies=deps)==0
+
+
+def test_cpu_verify_needs_no_model_runtime_or_new_svd(tmp_path):
+    import subprocess,sys
+    plan,deps=prepared(tmp_path)
+    assert command(tmp_path,'run','--config',plan,dependencies=deps)==0
+    code='''
+import sys
+class Reject:
+    def find_spec(self,name,*args):
+        if name.split('.')[0] in {'torch','transformers','peft'}:raise AssertionError(name)
+sys.meta_path.insert(0,Reject())
+from pilot_eval.stage0_intruders import verify
+assert verify(sys.argv[1],sys.argv[2])['geometry_complete']
+'''
+    subprocess.run([sys.executable,'-c',code,str(plan),str(tmp_path)],check=True)
+
+
+def test_notebook_exposes_optional_cpu_geometry_without_gpu_work():
+    import ast
+    data=json.loads(Path('notebooks/stage-0-cpu-colab.ipynb').read_text())
+    code='\n'.join(''.join(c['source']) for c in data['cells'] if c['cell_type']=='code')
+    for op in ['intruders-prepare','intruders-run','intruders-status','intruders-verify']:assert op in code
+    for c in data['cells']:
+        if c['cell_type']=='code':ast.parse(''.join(c['source']));assert c['execution_count'] is None and c['outputs']==[]
+
+
+def test_source_change_during_svd_blocks_publication(tmp_path):
+    plan,_=prepared(tmp_path)
+    class Changing(TinyWeights):
+        changed=False
+        def matrix(self,entry):
+            result=super().matrix(entry)
+            if not self.changed:
+                with open(entry['path'],'ab') as stream:stream.write(b'changed after read')
+                self.changed=True
+            return result
+    assert command(tmp_path,'run','--config',plan,dependencies=Changing())==1
+    directory=tmp_path/'runs/stage0/geometry/intruders'
+    assert not (directory/'complete.json').exists()
+    assert json.loads((directory/'meta/status.json').read_text())['state']=='failed'

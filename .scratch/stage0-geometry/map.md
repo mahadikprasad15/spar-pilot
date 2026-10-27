@@ -72,5 +72,12 @@
   stop points. Design approval is not evidence that those gates have passed.
 
 - Ticket 07 execution/validation record: `execution-ticket07.md`; 73 affected
-  tests passed on 2026-10-27. Conditional Ticket 08 and optional Ticket 11 are
-  independent remaining frontiers; neither is required to run the primary path.
+  tests passed on 2026-10-27. Ticket 08 implements rotation/intruder geometry;
+  its real CPU execution is pending. Conditional Ticket 09 and optional Ticket 11 are independent remaining
+  frontiers; neither is required to run the primary path.
+
+- Ticket 08: CPU rotation/intruder geometry implemented; `execution-ticket08.md`.
+  No small-update skip, top-20 detection/top-40 matching pool, floored subspaces,
+  chance-aware eligibility and explicit degeneracies. Ticket 09 consumes this
+  verified output for conditional edit construction; no V6 run is implied.
+  Final affected regression: 44 tests passed on 2026-10-27.

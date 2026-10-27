@@ -619,3 +619,116 @@ records and recomputes estimates/intervals from actual saved paired records and
 draws. A changed source, altered result, changed registration scope or missing
 sealed artifact is rejected. The report labels synthetic fixtures prominently;
 software tests are not real GPU qualification or experimental findings.
+
+## Rotation and intruder geometry (Ticket 08, conditional extension)
+
+This CPU-only branch depends on the completed base spectral cache (Ticket 02).
+It does not wait for the primary GPU collections or Ticket 07 report, and those
+primary findings do not wait for it. No model is instantiated, no new responses
+are generated, and no V6/V6c edit is constructed by this ticket.
+
+### Notebook and commands
+
+After CPU sections 1–8, you may jump to optional sections **23–25**:
+
+1. **23 — prepare:** bind the verified base spectral inventory and both saved
+   step-64 adapters. The complete real inventory is 196 modules × two arms =
+   **392 updated-matrix SVD units**. A synthetic fixture may contain fewer
+   modules and is labelled explicitly.
+2. **24 — measure/resume:** compute one missing unit by default. Inspect that
+   unit's recorded seconds and retained bytes before removing the limit to run
+   all missing units. Exact CPU SVD cost depends on module dimensions; do not
+   reuse GPU generation estimates or assume this is instantaneous.
+3. **25 — verify/inspect:** check seals, source identities and reconstruct the
+   reported geometry from the retained arrays. Inspect eligibility for each arm.
+   Conditional edit construction belongs to Ticket 09.
+
+```sh
+python -m pilot_eval stage0-intruders-prepare --spectral plans/<spectral-name>/stage0.spectral.json --name stage0-geometry-v1-intruder-geometry-v1 --output-root artifacts
+python -m pilot_eval stage0-intruders-run --config plans/stage0-geometry-v1-intruder-geometry-v1/stage0.intruders.json --max-new-units 1 --output-root artifacts
+python -m pilot_eval stage0-intruders-status --config plans/stage0-geometry-v1-intruder-geometry-v1/stage0.intruders.json --output-root artifacts
+python -m pilot_eval stage0-intruders-verify --config plans/stage0-geometry-v1-intruder-geometry-v1/stage0.intruders.json --output-root artifacts
+```
+
+Rerun `intruders-run` without the limit to finish. Each arm/module seals its own
+result; a half-written unsealed unit is recomputed, verified completed units are
+reused. `--no-progress` suppresses console progress without disabling saved state.
+One base matrix is loaded for both arms within a module. A stopped writer
+requires explicit token/notes through `stage0-intruders-recover-writer`; a live
+local writer is rejected. There is no GPU reservation because this is CPU work.
+
+### Quantities and eligibility
+
+Compute `W_new = W0 + b aᵀ` in FP64 from the saved rank-one, alpha-one factors.
+Run a full reduced SVD and verify its full reconstruction **before truncating
+stored vectors**. Keep all singular values and enough new left/right vectors
+for the **base-defined** k30, k50 and k70, floored at 40. Retained vectors are
+FP32 with the inherited 1e-6 orthogonality checks. No small-update skip exists.
+
+- **Whole-subspace rotation:** principal angles between old/new top-k left
+  subspaces and, separately, right subspaces. Sign flips and rotations within the
+  same subspace do not count as changes. Raw angles are radians; maxima are also
+  reported in degrees. Retained bases are re-orthonormalized for subspace-only
+  arithmetic after checking their stored precision against the inherited gate.
+- **Update scale:** a rank-one update has operator norm and Frobenius norm both
+  equal to `||b|| ||a||`. Report update/sigma_k and update/(sigma_k−sigma_(k+1))
+  for every base energy rank. The gap is from the base spectrum; updated gaps
+  are separately recorded.
+- **Intruder:** project each new top-20 **left** unit singular direction onto the
+  whole old top-m output subspace and take the norm. Primary m=max(k50,40),
+  threshold 0.5, with a **strict** below-threshold flag. k30/k70 sensitivities
+  use the same floor; thresholds 0.3, 0.4, 0.5, 0.6 and 0.7 are all retained.
+- **Chance:** sqrt(m/d_out), reported beside each overlap as an isotropic RMS
+  reference. At any threshold **at or below chance**, the module is undecidable.
+  Raw below-threshold values remain visible, but it has no edit-eligible indices
+  and is counted separately from modules with no intruders.
+- **Matching candidates:** keep overlaps, singular values and before/after gaps
+  for the new top **40** directions. Detection remains restricted to the top 20;
+  non-flagged top-40 directions in decidable modules form the candidate pool for
+  the later matched control. This ticket does not choose matches or halve values.
+
+Validate requested ranks against the actual singular dimension and available
+bases; never clip m or silently reduce the top-40 set. The real modules and the
+source spectral cache already satisfy this shape contract.
+
+### Ties, zero updates and limitations
+
+Always report the measurements even when the update is zero or tiny. A zero
+update is an exact operator identity: principal-angle rotation is recorded as
+zero. Boundary ties remain marked because a particular top-k selection may still
+be nonunique. A candidate inside a repeated singular-value cluster may change
+its vector identity under an equally valid SVD basis; raw flags are retained
+with this limitation, without inventing a stability or significance claim.
+
+Save exact gaps and a descriptive FP64 resolution indicator
+`eps64 × number_of_singular_values × sigma_max`. This marks numerically unresolved
+boundaries; it is not a new acceptance threshold or an additional intruder rule.
+A positive update over exact zero gap is infinite; zero/zero is undefined; the
+last singular value has no next value. JSON uses explicit statuses with null
+numeric fields for these cases. No epsilon is added to a ratio denominator.
+There is no “rotation under one degree” prediction or gate.
+
+### Artifacts
+
+Under `artifacts/runs/stage0/<intruder-name>/intruders/`:
+
+| Product | Content |
+|---|---|
+| `config.json`, `meta/run_manifest.json` | Sources, settings, CPU resource declaration, code/NumPy identity |
+| `units/<module>-<arm>/geometry.npz` | `new_sigma` FP64; retained `new_u` and `new_v` FP32 |
+| `units/<module>-<arm>/result.json` | All principal angles, old/new boundary gaps, update ratios, top-40 overlaps, chance and threshold-sweep statuses |
+| `units/<module>-<arm>/complete.json` | Unit identity and payload hashes |
+| `results/results.json` | Both arms, all module results and distinct eligible/no-intruder/undecidable counts |
+| `results/candidates.csv` | All 40 candidate indices, singular values, gaps, overlap/chance values |
+| `results/geometry.csv` | Per-energy-rank angles, ratios and explicit undefined statuses |
+| `plots/{rotation,overlap}.{svg,png}`, `inputs.json` | Inspectable figures and numerical figure inputs |
+| `report.html`, `results/report.md` | Eligibility report with links to raw evidence |
+| `meta/status.json`, `checkpoints/progress.json`, `logs/` | Resume state, failures and explicit writer recovery evidence |
+
+The completion receipt covers arrays, tables, plots and reports. Verification
+reconstructs reported overlap/rotation/gap quantities from sealed arrays and
+source factors rather than rerunning the full updated-weight SVD. The original
+full reconstruction/orthogonality evidence remains hash-bound in each unit.
+Changed source weights/adapters, altered settings, corrupted payloads or changed
+reported eligibility are rejected. Real-weight geometry is distinct from model
+inference, and synthetic fixtures never count as research findings.

@@ -55,7 +55,12 @@ def prepare(spectral_path,output_root,name):
 def _load(path,root):
     config=json.loads(inside(root,path).read_text())
     if (config.get('protocol')!='stage0-intruder-geometry-v1' or config.get('implementation')!=_implementation()
-            or config.get('numpy_version')!=np.__version__):
+            or config.get('numpy_version')!=np.__version__ or config.get('levels')!=list(LEVELS)
+            or config.get('thresholds')!=list(THRESHOLDS) or config.get('subspace_floor')!=40
+            or config.get('detection_top')!=20 or config.get('control_top')!=40
+            or config.get('primary_level')!=50 or config.get('primary_threshold')!=.5
+            or config.get('small_update_skip') is not False or config.get('reconstruction_gate')!=1e-6
+            or config.get('orthogonality_gate')!=1e-6 or config.get('arms')!=['sft','grpo']):
         raise ValueError('Geometry implementation/runtime changed; retain evidence and use a new name.')
     directory=inside(root,config['run_path'])
     if (json.loads((directory/'config.json').read_text())!=config
@@ -159,7 +164,7 @@ def _tables(directory,rows):
             writer=csv.DictWriter(stream,fieldnames=list(values[0]));writer.writeheader();writer.writerows(values)
 
 
-def run(path,output_root,*,dependencies=None,max_new_units=None):
+def run(path,output_root,*,dependencies=None,max_new_units=None,progress=True):
     root=Path(output_root).resolve();config,directory,spectral,cache=_load(path,root)
     if max_new_units is not None and (type(max_new_units) is not int or max_new_units<0):raise ValueError('Invalid unit limit.')
     deps=dependencies or LocalWeights();adapters=_adapters(config,root);rows=[];new=0
@@ -174,7 +179,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
                         if max_new_units is not None and new>=max_new_units:
                             return _state(directory,'incomplete',len(rows),len(_units(config)))
                         begin=time.monotonic()
-                        print(f'Stage 0 geometry: {len(rows)}/{len(_units(config))} sealed; {_module_id(module)}; {arm}; exact CPU SVD.',flush=True)
+                        if progress:print(f'Stage 0 geometry: {len(rows)}/{len(_units(config))} sealed; {_module_id(module)}; {arm}; exact CPU SVD.',flush=True)
                         if matrix is None:
                             entry=spectral['inventory']['modules'][module]
                             matrix=deps.matrix({**entry,'path':str(inside(root,entry['path']))})
@@ -184,12 +189,15 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
                         with (folder/'geometry.npz.tmp').open('wb') as stream:np.savez(stream,**arrays)
                         (folder/'geometry.npz.tmp').replace(folder/'geometry.npz')
                         row=dict(module=module,module_id=_module_id(module),arm=arm,**evidence,
-                            seconds=time.monotonic()-begin,arrays_path=f'units/{_key(module,arm)}/geometry.npz')
+                            seconds=time.monotonic()-begin,retained_bytes=(folder/'geometry.npz').stat().st_size,arrays_path=f'units/{_key(module,arm)}/geometry.npz')
                         _write_json(folder/'result.json',row)
                         _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),module=module,arm=arm),
                             files={p:file_hash(folder/p) for p in ['geometry.npz','result.json']}))
                         new+=1
+                        if progress:print(f'Stage 0 geometry: sealed {_key(module,arm)}; {row["seconds"]:.2f}s; {(folder/"geometry.npz").stat().st_size} bytes.',flush=True)
                     rows.append(row);_state(directory,'running',len(rows),len(_units(config)))
+            # Revalidate source hashes at publication, after the long CPU work.
+            _load(path,root)
             result=_summary(config,rows)
             _write_json(directory/'results/results.json',result);_tables(directory,rows)
             from pilot_eval.stage0_intruder_render import render
@@ -201,7 +209,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
         except (Exception,KeyboardInterrupt) as exc:
             _state(directory,'failed',len(rows),len(_units(config)),error=str(exc))
             log=directory/'logs/errors.jsonl';log.parent.mkdir(parents=True,exist_ok=True)
-            with log.open('a') as stream:stream.write(json.dumps(dict(error=str(exc),type=type(exc).__name__))+'\n')
+            with log.open('a') as stream:stream.write(json.dumps(dict(error=str(exc),type=type(exc).__name__,module=module if 'module' in locals() else None,arm=arm if 'arm' in locals() else None))+'\n')
             raise
 
 
@@ -232,7 +240,7 @@ def status(path,output_root):
     complete=(directory/'complete.json').exists()
     if complete:_verify(config,directory,spectral,cache,root,adapters)
     owner=directory/'writer.json'
-    return dict(geometry_complete=complete,completed_units=sum(r is not None for r in rows),total_units=len(rows),
+    return dict(geometry_complete=complete,completed_units=len(rows) if complete else sum(r is not None for r in rows),total_units=len(rows),
         execution_kind=config['execution_kind'],report=str(directory/'report.html'),
         writer=json.loads(owner.read_text()) if owner.exists() else None)
 

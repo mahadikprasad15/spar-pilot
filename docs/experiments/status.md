@@ -75,3 +75,11 @@ absent. Raw automatic scores and confirmed-case overlays are separately labelled
 The conditional intruder and optional explanatory branches remain separate
 implementation/execution work. See [the Stage 0 guide](../stage0-geometry.md) and
 [Ticket 07 execution record](../../.scratch/stage0-geometry/execution-ticket07.md).
+
+### Conditional geometry extension
+
+Ticket 08's CPU rotation/intruder report is implemented and locally validated.
+It always measures all module/arm units and distinguishes chance-undecidable
+modules from modules with no intruders. Real-weight execution is pending.
+Ticket 09 will construct the conditional merged V6/V6c edits from verified
+eligibility evidence; no such edit or behavioral result is established here.

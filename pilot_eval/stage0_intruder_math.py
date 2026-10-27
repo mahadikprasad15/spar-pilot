@@ -121,18 +121,25 @@ def measure(matrix,a,b,old,ranks):
     if w.shape!=(ranks['d_out'],ranks['d_in']) or a.shape!=(1,w.shape[1]) or b.shape!=(w.shape[0],1):
         raise ValueError('Base matrix and rank-one factors differ in dimensions.')
     if not all(np.isfinite(x).all() for x in [w,a,b]):raise ValueError('Nonfinite geometry input.')
+    rank=min(w.shape)
+    for level in LEVELS:
+        k=ranks[f'k{level}']
+        if type(k) is not int or not 1<=k<=rank or max(k,40)>rank:
+            raise ValueError('Requested singular rank is invalid; clipping forbidden.')
+        if min(old['u'].shape[1],old['v'].shape[1])<max(k,40):
+            raise ValueError('Requested old subspace is unavailable; clipping forbidden.')
     zero=not np.any(a) or not np.any(b)
     updated=w+b@a
     u,sigma,vt=np.linalg.svd(updated,full_matrices=False)
     norm=float(np.linalg.norm(updated))
     error=float(np.linalg.norm(updated-(u*sigma)@vt)/norm) if norm else 0.
-    if error>=1e-6:raise ValueError('Updated full-SVD reconstruction exceeds inherited gate.')
+    if error>=1e-6:raise ValueError(f'Updated full-SVD reconstruction exceeds inherited gate: {error}.')
     orth=max(float(np.max(np.abs(q.T@q-np.eye(len(sigma))))) for q in [u,vt.T])
-    if orth>1e-6:raise ValueError('Updated full-SVD orthogonality exceeds inherited gate.')
+    if orth>1e-6:raise ValueError(f'Updated full-SVD orthogonality exceeds inherited gate: {orth}.')
     keep=max(40,*[ranks[f'k{level}'] for level in LEVELS])
     new=dict(new_sigma=sigma,new_u=u[:,:keep].astype(np.float32),new_v=vt[:keep,:].T.astype(np.float32))
     retained=max(float(np.max(np.abs(q.astype(float).T@q-np.eye(keep)))) for q in [new['new_u'],new['new_v']])
-    if retained>1e-6:raise ValueError('Updated retained-basis orthogonality exceeds inherited gate.')
+    if retained>1e-6:raise ValueError(f'Updated retained-basis orthogonality exceeds inherited gate: {retained}.')
     row=diagnostics(a,b,old,new,ranks,zero_update=zero)
     row['decomposition']=dict(full_reconstruction_relative_error=error,full_orthogonality_error=orth,
         retained_orthogonality_error=retained,retained_columns=keep,full_reconstruction_defined=norm!=0,

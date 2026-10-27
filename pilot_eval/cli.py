@@ -22,7 +22,9 @@ def main(argv=None, *, dependencies=None):
             intruders.add_argument('--spectral',type=Path,required=True)
             intruders.add_argument('--name',required=True)
         else:intruders.add_argument('--config',type=Path,required=True)
-        if operation=='run':intruders.add_argument('--max-new-units',type=int)
+        if operation=='run':
+            intruders.add_argument('--max-new-units',type=int)
+            intruders.add_argument('--no-progress',action='store_true')
         if operation=='recover-writer':
             intruders.add_argument('--owner-token',required=True)
             intruders.add_argument('--review-notes',required=True)
@@ -461,7 +463,7 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval import stage0_intruders as workflow
             operation=args.command.removeprefix('stage0-intruders-')
             if operation=='prepare':result=workflow.prepare(args.spectral,args.output_root,args.name)
-            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,max_new_units=args.max_new_units)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,max_new_units=args.max_new_units,progress=not args.no_progress)
             elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
             else:result=getattr(workflow,operation)(args.config,args.output_root)
             if isinstance(result,dict) and 'module_results' in result:

@@ -107,3 +107,20 @@ remain pending.
   `artifacts/validation/stage0-ticket07/verification.json`.
 
 The recorded result is an affected-suite pass, not a new full-suite pass.
+
+## Recorded Stage 0 intruder-geometry validation
+
+27 October 2026, Ticket 08:
+
+- Starting affected baseline: **32 passed in 86.38s**.
+- Final affected regression: **44 passed in 106.77s**, covering geometry, spectral
+  cache, edits and shared saved-workflow behavior. Not a full-suite claim.
+- Independent diagonal intruder, exact zero-update and known-angle oracles;
+  within-subspace basis invariance; threshold/chance equality; zero/absent gaps;
+  unavailable-rank rejection before decomposition.
+- Interrupted/resumed units, source changes during computation, corrupted and
+  re-sealed changed eligibility, live-writer rejection/recovery and a fresh CPU
+  verifier with model-library imports blocked.
+- Plot inspected; notebook syntax and clean outputs checked. Retained structured
+  evidence: `artifacts/validation/stage0-ticket08/verification.json`.
+- No real model/adapter geometry or GPU experiment ran in these fixtures.
