@@ -101,3 +101,5 @@ Tickets 11–15 do not block the primary or conditional software paths.
   `artifacts/validation/stage0-ticket10/`.
 - Real GPU qualification, numerical/budget reviews, execution freeze and
   scientific measurements remain pending. No upload or GitHub push.
+
+- Verified scientific implementation/notebook pin: `d1ba54f674fa0d2034af845b45bd5227f89c0088`.
