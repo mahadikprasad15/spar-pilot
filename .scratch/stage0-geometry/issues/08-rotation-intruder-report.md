@@ -4,7 +4,7 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Track:** Conditional intruder extension.
 

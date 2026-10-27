@@ -15,6 +15,17 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run','verify','status','recover-writer']:
+        intruders=commands.add_parser('stage0-intruders-'+operation,help='CPU gap-aware subspace rotation and chance-aware intruder geometry')
+        intruders.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            intruders.add_argument('--spectral',type=Path,required=True)
+            intruders.add_argument('--name',required=True)
+        else:intruders.add_argument('--config',type=Path,required=True)
+        if operation=='run':intruders.add_argument('--max-new-units',type=int)
+        if operation=='recover-writer':
+            intruders.add_argument('--owner-token',required=True)
+            intruders.add_argument('--review-notes',required=True)
     for operation in ['prepare','run','verify','status','audit-prepare','audit-status','audit-save','audit-freeze','audit-reveal','report']:
         findings=commands.add_parser('stage0-findings-'+operation,help='CPU paired Stage 0 findings and targeted intended-answer review')
         findings.add_argument('--output-root',type=Path,required=True)
@@ -446,7 +457,17 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-findings-'):
+        if args.command.startswith('stage0-intruders-'):
+            from pilot_eval import stage0_intruders as workflow
+            operation=args.command.removeprefix('stage0-intruders-')
+            if operation=='prepare':result=workflow.prepare(args.spectral,args.output_root,args.name)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,max_new_units=args.max_new_units)
+            elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:result=getattr(workflow,operation)(args.config,args.output_root)
+            if isinstance(result,dict) and 'module_results' in result:
+                result={k:v for k,v in result.items() if k!='module_results'}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-findings-'):
             from pilot_eval import stage0_findings as workflow
             operation=args.command.removeprefix('stage0-findings-')
             if operation=='prepare':result=workflow.prepare(args.evaluation,args.drift,args.output_root,args.name)
