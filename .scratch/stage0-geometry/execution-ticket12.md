@@ -86,3 +86,5 @@ per-token outputs permit later positional summaries without extra GPU forwards.
 - Both notebooks parse, contain no saved outputs, and pass their public-workflow
   handoff test. Diff whitespace checks pass.
 - No real inference, numerical acceptance change, Colab use, Drive upload or push.
+
+- Verified scientific implementation/notebook release pin: `97b21a8bf5a3e0c5fe30454cc84abb138e997a01`.
