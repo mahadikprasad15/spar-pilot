@@ -15,7 +15,7 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
-    for operation in ['audit','prepare','profile','freeze','run','status','verify','recover-writer']:
+    for operation in ['audit','prepare','profile','profile-verify','freeze','run','status','verify','recover-writer']:
         rollout=commands.add_parser('stage0-rollouts-'+operation,help='optional audited untuned rollouts and derived cohorts')
         rollout.add_argument('--output-root',type=Path,required=True)
         if operation in ['audit','prepare']:
@@ -505,7 +505,7 @@ def main(argv=None, *, dependencies=None):
             elif operation in ['profile','run']:result=getattr(workflow,operation)(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
             elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
             elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.phase,args.owner_token,args.review_notes)
-            else:result=getattr(workflow,operation)(args.config,args.output_root)
+            else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['parents','legacy','historical','training']}
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('stage0-intruder-edits-'):

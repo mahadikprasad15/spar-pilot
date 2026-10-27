@@ -94,3 +94,97 @@ def test_dataset_memberships_keep_zero_success_questions_and_one_draw_selection(
     assert result['p_correct']['q0']==0 and result['neg_log_p_correct']['q0'] is None
     assert result['own_correct_one']==cohorts(records,order,selection_seed=42)['own_correct_one']
     with pytest.raises(ValueError,match='eight|duplicate'):cohorts(records+[records[0]],order,selection_seed=42)
+
+
+@pytest.fixture(scope='module')
+def complete_sources(tmp_path_factory):
+    return_root=tmp_path_factory.mktemp('r0-sources');sources(return_root);return return_root
+
+
+@pytest.fixture
+def ready(tmp_path,complete_sources):
+    import shutil
+    shutil.copytree(complete_sources,tmp_path,dirs_exist_ok=True)
+    return tmp_path
+
+
+def usage(root,event,total):
+    from pilot_eval.stage0_workflow import record_budget
+    from pilot_eval.stage0_budget import reservations,settle
+    path=root/'usage.json';write_json(path,dict(event_id=event,session_id='session-a',total_units=total,
+        observed_at='2026-10-27T12:00:00+00:00',note='synthetic cumulative Stage 0 usage'))
+    record_budget(root/'plans/audit/stage0.plan.json',root,path)
+    for key,row in reservations(root).items():
+        if row['state']=='active':settle(root,key)
+
+
+def prepare(root):
+    assert cmd(root,'prepare','--audit',root/'plans/audit/stage0.plan.json','--baseline',root/'plans/baseline/baseline.config.json',
+        '--weights-dir',root/'weights','--name','r0',dependencies=Tiny())==0
+    return root/'plans/r0/stage0.rollouts.json'
+
+
+class Sampling(Tiny):
+    def __init__(self,*,mismatch=False,session='session-a',fail_after=None):
+        self.calls=[];self.loads=0;self.mismatch=mismatch;self.session=session;self.fail_after=fail_after
+    def runtime(self):return dict(execution_kind='synthetic-cpu-fixture',session_id=self.session,device='tiny CPU')
+    def engine(self,config,root):self.loads+=1;return super().engine(config,root)
+    def special_tokens(self):return dict(eos_token_id=99,pad_token_id=98)
+    def sample(self,rows,settings,seed):
+        if self.fail_after is not None and len(self.calls)>=self.fail_after:raise RuntimeError('injected interruption')
+        self.calls.append((rows[0]['id'],seed));values=super().sample(rows,settings,seed)
+        if self.mismatch:
+            values[0]=dict(text='#### 3',token_ids=[6],generated_token_ids=[6,99],stop_reason='eos')
+        return values
+
+
+def profile_and_freeze(root,plan,engine):
+    usage(root,'start',4.)
+    review=root/'profile-review.json';write_json(review,dict(reviewer='test',notes='bounded eight-draw groups',
+        session_id='session-a',source_reviewed=True,max_units_per_hour=1.,max_seconds=600.))
+    assert cmd(root,'profile','--config',plan,'--approval',review,'--max-new-units',1,dependencies=engine)==0
+    profile=root/'runs/stage0/r0/rollouts/profile'
+    marker=next((profile/'units').glob('*/complete.json'));before=marker.read_bytes()
+    assert cmd(root,'profile','--config',plan,dependencies=engine)==0
+    assert marker.read_bytes()==before and len(engine.calls)==2
+    result=json.loads((profile/'results/profile.json').read_text())
+    usage(root,'profile-complete',4.01)
+    write_json(review,dict(reviewer='test',notes='approve evidence, route and forecast',session_id='session-a',
+        source_reviewed=True,max_units_per_hour=1.,max_seconds=max(3600.,result['forecast']['conservative_total_seconds']),
+        profile_sha256=file_hash(profile/'complete.json'),route=result['route']))
+    assert cmd(root,'freeze','--config',plan,'--review',review)==0
+    return result
+
+
+@pytest.mark.parametrize('mismatch',[False,True])
+def test_public_replay_route_generation_resume_and_verified_cohorts(ready,mismatch):
+    root=ready;plan=prepare(root);engine=Sampling(mismatch=mismatch)
+    config=json.loads(plan.read_text());assert config['uniform_order'][0]=='gsm8k:train:0'
+    assert config['historical_order'][0]=='gsm8k:train:127'
+    result=profile_and_freeze(root,plan,engine)
+    assert result['route']==('uniform-fresh-512' if mismatch else 'reuse-historical-128')
+    assert result['production_groups']==(512 if mismatch else 384)
+    assert cmd(root,'run','--config',plan,'--max-new-units',1,dependencies=engine)==0
+    collection=root/'runs/stage0/r0/rollouts/collection'
+    marker=next((collection/'units').glob('*/complete.json'));before=marker.read_bytes()
+    assert cmd(root,'status','--config',plan)==0
+    assert cmd(root,'run','--config',plan,dependencies=engine)==0
+    assert marker.read_bytes()==before
+    assert cmd(root,'verify','--config',plan)==0
+    directory=root/'runs/stage0/r0/rollouts';summary=json.loads((directory/'results/results.json').read_text())
+    rows=[json.loads(line) for line in (directory/'results/rollouts.jsonl').read_text().splitlines()]
+    memberships=json.loads((directory/'results/datasets.json').read_text())
+    assert len(rows)==4096 and len({r['draw_id'] for r in rows})==4096
+    assert memberships['counts']['questions']==512 and len(memberships['own_all'])==4096
+    assert summary['route']==result['route'] and not summary['real_gpu_measurement']
+    origins={r['origin'] for r in rows}
+    assert origins==({'new-uniform'} if mismatch else {'historical','new-extension'})
+    assert (directory/'results/historical/rollouts.jsonl').exists()
+    assert (directory/'results/rollouts.parquet').exists()
+    first_new=engine.calls[2]
+    assert first_new==('gsm8k:train:0',42) if mismatch else first_new==('gsm8k:train:128',170)
+    calls=len(engine.calls);assert cmd(root,'run','--config',plan,dependencies=engine)==0 and len(engine.calls)==calls
+    import pyarrow.parquet as pq
+    assert pq.read_table(directory/'results/rollouts.parquet').num_rows==4096
+    payload=root/'runs/historical/batches/0000.json';payload.write_text('[]')
+    assert cmd(root,'verify','--config',plan)==1

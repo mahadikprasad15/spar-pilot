@@ -11,6 +11,7 @@ dependencies = ["numpy>=1.26,<3"]
 
 [project.optional-dependencies]
 report = ["matplotlib>=3.8,<4"]
+stage0-rollouts = ["pyarrow>=14"]
 trace-audit = ["safetensors>=0.4,<1"]
 trace-corpus = ["tokenizers==0.22.1", "datasets==4.4.1", "huggingface-hub==0.36.0"]
 test = ["pytest>=8,<9"]
