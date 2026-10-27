@@ -67,3 +67,5 @@ conditional collection and findings. The primary report is not blocked by it.
   oracle, the original failed prerequisite fixture and structured validation are
   retained under `artifacts/validation/stage0-ticket09/`.
 - No real weight construction, model download, GPU run, Drive upload or push.
+
+- Scientific implementation/notebook release pin: `549f612775df7663847fbcb029af593d005f0e75`.
