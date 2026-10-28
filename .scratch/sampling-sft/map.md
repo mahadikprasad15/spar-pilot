@@ -3,7 +3,7 @@
 ## Notes
 - Original supplied design preserved in sources/; working design in design.md.
 - Read-only source/upstream audits completed; targeted baseline: 5 passed.
-- Round 1 answered on 2026-10-28. No implementation or cloud work begun.
+- Rounds 1–2 answered on 2026-10-28. No implementation or cloud work begun.
 
 ## Decisions so far
 - Data-recipe claim; descriptive mechanism measures; common-coverage k contrasts.
@@ -14,13 +14,18 @@
 - Frozen sampling configuration and exact pilot restart/resume qualification.
 - USD25 ceiling; sampling10/training6/storage-and-slack9; 80% review checkpoints.
 
-## Fog — next frontier
-- Clustered missing slots and test-failure fallback; common cohort definition.
-- Empty outputs, engine-error retry counter, per-attempt versus per-problem counts.
-- Review provenance and eligibility overrides.
-- Replay scheduling/cache state and deterministic scientific records.
-- Budget reservations, ongoing storage billing, and 80% checkpoint behavior.
-- Baseline provenance, proposed score tolerance and pilot alarm actions still to resolve.
+## Decisions added in round 2
+- T16 covers batches3–7; hand loss, finite gradients, one scheduler step; no duplication.
+- Three-arm common gate cohort; arm-specific training coverage; flag pairwise uncovered-set differences >5.
+- Per-attempt terminal states, per-problem dispositions, separate interruption events.
+- Exact block-boundary replay, prefix-cache resets and ordered requalification.
+- Immutable automatic scores plus confirmed human eligibility overrides.
+- Conservative reservations, ongoing storage lifetime, stage-attributed costs and automatic post-export stop; deletion requires approval.
+
+## Fog — remaining frontier
+- Baseline cohort/scoring population; numerical scoring gate.
+- Pilot alarm actions and prompt/J revision rules.
+- Statistical reductions, paired bootstrap and leakage metric.
 
 ## Next
-Ask the dependent question frontier, record answers, then confirm shared understanding before spec/implementation.
+Resolve remaining decisions, then confirm shared understanding before spec/implementation. Full CPU regression started in this session remains in progress; no scientific execution started.
