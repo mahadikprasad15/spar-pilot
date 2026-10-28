@@ -15,6 +15,14 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare', 'audit', 'status', 'verify']:
+        sampling = commands.add_parser('sampling-sft-' + operation, help='CPU Sampling SFT source audit and immutable plan')
+        sampling.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            sampling.add_argument('--selection', type=Path, required=True)
+            sampling.add_argument('--name', required=True)
+        else:
+            sampling.add_argument('--config', type=Path, required=True)
     for operation in ['prepare','run','status','report','verify','runtime','recover-writer','collection-prepare','collection-predict','collection-run','collection-forecast','collection-freeze','collection-status','collection-verify','collection-recover-writer']:
         trajectory=commands.add_parser('stage0-trajectory-'+operation,help='optional verified checkpoint geometry, drift-size trajectories and saved lengths')
         trajectory.add_argument('--output-root',type=Path,required=True)
@@ -661,6 +669,15 @@ def main(argv=None, *, dependencies=None):
                 result={k:v for k,v in result.items() if k!='contrasts'}
                 result['detail']='All contrast tables, raw pairs and plots are saved in the findings directory.'
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-'):
+            from pilot_eval import sampling_sft
+            operation = args.command.removeprefix('sampling-sft-')
+            if operation == 'prepare':
+                result = sampling_sft.prepare(args.selection, args.output_root, args.name)
+            else:
+                result = getattr(sampling_sft, operation)(args.config, args.output_root)
+                result = sampling_sft.console_summary(result)
+            print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
         elif args.command.startswith('stage0-drift-'):
             from pilot_eval.stage0_drift import prepare,run,verify,status,recover_writer
             operation=args.command.removeprefix('stage0-drift-')
