@@ -34,5 +34,8 @@
 - Atomic resume, export/download receipts and confirmed Pod shutdown.
 - Full CPU regression still in progress at this update.
 
+## Final confirmation
+User confirmed the consolidated design and checklist on2026-10-28. Explicit additions: data seed0, L40S sampling, verified L4 training, no gold rerun, exact checkpoint0 and gold logs, optional optimizer/gradient capture. Weights-only mid-training resume is invalid; without recovery state restart from checkpoint0 under the budget policy. First sampling-GPU spend needs a separate post-preflight go-ahead.
+
 ## Next
-Confirm consolidated shared understanding. Then spec/tickets or implementation only on user request; no cloud launch is implied.
+Design confirmed. Spec/tickets or implementation only on user request; no cloud launch is implied.

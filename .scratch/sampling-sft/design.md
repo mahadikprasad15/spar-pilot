@@ -1,6 +1,6 @@
 # Sampling SFT arm — working design
 
-Status: consolidated design, awaiting shared-understanding confirmation; no implementation or paid execution authorized by this document.
+Status: design confirmed by the user on 2026-10-28, including the final checklist below. No paid execution is authorized by this document; implementation requires a separate request.
 Date: 2026-10-28
 
 ## Purpose and scope
@@ -38,9 +38,15 @@ This is a data-recipe comparison: gold SFT versus Sampling SFT k=0/2/5, with GRP
 
 ### Generation and training scope
 
-Generate all 512 problems for k=0/2/5. After the gate and explicit approval, train k=0 and k=5 only, seed 42, matched to the verified gold-SFT protocol. This final scope answer supersedes the earlier round-1 suggestion to train all three. Retain k=2 data and gate row; any k=2 training needs separate approval. A claim that endpoint results differ meaningfully is not yet an executable rule.
+Generate all 512 problems for k=0/2/5, with data seed 0 and the declared deterministic per-request/retry seed derivation. After the gate and explicit approval, train k=0 and k=5 only, seed 42, matched to the verified gold-SFT protocol. This final scope answer supersedes the earlier round-1 suggestion to train all three. Retain k=2 data and gate row; any k=2 training needs separate approval. A claim that endpoint results differ meaningfully is not yet an executable rule.
 
 Defer k=10, k=5+5 polish, extra seeds, self-correct SFT, evaluation, internals and Stage 0 follow-ups, each requiring its own approval/budget. No automatic arm merging. Intervals including zero mean inconclusive; an equivalence claim requires separately preregistered margins and an entire paired-bootstrap interval inside them. Illustrative margins in the reply are not approved thresholds.
+
+### Gold training reuse and required captures
+
+Gold SFT is not re-run. Sampling-SFT training uses gold's exact saved per-step problem order/batches with approved uncovered slots explicitly marked, its verified optimizer/configuration, checkpoint steps 0/8/16/32/64, and matching log fields. Use one training seed42. Training hardware is L4, FP32, with TF32 settings matching the actual gold-training metadata. These are preflight requirements: verify the original training manifest, not just an L4 evaluation manifest. Missing or contradictory evidence blocks training and is reported; do not silently substitute another GPU or redefine the historical match.
+
+Required captures: PEFT-format adapters at 0/8/16/32/64; bit-identical checkpoint-0 payload versus gold (T15, including saved A0 and zero B); gold-matching training logs; and manifest with exact config, batches/slot omissions, seeds, source/runtime identities and hashes. Capture optimizer state and full per-step gradients optionally. Complete recovery state is mandatory only for a claimed mid-training resume; without it, recovery is a recorded restart from checkpoint0, not a weights-only resume.
 
 ### Coverage gate after Stage 3
 
@@ -58,7 +64,7 @@ Empty generation without a real stop token, or missing/malformed scoring prompt_
 
 ### Runtime freeze and replay
 
-Choose settings at Stage 0.5; freeze before the 32-problem Stage 1 pilot. Record GPU type, driver, CUDA, Torch/vLLM versions, dtype, actual worker TF32 flags, max_num_seqs, max_num_batched_tokens, GPU memory utilization, prefix-cache setting and max_model_len; hash the block as runtime_hash. All sampling arms, model-outcome retries and resumes must match. A mismatch refuses resume. Changed settings require a new run_id and regeneration of all k arms; never mix runtime hashes in a comparison.
+Sampling hardware is L40S. Choose settings at Stage 0.5; freeze before the 32-problem Stage 1 pilot. A different GPU requires an explicitly revised plan, not an implicit fallback. Record GPU type, driver, CUDA, Torch/vLLM versions, dtype, actual worker TF32 flags, max_num_seqs, max_num_batched_tokens, GPU memory utilization, prefix-cache setting and max_model_len; hash the block as runtime_hash. All sampling arms, model-outcome retries and resumes must match. A mismatch refuses resume. Changed settings require a new run_id and regeneration of all k arms; never mix runtime hashes in a comparison.
 
 The 32-problem pilot qualification compares uninterrupted execution against kill-after-block-2/resume. Checkpoint at completed block boundaries only; discard partial scientific records and replay the partial block. Submit logical requests in fixed recorded order, by problem id then request type, while preserving extension/refinement dependencies. Clear prefix cache at each block boundary in qualification and production; within-block caching stays on. Record additional prefill work. Response IDs, scores, accept decisions, traces, steps and coverage match exactly; operational timing, PIDs, error and interruption events live separately.
 
@@ -83,7 +89,7 @@ After verified export to the network volume and a downloaded copy, the runner re
 - Canonical storage under artifacts/plans, artifacts/runs and artifacts/reports; replace the proposal's outputs/sampling_sft root in the working implementation plan.
 - Check existing products first; retain source hashes, resolved configuration, runtime, status, response IDs and logs. Resume only verified sealed units.
 - Preserve automatic scores and original text; human labels and any selection override are separate versioned records.
-- Required training resume state includes optimizer, scheduler and RNG state where applicable, not only adapters. Optional analysis gradients are distinct from required recovery state.
+- Saving optimizer state and per-step analysis gradients is optional under the final user-confirmed capture policy. Resuming training nevertheless requires a verified complete recovery checkpoint (adapter, optimizer, scheduler/progress and RNG state as applicable). If that state was not saved, do not resume from an adapter alone: preserve the interrupted attempt and restart from the verified checkpoint-0 under a new recorded attempt, subject to budget reservation and stage approval. Optional capture is not permission for an invalid resume.
 - Prompt/J changes after the pilot require a new immutable version and a complete pilot rerun. Do not mutate an existing production plan.
 
 ## Baseline and measured gate quantities
@@ -119,15 +125,32 @@ Use pilot throughput and observed lengths to re-estimate the full-generation res
 | 1 | Fixed32 k5 pilot, replay evidence, T3 fixture scores, alarm report | Exact replay, score gates and alarm review |
 | 2 / 3 | k0/2/5 on512; bounded retries, response/step records, events, automatic and reviewed labels | Terminal/disposition reconciliation and coverage |
 | 4 | Plain-NLL/length/format/leakage gate sheet, common cohort, bootstrap intervals, budget | Explicit training approval; no baseline/offset |
-| 5 | Seed42 k0/k5 training; saved gold-order slots; adapters0/8/16/32/64, recovery state, logs and manifest | T15 exact initial adapter, T16, verified trainer config and budget |
+| 5 | Seed42 k0/k5 on verified L4; gold-order slots; adapters0/8/16/32/64, logs and manifest; optional recovery state/gradients | T15 exact initial adapter, T16, verified trainer config and budget |
 | 6 | Verified export manifests, network-volume and downloaded copy receipts; Pod-stop request/confirmation | Preserve durable products; no implicit evaluation/internal work |
 
 ## Implementation preflight and unresolved facts
 
 These are source/engineering checks, not permission to choose different scientific controls: audit the actual gold-training runtime manifest; pin a compatible vLLM environment and decoding defaults; verify worker numeric flags; verify real stop-token return/cap semantics; define first-stop validation and same-boundary EOS/cap precedence; specify deterministic fixture identities, word normalization and p90 implementation; bound profiling jobs; implement atomic block sealing, writer ownership, interruption recovery, download receipts and external stop confirmation. Record any unsupported engine capability as blocked with evidence. A missing fact must not be filled from an unrelated evaluation manifest or an engine default.
 
-No implementation begins until the consolidated design is confirmed and implementation is requested. No paid execution follows from this design alone. Separate training approval remains required after the gate. Any remaining policy choice exposed by preflight is brought back before affected execution.
+The consolidated design is now confirmed. Implementation begins only on a separate request. No paid execution follows from this confirmation. The first spend, including sampling-GPU Stage0 tests and Stage0.5 profiling, requires its own explicit go-ahead after preflight. Separate training approval remains required after the gate. Any remaining policy choice exposed by preflight is brought back before affected execution.
 
 ## Evidence and limitations
 
 A targeted local baseline check passed5 tests (6 deselected). The full CPU regression started during design review is still running as of this document update; its result is not yet known. Neither check is sampler qualification or scientific execution evidence. Timing and prices in the supplied proposal remain unverified estimates. No training, GPU sampling, cloud rental or upload was performed during this review. The supplied design remains unchanged in sources; this consolidated design supersedes its conflicting scope, coverage, baseline, merge, termination, replay and budget rules.
+
+## Final user confirmation checklist — 2026-10-28
+
+All items below are incorporated and supersede conflicting statements in the supplied source document.
+
+- Data-recipe framing; no causal on-policyness claim; descriptive gates, baseline/offset not measured.
+- Generate k0/k2/k5 with data seed0; train k0/k5 only after explicit gate approval, seed42. k2 training separately approved; no automatic merging.
+- Do not rerun gold SFT. Reuse verified gold config, exact step batches, logs and checkpoints0/8/16/32/64; require L4 FP32/TF32 match and T15 checkpoint0 identity.
+- Initial attempt plus at most3 model retries; coverage0 passes coverage only;1–5 requires T16 batches3–7 and marked omissions;>5 blocks. No duplication. Three-arm common gate cohort; arm-specific training coverage; symmetric-difference>5 flag.
+- Length-based loop and doubled block safety limit; four attempt end states; same-request engine replay;512 final dispositions per completed arm; separate events.
+- L40S sampling; runtime_hash after Stage0.5; same runtime for arms/retries/resumes; block-boundary state, fixed logical request order and prefix-cache reset; exact pilot resume before Stage2. Configuration changes create new attempts and regenerate all k arms.
+- T3 on20 predeclared traces: exact alignment, mean error<=0.001 nats/token and max token error<=0.01. Fixed J64 and explicit pilot alarms; no automatic changes.
+- Equal-problem NLL including stop; difference-of-medians bootstrap for length; approved whole-problem uncertainty and leakage diagnostics.
+- Required adapter/identity/log/manifest captures; optimizer and per-step gradients optional, with strict recovery-state requirements for any claimed training resume.
+- Deferred with separate approval: evaluation, internals, Stage0 research work (distinct from this sampler's Stage0 setup tests),512×8 baseline/offset,k10,k5+5,self-correct SFT,extra seeds.
+- USD25 ceiling;10/6/9 sub-caps; reservations before launch;80% pause; automatic own-Pod stop only after verified export; explicit deletion/unexported termination approval.
+- Design confirmation grants no paid-job permission. First sampling-GPU spend needs a separate post-preflight go-ahead.
