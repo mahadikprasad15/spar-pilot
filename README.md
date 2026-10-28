@@ -36,6 +36,9 @@ for later conditional edits. Optional initial-gradient collection and CPU
 push/endpoint alignment reports are implemented as well; real collection is
 pending. The optional base-input activation-energy branch also has collection
 and CPU component reports implemented; its real measurements remain pending.
+All15 approved Stage0 software slices are implemented, including optional
+checkpoint trajectories and saved-output length analysis. Real qualification,
+measurement and scientific analysis remain separate execution work.
 
 See [execution and result status](docs/experiments/status.md),
 [measurement conventions](docs/methods.md), and [domain terminology](CONTEXT.md).

@@ -29,12 +29,12 @@ def tensor_file(path, arrays):
     path.write_bytes(len(encoded).to_bytes(8, 'little') + encoded + b''.join(chunks))
 
 
-def sources(root, *, changed_a=False, width=2, output=3):
+def sources(root, *, changed_a=False, width=2, output=3,steps=(0,64)):
     selected = {}
     projections = ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
     for arm in ['sft', 'grpo']:
         checkpoints = {}
-        for step in [0, 64]:
+        for step in steps:
             directory = root / 'inputs' / arm / str(step)
             directory.mkdir(parents=True)
             write_json(directory/'adapter_config.json', dict(r=1, lora_alpha=1, lora_dropout=0,
@@ -58,7 +58,7 @@ def sources(root, *, changed_a=False, width=2, output=3):
             model='Qwen/Qwen2.5-1.5B-Instruct', model_revision='pinned', tokenizer_revision='pinned',
             dtype='float32', source_contract={'kind': 'grpo'} if arm == 'grpo' else {},
             source_evidence={'base_sha256': 'same-base', 'checkpoints': checkpoints},
-            checkpoint_steps=[0,64])
+            checkpoint_steps=list(steps))
         path = root/'inputs'/arm/'activation.prepared.json'
         write_json(path, config)
         write_json(path.parent/'prepare-complete.json', dict(config_sha256=_hash(config),

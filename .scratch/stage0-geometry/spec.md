@@ -620,3 +620,31 @@ Capture on the original150 GSM8K/150 FineWeb fixed inputs, preserving their
 unshifted question/solution/user masks. All selected factors contract the same
 untuned base inputs; one body forward supplies every factor and cutoff. Retain
 FP64 sufficient sums and per-example counts, not full activation tensors.
+
+### Ticket15 trajectory amendments approved 28 October2026
+
+Use measured checkpoints only: no interpolation, nearest-checkpoint matching or
+“equal size” direction claim. Primary parameter size is total Frobenius
+||ΔW|| = sqrt(Σ_m ||b_m||² ||a_m||²), over all adapted matrices under the audited
+rank1/alpha1 convention. The plain sum Σ_m ||b_m||||a_m|| is an additional view
+only, never the denominator of KL/size² or the slope's size axis.
+
+Primary drift is the same per-token FineWeb KL from Ticket06. Retain equal-document
+summaries alongside it. Resample whole documents for both the primary token-ratio
+interval and the equal-document mean interval; individual tokens are not bootstrap
+subjects. Effective-write size is the equal-module mean of each module's token-mean
+||ΔW x||/||W x||, separately by corpus/view, preserving the exact Ticket06/Pilot4
+per-module definition and all module values.
+
+Show log–log curves, with checkpoint0 in a separately labelled linear-origin
+inset (zero has no logarithm; do not insert an arbitrary epsilon). Report
+per-checkpoint token-mean KL / total Frobenius size² where size is positive;
+zero-size ratios are undefined. Report within-runtime/arm fitted log–log slope
+and adjacent observed-checkpoint slopes using positive measured points only.
+The user explicitly approved leaving “near2” unclassified: do not impose a
+numerical band, claim direction sensitivity, or declare the small-update
+approximation valid without a separate criterion.
+
+Proposed follow-up only; do not implement or execute here: exactly match
+GRPO64's parameter size by rescaling SFT64 as W0+c*b*aᵀ, with
+c=||ΔW_GRPO64||/||ΔW_SFT64||, then measure KL under a separately approved plan.

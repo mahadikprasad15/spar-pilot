@@ -15,6 +15,23 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run','status','report','verify','runtime','recover-writer','collection-prepare','collection-predict','collection-run','collection-forecast','collection-freeze','collection-status','collection-verify','collection-recover-writer']:
+        trajectory=commands.add_parser('stage0-trajectory-'+operation,help='optional verified checkpoint geometry, drift-size trajectories and saved lengths')
+        trajectory.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            for option in ['spectral','inputs','selection']:trajectory.add_argument('--'+option,type=Path,required=True)
+            trajectory.add_argument('--name',required=True)
+        else:trajectory.add_argument('--config',type=Path,required=True)
+        if operation in ['report','verify','collection-prepare']:trajectory.add_argument('--name',required=True)
+        if operation=='report':trajectory.add_argument('--collection',type=Path,action='append',default=[])
+        if operation in ['run','collection-run']:
+            trajectory.add_argument('--max-new-units',type=int);trajectory.add_argument('--no-progress',action='store_true')
+        if operation=='collection-run':trajectory.add_argument('--approval',type=Path)
+        if operation in ['collection-predict','collection-freeze']:trajectory.add_argument('--review',type=Path,required=True)
+        if operation=='collection-prepare':
+            trajectory.add_argument('--qualification',type=Path,required=True);trajectory.add_argument('--states',nargs='+')
+            trajectory.add_argument('--context-chunk',type=int,default=32);trajectory.add_argument('--workspace-bytes',type=int,default=536870912)
+        if operation in ['recover-writer','collection-recover-writer']:trajectory.add_argument('--owner-token',required=True);trajectory.add_argument('--review-notes',required=True)
     for operation in ['prepare','predict','runtime','run','forecast','freeze','status','verify-measurement','report','verify','recover-writer']:
         energy=commands.add_parser('stage0-energy-'+operation,help='optional base-input principal/rest/cross energy measurement')
         energy.add_argument('--output-root',type=Path,required=True)
@@ -532,7 +549,29 @@ def main(argv=None, *, dependencies=None):
         if name=='tokens-report': token.add_argument('--name', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command.startswith('stage0-energy-'):
+        if args.command.startswith('stage0-trajectory-'):
+            from pilot_eval import stage0_trajectory as workflow
+            operation=args.command.removeprefix('stage0-trajectory-')
+            if operation=='prepare':result=workflow.prepare(args.spectral,args.inputs,args.selection,args.output_root,args.name)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,max_new_units=args.max_new_units,progress=not args.no_progress)
+            elif operation in ['report','verify']:
+                from pilot_eval import stage0_trajectory_report
+                result=stage0_trajectory_report.report(args.config,args.output_root,args.name,collection_paths=args.collection) if operation=='report' else stage0_trajectory_report.verify(args.config,args.output_root,args.name)
+            elif operation=='recover-writer':result=workflow.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            elif operation=='runtime':
+                from pilot_eval.stage0_trajectory_collect import runtime
+                result=runtime(args.config,args.output_root,dependencies=dependencies)
+            elif operation.startswith('collection-'):
+                from pilot_eval import stage0_trajectory_collect as collector
+                op=operation.removeprefix('collection-')
+                if op=='prepare':result=collector.prepare(args.config,args.qualification,args.output_root,args.name,dependencies=dependencies,states=args.states,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
+                elif op=='run':result=collector.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
+                elif op in ['predict','freeze']:result=getattr(collector,op)(args.config,args.output_root,args.review)
+                elif op=='recover-writer':result=collector.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+                else:result=getattr(collector,op)(args.config,args.output_root)
+            else:result=workflow.status(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-energy-'):
             from pilot_eval import stage0_energy as workflow
             operation=args.command.removeprefix('stage0-energy-')
             if operation=='prepare':result=workflow.prepare(args.spectral,args.qualification,args.inputs,args.random,args.output_root,args.name,batches_per_unit=args.batches_per_unit)

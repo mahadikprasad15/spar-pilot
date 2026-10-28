@@ -15,7 +15,20 @@ def interval(sums,counts,draws):
     if sums.ndim!=1 or sums.shape!=counts.shape or not len(sums) or np.any(counts<=0) or not np.isfinite(sums).all() or draws.ndim!=2 or draws.shape[1]!=len(sums) or not np.issubdtype(draws.dtype,np.integer) or draws.min()<0 or draws.max()>=len(sums):raise ValueError('Matched whole-document sums/counts and resampling indices required.')
     means=sums/counts;replicates=means[draws].mean(1)
     return dict(equal_example_mean=float(means.mean()),token_mean=float(sums.sum()/counts.sum()),
-        interval_95=np.percentile(replicates,[2.5,97.5]).tolist(),documents=len(sums),tokens=int(counts.sum()),bootstrap_unit='whole document')
+        interval_95=np.percentile(replicates,[2.5,97.5]).tolist(),token_interval_95=np.percentile(sums[draws].sum(1)/counts[draws].sum(1),[2.5,97.5]).tolist(),documents=len(sums),tokens=int(counts.sum()),bootstrap_unit='whole document')
+
+
+def log_slopes(points):
+    """Measured positive points only; zeros never become arbitrary log epsilons."""
+    valid=sorted([r for r in points if r['size']>0 and r['kl']>0],key=lambda r:r['step'])
+    adjacent=[]
+    for a,b in zip(valid,valid[1:]):
+        value=None if a['size']==b['size'] else float(np.log(b['kl']/a['kl'])/np.log(b['size']/a['size']))
+        adjacent.append(dict(from_step=a['step'],to_step=b['step'],slope=value))
+    x=np.log([r['size'] for r in valid]);y=np.log([r['kl'] for r in valid])
+    fitted=None if len(valid)<2 or np.ptp(x)==0 else float(np.sum((x-x.mean())*(y-y.mean()))/np.sum((x-x.mean())**2))
+    return dict(fitted_slope=fitted,adjacent_slopes=adjacent,positive_points=len(valid),excluded_nonpositive_steps=[r['step'] for r in points if r['size']<=0 or r['kl']<=0],near_two='unclassified by approval',direction_sensitivity_claim=False,
+        interpretation='KL/size² is descriptive. No numerical near-2 criterion or small-update validity claim has been declared.')
 
 
 def lengths(reference,edited,draws):

@@ -9,7 +9,7 @@
   `spec.md`; the approved slice breakdown is in `ticket-proposal.md`.
 - The user approved the public saved-workflow test boundary, all 15 slices and
   their dependency edges on 2026-10-26. Spec and individual `ready-for-agent`
-  issues are published in this local tracker. Tickets 01-14 are implemented;
+  issues are published in this local tracker. Tickets 01-15 are implemented;
   real source/weight execution remains separately pending.
 
 ## Decisions so far
@@ -73,8 +73,7 @@
 
 - Ticket 07 execution/validation record: `execution-ticket07.md`; 73 affected
   tests passed on 2026-10-27. Ticket 08 implements rotation/intruder geometry;
-  its real CPU execution is pending. Conditional Ticket 09 is now implemented; Ticket 10 is also implemented; optional Ticket 15 is the next implementation
-  frontier. Neither conditional nor supporting work is required to run the primary path.
+  its real CPU execution is pending. Conditional Ticket 09 is now implemented; Ticket 10 is also implemented; optional Ticket 15 is implemented; all approved slices are now implemented. Neither conditional nor supporting work is required to run the primary path.
 
 - Ticket 08: CPU rotation/intruder geometry implemented; `execution-ticket08.md`.
   No small-update skip, top-20 detection/top-40 matching pool, floored subspaces,
@@ -105,7 +104,7 @@
   separately frozen measured budgets, same-sampled-runtime enforcement, saved
   problem bootstraps, positional summaries and unchanged ±0.02 gate. CPU32–33 /
   GPU26–31. `execution-ticket12.md` separates software validation from pending
-  real GPU scoring and scientific gate evaluation. Ticket13 is implemented; Ticket14 is implemented; Ticket15 is next.
+  real GPU scoring and scientific gate evaluation. Ticket13 is implemented; Ticket14 is implemented; Ticket15 is implemented; the approved software plan is complete.
 
 - Ticket13: matched initial CE/GRPO gradients, exact A₀ audit, independent
   reconstruction, measured budgets, resume, CPU summaries and prediction-bound
@@ -116,3 +115,9 @@
   normalized projection checks, bounded profile/freeze/resume, CPU ratios/plots
   and prediction provenance are implemented. CPU37–39 / GPU38–43.
   `execution-ticket14.md` records validation; real measurement remains pending.
+
+- Ticket15: verified original-checkpoint geometry, historical/source-separated
+  trajectories, optional missing-only paired KL/write collection, document-level
+  uncertainty, approved size/slopes and saved-output length analysis implemented.
+  CPU40–42 / GPU44–49. `execution-ticket15.md` separates software validation
+  from pending real execution. All15 implementation tickets are resolved.

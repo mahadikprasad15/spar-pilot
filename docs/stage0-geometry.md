@@ -1335,3 +1335,152 @@ arm and descriptive module/layer summaries do not establish population effects.
 `energy-verify-measurement` checks collection; `energy-report`/`energy-verify`
 produce and verify the CPU result without importing model libraries. Scientific
 execution remains separate from successful software fixtures.
+
+## Optional checkpoint trajectories (Ticket15)
+
+This final software slice audits the original0/8/16/32/64 adapters, computes
+principal input/output geometry, imports verified historical KL/write products,
+and optionally collects only missing compatible measurements. It reuses existing
+adapters; there is no training, answer generation or equal-size edit experiment.
+Missing optional products do not block the primary intervention report.
+
+### CPU source selection and report
+
+Use CPU40–42 after the base spectral cache exists. The selection file contains:
+
+```json
+{
+  "products": [
+    {"kind": "stage0-drift", "config": "plans/<name>/stage0.drift.json"},
+    {"kind": "pilot4-tokens", "config": "plans/<name>/tokens.execution.json"},
+    {"kind": "pilot3-writes", "config": "plans/<name>/activation.execution.json"},
+    {"kind": "trajectory-collection", "config": "plans/<name>/stage0.trajectory.collection.json"}
+  ],
+  "random": "plans/pilot4-grpo-fp32-v1-random-writes-v1/activation.prepared.json",
+  "evaluation": {"kind": "behaviour", "config": "plans/<name>/behaviour.config.json"}
+}
+```
+
+Only include products you intend to inspect. An empty products list still gives
+geometry and an honest missing-measurement report. `evaluation` is optional and
+can instead select `kind: stage0-evaluation` with its saved execution config.
+A missing/incomplete selected product is recorded; an altered or invalid selected
+product fails verification. Do not supply HTML or aggregate tables as raw evidence.
+
+`stage0-trajectory-prepare` verifies original checkpoint seals/tensors and fixed
+150 GSM8K/150 FineWeb inputs. Original intermediate checkpoints that are unavailable
+stay missing; paths or new checkpoints are never guessed. `trajectory-run` resumes
+sealed CPU geometry/import units. Geometry includes k30/k50/k70 π_in/π_out and chance
+values, checkpoint norm products and the verified spectral bases. The primary
+parameter size uses all adapted module deltas, not just a fixture/test subset.
+
+Imports support the existing Stage0 drift collector, Pilot4 supplemental token
+workflow and Pilot3 fixed-write workflow. Each source's public verifier checks raw
+shards, mappings, factor hashes and completion receipts before normalization.
+Historical raw coefficients are not regraded: batch sensitivity remains descriptive,
+while repeat/chunk/KL/reconstruction/mapping/integrity gates remain strict.
+
+Complementary KL and effective writes are combined only when their recorded session,
+full runtime, model/base identity, input identity and numerical batching schedule
+agree. Same GPU type is insufficient. If session identity is absent, products are
+kept in separate comparison groups. No reward-rate heuristic or fitted compatibility
+envelope is introduced. Existing incompatible products can remain visible as
+separate panels instead of being silently mixed into a trajectory.
+
+`trajectory-report --name <snapshot>` works without new GPU measurements; missing
+coverage is explicit. After optional collection, pass `--collection <config>` and
+choose a new report name. Existing report snapshots are immutable. `trajectory-verify`
+rechecks the report and its saved-workflow source chain on CPU.
+
+### Optional missing-measurement collection
+
+GPU setup1–4 and44–49 inspect the current pinned runtime, prepare a separately named
+collection, freeze supporting hypotheses, profile, approve measured production,
+resume and reconcile actual usage. Select available aliases such as `sft-8`,
+`grpo-32`, `sft-64` or `random-64`; unavailable original states cannot be selected.
+
+The source audit and CPU imports run first. Exact same-session, same-input and
+same-scheduling paired KL/write records can be reused. Only sequences without
+complete paired records are scheduled. On a new session, old values remain a
+separate product and the required new KL/write pairs are collected together.
+No old effective-write number is used as an input to a newly measured KL point.
+If every selected record is reusable, completion loads no model and reserves no
+GPU budget.
+
+Missing collection uses Ticket06's actual local FP32 engine: no autocast/TF32,
+full-vocabulary variant||untuned KL with FP64 reduction, bounded head workspace,
+strict disabled-reference/switch restoration, rank1 branch reconstruction,
+repeat/chunk/mapping checks, exact-zero checkpoint controls and full weight
+integrity. Per-token KL positions use the same next-target convention as Ticket06;
+effective writes use unshifted adapted-module inputs. The norms and KL share the
+same forward/session. No production raw-coefficient arrays or relaxed sensitivity
+gates are added.
+
+The bounded profile uses the first two missing documents per checkpoint/corpus.
+Those units are reused; they are not an extra full production sweep. Reference
+restoration and strict repeat/chunk diagnostics add calls, explicitly noted in the
+manifest and forecast. Timing is measured per checkpoint/corpus before a separate
+production approval. All reservations use the single cumulative20-unit ceiling.
+A changed runtime or altered source is rejected before model loading. Graceful
+interruption preserves sealed units and attempts a remaining-budget-bounded full
+integrity check. Hard kills/unknown timings remain visible for reconciliation.
+
+### Size, KL, uncertainty and slopes
+
+Primary size is total Frobenius `sqrt(sum_m ||b_m||²||a_m||²)`, valid for disjoint
+rank1/alpha1 module deltas. Also retain the plain norm-product sum as an additional
+view. FineWeb token-mean KL is primary; equal-document KL remains alongside it.
+Whole-document bootstrap resamples saved document IDs (10000 draws, seed42),
+recomputing the token-weighted ratio for primary intervals. Per-token positions
+and denominators remain available. Intervals are pointwise and do not represent
+training-seed uncertainty.
+
+The secondary size axis is the equal-module mean of each module's token-mean
+`||ΔW x||/||W x||`, separately within corpus/view. Every module's value, counted
+tokens and equal-example sensitivity are retained. It is not an aggregate
+ratio of output norms and does not preferentially weight wide modules.
+
+Plots connect measured checkpoints in step order without interpolation or nearest
+size matching. Primary/additional size and effective-write plots are log–log for
+positive points. Step0 appears in a labelled linear-origin inset; no arbitrary
+log epsilon is substituted. Plot panels remain separated by runtime group.
+
+Per-point `KL/size²` uses primary token-mean KL and total Frobenius size. Zero-size
+ratios are undefined. Within each runtime/arm/corpus/view, save the ordinary
+least-squares slope of log(KL) against log(size) over positive observed points
+and the secant slopes between adjacent observed checkpoints. Fewer than two
+positive distinct sizes gives an undefined fitted slope. No numerical “near2”
+classification was approved, so the report makes no direction-sensitivity or
+small-update-validity claim from these descriptive quantities. KL by itself is
+not a measure of behavioral damage.
+
+The exact equal-size SFT64-versus-GRPO64 experiment is a proposed follow-up only:
+rescale SFT64 by the ratio of total Frobenius sizes, then measure its KL under a
+separately approved plan. This ticket neither constructs nor evaluates that edit.
+
+### Saved-output endpoint length panel
+
+Optional verified endpoint outputs are analyzed without new generation. The
+Stage0 evaluation supplies SFT64/GRPO64; the verified Pilot4 behavior workflow can
+also supply each arm's0-versus64 pair. Report median paired content-token change,
+whole-item bootstrap interval, shorter-response share and both cap rates. This
+is the median of paired differences, not a difference of marginal medians.
+Question/prompt identities must match. The panel stays separate from KL and makes
+no reasoning-quality claim or implied cross-session behavior/KL join.
+
+### Canonical outputs and completion
+
+- CPU plan and units: `plans/<name>/stage0.trajectory.json` and
+  `runs/stage0/<name>/trajectory/`, with source-state inventory, geometry units,
+  verified normalized saved products, fixed inputs, progress and diagnostics.
+- Optional collection: `plans/<name>/stage0.trajectory.collection.json` and
+  `runs/stage0/<name>/trajectory-collection/`, with reused source records, raw
+  KL/write NPZ shards, mapping/validation JSON, hypotheses, timings, integrity,
+  budget references and completion seals.
+- Immutable report: `reports/<snapshot>/report.html`, `results/results.json`,
+  geometry/KL-size/module-write CSVs, fitted/adjacent `slopes.json`, saved bootstrap
+  indices/ID mapping and standalone SVG figures.
+
+CPU report completion is distinct from full drift coverage, GPU qualification,
+real model execution or completion of the primary causal experiment. Missing
+optional work never becomes an implicit prerequisite for E0.4.

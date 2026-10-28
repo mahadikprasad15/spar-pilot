@@ -104,3 +104,16 @@ checks, bounded budgets/resume and CPU tables/plots are implemented. CPU37–39 
 GPU38–43 expose the branch. Test artifacts are synthetic software evidence;
 real GPU measurements remain pending. See the
 [execution record](../../.scratch/stage0-geometry/execution-ticket14.md).
+
+### Optional checkpoint trajectories — 28 October2026
+
+Ticket15 implements original-checkpoint audit/geometry, verified historical
+products, conservative runtime separation, optional missing-only paired KL/write
+collection and CPU trajectory/length reports. Primary size is total Frobenius RSS;
+FineWeb token-mean KL, equal-module effective writes, KL/size² and unclassified
+within-run log–log slopes follow the approved conventions. Exact equal-size
+rescaling remains a proposed follow-up only. CPU40–42 / GPU44–49.
+
+All15 approved Stage0 software slices are implemented. This does not establish
+real source execution, CUDA qualification or scientific completion. See the
+[Ticket15 execution record](../../.scratch/stage0-geometry/execution-ticket15.md).

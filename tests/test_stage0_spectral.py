@@ -32,8 +32,8 @@ class TinyWeights:
             return arrays[entry['key']]
 
 
-def fixture(root, *, isotropic=False):
-    selection=sources(root,width=64,output=64)
+def fixture(root, *, isotropic=False,**source_options):
+    selection=sources(root,width=64,output=64,**source_options)
     assert command(root,'prepare','--selection',selection,'--name','audit')==0
     audit=root/'plans/audit/stage0.plan.json'
     assert command(root,'audit','--config',audit)==0
