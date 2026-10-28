@@ -37,5 +37,11 @@
 ## Final confirmation
 User confirmed the consolidated design and checklist on2026-10-28. Explicit additions: data seed0, L40S sampling, verified L4 training, no gold rerun, exact checkpoint0 and gold logs, optional optimizer/gradient capture. Weights-only mid-training resume is invalid; without recovery state restart from checkpoint0 under the budget policy. First sampling-GPU spend needs a separate post-preflight go-ahead.
 
+## Specification and proposed tickets
+- User requested to-spec and to-tickets; approved the public saved-workflow test boundary on2026-10-28.
+- spec.md published locally with ready-for-agent status.
+- ticket-proposal.md contains10 vertical slices; granularity and edges await approval before individual issue publication.
+- Source original and consolidated design remain preserved; no implementation or cloud launch started.
+
 ## Next
-Design confirmed. Spec/tickets or implementation only on user request; no cloud launch is implied.
+Review ticket breakdown. Publish individual ready-for-agent issues only after approval; no paid job or push is implied.
