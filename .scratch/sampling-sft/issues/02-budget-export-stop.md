@@ -4,7 +4,7 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Type:** task
 
@@ -31,3 +31,5 @@ Parent: confirmed Sampling SFT specification. Read the confirmed design amendmen
 ## Comments
 
 2026-10-28: User approved the ten slices and all declared dependency edges. Published locally; not claimed or implemented.
+
+2026-10-28: Claimed at user request. CLI/run-script workflow is primary; notebook optional. Fake-provider testing only, no paid job.

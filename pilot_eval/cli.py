@@ -15,6 +15,18 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['init', 'status', 'reserve', 'settle', 'extend']:
+        budget = commands.add_parser('sampling-sft-budget-' + operation, help='shared USD ledger; reservations do not launch paid work')
+        budget.add_argument('--output-root', type=Path, required=True)
+        if operation in ['init', 'reserve']:
+            budget.add_argument('--config', type=Path, required=True)
+        if operation in ['reserve', 'extend']:
+            budget.add_argument('--request', type=Path, required=True)
+            budget.add_argument('--approval', type=Path)
+        if operation in ['settle', 'extend']:
+            budget.add_argument('--job-id', required=True)
+        if operation == 'settle':
+            budget.add_argument('--observation', type=Path, required=True)
     for operation in ['prepare', 'audit', 'status', 'verify', 'recover-writer']:
         sampling = commands.add_parser('sampling-sft-' + operation, help='CPU Sampling SFT source audit and immutable plan')
         sampling.add_argument('--output-root', type=Path, required=True)
@@ -672,6 +684,15 @@ def main(argv=None, *, dependencies=None):
                 result={k:v for k,v in result.items() if k!='contrasts'}
                 result['detail']='All contrast tables, raw pairs and plots are saved in the findings directory.'
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-budget-'):
+            from pilot_eval import sampling_sft_budget as budget
+            operation = args.command.removeprefix('sampling-sft-budget-')
+            if operation == 'init': result = budget.initialize(args.config, args.output_root)
+            elif operation == 'reserve': result = budget.reserve(args.config, args.output_root, args.request, args.approval)
+            elif operation == 'extend': result = budget.extend(args.output_root, args.job_id, args.request, args.approval)
+            elif operation == 'settle': result = budget.settle(args.output_root, args.job_id, args.observation)
+            else: result = budget.status(args.output_root)
+            print(json.dumps(result, indent=2))
         elif args.command.startswith('sampling-sft-'):
             from pilot_eval import sampling_sft
             operation = args.command.removeprefix('sampling-sft-')
