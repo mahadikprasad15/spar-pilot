@@ -32,7 +32,7 @@
 - Actual training runtime identity, engine compatibility/numeric flags and stop semantics.
 - Deterministic fixtures/metric serialization and bounded profiling.
 - Atomic resume, export/download receipts and confirmed Pod shutdown.
-- Full CPU regression still in progress at this update.
+- Full local regression:644 passed,39 skipped,4 warnings in2578.05s; some Torch-backed checks skipped due a broken local Torch import.
 
 ## Final confirmation
 User confirmed the consolidated design and checklist on2026-10-28. Explicit additions: data seed0, L40S sampling, verified L4 training, no gold rerun, exact checkpoint0 and gold logs, optional optimizer/gradient capture. Weights-only mid-training resume is invalid; without recovery state restart from checkpoint0 under the budget policy. First sampling-GPU spend needs a separate post-preflight go-ahead.
@@ -40,8 +40,8 @@ User confirmed the consolidated design and checklist on2026-10-28. Explicit addi
 ## Specification and proposed tickets
 - User requested to-spec and to-tickets; approved the public saved-workflow test boundary on2026-10-28.
 - spec.md published locally with ready-for-agent status.
-- ticket-proposal.md contains10 vertical slices; granularity and edges await approval before individual issue publication.
+- User approved all10 slices and edges; issues/ contains10 separate ready-for-agent tickets. None claimed or implemented.
 - Source original and consolidated design remain preserved; no implementation or cloud launch started.
 
 ## Next
-Review ticket breakdown. Publish individual ready-for-agent issues only after approval; no paid job or push is implied.
+Ticket01 is the initial implementation frontier, awaiting an implementation request. No paid job or push is implied.

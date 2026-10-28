@@ -136,7 +136,7 @@ The consolidated design is now confirmed. Implementation begins only on a separa
 
 ## Evidence and limitations
 
-A targeted local baseline check passed5 tests (6 deselected). The full CPU regression started during design review is still running as of this document update; its result is not yet known. Neither check is sampler qualification or scientific execution evidence. Timing and prices in the supplied proposal remain unverified estimates. No training, GPU sampling, cloud rental or upload was performed during this review. The supplied design remains unchanged in sources; this consolidated design supersedes its conflicting scope, coverage, baseline, merge, termination, replay and budget rules.
+A targeted local baseline check passed5 tests (6 deselected). The full local regression completed:644 passed,39 skipped,4 warnings in2578.05 seconds. Some model-backed checks were skipped because the local Torch installation fails to import (missing libtorch_cpu.dylib). This is not full model-backed validation. Neither check is sampler qualification or scientific execution evidence. Timing and prices in the supplied proposal remain unverified estimates. No training, GPU sampling, cloud rental or upload was performed during this review. The supplied design remains unchanged in sources; this consolidated design supersedes its conflicting scope, coverage, baseline, merge, termination, replay and budget rules.
 
 ## Final user confirmation checklist — 2026-10-28
 

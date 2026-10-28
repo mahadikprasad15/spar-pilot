@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Date: 2026-10-28
-Approval: scientific design and public saved-workflow test boundary confirmed by the user. Ticket breakdown approval is pending. Publishing this spec authorizes no paid job. First GPU spend requires explicit post-preflight approval; training requires separate post-gate approval.
+Approval: scientific design and public saved-workflow test boundary confirmed by the user. The user also approved the ten-ticket breakdown and dependency edges; individual tickets are published locally. Publishing this spec authorizes no paid job. First GPU spend requires explicit post-preflight approval; training requires separate post-gate approval.
 
 ## Problem Statement
 

@@ -1,6 +1,6 @@
 # Sampling SFT — proposed vertical slices
 
-Status: awaiting user approval of granularity and dependency edges
+Status: approved by user on 2026-10-28; ten individual ready-for-agent tickets published locally
 Date: 2026-10-28
 Parent: confirmed Sampling SFT specification
 
@@ -97,6 +97,6 @@ All slices use the approved public saved-workflow boundary and the same incremen
 - 10 needs the gate and training product contracts. Its partial-status mode does not require completed real GPU execution to be implemented or tested.
 - Every ticket integrates its notebook/runbook route;10 consolidates them rather than introducing the first runnable notebook.
 
-## Approval request
+## Approval and publication
 
-Review granularity, genuine blocking edges, and whether any slice should be merged or split. Once approved, publish one ready-for-agent file per ticket in dependency order. Do not claim or implement tickets merely because this proposal exists.
+The user approved all ten slices and dependency edges on2026-10-28. Ten separate ready-for-agent tickets are published in dependency order. Ticket01 is the initial frontier. No ticket is claimed or implemented; no paid execution, deletion or GitHub push is authorized by publication.
