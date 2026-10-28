@@ -44,6 +44,11 @@ def receipt(manifest_path,copy_root,role,receipt_path,*,provider=None):
     if role not in ['network','downloaded']:raise ValueError('Unknown export role.')
     copy_root=Path(copy_root).resolve()
     value=verify_manifest(manifest_path,copy_root)
+    marker=Path(manifest_path).resolve().parent/'work-complete.json'
+    expected=dict(manifest_sha256=value['sha256'],job_sha256=value['job_sha256'])
+    if marker.exists() and json.loads(marker.read_text())!=expected:
+        raise ValueError('Export work marker differs from the verified manifest.')
+    if not marker.exists():save(marker,expected)
     actual_host=host(provider)
     if role=='downloaded' and not value['simulation'] and actual_host==value['worker_host']:
         raise ValueError('A live downloaded receipt must be verified on the external download host.')
@@ -61,7 +66,10 @@ def receipt(manifest_path,copy_root,role,receipt_path,*,provider=None):
 def export(manifest_path,root,copy_root,role,receipt_path,*,provider=None):
     root=Path(root).resolve();copy_root=Path(copy_root).resolve()
     value=verify_manifest(manifest_path,root)
-    if copy_root==root or copy_root.is_relative_to(root/'runs/sampling-sft'):
+    if copy_root==root:
+        if role!='network':raise ValueError('Downloaded copy must be independent of the worker artifact root.')
+        return receipt(manifest_path,copy_root,role,receipt_path,provider=provider)
+    if copy_root.is_relative_to(root/'runs/sampling-sft'):
         raise ValueError('Use a separate export root, not the active job tree.')
     # Never overwrite a different existing payload or follow a destination escape.
     for name,entry in value['files'].items():
@@ -83,6 +91,7 @@ def export(manifest_path,root,copy_root,role,receipt_path,*,provider=None):
     if target_manifest.exists() and json.loads(target_manifest.read_text())!=value:
         raise ValueError('Destination manifest differs.')
     save(target_manifest,value)
+    save(target_manifest.parent/'work-complete.json',dict(manifest_sha256=value['sha256'],job_sha256=value['job_sha256']))
     return receipt(manifest_path,copy_root,role,receipt_path,provider=provider)
 
 
@@ -105,3 +114,17 @@ def check_receipts(manifest,network_path,download_path,root):
     if (records[0]['host'],records[0]['copy_root'])==(records[1]['host'],records[1]['copy_root']):
         raise ValueError('Network and downloaded receipts describe the same copy.')
     return records
+
+
+def persist_control(directory,root,network_root):
+    """Persist dynamic stop-intent evidence separately from immutable payloads."""
+    import os
+    target_dir=inside(Path(network_root).resolve(),directory.relative_to(root))
+    for name in ['state.json','events.jsonl']:
+        source=directory/name;target=target_dir/name
+        if source.resolve()==target.resolve():continue
+        target.parent.mkdir(parents=True,exist_ok=True)
+        temporary=target.with_suffix(target.suffix+'.pending')
+        with temporary.open('wb') as stream:
+            stream.write(source.read_bytes());stream.flush();os.fsync(stream.fileno())
+        temporary.replace(target)

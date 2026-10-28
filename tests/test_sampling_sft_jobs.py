@@ -17,7 +17,7 @@ class Provider:
 
     def own_pod_id(self):return 'fixture-pod'
     def inspect(self,pod_id):
-        return dict(id=pod_id,desiredStatus='EXITED' if self.stopped else 'RUNNING',networkVolumeId='volume-1')
+        return dict(id=pod_id,desiredStatus='EXITED' if self.stopped else 'RUNNING',networkVolumeId='volume-1',costPerHr='1')
     def stop(self,pod_id):
         self.calls.append(pod_id)
         if self.fail_stop:raise RuntimeError('provider stop failed')
@@ -94,7 +94,7 @@ def test_real_mode_cannot_launch_without_source_preflight_and_explicit_approval(
     job=prepared(tmp_path)
     value=json.loads(job.read_text())['request']
     value.update(job_id='paid',kind='gpu',mode='runpod',rate_usd_per_hour='1',estimated_hours='0.1',
-                 setup_hours='0.01',network_volume_id='volume-1',command=['python','-V'])
+                 setup_hours='0.01',network_volume_id='volume-1',command=['python','-m','pilot_eval','sampling-sft-fixture'])
     path=write(tmp_path/'paid-request.json',value)
     plan=tmp_path/'plans/budget-test/sampling-sft.plan.json'
     assert cli(tmp_path,'prepare','--config',plan,'--request',path)==0
@@ -132,7 +132,7 @@ def paid_job(root,template):
     from pilot_eval.training import file_hash
     shutil.copytree(template,root,dirs_exist_ok=True)
     plan=root/'plans/sample/sampling-sft.plan.json'
-    request=dict(job_id='paid',kind='gpu',stage='sampling',mode='runpod',command=['reviewed-fixture-command'],
+    request=dict(job_id='paid',kind='gpu',stage='sampling',mode='runpod',command=['python','-m','pilot_eval','sampling-sft-fixture'],
         outputs=['runs/sampling-sft/sample/payload/result.json'],network_volume_id='volume-1',
         rate_usd_per_hour='1',estimated_hours='0.1',setup_hours='0.01')
     request_path=write(root/'paid-request.json',request)
@@ -197,3 +197,153 @@ def test_missing_download_blocks_execute_without_automatic_stop(tmp_path):
                '--download-receipt',tmp_path/'not-yet-downloaded.json','--max-wait-seconds','0')==1
     assert 'stop-requested' not in (job.parent/'events.jsonl').read_text()
     assert 'export-blocked' in (job.parent/'events.jsonl').read_text()
+
+
+def test_live_cost_cannot_release_reservation_before_shutdown_evidence(tmp_path,source_template):
+    from test_sampling_sft_budget import settle
+    job,approval,provider=paid_job(tmp_path,source_template)
+    assert cli(tmp_path,'run','--job',job,'--approval',approval,provider=provider)==0
+    assert settle(tmp_path,'paid','0.1')==1
+    assert ledger(tmp_path)['reserved_usd']=='0.160000'
+
+
+def test_already_durable_network_tree_can_be_verified_without_second_copy(tmp_path,source_template):
+    job,approval,provider=paid_job(tmp_path,source_template)
+    assert cli(tmp_path,'run','--job',job,'--approval',approval,provider=provider)==0
+    receipt=tmp_path/'network-in-place.json'
+    assert cli(tmp_path,'export','--job',job,'--copy-root',tmp_path,'--role','network',
+               '--receipt',receipt,provider=provider)==0
+    assert json.loads(receipt.read_text())['copy_root']==str(tmp_path.resolve())
+
+
+def test_provider_quote_above_reservation_rate_blocks_child_launch(tmp_path,source_template):
+    job,approval,provider=paid_job(tmp_path,source_template)
+    provider.inspect=lambda pod:dict(id=pod,desiredStatus='RUNNING',networkVolumeId='volume-1',costPerHr='99')
+    assert cli(tmp_path,'run','--job',job,'--approval',approval,provider=provider)==1
+    assert provider.calls==[]
+
+
+def test_real_adapter_uses_only_inspect_and_own_stop_without_logging_credentials(monkeypatch):
+    from types import SimpleNamespace
+    from pilot_eval.sampling_sft_provider import RunPodProvider
+    calls=[]
+    def external(argv,**kwargs):
+        calls.append(argv)
+        return SimpleNamespace(stdout=json.dumps(dict(id='own-pod',desiredStatus='RUNNING',
+                    networkVolumeId='v',costPerHr='1',env={'RUNPOD_API_KEY':'secret'})))
+    monkeypatch.setenv('RUNPOD_POD_ID','own-pod')
+    monkeypatch.setattr('pilot_eval.sampling_sft_provider.subprocess.run',external)
+    provider=RunPodProvider()
+    assert 'env' not in provider.inspect('own-pod')
+    provider.stop('own-pod')
+    with pytest.raises(ValueError):provider.stop('another-pod')
+    assert calls==[['runpodctl','pod','get','own-pod'],['runpodctl','pod','stop','own-pod']]
+
+
+def test_command_runner_owns_a_process_group_for_timeout_cleanup(tmp_path,monkeypatch):
+    import subprocess
+    from pilot_eval.sampling_sft_provider import RunPodProvider
+    captured={}
+    class Process:
+        pid=999999
+        returncode=-15
+        attempts=0
+        def __init__(self,argv,**kwargs):captured.update(kwargs)
+        def wait(self,timeout):
+            self.attempts+=1
+            if self.attempts==1:raise subprocess.TimeoutExpired('fixture',timeout)
+            return self.returncode
+    killed=[]
+    monkeypatch.setattr('pilot_eval.sampling_sft_provider.subprocess.Popen',Process)
+    monkeypatch.setattr('pilot_eval.sampling_sft_provider.os.killpg',lambda pid,sig:killed.append((pid,sig)))
+    provider=RunPodProvider()
+    result=provider.run_job({'command':['fake']},tmp_path,tmp_path/'console.log',0.01)
+    assert captured['start_new_session'] is True
+    assert killed and killed[0][0]==999999
+    assert result['timed_out'] is True
+
+
+def test_external_bundle_confirmation_can_settle_the_authoritative_ledger(tmp_path,source_template):
+    from test_sampling_sft_budget import cli as budget_cli
+    job,approval,provider=paid_job(tmp_path,source_template)
+    assert cli(tmp_path,'run','--job',job,'--approval',approval,provider=provider)==0
+    network,downloaded,client=paid_receipts(tmp_path,job,provider)
+    assert cli(tmp_path,'finish','--job',job,'--network-receipt',network,'--download-receipt',downloaded,provider=provider)==0
+    client.stopped=True
+    copy_root=tmp_path/'downloaded'
+    copied_job=copy_root/job.relative_to(tmp_path)
+    assert cli(copy_root,'confirm','--job',copied_job,provider=client)==0
+    proof=tmp_path/'shutdown-receipt.json'
+    proof.write_bytes((copied_job.parent/'shutdown-receipt.json').read_bytes())
+    observation=write(tmp_path/'bill.json',dict(event_id='final-bill',actual_usd='0.12',
+        evidence='fake-provider test bill',reviewer='human',notes='Entire allocation including setup and idle',
+        shutdown_receipt=str(proof.relative_to(tmp_path))))
+    assert budget_cli(tmp_path,'settle','--job-id','paid','--observation',observation)==0
+    assert ledger(tmp_path)['spent_usd']=='0.120000'
+    assert ledger(tmp_path)['reserved_usd']=='0.000000'
+
+
+def test_script_is_the_same_public_noop_execute_workflow(tmp_path):
+    import subprocess,sys
+    job=prepared(tmp_path)
+    assert cli(tmp_path,'run','--job',job)==0
+    copy_receipt(tmp_path,job,tmp_path/'network','network')
+    downloaded=copy_receipt(tmp_path,job,tmp_path/'downloaded','downloaded')
+    repo=Path(__file__).parents[1]
+    result=subprocess.run([sys.executable,str(repo/'scripts/run_sampling_sft_job.py'),
+        '--job',str(job),'--output-root',str(tmp_path),'--network-root',str(tmp_path/'network'),
+        '--download-receipt',str(downloaded),'--max-wait-seconds','0'],cwd=repo,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    assert 'noop-completed' in result.stdout
+
+
+def test_blocked_export_event_obeys_the_same_single_writer_lock(tmp_path,monkeypatch):
+    from pilot_eval import sampling_sft_jobs as jobs
+    from pilot_eval.training import run_lock
+    job=prepared(tmp_path)
+    original=jobs._event
+    def checked(directory,plan,kind,**extra):
+        if kind=='export-blocked':
+            with pytest.raises(RuntimeError):
+                with run_lock(directory):pass
+        return original(directory,plan,kind,**extra)
+    monkeypatch.setattr(jobs,'_event',checked)
+    assert cli(tmp_path,'execute','--job',job,'--network-root',tmp_path/'network',
+               '--download-receipt',tmp_path/'missing-receipt.json','--max-wait-seconds','0')==1
+
+
+@pytest.mark.parametrize('command',[['runpodctl','pod','delete','other'],['bash','-c','unsafe'],
+                                     ['python','-c','unsafe']])
+def test_scientific_job_approval_cannot_be_used_as_a_cloud_or_shell_launcher(tmp_path,command):
+    plan=setup(tmp_path)
+    request=dict(job_id='unsafe',kind='gpu',stage='sampling',mode='runpod',command=command,
+        outputs=['runs/sampling-sft/budget-test/test/result.json'],network_volume_id='volume-1',
+        rate_usd_per_hour='1',estimated_hours='0.1',setup_hours='0')
+    path=write(tmp_path/'unsafe.json',request)
+    assert cli(tmp_path,'prepare','--config',plan,'--request',path)==1
+
+
+def test_training_budget_does_not_authorize_training_before_its_gate_workflow(tmp_path,source_template):
+    job,approval,provider=paid_job(tmp_path,source_template)
+    request=json.loads((job.parent/'request.json').read_text())
+    request.update(job_id='training-future',stage='training')
+    path=write(tmp_path/'training-request.json',request)
+    assert cli(tmp_path,'prepare','--config',tmp_path/'plans/sample/sampling-sft.plan.json','--request',path)==0
+    training=job.parent.parent/'training-future/job.plan.json'
+    assert cli(tmp_path,'run','--job',training,'--approval',approval,provider=provider)==1
+    assert provider.calls==[]
+
+
+def test_unreconciled_launched_gpu_job_blocks_another_paid_launch(tmp_path,source_template):
+    job,approval,provider=paid_job(tmp_path,source_template)
+    assert cli(tmp_path,'run','--job',job,'--approval',approval,provider=provider)==0
+    request=json.loads((job.parent/'request.json').read_text())
+    request.update(job_id='next-job',outputs=['runs/sampling-sft/sample/next/result.json'])
+    path=write(tmp_path/'next-request.json',request)
+    assert cli(tmp_path,'prepare','--config',tmp_path/'plans/sample/sampling-sft.plan.json','--request',path)==0
+    next_job=job.parent.parent/'next-job/job.plan.json'
+    approved=json.loads(approval.read_text());approved['request_sha256']=_hash(request)
+    next_approval=write(tmp_path/'next-approval.json',approved)
+    before=list(provider.calls)
+    assert cli(tmp_path,'run','--job',next_job,'--approval',next_approval,provider=provider)==1
+    assert provider.calls==before

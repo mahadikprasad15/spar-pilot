@@ -90,9 +90,9 @@ python -m pilot_eval sampling-sft-recover-writer --config artifacts/plans/sampli
 
 ## Next stages
 
-Budget/export controls, engine/scoring qualification, exact-resume pilot,
-production generation, review, gate statistics and approved training are separate
-implementation tickets. Sampling hardware is L40S; training requires verified
+Budget/export controls are implemented in Ticket02. Engine/scoring qualification,
+the exact-resume pilot, production generation, review, gate statistics and approved
+training remain separate implementation tickets. Sampling hardware is L40S; training requires verified
 L4/FP32 gold metadata. GPU-version/scheduling/default settings and actual stop
 semantics are resolved before engine qualification, not fabricated by this CPU
 audit.
@@ -105,3 +105,10 @@ remain deferred.
 The confirmed design, specification and ticket graph are retained in the local
 Sampling SFT issue-tracker effort. CPU fixture completion does not establish
 real Drive source readiness or L40S/L4 qualification.
+
+## Budget and cloud lifecycle
+
+Ticket02 adds the CLI-first budget/export/stop controls and the
+[RunPod handoff guide](../operations/sampling-sft-runpod.md).
+The optional notebook can inspect the ledger and run a disabled-by-default
+zero-cost smoke. No engine, live cloud qualification or paid approval is implied.

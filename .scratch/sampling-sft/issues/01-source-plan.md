@@ -43,4 +43,4 @@ Validation: red tests first demonstrated absent public commands; new recovery/sc
 
 Actual source readiness remains unexecuted against the full Drive tree. No real decoder/tokenizer was loaded, no paid job launched, no training or GPU qualification occurred, and nothing was pushed. The earlier source-audit fixture is not a scientific result.
 
-A full baseline regression was started as required, then stopped as a duplicate after253 passed/24 skipped (no failures; explicit KeyboardInterrupt). The post-change full regression is still running and is not claimed green. The local Torch import limitation remains; none of the47 focused checks skipped.
+A full baseline regression was started as required, then stopped as a duplicate after253 passed/24 skipped (no failures; explicit KeyboardInterrupt). The inherited post-change full regression later completed669 passed/39 skipped/4 warnings; it collected before Ticket02 tests existed and is not a commit-isolated validation of later changes. The local Torch import limitation remains; none of the47 focused checks skipped.

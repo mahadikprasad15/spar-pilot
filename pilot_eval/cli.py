@@ -35,7 +35,7 @@ def main(argv=None, *, dependencies=None):
         if operation == 'execute':
             job.add_argument('--network-root', type=Path, required=True)
             job.add_argument('--max-wait-seconds', type=float, default=0)
-    for operation in ['init', 'status', 'reserve', 'settle', 'extend']:
+    for operation in ['init', 'status', 'reserve', 'settle', 'extend', 'observe']:
         budget = commands.add_parser('sampling-sft-budget-' + operation, help='shared USD ledger; reservations do not launch paid work')
         budget.add_argument('--output-root', type=Path, required=True)
         if operation in ['init', 'reserve']:
@@ -43,9 +43,9 @@ def main(argv=None, *, dependencies=None):
         if operation in ['reserve', 'extend']:
             budget.add_argument('--request', type=Path, required=True)
             budget.add_argument('--approval', type=Path)
-        if operation in ['settle', 'extend']:
+        if operation in ['settle', 'extend', 'observe']:
             budget.add_argument('--job-id', required=True)
-        if operation == 'settle':
+        if operation in ['settle', 'observe']:
             budget.add_argument('--observation', type=Path, required=True)
     for operation in ['prepare', 'audit', 'status', 'verify', 'recover-writer']:
         sampling = commands.add_parser('sampling-sft-' + operation, help='CPU Sampling SFT source audit and immutable plan')
@@ -725,6 +725,7 @@ def main(argv=None, *, dependencies=None):
             elif operation == 'reserve': result = budget.reserve(args.config, args.output_root, args.request, args.approval)
             elif operation == 'extend': result = budget.extend(args.output_root, args.job_id, args.request, args.approval)
             elif operation == 'settle': result = budget.settle(args.output_root, args.job_id, args.observation)
+            elif operation == 'observe': result = budget.observe(args.output_root, args.job_id, args.observation)
             else: result = budget.status(args.output_root)
             print(json.dumps(result, indent=2))
         elif args.command.startswith('sampling-sft-'):

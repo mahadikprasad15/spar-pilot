@@ -40,15 +40,23 @@ User confirmed the consolidated design and checklist on2026-10-28. Explicit addi
 ## Specification and proposed tickets
 - User requested to-spec and to-tickets; approved the public saved-workflow test boundary on2026-10-28.
 - spec.md published locally with ready-for-agent status.
-- User approved all10 slices and edges; issues/ contains10 separate ready-for-agent tickets. Ticket01 software implemented and resolved;02–10 remain ready-for-agent, unclaimed.
+- User approved all10 slices and edges; issues/ contains10 separate ready-for-agent tickets. Tickets01–02 software implemented and resolved;03–10 remain ready-for-agent, unclaimed.
 - Source original and consolidated design remain preserved; no implementation or cloud launch started.
 
 ## Next
-Ticket02 (budget/export/stop lifecycle) is the next implementation frontier, awaiting a request. No paid job or push is implied.
+Ticket03 (bounded sampler, score qualification and profile) is the next implementation frontier, awaiting a request. No paid job or push is implied.
 
 ## Ticket01 implementation evidence
 - Public prepare/audit/status/verify and reviewed writer recovery; clean CPU notebook and guide.
 - Exact source/prompt/order/checkpoint identities and blocked missing-evidence reports; engine controls/runtime remain explicitly unqualified.
 - Red/green workflow development; final affected regression47 passed in114.26s; full notebook execution and schema validation passed.
 - Canonical synthetic demonstration: artifacts/validation/sampling-sft-ticket01/passing-cpu-fixture-v1, latest plan source-fixture-v2. No real Drive audit, GPU qualification, inference, training, paid launch or push.
-- Session full baseline intentionally interrupted as duplicate after253 passed/24 skipped; post-change full suite still running, no final result claimed.
+- Session full baseline intentionally interrupted as duplicate after253 passed/24 skipped. Inherited later full run completed669 passed/39 skipped; collection preceded Ticket02 and is not a final commit-isolated suite claim.
+
+## Ticket02 implementation evidence
+- CLI/run script primary; optional notebook budget and disabled offline smoke cells.
+- Shared atomic USD ledger, storage/interim-cost handling,80% review and conservative launch reconciliation; no new stage-specific budget authority.
+- Verified bundle/client receipt/own-Pod-stop handshake, external shutdown proof and actual-bill settlement; trusted scientific entrypoints only.
+- Final budget/lifecycle suite37 passed in11.65s; earlier combined affected regression78 passed in84.35s; notebook schema/execution checked.
+- Canonical demo artifacts/validation/sampling-sft-ticket02; simulation only, no live provider calls or model/GPU work.
+- Real RunPod/storage preflight remains pending; Ticket03 unclaimed. No new commits pushed without a request.

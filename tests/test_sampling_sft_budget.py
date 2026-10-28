@@ -182,3 +182,14 @@ def test_simultaneous_reservations_cannot_overbook_a_stage(tmp_path):
         child.communicate(timeout=30);codes.append(child.returncode)
     assert sorted(codes)==[0,1]
     assert ledger(tmp_path)['reserved_usd']=='6.100000'
+
+
+def test_interim_gpu_cost_observation_does_not_release_the_reservation(tmp_path):
+    plan=setup(tmp_path)
+    assert reserve(tmp_path,plan,gpu())==0
+    observation=write(tmp_path/'interim.json',dict(event_id='meter',actual_usd='2',
+        evidence='provider running-total meter',reviewer='human',notes='Cumulative charges; Pod still running'))
+    assert cli(tmp_path,'observe','--job-id','job','--observation',observation)==0
+    assert cli(tmp_path,'observe','--job-id','job','--observation',observation)==0
+    assert ledger(tmp_path)['spent_usd']=='2.000000'
+    assert ledger(tmp_path)['reserved_usd']=='1.600000'

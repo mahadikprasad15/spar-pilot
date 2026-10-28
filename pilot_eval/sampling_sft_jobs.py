@@ -1,6 +1,7 @@
 """Saved bounded-job lifecycle shared by RunPod scripts and the optional notebook."""
 from datetime import datetime, timezone
 import json
+import re
 from pathlib import Path
 import time
 
@@ -34,6 +35,15 @@ def prepare(config,output_root,request_path):
             or not isinstance(request.get('command'),list) or not request['command']
             or any(not isinstance(x,str) or not x for x in request['command'])):
         raise ValueError('RunPod jobs need a GPU estimate, network-volume identity and explicit argv command.')
+    if mode=='runpod':
+        command=request['command']
+        python=bool(re.fullmatch(r'python(?:3(?:\.\d+)?)?',Path(command[0]).name))
+        module=command[2] if len(command)>2 and command[1]=='-m' else None
+        scientific=(module=='pilot_eval' and len(command)>3 and command[3].startswith('sampling-sft-')
+                    and not command[3].startswith(('sampling-sft-job-','sampling-sft-budget-'))
+                    and 'recover-writer' not in command[3])
+        if not python or not (module=='pytest' or scientific):
+            raise ValueError('Use a reviewed project scientific CLI/test entrypoint; shell and cloud-management launchers are not accepted.')
     outputs=request.get('outputs')
     if not isinstance(outputs,list) or not outputs:raise ValueError('Declare required job output paths.')
     for name in outputs:
@@ -132,14 +142,18 @@ def run(path,output_root,approval_path=None,*,provider=None):
         if (directory/'launch.json').exists():
             raise ValueError('Interrupted/uncertain job launch: inspect and reconcile; never relaunch automatically.')
         if request['mode']=='runpod':
+            if request['stage']=='training':
+                raise ValueError('Training launches remain blocked until the post-gate Ticket09 workflow is implemented.')
             _approval(job,root,approval)
             pod_id=provider.own_pod_id();observed=provider.inspect(pod_id)
             if observed.get('id')!=pod_id or observed.get('networkVolumeId')!=request['network_volume_id']:
                 raise ValueError('Own Pod/network-volume identity mismatch.')
+            if budget.number(observed.get('costPerHr'),True)>budget.number(request['rate_usd_per_hour'],True):
+                raise ValueError('Provider hourly quote exceeds the reserved rate; re-estimate before launch.')
         else:pod_id=None
         budget.initialize(root/job['source_plan'],root)
         budget.reserve(root/job['source_plan'],root,directory/'request.json',approval_path)
-        snapshot=budget.authorize_launch(root,request['job_id'],request,approval)
+        snapshot=budget.authorize_launch(root,request['job_id'],request,approval,pod_id=pod_id)
         launch=dict(pod_id=pod_id,host=copies.host(provider),started_at=now(),
                     job_sha256=_hash(job),budget_sha256=snapshot['sha256'])
         sources.frozen(directory/'launch.json',launch)
@@ -216,10 +230,13 @@ def finish(path,output_root,network_receipt,download_receipt,*,provider=None):
         if provider.own_pod_id()!=launch['pod_id']:
             raise ValueError('Automatic shutdown is restricted to the job’s own Pod.')
         _event(directory,job,'stop-requested',pod_id=launch['pod_id'])
+        network=json.loads(Path(network_receipt).read_text())
+        copies.persist_control(directory,root,network['copy_root'])
         try:
             provider.stop(launch['pod_id']) # Last external mutation; confirmation is a separate client command.
         except Exception as exc:
             _event(directory,job,'stop-request-failed',error_type=type(exc).__name__)
+            copies.persist_control(directory,root,network['copy_root'])
             raise RuntimeError('Stop request failed; Pod status and cost remain unresolved. Inspect immediately.') from exc
         return dict(state='stop-requested',pod_id=launch['pod_id'],confirmed=False,workload_success=manifest['workload_success'],
                     budget='reservation remains until actual billing is reconciled')
@@ -229,14 +246,22 @@ def confirm(path,output_root,*,provider=None):
     root,job,directory=_load(path,output_root);provider=provider or RunPodProvider()
     with run_lock(directory):
         state=_state(directory,job)
-        if not any(e['kind']=='stop-requested' for e in state['events']):raise ValueError('No verified stop request to confirm.')
+        if not _work(directory,root,job):raise ValueError('No sealed job payload to bind shutdown confirmation.')
         pod_id=json.loads((directory/'launch.json').read_text())['pod_id']
         if copies.host(provider)==json.loads((directory/'launch.json').read_text())['host']:
             raise ValueError('Confirm shutdown from the external controller, not the self-stopping worker.')
         observed=provider.inspect(pod_id)
         if observed.get('id')!=pod_id or observed.get('desiredStatus')!='EXITED':
             raise ValueError('Provider does not report this Pod stopped; costs remain uncertain.')
-        _event(directory,job,'stop-confirmed',pod_id=pod_id,scope='external provider-reported EXITED; billing reconciled separately')
+        launch=json.loads((directory/'launch.json').read_text())
+        proof=dict(job_sha256=_hash(job),request_sha256=job['request_sha256'],pod_id=pod_id,
+                   provider_status='EXITED',worker_host=launch['host'],controller_host=copies.host(provider),
+                   observed_at=now(),scope='provider-reported stopped; actual bill still required')
+        proof['sha256']=_hash(proof)
+        sources.save(directory/'shutdown-receipt.json',proof)
+        _event(directory,job,'stop-confirmed',pod_id=pod_id,
+            local_stop_request_known=any(e['kind']=='stop-requested' for e in state['events']),
+            scope='external provider-reported EXITED; billing reconciled separately')
         return status(path,output_root)
 
 
@@ -252,8 +277,13 @@ def execute(path,output_root,network_root,download_receipt,approval_path=None,ma
     export(path,root,network_root,'network',network,provider=provider)
     while not Path(download_receipt).is_file():
         remaining=float(wait)-(time.monotonic()-began)
+        if job['request']['mode']=='runpod':
+            launch=json.loads((directory/'launch.json').read_text())
+            age=(datetime.now(timezone.utc)-datetime.fromisoformat(launch['started_at'])).total_seconds()
+            remaining=min(remaining,float(maximum)-age)
         if remaining<=0:
-            _event(directory,job,'export-blocked',reason='External download receipt missing; reservation retained; operator action required.')
+            with run_lock(directory):
+                _event(directory,job,'export-blocked',reason='External download receipt missing; reservation retained; operator action required.')
             raise ValueError('Downloaded-copy verification is missing. No stop/delete attempted; inspect immediately, costs remain reserved.')
         print('Waiting for external downloaded-copy receipt; not a completed job.',flush=True)
         time.sleep(min(10,remaining))

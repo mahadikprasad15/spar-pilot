@@ -7,6 +7,7 @@ import uuid
 
 from pilot_eval.sampling_sft import save, frozen, load
 from pilot_eval.sft import safe_name
+from pilot_eval.sampling_sft_sources import inside
 from pilot_eval.training import run_lock
 from pilot_eval.workflow import _hash
 
@@ -106,6 +107,14 @@ def _jobs(value):
             if job_id not in jobs or jobs[job_id]['state']!='reserved' or jobs[job_id].get('launched'):
                 raise ValueError('Invalid or repeated launch transaction.')
             jobs[job_id]['launched']=True
+            jobs[job_id]['pod_id']=event.get('pod_id')
+        elif kind=='observe':
+            if job_id not in jobs or jobs[job_id]['state']!='reserved' or jobs[job_id]['request']['kind']!='gpu':
+                raise ValueError('Interim observations require an outstanding GPU reservation.')
+            amount=event['actual_microusd']
+            if amount<jobs[job_id]['actual_microusd'] or amount!=micros(event['observation']['actual_usd']):
+                raise ValueError('Interim cumulative cost cannot move backward.')
+            jobs[job_id]['actual_microusd']=amount
         elif kind=='settle':
             if (job_id not in jobs or jobs[job_id]['state']!='reserved' or type(event['actual_microusd']) is not int
                     or event['actual_microusd']!=micros(event['observation']['actual_usd'])
@@ -138,7 +147,8 @@ def _summary(value):
         committed_usd=usd(spent+reserved),cap_exceeded=spent+reserved>POLICY['total_microusd'] or any(sum(s.values())>CAPS[k] for k,s in stages.items()),
         review_required=(spent+reserved)*5>=POLICY['total_microusd']*4 or any(sum(s.values())*5>=CAPS[k]*4 for k,s in stages.items()),
         stage_totals={name:dict(spent_usd=usd(s['spent']),reserved_usd=usd(s['reserved']),committed_usd=usd(sum(s.values())),cap_usd=usd(CAPS[name])) for name,s in stages.items()},
-        jobs={name:dict(state=job['state'],stage=job['stage'],kind=job['request']['kind'],request_sha256=job['request_sha256'],
+        unreconciled_gpu_jobs=[name for name,job in jobs.items() if job.get('launched') and job['state']=='reserved' and job['request']['kind']=='gpu'],
+        jobs={name:dict(launch_recorded=bool(job.get('launched')),state=job['state'],stage=job['stage'],kind=job['request']['kind'],request_sha256=job['request_sha256'],
                        reserved_usd=usd(job['reserved_microusd']),actual_usd=usd(job['actual_microusd']) if job['state']=='settled' or job['actual_microusd'] else None) for name,job in jobs.items()})
 
 
@@ -216,6 +226,18 @@ def settle(output_root,job_id,observation_path):
             return _summary(value)
         if jobs[job_id]['state']=='settled':
             raise ValueError('Reservation already settled; preserve the recorded bill.')
+        job=jobs[job_id]
+        if job.get('launched') and job['request'].get('mode')=='runpod':
+            proof_path=observation.get('shutdown_receipt')
+            if not isinstance(proof_path,str):
+                raise ValueError('Live GPU charges remain uncertain until external shutdown evidence is provided.')
+            proof=json.loads(inside(Path(output_root).resolve(),proof_path).read_text())
+            content={k:v for k,v in proof.items() if k!='sha256'}
+            if (proof.get('sha256')!=_hash(content) or proof.get('pod_id')!=job.get('pod_id')
+                    or proof.get('request_sha256')!=job['request_sha256']
+                    or proof.get('provider_status')!='EXITED'
+                    or not proof.get('controller_host') or proof.get('controller_host')==proof.get('worker_host')):
+                raise ValueError('Shutdown receipt is altered or belongs to another job/Pod.')
         if jobs[job_id]['request']['kind']=='storage':
             covered=number(observation.get('covered_months'),True)
             if covered>number(jobs[job_id]['remaining_months']):
@@ -240,7 +262,7 @@ def extend(output_root,job_id,request_path,approval_path=None):
             request=request,request_sha256=_hash(request),approval=approval))
 
 
-def authorize_launch(output_root,job_id,request,approval=None):
+def authorize_launch(output_root,job_id,request,approval=None,*,pod_id=None):
     """One launch authorization, atomically recorded with current budget review."""
     with run_lock(folder(output_root)):
         value=_read(output_root);job=_jobs(value).get(job_id)
@@ -248,6 +270,9 @@ def authorize_launch(output_root,job_id,request,approval=None):
             raise ValueError('Job needs its matching outstanding reservation before launch.')
         if job.get('launched'):
             raise ValueError('Launch already authorized; reconcile interrupted work rather than relaunch.')
+        if request['kind']=='gpu' and any(other.get('launched') and other['state']=='reserved'
+                and other['request']['kind']=='gpu' and name!=job_id for name,other in _jobs(value).items()):
+            raise ValueError('Another launched GPU job has unreconciled cost; close it before a new paid launch.')
         last=value['events'][-1]
         reviewed_own_reservation=(last['kind']=='reserve' and last['job_id']==job_id
                                  and bool(last.get('approval',{}))
@@ -255,4 +280,24 @@ def authorize_launch(output_root,job_id,request,approval=None):
         if not reviewed_own_reservation:
             _check(value,job['stage'],0,request,approval)
         return _write(output_root,value,dict(kind='launch',job_id=job_id,
-            request_sha256=_hash(request),review=approval))
+            request_sha256=_hash(request),review=approval,pod_id=pod_id))
+
+
+def observe(output_root,job_id,observation_path):
+    """Record cumulative incurred GPU charges without releasing uncertain time."""
+    observation=json.loads(Path(observation_path).read_text())
+    amount=micros(observation['actual_usd'])
+    if not all(isinstance(observation.get(k),str) and observation[k].strip() for k in ['event_id','evidence','reviewer','notes']):
+        raise ValueError('Interim charges need an evidenced cumulative observation.')
+    with run_lock(folder(output_root)):
+        value=_read(output_root);job=_jobs(value).get(job_id)
+        if not job or job['state']!='reserved' or job['request']['kind']!='gpu':
+            raise ValueError('Only outstanding GPU reservations accept interim charges.')
+        previous=[e for e in value['events'] if e.get('event_id')==observation['event_id']]
+        if previous:
+            if previous[0].get('job_id')!=job_id or previous[0].get('observation_sha256')!=_hash(observation):
+                raise ValueError('Cost observation ID changed or was reused.')
+            return _summary(value)
+        if amount<job['actual_microusd']:raise ValueError('Cumulative interim charges cannot move backward.')
+        return _write(output_root,value,dict(kind='observe',job_id=job_id,event_id=observation['event_id'],
+            actual_microusd=amount,observation=observation,observation_sha256=_hash(observation)))
