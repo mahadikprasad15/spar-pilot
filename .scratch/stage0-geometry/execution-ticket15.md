@@ -75,3 +75,7 @@ Final regression, retained fixtures and release pin follow below.
 - Both shared notebooks parse without outputs. Final profile-cell handoff guard
   prevents accidentally using the profile cell after production is frozen.
 - No new causal result, real CUDA run, Colab spending, Drive upload or GitHub push.
+
+- Final source/shared-notebook release pin: `5bc087ed70269ea59ee901f3af89bc61f248c768`. Fresh verification of the
+  retained report and no-model reused collection passed. Final notebook/length/
+  slope handoff check:4 passed in0.18s; no additional model calls.
