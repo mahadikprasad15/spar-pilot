@@ -3,7 +3,7 @@
 ## Notes
 - Original supplied design preserved in sources/; working design in design.md.
 - Read-only source/upstream audits completed; targeted baseline: 5 passed.
-- Rounds 1–2 answered on 2026-10-28. No implementation or cloud work begun.
+- Rounds 1–3 answered on 2026-10-28. No implementation or cloud work begun.
 
 ## Decisions so far
 - Data-recipe claim; descriptive mechanism measures; common-coverage k contrasts.
@@ -22,10 +22,17 @@
 - Immutable automatic scores plus confirmed human eligibility overrides.
 - Conservative reservations, ongoing storage lifetime, stage-attributed costs and automatic post-export stop; deletion requires approval.
 
-## Fog — remaining frontier
-- Baseline cohort/scoring population; numerical scoring gate.
-- Pilot alarm actions and prompt/J revision rules.
-- Statistical reductions, paired bootstrap and leakage metric.
+## Decisions added in round 3
+- Defer512×8 temperature1 baseline and every NLL-offset column; no historical reuse.
+- T3: exact alignment, mean error<=0.001 nats/token and max token error<=0.01; fixed coverage of short/long/stop/cap/empty-prefix fixtures.
+- J64 fixed; initial pilot unfinished>2%, correct<90%, or over-budget Stage2 reservation stops for review.
+- Equal-problem NLL including stop; common-cohort paired bootstrap10000/seed42/percentile95%; differences of medians for length; approved leakage diagnostics.
+
+## Remaining facts/preflight
+- Actual training runtime identity, engine compatibility/numeric flags and stop semantics.
+- Deterministic fixtures/metric serialization and bounded profiling.
+- Atomic resume, export/download receipts and confirmed Pod shutdown.
+- Full CPU regression still in progress at this update.
 
 ## Next
-Resolve remaining decisions, then confirm shared understanding before spec/implementation. Full CPU regression started in this session remains in progress; no scientific execution started.
+Confirm consolidated shared understanding. Then spec/tickets or implementation only on user request; no cloud launch is implied.

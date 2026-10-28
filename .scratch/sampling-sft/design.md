@@ -1,6 +1,6 @@
 # Sampling SFT arm — working design
 
-Status: design review; no implementation or paid execution authorized by this document.
+Status: consolidated design, awaiting shared-understanding confirmation; no implementation or paid execution authorized by this document.
 Date: 2026-10-28
 
 ## Purpose and scope
@@ -30,11 +30,11 @@ Primary sources: https://github.com/aakaran/finetuning-with-sampling/blob/main/b
 
 The released code uses strict improvement in mean response-token log probability, whole-trace cuts, shorter regrowth, and end-token checks after the block's refinement steps. The decoded prefix inside the proposer user message plus the same IDs as assistant prefill is intentional upstream behavior. Fixed J=64 and a ceiling block count are adaptations. The paper's stochastic MH acceptance and theoretical distribution guarantees must not be attributed to this greedy port.
 
-## Approved decisions — interview round 1
+## Approved decisions — interview rounds 1–3
 
 ### Scientific scope and comparisons
 
-This is a data-recipe comparison: gold SFT versus Sampling SFT k=0/2/5, with GRPO as a reference. No causal claim about on-policyness. The within-recipe k contrast varies search amount with gold conditioning and filtering fixed. Report pass rates and coverage separately per k; compare k arms on common covered problems. Distance/NLL, sharpening, length, format and leakage are descriptive candidate mechanisms, not established causal mediators. Self-correct, random-correct versus searched, and length-matched controls are deferred.
+This is a data-recipe comparison: gold SFT versus Sampling SFT k=0/2/5, with GRPO as a reference. No causal claim about on-policyness. The within-recipe k contrast varies search amount with gold conditioning and filtering fixed. Report pass rates and coverage separately per k; compare k arms on common covered problems. Plain NLL, length, format and leakage are descriptive candidate mechanisms, not established causal mediators. Sharpening relative to the model’s own samples is not measured in this run. Self-correct, random-correct versus searched, and length-matched controls are deferred.
 
 ### Generation and training scope
 
@@ -46,7 +46,7 @@ Defer k=10, k=5+5 polish, extra seeds, self-correct SFT, evaluation, internals a
 
 Training must not start until coverage passes. Zero uncovered passes coverage only; other gates and explicit training approval remain required. With 1–5 uncovered per arm, keep marked empty slots and retain 64 nonempty optimizer steps. T16 must exercise batch sizes 3, 4, 5, 6, 7 with the existing total-supervised-token denominator: step completes, loss matches an independent hand computation, gradients are finite, and scheduler advances exactly once. Any failure stops for repair; there is no duplicate fallback. More than 5 uncovered blocks training and requires a revised plan. Never fill with gold or incorrect traces; never retry without a bound.
 
-Missing slots retain problem id and reason in batches.json and coverage summaries. Gate comparisons use the intersection covered by all k0/k2/k5 arms, alongside full-coverage summaries per arm. Training uses each arm's own covered slots to stay as close as possible to historical gold SFT's 512 problems. Report uncovered lists and their union/intersection. Flag pairwise differences of more than 5 uncovered ids before training approval (symmetric difference is the proposed formal definition). Eventual evaluation uses the same 150 held-out problems, but evaluation execution is outside this experiment's current scope.
+Missing slots retain problem id and reason in batches.json and coverage summaries. Gate comparisons use the intersection covered by all k0/k2/k5 arms, alongside full-coverage summaries per arm. Training uses each arm's own covered slots to stay as close as possible to historical gold SFT's 512 problems. Report uncovered lists and their union/intersection. Flag pairwise differences of more than 5 uncovered ids before training approval (symmetric difference). Eventual evaluation uses the same 150 held-out problems, but evaluation execution is outside this experiment's current scope.
 
 ### Termination and retries
 
@@ -70,7 +70,7 @@ Keep original flexible-v3 scores and generated text immutable. Separate confirme
 
 ### Budget
 
-Hard total ceiling USD25 including GPU and storage. Sub-caps: sampling/setup/tests/profile/pilot/retries/T1 baseline/gate USD10; training USD6; network volume and genuinely shared overhead USD9. Setup, idle, debugging and reruns count against the stage served, not the storage line.
+Hard total ceiling USD25 including GPU and storage. Sub-caps: sampling/setup/tests/profile/pilot/retries/gate USD10 (the T1 baseline is deferred; the sub-cap is unchanged); training USD6; network volume and genuinely shared overhead USD9. Setup, idle, debugging and reruns count against the stage served, not the storage line.
 
 Before every job, persist a conservative reservation in budget.json: GPU hourly rate times estimated hours times 1.5, plus setup-time cost. Include existing spent and outstanding reservations; launch only if the proposed sum stays below both the stage and total hard ceilings. Avoid counting setup twice if already in the runtime estimate. At 80% of any sub-cap or total, pause for approval before the next job even if headroom remains. Reconcile reservations to actual billed/estimated cost after each job; do not release an uncertain interrupted reservation without reconciliation. Store cumulative-cost snapshots in run_k{k}.json; shared charges count once in the global ledger.
 
@@ -86,18 +86,48 @@ After verified export to the network volume and a downloaded copy, the runner re
 - Required training resume state includes optimizer, scheduler and RNG state where applicable, not only adapters. Optional analysis gradients are distinct from required recovery state.
 - Prompt/J changes after the pilot require a new immutable version and a complete pilot rerun. Do not mutate an existing production plan.
 
-## Remaining technical verification
+## Baseline and measured gate quantities
 
-Pin vLLM version and compatible dependency environment; verify FP32/TF32 settings in the actual worker. Specify top-k and all decoding defaults. Verify stop-token return behavior, first-stop truncation and cap accounting without guessing a token from text. Define empty-generation handling, score slicing, context overflow, append/seal recovery and attempt ownership. Bound the throughput sweep before running it. Proposed numeric tolerances in the supplied document remain proposals, not approved acceptance gates.
+The temperature-1 baseline is deferred. Do not generate 512×8 baseline samples, reuse historical samples, calculate typical-NLL offsets, or imply sharpening relative to the model’s own distribution was measured. Defer that baseline to later internals/Stage 0 work with separate approval and budget. Its proposed future settings are scorer prompt, temperature1, top-p1, no top-k restriction, repetition penalty1, cap1024. Current tables omit offset columns and explicitly mark that measurement not measured.
+
+Gate rows cover gold and k0/k2/k5. A trace's NLL is the negative mean response-token log probability under the scorer prompt, including the actual stop token when present. Aggregate as an equal-problem mean of these answer-level values. Report length median and p90, explicitly counting the same retained response IDs. Report each arm's complete eligible coverage and the three-arm common-coverage comparison; include gold on the corresponding common problem IDs for paired comparisons.
+
+For each k-arm contrast, bootstrap whole problems in the common cohort 10,000 times with local seed42. Use percentile95% intervals. The length estimand is the difference of arm medians, recomputed within every resample, not the median of paired differences (which may be a separately labelled secondary column). NLL contrasts use differences of equal-problem means. Preserve bootstrap configuration and cohort ids. No offset analysis runs without its baseline. Later E0.6a must match these definitions or document differences.
+
+Leakage diagnostics: literal << occurrence rate; fraction of response word4-grams present in cleaned gold. Under-four-word responses have undefined overlap, not zero. Preserve numerator, denominator and undefined count. The exact deterministic word normalization belongs in the metric contract before implementation; it must not silently alter the approved word-based measure. All intervals and leakage/NLL summaries are descriptive, not causal mediation evidence. No equivalence rule or multiplicity-based success claim is introduced.
+
+## Scoring qualification — approved T3 gates
+
+Before Stage2, compare engine and independent HF FP32 scores on 20 traces chosen by a predeclared qualification fixture/selection plan. Include short and long traces, real-stop and capped cases, and a trace whose first generated token follows an empty response prefix. Qualification preparation must check that every required category is present; do not silently omit a category or search for traces that pass. If the pilot has no capped case, a bounded deliberately capped fixture must be identified in the fixture plan before the score comparison; missing fixtures block qualification rather than expand work silently.
+
+For every trace, exact aligned token IDs and positions are mandatory; absolute mean log-probability difference <=0.001 nats/token and maximum absolute per-token difference <=0.01 nats. Include stop when actually present. Save signed/absolute mean error, maximum per-token error, worst position, aligned IDs and scores. No mean cancellation can hide a failing token. Investigate failures in order: prompt/template mismatch; slicing offset; dtype/TF32. Failure blocks Stage2. No gate changes without user approval.
+
+This validates score agreement on the fixture, not cross-engine equality of near-tie acceptance decisions. Sampling/refinement uses one frozen engine. T3 is the score gate; the supplied T14 is batch replay, not a second score definition. CPU independent-math/slicing tests remain separate from this real-engine evidence.
+
+## Pilot alarm and revision rules
+
+J64 stays fixed. Report median/p90 lengths without an automatic J adjustment. Stop for review if initial-attempt unfinished fraction (capped plus block_budget_exhausted) >0.02; initial-attempt correctness <0.90; or the measured Stage2 reservation exceeds available budget headroom. Compute the initial-attempt metrics over the fixed32 problems; engine failures already stop and cannot disappear from a denominator. At n32 a single unfinished trace exceeds2%, and at most28 correct is below90%. Print each alarm's measured value, denominator and threshold, including alarms that do not fire.
+
+Use pilot throughput and observed lengths to re-estimate the full-generation reservation. Prompt/J changes require user approval, new template/algorithm identity and run_id, and a complete pilot rerun. J belongs in the frozen algorithm hash. Never increase cap or rewrite a template automatically. Runtime changes follow the separate runtime_hash/requalification contract.
+
+## Stage handoffs and scope boundaries
+
+| Stage | Work and durable output | Gate |
+| --- | --- | --- |
+| Source preparation | Exact model/tokenizer/source hashes, train/eval IDs, gold config/order/A0 and resolved plan | Missing source identity blocks dependent work |
+| 0 / 0.5 | CPU tests, bounded real-engine tests and throughput settings; runtime_hash and measured budget | Correctness, reservations and frozen settings |
+| 1 | Fixed32 k5 pilot, replay evidence, T3 fixture scores, alarm report | Exact replay, score gates and alarm review |
+| 2 / 3 | k0/2/5 on512; bounded retries, response/step records, events, automatic and reviewed labels | Terminal/disposition reconciliation and coverage |
+| 4 | Plain-NLL/length/format/leakage gate sheet, common cohort, bootstrap intervals, budget | Explicit training approval; no baseline/offset |
+| 5 | Seed42 k0/k5 training; saved gold-order slots; adapters0/8/16/32/64, recovery state, logs and manifest | T15 exact initial adapter, T16, verified trainer config and budget |
+| 6 | Verified export manifests, network-volume and downloaded copy receipts; Pod-stop request/confirmation | Preserve durable products; no implicit evaluation/internal work |
+
+## Implementation preflight and unresolved facts
+
+These are source/engineering checks, not permission to choose different scientific controls: audit the actual gold-training runtime manifest; pin a compatible vLLM environment and decoding defaults; verify worker numeric flags; verify real stop-token return/cap semantics; define first-stop validation and same-boundary EOS/cap precedence; specify deterministic fixture identities, word normalization and p90 implementation; bound profiling jobs; implement atomic block sealing, writer ownership, interruption recovery, download receipts and external stop confirmation. Record any unsupported engine capability as blocked with evidence. A missing fact must not be filled from an unrelated evaluation manifest or an engine default.
+
+No implementation begins until the consolidated design is confirmed and implementation is requested. No paid execution follows from this design alone. Separate training approval remains required after the gate. Any remaining policy choice exposed by preflight is brought back before affected execution.
 
 ## Evidence and limitations
 
-A targeted local baseline check passed 5 tests (6 deselected). This is software evidence only, not sampler qualification or scientific results. Timing and prices in the supplied proposal are unverified estimates. No training, GPU sampling, cloud rental, or upload was performed during this review.
-
-## Remaining decision frontier
-
-- Fresh temperature-1 baseline on all 512 problems versus historical reuse; eligibility and scoring population.
-- HF/vLLM score agreement gate and what numeric evidence is required before full generation.
-- Pilot alarm actions, immutable prompt/J revisions and repeat qualification.
-- Gate estimator, paired bootstrap, normalized-string leakage and explicit edge cases.
-- Export/download receipt handoff and stop confirmation are engineering contracts to verify during implementation, not claims of executed cloud behavior.
+A targeted local baseline check passed5 tests (6 deselected). The full CPU regression started during design review is still running as of this document update; its result is not yet known. Neither check is sampler qualification or scientific execution evidence. Timing and prices in the supplied proposal remain unverified estimates. No training, GPU sampling, cloud rental or upload was performed during this review. The supplied design remains unchanged in sources; this consolidated design supersedes its conflicting scope, coverage, baseline, merge, termination, replay and budget rules.
