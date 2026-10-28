@@ -201,3 +201,66 @@ def test_notebook_uses_same_public_commands_and_clean_cpu_flow():
         assert 'sampling-sft-'+operation in joined
     assert 'torch' not in joined and 'cuda' not in joined.lower()
     assert all(c.get('execution_count') is None and not c.get('outputs') for c in book['cells'] if c['cell_type']=='code')
+
+
+def test_reviewed_writer_recovery_preserves_source_and_audit_identity(tmp_path):
+    import platform
+    selection,_,directory=fixture_sources(tmp_path)
+    plan=prepare(tmp_path,selection)
+    run=tmp_path/'runs/sampling-sft/sample'
+    marker=run/'writer.json'
+    write_json(marker,dict(token='stale-owner',pid=99999999,host=platform.node()))
+    original=(directory/'checkpoints/checkpoint-0/adapter_model.safetensors').read_bytes()
+    assert command(tmp_path,'audit','--config',plan)==1
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','wrong','--review-notes','inspected')==1
+    assert marker.exists()
+    assert command(tmp_path,'recover-writer','--config',plan,'--owner-token','stale-owner','--review-notes','inspected dead process')==0
+    assert not marker.exists()
+    assert command(tmp_path,'audit','--config',plan)==0
+    assert (directory/'checkpoints/checkpoint-0/adapter_model.safetensors').read_bytes()==original
+    events=[json.loads(line) for line in (run/'logs/ownership-recovery.jsonl').read_text().splitlines()]
+    assert events[0]['owner']['token']=='stale-owner'
+    assert events[0]['review_notes']=='inspected dead process'
+
+
+def test_notebook_runs_all_cpu_cells_against_saved_fixture_sources(tmp_path):
+    selection,gold,_=fixture_sources(tmp_path)
+    picked=json.loads(selection.read_text())
+    repo=Path(__file__).parents[1]
+    book=json.loads((repo/'notebooks/sampling-sft.ipynb').read_text())
+    codes=[''.join(c['source']) for c in book['cells'] if c['cell_type']=='code']
+    script='\n'.join(codes)
+    # Simulate the user editing only the notebook's source/root parameters.
+    script=script.replace('ARTIFACT_ROOT = REPO_DIR / "artifacts"',f'ARTIFACT_ROOT = Path({str(tmp_path)!r})')
+    script=script.replace('plans/pilot2-sft-fp32-l4-batch2-v1/sft.config.json',picked['sft'])
+    script=script.replace('plans/pilot4-grpo-fp32-v1-writes-v1/activation.prepared.json',picked['grpo'])
+    completed=subprocess.run([sys.executable,'-c',script],cwd=repo,text=True,capture_output=True)
+    assert completed.returncode==0,completed.stderr
+    assert 'Sources ready: True' in completed.stdout
+    assert (tmp_path/'plans/sampling-sft-v1/sampling-sft.plan.json').exists()
+
+
+@pytest.mark.parametrize('arm',['sft','grpo'])
+def test_malformed_source_schema_is_recorded_as_a_blocker(tmp_path,arm):
+    selection,gold,_=fixture_sources(tmp_path)
+    picked=json.loads(selection.read_text())
+    write_json(tmp_path/picked[arm],[])
+    plan=prepare(tmp_path,selection)
+    assert command(tmp_path,'audit','--config',plan)==0
+    assert result(tmp_path)['source_ready'] is False
+    assert any(b['source']==arm for b in result(tmp_path)['blockers'])
+
+
+def test_saved_plan_binds_proposer_text_and_gold_chat_template(tmp_path):
+    selection,_,_=fixture_sources(tmp_path)
+    plan=prepare(tmp_path,selection)
+    assert command(tmp_path,'audit','--config',plan)==0
+    audit=result(tmp_path)
+    prompts=audit['recipe']['prompts']
+    assert prompts['version']=='sampling-sft-proposer-v1'
+    assert prompts['template_sha256']==_hash(prompts['proposer_template'])
+    assert '{TRAINING_USER_MESSAGE}' in prompts['proposer_template']
+    assert '{CLEANED_GOLD}' in prompts['proposer_template']
+    assert '{PARTIAL_RESPONSE_TEXT}' in prompts['proposer_template']
+    assert prompts['prefix_policy']=='decoded-in-user-and-token-ids-as-assistant-prefill'
+    assert len(audit['training']['prompt_mask_contract']['chat_template_sha256'])==64

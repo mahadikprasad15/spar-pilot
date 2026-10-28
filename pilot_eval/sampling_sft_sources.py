@@ -36,6 +36,13 @@ def read(root, path, parents):
     return json.loads(path.read_text())
 
 
+def read_object(root, path, parents):
+    value = read(root, path, parents)
+    if not isinstance(value, dict):
+        raise ValueError('Expected a source JSON object: ' + str(path))
+    return value
+
+
 def verify_parents(root, parents):
     for value, digest in parents.items():
         path = inside(root, value)
@@ -46,37 +53,37 @@ def verify_parents(root, parents):
 
 def gold_source(root, value, parents):
     path = inside(root, value)
-    source = read(root, path, parents)
+    source = read_object(root, path, parents)
     # Accept the historical prepared activation selector, but follow its explicit
     # source reference. Never infer a training directory from an evaluation file.
     if source.get('protocol_version') == 'pilot3-write-v1':
         prepared = audit_source(root, 'sft', path)
         parents.update(prepared['parents'])
         path = inside(root, source['source_config_path'])
-        source = read(root, path, parents)
+        source = read_object(root, path, parents)
     for field in ['training_items_path', 'evaluation_items_path', 'analysis_plan_path']:
         read(root, source[field], parents)
     config, rows, evaluation = load_sft(path, root)
     if config.get('hardware') != 'L4':
         raise ValueError('Gold training configuration must explicitly select L4.')
     directory = inside(root, training_directory(root, config))
-    manifest = read(root, directory/'meta/run_manifest.json', parents)
-    runtime = read(root, directory/'meta/runtime.json', parents)
-    result = read(root, directory/'results/results.json', parents)
-    preflight = read(root, directory/'results/preflight.json', parents)
+    manifest = read_object(root, directory/'meta/run_manifest.json', parents)
+    runtime = read_object(root, directory/'meta/runtime.json', parents)
+    result = read_object(root, directory/'results/results.json', parents)
+    preflight = read_object(root, directory/'results/preflight.json', parents)
     order = read(root, directory/'inputs/order.json', parents)
     log = observe(root, directory/'logs/steps.jsonl', parents)
     if not log.is_file():
         raise FileNotFoundError('Missing original gold training step logs.')
     logs = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
-    if not logs or not any(row.get('step') == 64 for row in logs):
+    if not logs or any(not isinstance(row, dict) for row in logs) or not any(row.get('step') == 64 for row in logs):
         raise ValueError('Gold training step logs lack completed step64.')
     if manifest.get('config') != config or manifest.get('runtime') != runtime:
         raise ValueError('Original gold training manifest/config/runtime disagree.')
     if 'L4' not in runtime.get('device', ''):
         raise ValueError('Original gold training runtime is not L4; evaluation metadata cannot substitute.')
     resolved_path = observe(root, directory/'meta/resolved_trainer.json', parents)
-    resolved = read(root, resolved_path, parents) if resolved_path.is_file() else {}
+    resolved = read_object(root, resolved_path, parents) if resolved_path.is_file() else {}
     # HF's original runtime records may put numeric mode only in resolved trainer args.
     if (runtime.get('tf32', resolved.get('tf32')) is not False
             or runtime.get('autocast', False) is not False
@@ -110,7 +117,7 @@ def gold_source(root, value, parents):
         folder = directory/'checkpoints'/f'checkpoint-{step}'
         for name in ['complete.json', 'adapter_config.json', 'adapter_model.safetensors']:
             observe(root, folder/name, parents)
-        marker = read(root, folder/'complete.json', parents)
+        marker = read_object(root, folder/'complete.json', parents)
         evidence[str(step)] = dict(path=str(folder.relative_to(root)),
             complete_sha256=file_hash(folder/'complete.json'),
             adapter_sha256=marker.get('files', {}).get('adapter_model.safetensors'))
@@ -124,6 +131,7 @@ def gold_source(root, value, parents):
         training_ids=[row['id'] for row in rows], heldout_ids=[row['id'] for row in evaluation],
         batches=[order[i:i+8] for i in range(0, 512, 8)],
         prompt_mask_contract=dict(template=config['source_config']['prompt_template'],
+            chat_template_sha256=config['source_config']['chat_template_sha256'],
             prompt_mask_value=-100, stop_included=True, eos_token_id=config['source_config']['decoding']['eos_token_id'],
             verification='saved token IDs and completion-only masks; retokenization qualification remains pending'),
         initialization_scope='saved original checkpoint0 payload verified; future trained-arm T15 still required')
@@ -131,10 +139,14 @@ def gold_source(root, value, parents):
 
 def grpo_source(root, value, parents):
     path = inside(root, value)
-    config = read(root, path, parents)
+    config = read_object(root, path, parents)
     # Observe metadata even on a blocked audit so availability changes invalidate it.
-    observe(root, path.parent/'prepare-complete.json', parents)
+    marker = read_object(root, path.parent/'prepare-complete.json', parents)
+    for item in marker.get('files', {}):
+        observe(root, item, parents)
     evidence = config.get('source_evidence', {})
+    if not isinstance(evidence, dict):
+        raise ValueError('GRPO source evidence must be an object.')
     for item in evidence.get('files', {}):
         observe(root, item, parents)
     if config.get('source_config_path'):

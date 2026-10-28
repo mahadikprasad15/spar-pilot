@@ -11,6 +11,10 @@ notebook defaults and original specifications may describe a different variant.
 4. [Pilot 4 — rank-1 GRPO and paired measurements](pilot-4.md)
 5. [Pilot 5 — readable traces](pilot-5.md)
 
+## Follow-ups
+
+- [Sampling SFT — source preparation and data recipes](sampling-sft.md)
+
 ## Dependencies
 
 ```mermaid

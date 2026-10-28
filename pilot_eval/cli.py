@@ -15,7 +15,7 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
-    for operation in ['prepare', 'audit', 'status', 'verify']:
+    for operation in ['prepare', 'audit', 'status', 'verify', 'recover-writer']:
         sampling = commands.add_parser('sampling-sft-' + operation, help='CPU Sampling SFT source audit and immutable plan')
         sampling.add_argument('--output-root', type=Path, required=True)
         if operation == 'prepare':
@@ -23,6 +23,9 @@ def main(argv=None, *, dependencies=None):
             sampling.add_argument('--name', required=True)
         else:
             sampling.add_argument('--config', type=Path, required=True)
+        if operation == 'recover-writer':
+            sampling.add_argument('--owner-token', required=True)
+            sampling.add_argument('--review-notes', required=True)
     for operation in ['prepare','run','status','report','verify','runtime','recover-writer','collection-prepare','collection-predict','collection-run','collection-forecast','collection-freeze','collection-status','collection-verify','collection-recover-writer']:
         trajectory=commands.add_parser('stage0-trajectory-'+operation,help='optional verified checkpoint geometry, drift-size trajectories and saved lengths')
         trajectory.add_argument('--output-root',type=Path,required=True)
@@ -674,6 +677,8 @@ def main(argv=None, *, dependencies=None):
             operation = args.command.removeprefix('sampling-sft-')
             if operation == 'prepare':
                 result = sampling_sft.prepare(args.selection, args.output_root, args.name)
+            elif operation == 'recover-writer':
+                result = sampling_sft.recover_writer(args.config, args.output_root, args.owner_token, args.review_notes)
             else:
                 result = getattr(sampling_sft, operation)(args.config, args.output_root)
                 result = sampling_sft.console_summary(result)

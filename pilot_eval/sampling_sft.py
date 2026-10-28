@@ -1,16 +1,35 @@
 """Public CPU source/plan workflow for Sampling SFT. No paid execution exists here."""
 import json
+import os
+import platform
+from datetime import datetime, timezone
 from pathlib import Path
 
-from pilot_eval.protocol import gsm8k_messages
 from pilot_eval.run import _write_state
 from pilot_eval.sampling_sft_sources import (gold_source, grpo_source, inside, observe,
                                              read, verify_parents)
 from pilot_eval.sft import safe_name
 from pilot_eval.stage0_workflow import _writer, _software
 from pilot_eval.trace_session import _save
-from pilot_eval.training import file_hash
+from pilot_eval.training import file_hash, run_lock
 from pilot_eval.workflow import _hash
+
+
+PROPOSER_TEMPLATE = """You are given a grade-school math word problem, a reference solution, and the beginning
+of a response. Study the reference solution, then continue the response in your own words,
+showing your reasoning. Keep it consistent with the reference solution, and make sure the
+final answer equals the reference solution's final answer.
+
+Task:
+{TRAINING_USER_MESSAGE}
+
+Reference solution:
+{CLEANED_GOLD}
+
+Beginning of the response:
+{PARTIAL_RESPONSE_TEXT}
+
+Continue the response from exactly where it stops."""
 
 
 def recipe():
@@ -21,6 +40,10 @@ def recipe():
         jump_tokens=64, cap_tokens=1024, max_blocks=32, max_model_retries=3,
         temperature=0.6, top_p=1.0, repetition_penalty=1.1,
         accept_rule='strict-mean-response-logprob-improvement', cut_range='whole-trace',
+        prompts=dict(version='sampling-sft-proposer-v1', scorer_template='gsm8k-v1',
+            proposer_template=PROPOSER_TEMPLATE, template_sha256=_hash(PROPOSER_TEMPLATE),
+            prefix_policy='decoded-in-user-and-token-ids-as-assistant-prefill',
+            gold_cleaning='strip-calculator-markup-and-rewrite-final-marker-as-prose-v1'),
         stop_token_strings=['<|im_end|>','<|endoftext|>'],
         baseline='deferred', offset='not-measured', evaluation='deferred', internals='deferred',
         checkpoint_steps=[0,8,16,32,64], budget_usd=dict(total=25,sampling=10,training=6,storage_shared=9),
@@ -68,7 +91,7 @@ def prepare(selection_path, output_root, name):
         selection_sha256=_hash(sources), execution_kind='cpu-source-audit-only')
     path = root/'plans'/name/'sampling-sft.plan.json'
     directory = root/config['run_path']
-    with _writer(directory):
+    with run_lock(directory):
         frozen(path, config)
         frozen(directory/'meta/run_manifest.json', dict(config_path=str(path.relative_to(root)),
             config_sha256=_hash(config), config_file_sha256=file_hash(path), execution_kind='cpu-source-audit-only'))
@@ -158,6 +181,38 @@ def verify(path, output_root):
     if result['audit'] is None:
         raise ValueError('Sampling SFT audit not completed.')
     return result
+
+
+def recover_writer(path, output_root, owner_token, review_notes):
+    """Explicit reviewed ownership recovery; never automatically clear a writer."""
+    _, _, directory = load(path, output_root)
+    if not owner_token or not review_notes.strip():
+        raise ValueError('Recovery requires the recorded owner token and review notes.')
+    with run_lock(directory):
+        marker = directory/'writer.json'
+        owner = json.loads(marker.read_text())
+        if owner.get('token') != owner_token:
+            raise ValueError('Sampling SFT writer token mismatch.')
+        if owner.get('host') == platform.node():
+            pid = owner.get('pid')
+            if not isinstance(pid, int) or pid <= 0:
+                raise ValueError('Invalid writer process identity.')
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise ValueError('The recorded writer process is still active.')
+        event = dict(owner=owner, review_notes=review_notes,
+                     updated_at=datetime.now(timezone.utc).isoformat())
+        log = directory/'logs/ownership-recovery.jsonl'
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open('a') as stream:
+            stream.write(json.dumps(event)+'\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        marker.unlink()
+    return dict(state='ownership-released', scope='No source, plan or scientific payload changed.')
 
 
 def console_summary(value):
