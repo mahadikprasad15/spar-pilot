@@ -120,3 +120,14 @@ _Avoid_: Fraction of total activation energy, when components can interfere
 A new leading singular direction whose projection onto a declared old leading
 singular subspace is below a declared overlap threshold.
 _Avoid_: New direction, inferred only from low overlap with individual old vectors
+
+**Sampling SFT recipe**:
+A data-construction procedure that uses a gold-guided proposer, a declared amount
+of greedy likelihood search, and correctness filtering before supervised training.
+_Avoid_: On-policy SFT, when describing this selected proposal distribution
+
+**Sampling coverage**:
+The set of training problems with an eligible completed answer under a declared
+sampling recipe and bounded retry policy. A common-coverage comparison uses
+only problems covered by every arm named in that comparison.
+_Avoid_: Full-cohort comparison, when uncovered problems are excluded
