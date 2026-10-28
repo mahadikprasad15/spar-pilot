@@ -15,6 +15,26 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare', 'run', 'status', 'export', 'receipt', 'finish', 'confirm', 'execute']:
+        job = commands.add_parser('sampling-sft-job-' + operation, help='bounded CLI job/export/own-Pod-stop lifecycle')
+        job.add_argument('--output-root', type=Path, required=True)
+        if operation == 'prepare':
+            job.add_argument('--config', type=Path, required=True)
+            job.add_argument('--request', type=Path, required=True)
+        elif operation == 'receipt':
+            job.add_argument('--manifest', type=Path, required=True)
+        else:
+            job.add_argument('--job', type=Path, required=True)
+        if operation in ['run', 'execute']: job.add_argument('--approval', type=Path)
+        if operation in ['export', 'receipt']:
+            job.add_argument('--copy-root', type=Path, required=True)
+            job.add_argument('--role', choices=['network','downloaded'], required=True)
+            job.add_argument('--receipt', type=Path, required=True)
+        if operation == 'finish': job.add_argument('--network-receipt', type=Path, required=True)
+        if operation in ['finish', 'execute']: job.add_argument('--download-receipt', type=Path, required=True)
+        if operation == 'execute':
+            job.add_argument('--network-root', type=Path, required=True)
+            job.add_argument('--max-wait-seconds', type=float, default=0)
     for operation in ['init', 'status', 'reserve', 'settle', 'extend']:
         budget = commands.add_parser('sampling-sft-budget-' + operation, help='shared USD ledger; reservations do not launch paid work')
         budget.add_argument('--output-root', type=Path, required=True)
@@ -684,6 +704,20 @@ def main(argv=None, *, dependencies=None):
                 result={k:v for k,v in result.items() if k!='contrasts'}
                 result['detail']='All contrast tables, raw pairs and plots are saved in the findings directory.'
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-job-'):
+            from pilot_eval import sampling_sft_jobs as jobs
+            operation = args.command.removeprefix('sampling-sft-job-')
+            if operation == 'prepare': result = jobs.prepare(args.config, args.output_root, args.request)
+            elif operation == 'run': result = jobs.run(args.job, args.output_root, args.approval, provider=dependencies)
+            elif operation == 'status': result = jobs.status(args.job, args.output_root)
+            elif operation == 'export': result = jobs.export(args.job, args.output_root, args.copy_root, args.role, args.receipt, provider=dependencies)
+            elif operation == 'receipt':
+                from pilot_eval.sampling_sft_exports import receipt
+                result = receipt(args.manifest, args.copy_root, args.role, args.receipt, provider=dependencies)
+            elif operation == 'finish': result = jobs.finish(args.job, args.output_root, args.network_receipt, args.download_receipt, provider=dependencies)
+            elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
+            else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
+            print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
         elif args.command.startswith('sampling-sft-budget-'):
             from pilot_eval import sampling_sft_budget as budget
             operation = args.command.removeprefix('sampling-sft-budget-')

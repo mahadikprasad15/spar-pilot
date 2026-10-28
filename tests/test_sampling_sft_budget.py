@@ -153,3 +153,32 @@ def test_total_and_stage_caps_count_all_outstanding_reservations(tmp_path):
     request=gpu('more',hours='0.3',stage='training')
     approval.update(budget_sha256=ledger(tmp_path)['sha256'],request_sha256=_hash(request))
     assert reserve(tmp_path,plan,request,approval)==1
+
+
+def test_partial_storage_bill_retains_expected_remaining_lifetime(tmp_path):
+    plan=setup(tmp_path)
+    request=dict(job_id='volume',kind='storage',stage='storage_shared',volume_id='v',
+                 rate_usd_per_month='4',months='1')
+    assert reserve(tmp_path,plan,request)==0
+    observation=write(tmp_path/'partial.json',dict(event_id='week1',actual_usd='1.2',covered_months='0.25',
+        evidence='provider bill for first quarter month',reviewer='human',notes='Volume remains allocated'))
+    assert cli(tmp_path,'settle','--job-id','volume','--observation',observation)==0
+    assert cli(tmp_path,'settle','--job-id','volume','--observation',observation)==0
+    current=ledger(tmp_path)
+    assert current['spent_usd']=='1.200000'
+    assert current['reserved_usd']=='3.000000'
+    assert current['committed_usd']=='4.200000'
+
+
+def test_simultaneous_reservations_cannot_overbook_a_stage(tmp_path):
+    import subprocess,sys
+    plan=setup(tmp_path)
+    paths=[write(tmp_path/f'{i}.json',gpu(str(i),hours='4')) for i in range(2)]
+    script='from pilot_eval.cli import main; import sys; raise SystemExit(main(sys.argv[1:]))'
+    children=[subprocess.Popen([sys.executable,'-c',script,'sampling-sft-budget-reserve','--config',str(plan),
+              '--output-root',str(tmp_path),'--request',str(path)],stdout=subprocess.PIPE,stderr=subprocess.PIPE) for path in paths]
+    codes=[]
+    for child in children:
+        child.communicate(timeout=30);codes.append(child.returncode)
+    assert sorted(codes)==[0,1]
+    assert ledger(tmp_path)['reserved_usd']=='6.100000'
