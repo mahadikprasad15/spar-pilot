@@ -15,6 +15,16 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','export','import','status','freeze','verify']:
+        review=commands.add_parser('sampling-sft-review-'+operation,help='separate human eligibility and reviewed coverage; CPU only')
+        review.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            review.add_argument('--generation',type=Path,required=True);review.add_argument('--name',required=True)
+        else:review.add_argument('--config',type=Path,required=True)
+        if operation=='export':review.add_argument('--destination',type=Path,required=True)
+        if operation in ['export','import']:review.add_argument('--origin',choices=['human','agent'],default='human')
+        if operation=='import':
+            review.add_argument('--labels',type=Path,required=True);review.add_argument('--confirm-human',action='store_true')
     for operation in ['prepare','freeze','run','status','verify','recover-writer']:
         generation=commands.add_parser('sampling-sft-generation-'+operation,help='three full512 arms with sealed attempts and bounded retries')
         generation.add_argument('--output-root',type=Path,required=True)
@@ -756,6 +766,14 @@ def main(argv=None, *, dependencies=None):
             elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
             else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('sampling-sft-review-'):
+            from pilot_eval import sampling_sft_review as review
+            operation=args.command.removeprefix('sampling-sft-review-')
+            if operation=='prepare':result=review.prepare(args.generation,args.output_root,args.name)
+            elif operation=='export':result=review.export(args.config,args.output_root,args.destination,args.origin)
+            elif operation=='import':result=review.import_labels(args.config,args.output_root,args.labels,args.origin,args.confirm_human)
+            else:result=getattr(review,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(review.console(result),indent=2))
         elif args.command.startswith('sampling-sft-generation-'):
             from pilot_eval import sampling_sft_generation as generation
             operation=args.command.removeprefix('sampling-sft-generation-')
