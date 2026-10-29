@@ -15,6 +15,16 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run','status','verify','compare','select']:
+        instrument=commands.add_parser('sampling-sft-instrument-'+operation,help='bounded sampler, T3 and engine throughput evidence')
+        instrument.add_argument('--output-root',type=Path,required=True)
+        instrument.add_argument('--config',type=Path,required=True)
+        if operation=='prepare':
+            instrument.add_argument('--settings',type=Path,required=True)
+            instrument.add_argument('--name',required=True)
+        if operation=='run':instrument.add_argument('--job',type=Path)
+        if operation=='compare':instrument.add_argument('--oracle',type=Path,required=True)
+        if operation=='select':instrument.add_argument('--review',type=Path,required=True)
     for operation in ['prepare', 'run', 'status', 'export', 'receipt', 'finish', 'confirm', 'execute']:
         job = commands.add_parser('sampling-sft-job-' + operation, help='bounded CLI job/export/own-Pod-stop lifecycle')
         job.add_argument('--output-root', type=Path, required=True)
@@ -718,6 +728,15 @@ def main(argv=None, *, dependencies=None):
             elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
             else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('sampling-sft-instrument-'):
+            from pilot_eval import sampling_sft_instrument as instrument
+            operation=args.command.removeprefix('sampling-sft-instrument-')
+            if operation=='prepare':result=instrument.prepare(args.config,args.output_root,args.settings,args.name)
+            elif operation=='run':result=instrument.run(args.config,args.output_root,args.job,dependencies=dependencies)
+            elif operation=='compare':result=instrument.compare(args.config,args.output_root,args.oracle)
+            elif operation=='select':result=instrument.select(args.config,args.output_root,args.review)
+            else:result=getattr(instrument,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(instrument.console(result),indent=2))
         elif args.command.startswith('sampling-sft-budget-'):
             from pilot_eval import sampling_sft_budget as budget
             operation = args.command.removeprefix('sampling-sft-budget-')

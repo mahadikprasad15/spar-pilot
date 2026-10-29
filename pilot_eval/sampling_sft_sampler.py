@@ -6,6 +6,7 @@ enters scientific state. The caller owns durable completed-block checkpoints.
 import math
 import random
 import re
+import time
 
 from pilot_eval.sampling_sft import PROPOSER_TEMPLATE
 
@@ -73,7 +74,8 @@ def scored(output, request):
     return math.fsum(values)/len(values)
 
 
-def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None, on_record=None):
+def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None, on_record=None,
+           on_timing=None, block_limit=32):
     """One bounded attempt per problem; retries/production resume belong upstream.
 
     Errors replay the identical ordered logical batch once. An exhausted replay
@@ -92,6 +94,7 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
     def call(kind, requests, validator):
         for replay in range(2):
             try:
+                start=time.monotonic()
                 outputs = getattr(engine,kind)(requests)
                 if not isinstance(outputs,list) or len(outputs) != len(requests):
                     raise ProtocolError('Engine batch cardinality changed.')
@@ -99,8 +102,12 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
                 entry = dict(kind=kind, requests=requests, outputs=outputs, replay=replay)
                 records.append(entry)
                 if on_record: on_record(entry)
+                if on_timing:on_timing(dict(kind=kind,seconds=time.monotonic()-start,
+                    input_tokens=sum(len(r['prompt_ids'])+(len(r['response_ids']) if kind=='score' else 0) for r in requests),
+                    cached_tokens=sum(o.get('num_cached_tokens',0) or 0 for o in outputs),
+                    generated_tokens=sum(len(o['token_ids']) for o in outputs) if kind=='generate' else 0))
                 return checked
-            except (RuntimeError, ValueError, TypeError, KeyError, IndexError) as exc:
+            except (RuntimeError, ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
                 error = dict(kind=kind, requests=requests, replay=replay,
                              error=str(exc), type=type(exc).__name__)
                 errors.append(error)
@@ -108,7 +115,7 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
         raise ProtocolError('Same logical request failed twice; stop the run.')
 
     try:
-        for block in range(32):
+        for block in range(block_limit):
             active = [p for p in problems if states[p['problem_id']]['end_state'] is None]
             if not active: break
             prefixes = [states[p['problem_id']]['response_ids'] for p in active]
