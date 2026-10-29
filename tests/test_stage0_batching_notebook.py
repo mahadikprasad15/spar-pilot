@@ -9,7 +9,8 @@ def test_saved_notebooks_expose_batch16_handoff_and_keep_internals_singleton():
         notebook=json.loads((root/f'notebooks/stage-0-{kind}-colab.ipynb').read_text())
         text='\n'.join(''.join(c['source']) for c in notebook['cells'])
         assert 'USE_BATCH16 = not CONDITIONAL_EXTENSION' in text
-        assert '-batch16-primary-findings-v1' in text
+        assert '-batch16-primary-findings-v2' in text
+        assert '-batch16-fp64-fixed-context-v2' in text
         for cell in notebook['cells']:
             if cell['cell_type']=='code':ast.parse(''.join(cell['source']))
         if kind=='gpu':

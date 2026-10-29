@@ -47,7 +47,32 @@ def _parents(evaluation_path, drift_path, root):
     return evaluation, measurement, edir, ddir
 
 
-def prepare(evaluation_path, drift_path, output_root, name):
+_INHERITED_FIELDS = ['contrasts', 'statistics', 'hypotheses', 'limitations', 'noninferiority_margin']
+
+
+def _inherited_registration(prior_path, root, evaluation_path, config):
+    """ADR 0015: a re-identified instrument keeps only an unchanged pre-collection registration."""
+    prior_path = inside(root, prior_path); prior = json.loads(prior_path.read_text())
+    directory = inside(root, prior['run_path'])
+    if (prior.get('protocol') != 'stage0-primary-findings-v1'
+            or json.loads((directory/'config.json').read_text()) != prior
+            or json.loads((directory/'meta/run_manifest.json').read_text())['config_sha256'] != _hash(prior)):
+        raise ValueError('Registration source is not an intact frozen findings plan.')
+    if prior['registration'].get('status') != 'before-collection':
+        raise ValueError('Only a pre-collection registration can be inherited.')
+    if (prior['evaluation_path'] != config['evaluation_path'] or prior['evaluation_sha256'] != config['evaluation_sha256']
+            or prior['execution_sha256'] != config['execution_sha256']
+            or prior['inference_schedules'] != config['inference_schedules']
+            or any(prior[k] != config[k] for k in _INHERITED_FIELDS)):
+        raise ValueError('Inherited registration must bind the same behavior collection and comparison family.')
+    return dict(status='before-collection', recorded_at=_now(),
+        inherited_from=dict(path=str(prior_path.relative_to(root)), sha256=file_hash(prior_path),
+            recorded_at=prior['registration']['recorded_at'], drift_path=prior['drift_path']),
+        reason='Fixed-context instrument re-identified (ADR 0015); comparison family frozen before collection is unchanged.',
+        n150_risk=prior['registration']['n150_risk'])
+
+
+def prepare(evaluation_path, drift_path, output_root, name, registered_from=None):
     root = Path(output_root).resolve(); safe_name(name)
     ep, dp = inside(root, evaluation_path), inside(root, drift_path)
     evaluation, measurement, edir, ddir = _parents(ep, dp, root)
@@ -77,6 +102,9 @@ def prepare(evaluation_path, drift_path, output_root, name):
             optional_work='not required; absent products do not block primary findings',
             conditional_v6='not included; applicability has not been inferred from missing evidence')
         config.update(extension)
+        if registered_from is not None:
+            config['registration'] = dict(_inherited_registration(registered_from, root, ep, config),
+                observed_collection_units=config['registration']['observed_collection_units'])
         _save_frozen(path, config); _save_frozen(directory/'config.json', config)
         _save_frozen(directory/'meta/run_manifest.json', dict(config_sha256=_hash(config),
             model_calls=0, resources='CPU only', total_units=len(config['contrasts'])))

@@ -7,6 +7,24 @@ from pilot_eval.token_measurement_math import full_vocabulary_kl, prediction_pos
 SUM_FIELDS = ['update_squared_sum', 'base_squared_sum', 'ratio_sum']
 
 
+def coefficient_fractions(dot, actual, sum_abs, length):
+    """Coefficient reconstruction use of its allowance (ADR 0015).
+
+    The legacy allowance 1e-6+1e-5|dot| is kept. An FP32 dot product of length
+    d may also err by the a-priori bound gamma_d*sum|a_i x_i|,
+    gamma_d=d*u/(1-d*u), u=2**-24: under heavy cancellation the legacy floor is
+    finer than FP32 can resolve. Returns (fraction, legacy_fraction).
+    """
+    dot,actual,sum_abs=(np.asarray(v,dtype=np.float64) for v in [dot,actual,sum_abs])
+    if (type(length) is not int or length<1 or dot.shape!=actual.shape or dot.shape!=sum_abs.shape
+            or not all(np.isfinite(v).all() for v in [dot,actual,sum_abs]) or np.any(sum_abs<0)):
+        raise ValueError('Malformed coefficient reconstruction evidence.')
+    if not dot.size:return 0.,0.
+    unit=2.0**-24;gamma=length*unit/(1-length*unit)
+    error=np.abs(dot-actual);legacy=1e-6+1e-5*np.abs(dot)
+    return float((error/np.maximum(legacy,gamma*sum_abs)).max()),float((error/legacy).max())
+
+
 def positions(rows):
     writes=[]
     for example,row in enumerate(rows):

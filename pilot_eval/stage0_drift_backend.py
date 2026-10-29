@@ -5,7 +5,7 @@ import numpy as np
 
 from pilot_eval.activation_prepare import VIEWS
 from pilot_eval.activation_profile import AGREEMENT
-from pilot_eval.stage0_drift_math import SUM_FIELDS, positions
+from pilot_eval.stage0_drift_math import SUM_FIELDS, coefficient_fractions, positions
 from pilot_eval.stage0_evaluation_backend import EvaluationDependencies, EvaluationEngine
 from pilot_eval.workflow import _hash
 
@@ -90,9 +90,11 @@ class DriftEngine(EvaluationEngine):
             self._finite(scalar,branch)
             selected=[p['position'] for p in mapping['writes']]
             if selected:
-                dot=(x[0,selected].double()*a[0].double()).sum(-1)
-                actual=scalar[0,selected,0].double()
-                frac=float(((dot-actual).abs()/(1e-6+1e-5*dot.abs())).max())
+                terms=x[0,selected].double()*a[0].double()
+                dot=terms.sum(-1);actual=scalar[0,selected,0].double()
+                frac,legacy=coefficient_fractions(dot.cpu().numpy(),actual.cpu().numpy(),
+                    terms.abs().sum(-1).cpu().numpy(),int(a.shape[1]))
+                self.legacy_coefficient_fraction=max(getattr(self,'legacy_coefficient_fraction',0.),legacy)
                 expected=scalar[0,selected].double()*b[:,0].double()*m.scaling[variant]
                 frac=max(frac,float(((branch[0,selected].double()-expected).abs()/(1e-6+1e-5*expected.abs())).max()))
                 fraction=frac
@@ -154,7 +156,7 @@ class DriftEngine(EvaluationEngine):
     def measure(self,rows,variant,*,diagnostic):
         # Current real qualification is singleton. Save groups do not alter inference batching.
         if self.config['batch_size']!=1:raise ValueError('Real drift engine requires qualified singleton batches.')
-        group=tuple(r['id'] for r in rows)
+        group=tuple(r['id'] for r in rows);self.legacy_coefficient_fraction=0.
         if group!=self.cache_group:
             self.cache.clear();self.cache_group=group
         outputs=[];fraction=0.;max_sum=0.;chunk_comparison=None
@@ -196,7 +198,9 @@ class DriftEngine(EvaluationEngine):
                 max_logit_contexts=min(self.config['context_chunk'],max(len(positions([r])['predictions']) for r in rows)),
                 workspace_bytes=self.config['workspace_bytes'],max_abs_log_sum=max_sum,
                 chunk_comparison=chunk_comparison,
-                kl_roundoff_bound=64*np.finfo(float).eps*(1+max_sum)))
+                kl_roundoff_bound=64*np.finfo(float).eps*(1+max_sum),
+                coefficient_allowance='max(1e-6+1e-5|dot|, gamma_d*sum|a_i x_i|); ADR 0015',
+                legacy_coefficient_max_fraction=getattr(self,'legacy_coefficient_fraction',0.)))
 
     def close(self):
         self.cache.clear();self.modules=[];self.body=None

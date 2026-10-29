@@ -144,6 +144,7 @@ def main(argv=None, *, dependencies=None):
             findings.add_argument('--evaluation',type=Path,required=True)
             findings.add_argument('--drift',type=Path,required=True)
             findings.add_argument('--name',required=True)
+            findings.add_argument('--registered-from',type=Path)
         else:findings.add_argument('--config',type=Path,required=True)
         if operation=='run':findings.add_argument('--max-new-units',type=int)
         if operation=='audit-prepare':
@@ -672,7 +673,8 @@ def main(argv=None, *, dependencies=None):
         elif args.command.startswith('stage0-findings-'):
             from pilot_eval import stage0_findings as workflow
             operation=args.command.removeprefix('stage0-findings-')
-            if operation=='prepare':result=workflow.prepare(args.evaluation,args.drift,args.output_root,args.name)
+            if operation=='prepare':result=workflow.prepare(args.evaluation,args.drift,args.output_root,args.name,
+                registered_from=args.registered_from)
             elif operation=='run':result=workflow.run(args.config,args.output_root,max_new_units=args.max_new_units)
             elif operation.startswith('audit-'):
                 from pilot_eval import stage0_findings_review as review
