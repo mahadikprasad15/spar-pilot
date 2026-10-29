@@ -203,6 +203,10 @@ def _saved(config,directory,root):
     return [_read_unit(config,directory,u,by_id,cache) for u in config['units']]
 
 
+def _environment(runtime):
+    return {k:v for k,v in runtime.items() if k!='git_commit'}
+
+
 def _reservation(config,directory,root,runtime,approval_path):
     usage=budget_status(root)
     if usage['state']!='observed' or usage['spent_units']>=20:raise ValueError('Observed cumulative Stage 0 usage must be below 20 units.')
@@ -257,7 +261,10 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         from pilot_eval.stage0_drift_backend import DriftDependencies
         from pilot_eval.stage0_qualification_backend import deadline_guard
         deps=dependencies or _dependencies(config);runtime=deps.runtime()
-        if runtime!=config['runtime']:raise ValueError('Drift requires the exact qualified runtime/session; do not silently join a new environment.')
+        # ADR 0015: only the code release may differ inside the frozen session; it is recorded per unit.
+        if _environment(runtime)!=_environment(config['runtime']):
+            raise ValueError('Drift requires the exact qualified runtime/session; do not silently join a new environment.')
+        code_git_commit=runtime.get('git_commit');runtime=config['runtime']
         reservation,remaining=_reservation(config,directory,root,runtime,approval_path)
         attempt=directory/'attempts'/uuid.uuid4().hex
         _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],started_at=_now(),remaining_seconds=remaining))
@@ -294,7 +301,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
                     (folder/'arrays.npz.tmp').replace(folder/'arrays.npz')
                     _write_json(folder/'result.json',{k:v for k,v in result.items() if k!='arrays'})
                     _write_json(folder/'attempt.json',dict(attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),
-                        integrity=integrity,seconds=time.monotonic()-begin))
+                        integrity=integrity,seconds=time.monotonic()-begin,code_git_commit=code_git_commit))
                     _write_json(folder/'complete.json',dict(identity=_identity(config,unit,_hash(runtime),config['items_sha256']),
                         files={p:file_hash(folder/p) for p in ['arrays.npz','result.json','attempt.json']}))
                     saved[i]=result;new+=1;_progress(config,directory,saved,'running',reservation_id=reservation['reservation_id'])

@@ -359,3 +359,22 @@ def test_notebooks_expose_fixed_context_stages_and_keep_code_parseable():
             if cell['cell_type']=='code':
                 ast.parse(''.join(cell['source']))
                 assert cell['outputs']==[] and cell['execution_count'] is None
+
+
+def test_same_session_code_release_change_is_recorded_not_joined_silently(source):
+    """ADR 0015: a later code release may measure in the identical frozen session."""
+    plan=prepared(source);review=release_greedy(source)
+    class LaterRelease(TinyDrift):
+        def __init__(self,commit,**kw):super().__init__(**kw);self.commit=commit
+        def runtime(self):return dict(super().runtime(),git_commit=self.commit)
+    moved=LaterRelease('later-commit',session='other')
+    assert command(source,'run','--config',plan,'--approval',review,dependencies=moved)==1 and moved.loads==0
+    engine=LaterRelease('later-commit')
+    assert command(source,'run','--config',plan,'--approval',review,'--max-new-units',1,dependencies=engine)==0
+    directory=source/'runs/stage0/drift/fixed-context'
+    config=json.loads(plan.read_text())
+    assert json.loads((directory/'meta/runtime.json').read_text())==config['runtime']
+    unit=next((directory/'units').glob('*/attempt.json'))
+    assert json.loads(unit.read_text())['code_git_commit']=='later-commit'
+    assert command(source,'run','--config',plan,dependencies=engine)==0
+    assert command(source,'verify','--config',plan)==0

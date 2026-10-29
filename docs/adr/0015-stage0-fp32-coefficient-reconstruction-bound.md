@@ -46,3 +46,11 @@ The inheritance and its reason are stored in the plan. Otherwise the new plan is
 labelled exploratory, as before.
 
 This is a gate change made after a failure, recorded as an explicit user decision.
+
+Code release: the frozen execution runtime records the code commit used for behavioral
+collection. Applying this fix in the same live session changes only that commit. Drift
+collection therefore compares every runtime field except `git_commit`, including session,
+GPU, driver, CUDA, library versions and numerical flags. It records the actual commit in
+every sealed unit's `attempt.json`. Unit identities and the saved runtime still use the
+frozen runtime. The changed drift implementation is separately bound by the v2 plan's
+implementation hash.
