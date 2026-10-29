@@ -90,8 +90,8 @@ python -m pilot_eval sampling-sft-recover-writer --config artifacts/plans/sampli
 
 ## Next stages
 
-Tickets02–04 implement budget/export controls, bounded engine checks and the exact-resume pilot. Real execution of those checks remains pending.
-Production generation, review, gate statistics and approved training remain later implementation tickets. Sampling hardware is L40S; training requires verified
+Tickets02–05 implement budget/export controls, bounded engine checks, the exact-resume pilot and full-arm generation. Real execution remains pending.
+Human review, gate statistics and approved training remain later implementation tickets. Sampling hardware is L40S; training requires verified
 L4/FP32 gold metadata. GPU-version/scheduling/default settings and actual stop
 semantics are resolved before engine qualification, not fabricated by this CPU
 audit.
@@ -119,3 +119,10 @@ zero-cost smoke. No engine, live cloud qualification or paid approval is implied
 commands behind the reserved-job entrypoint. The notebook exposes optional CPU
 plan cells; CLI/RunPod remains primary. CPU fixture and subprocess-kill evidence
 is not a real engine qualification or paid-job approval.
+
+## Full generation
+
+[Generation runbook](../operations/sampling-sft-generation.md): real qualification
+and exact-plan review precede budgeted k0/k2/k5 jobs. Sealed blocks, model-outcome
+retries and automatic512-row dispositions share one frozen runtime. Completed
+collection remains separate from human coverage review and training approval.

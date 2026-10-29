@@ -102,7 +102,7 @@ def test_partial_round_resume_preserves_sealed_bytes_and_skips_covered_work(tmp_
     assert cli(tmp_path,'run','--config',plan,'--k','0',deps=deps)==0
     assert all(p.read_bytes()==b for p,b in saved.items())
     assert list((folder/'abandoned').glob('*/scientific.jsonl'))
-    # After resume, the original32/512 completed responses are never regenerated.
+    # After resume, previously completed responses are never regenerated.
     first=deps.engines[0].requests[0]
     assert first['problem_id']==2 and first['block']==1
     assert all(r['problem_id']<5 for r in deps.engines[0].requests)
