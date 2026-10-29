@@ -60,3 +60,8 @@ Ticket03 (bounded sampler, score qualification and profile) is the next implemen
 - Final budget/lifecycle suite37 passed in11.65s; earlier combined affected regression78 passed in84.35s; notebook schema/execution checked.
 - Canonical demo artifacts/validation/sampling-sft-ticket02; simulation only, no live provider calls or model/GPU work.
 - Real RunPod/storage preflight remains pending; Ticket03 unclaimed. No new commits pushed without a request.
+
+## Ticket03 implementation
+- Resolved software slice: bounded likelihood search, score and throughput workflow; public commands and runbook in docs/operations/sampling-sft-engine.md.
+- CPU regression78 passed; artifacts/validation/sampling-sft-ticket03/validation.json. Real L40S/T3/profile execution remains pending, not inferred from fixtures.
+- Ticket04 is next: fixed32 pilot and exact interruption/resume. No paid work or publication authorized.

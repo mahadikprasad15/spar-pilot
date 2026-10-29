@@ -55,6 +55,8 @@ def generated(output, maximum, stops):
         ids.append(stop)
     if not ids or len(ids) > maximum:
         raise ProtocolError('Empty generation or token budget overflow.')
+    if reason == 'length' and len(ids) != maximum:
+        raise ProtocolError('Length-limited generation returned fewer than requested tokens without a stop.')
     positions = [i for i, value in enumerate(ids) if value in stops]
     if positions and (positions != [len(ids)-1] or reason != 'stop'):
         raise ProtocolError('Inconsistent first-stop accounting.')
@@ -74,6 +76,15 @@ def scored(output, request):
     return math.fsum(values)/len(values)
 
 
+def diagnostic(value):
+    """Retain malformed numerical evidence as valid JSON, including NaN/Inf."""
+    if isinstance(value,float) and not math.isfinite(value):return {'nonfinite':repr(value)}
+    if isinstance(value,dict):return {str(k):diagnostic(v) for k,v in value.items()}
+    if isinstance(value,(list,tuple)):return [diagnostic(v) for v in value]
+    if value is None or isinstance(value,(str,int,float,bool)):return value
+    return {'representation':repr(value)}
+
+
 def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None, on_record=None,
            on_timing=None, block_limit=32):
     """One bounded attempt per problem; retries/production resume belong upstream.
@@ -86,30 +97,33 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
     if not problems or len({p['problem_id'] for p in problems}) != len(problems):
         raise ValueError('Require distinct problems.')
     problems = sorted(problems, key=lambda p:p['problem_id'])
-    states = {p['problem_id']:dict(problem_id=p['problem_id'], response_ids=[],
+    states = {p['problem_id']:dict(problem_id=p['problem_id'], source_id=p.get('source_id'), response_ids=[],
                                    mean_logprob=None, end_state=None, blocks=0) for p in problems}
     rng = {p['problem_id']:random.Random((data_seed*1_000_003+p['problem_id']) % 2**31) for p in problems}
     records, decisions, errors = [], [], []
 
     def call(kind, requests, validator):
         for replay in range(2):
+            outputs=None
             try:
                 start=time.monotonic()
                 outputs = getattr(engine,kind)(requests)
+                elapsed=time.monotonic()-start
                 if not isinstance(outputs,list) or len(outputs) != len(requests):
                     raise ProtocolError('Engine batch cardinality changed.')
                 checked = [validator(out, req) for out,req in zip(outputs,requests)]
                 entry = dict(kind=kind, requests=requests, outputs=outputs, replay=replay)
                 records.append(entry)
                 if on_record: on_record(entry)
-                if on_timing:on_timing(dict(kind=kind,seconds=time.monotonic()-start,
+                if on_timing:on_timing(dict(kind=kind,seconds=elapsed,
                     input_tokens=sum(len(r['prompt_ids'])+(len(r['response_ids']) if kind=='score' else 0) for r in requests),
                     cached_tokens=sum(o.get('num_cached_tokens',0) or 0 for o in outputs),
                     generated_tokens=sum(len(o['token_ids']) for o in outputs) if kind=='generate' else 0))
                 return checked
             except (RuntimeError, ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
                 error = dict(kind=kind, requests=requests, replay=replay,
-                             error=str(exc), type=type(exc).__name__)
+                             error=str(exc), type=type(exc).__name__,
+                             raw_outputs=diagnostic(outputs))
                 errors.append(error)
                 if on_record: on_record(dict(engine_error=error))
         raise ProtocolError('Same logical request failed twice; stop the run.')

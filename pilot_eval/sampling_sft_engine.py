@@ -5,6 +5,7 @@ collective_rpc/apply_model APIs. No automatic installs, downloads or fallback.
 """
 import importlib.metadata
 import json
+import os
 import subprocess
 
 from pilot_eval.sampling_sft_sampler import ProtocolError, proposer
@@ -65,9 +66,11 @@ class VLLMEngine:
             stop_token_ids=r['actual_stop_ids'],**kwargs)
 
     def generate(self,requests):
+        if any(len(r['prompt_ids'])+r['max_tokens']>self.settings['max_model_len'] for r in requests):
+            raise ProtocolError('Proposer context overflow; truncation forbidden.')
         prompts=[dict(prompt_token_ids=r['prompt_ids']) for r in requests]
         params=[self.params(temperature=0.6,top_p=1.0,repetition_penalty=1.1,
-            max_tokens=r['max_tokens'],min_tokens=1,seed=r['seed']) for r in requests]
+            max_tokens=r['max_tokens'],min_tokens=0,seed=r['seed']) for r in requests]
         outputs=self.llm.generate(prompts,params,use_tqdm=False)
         result=[]
         for request,out in zip(requests,outputs):
@@ -81,6 +84,8 @@ class VLLMEngine:
 
     def score(self,requests):
         from vllm import SamplingParams
+        if any(len(r['prompt_ids'])+len(r['response_ids'])+1>self.settings['max_model_len'] for r in requests):
+            raise ProtocolError('Scorer context overflow; truncation forbidden.')
         # Raw model probabilities: no proposer penalties/temperature applied.
         params=SamplingParams(n=1,max_tokens=1,temperature=1.0,top_p=1.0,top_k=-1,
             min_p=0.0,repetition_penalty=1.0,presence_penalty=0.0,frequency_penalty=0.0,
@@ -130,6 +135,8 @@ class HFOracle:
 
 
 def open_engine(plan,root):
+    os.environ['HF_HUB_OFFLINE']='1'
+    os.environ['TRANSFORMERS_OFFLINE']='1'
     import torch
     from transformers import AutoTokenizer,AutoModelForCausalLM
     from pilot_eval.sampling_sft import verify
@@ -140,6 +147,9 @@ def open_engine(plan,root):
         raise ValueError('Independent tokenizer/HF adapter requires transformers4.57.6.')
     audit=verify(root/plan['source_plan'],root)['audit'];identity=audit['training']['identity']
     model_path=root/settings['local_model'];tokenizer_path=root/settings['local_tokenizer']
+    model_config=json.loads((model_path/'config.json').read_text())
+    if model_config.get('quantization_config'):
+        raise ValueError('Quantized snapshots cannot qualify this FP32 instrument.')
     # Model snapshots are staged offline under their immutable Hub revision name.
     if model_path.name!=identity['model_revision'] or tokenizer_path.name!=identity['tokenizer_revision']:
         raise ValueError('Local snapshot directory names must identify the audited immutable Hub revisions.')

@@ -85,17 +85,17 @@ def test_cap_and_safety_bound_without_changing_production_numbers(monkeypatch):
     assert result['traces'][0]['end_state']=='capped'
     assert len(result['traces'][0]['response_ids'])==1024
     # Every refinement shrinks the trace to one non-stop token.
-    engine=Engine([g for _ in range(32) for g in [generation([65]*64),generation([66]),generation([66])]],
-                  [s for _ in range(32) for s in [[-2.0]*64,[-1.0]]])
+    engine=Engine([g for _ in range(32) for g in [generation([65]*64),generation([3],'stop',3),generation([66])]])
     # Scoring lengths depend on retained prefix; use length-aware synthetic scores.
     def scores(requests):
         return [dict(token_ids=r['response_ids'],positions=list(range(2,2+len(r['response_ids']))),
-                     logprobs=[-1.0 if len(r['response_ids'])<64 else -2.0]*len(r['response_ids'])) for r in requests]
+                     logprobs=[(-1.0 if r['response_ids'][-1]==3 else -0.5) if len(r['response_ids'])<64 else -2.0]*len(r['response_ids'])) for r in requests]
     engine.score=scores
     # cut can retain prefix, so a deterministic fixture RNG is tested separately;
     # this assertion checks every output remains bounded under full search.
     value=sample([problem()],2,engine,Tokenizer(),[3])
-    assert value['traces'][0]['end_state'] in ['capped','block_budget_exhausted']
+    assert value['traces'][0]['end_state']=='block_budget_exhausted'
+    assert value['traces'][0]['blocks']==32
 
 
 def test_score_gate_exact_alignment_and_both_thresholds():

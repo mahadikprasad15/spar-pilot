@@ -5,7 +5,6 @@ attempts are preserved for diagnosis; exact restart qualification is Ticket04.
 """
 import json
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from pilot_eval.sampling_sft_sampler import sample, score_receipt, token_ids
 from pilot_eval.sampling_sft_sources import inside, observe, verify_parents
 from pilot_eval.sft import load_sft, safe_name
 from pilot_eval.stage0_workflow import _writer
+from pilot_eval.run import _write_state
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash
 
@@ -76,7 +76,7 @@ def prepare(config_path, output_root, settings_path, name):
         raise ValueError('Predeclare1–64 ordered problem ordinals within the saved512 cohort.')
     if mode=='profile' and (len(pids)!=64 or settings['k']!=2):
         raise ValueError('Throughput profile requires64 fixed problems and k2, one block.')
-    parents={str(inside(root,config_path).relative_to(root)):file_hash(config_path),
+    parents={str(inside(root,config_path).relative_to(root)):file_hash(inside(root,config_path)),
              str((parent/'results/source-audit.json').relative_to(root)):file_hash(parent/'results/source-audit.json')}
     settings=dict(settings)
     for key in ['local_model','local_tokenizer']:
@@ -117,6 +117,8 @@ def prepare(config_path, output_root, settings_path, name):
     target=root/'plans'/name/'sampling-sft.instrument.json'
     source.frozen(target,plan)
     source.frozen(root/plan['run_path']/'plan-seal.json',dict(config_sha256=_hash(plan)))
+    if not (root/plan['run_path']/'meta/status.json').exists():
+        _write_state(root/plan['run_path'],'prepared',0,len(problems))
     return target
 
 
@@ -154,6 +156,10 @@ def load(path,output_root):
             or plan['runtime_hash']!=_hash(plan['settings']['runtime'])):
         raise ValueError('Bounded instrument plan/code/seal changed; use a new name.')
     verify_parents(root,plan['parents'])
+    for key in ['local_model','local_tokenizer']:
+        current={str(p.relative_to(root)) for p in inside(root,plan['settings'][key]).rglob('*') if p.is_file()}
+        frozen={p for p in plan['parents'] if inside(root,p).is_relative_to(inside(root,plan['settings'][key]))}
+        if current!=frozen:raise ValueError('Local snapshot file inventory changed.')
     return root,plan,folder
 
 
@@ -194,6 +200,7 @@ def run(path,output_root,job_path=None,*,dependencies=None):
         if (folder/'started.json').exists():
             raise ValueError('Interrupted/failed bounded attempt preserved; use a new name. Pilot resume is Ticket04.')
         source.frozen(folder/'started.json',dict(config_sha256=_hash(plan),simulation=dependencies is not None))
+        _write_state(folder,'loading-engine',0,len(plan['problems']))
         start=time.monotonic()
         try:
             if dependencies is None:
@@ -224,10 +231,16 @@ def run(path,output_root,job_path=None,*,dependencies=None):
                 if hasattr(engine,'measurement_start'):engine.measurement_start()
                 def timing(value):
                     timings.append(value);append(folder/'timings.jsonl',value)
+                def checkpoint(block,states,rng):
+                    source.save(folder/'blocks'/f'{block:03d}.json',dict(states=states,rng=rng))
+                    completed=sum(s['end_state'] is not None for s in states.values())
+                    _write_state(folder,'running',completed,len(states))
+                    print(f'Bounded k{settings["k"]}: block {block+1}; {completed}/{len(states)} terminal; '
+                          f'{sum(len(s["response_ids"]) for s in states.values())} retained tokens.',flush=True)
                 workload_start=time.monotonic()
                 result=sample(plan['problems'],settings['k'],engine,tokenizer,
                     settings['runtime']['actual_stop_ids'],
-                    on_block=lambda b,state,rng:source.save(folder/'blocks'/f'{b:03d}.json',dict(states=state,rng=rng)),
+                    on_block=checkpoint,
                     on_record=lambda record:append(folder/'requests.jsonl',record),
                     on_timing=timing,
                     block_limit=1 if mode=='profile' else 32)
@@ -244,15 +257,21 @@ def run(path,output_root,job_path=None,*,dependencies=None):
                         rate_scope='request-wall throughput proxies, not isolated CUDA kernel rates; auxiliary scoring decode excluded',
                         peak_gpu_memory=engine.measurement_end() if hasattr(engine,'measurement_end') else None)
                     result['batch_dependence']=batch_dependence(engine,result)
+                    result['trace_scope']='one-block throughput fixture; nonterminal traces are not completed attempts'
+                for trace in result['traces']:
+                    append(folder/'responses.jsonl',dict(**trace,k=settings['k'],data_seed=0,
+                        text=tokenizer.decode(trace['response_ids'],skip_special_tokens=False)))
             result.update(execution_kind=runtime['execution_kind'],gpu_qualified=False,
                 runtime_hash=plan['runtime_hash'],seconds=time.monotonic()-start,production_ready=False)
             source.save(folder/'results.json',result)
             if result['state']=='engine-error':raise ValueError('Engine protocol replay exhausted; diagnostics saved.')
+            _write_state(folder,'completed',len(plan['problems']),len(plan['problems']))
             files={str(p.relative_to(folder)):file_hash(p) for p in folder.rglob('*')
                    if p.is_file() and p.name not in ['writer.json','complete.json']}
             source.save(folder/'complete.json',dict(config_sha256=_hash(plan),files=files))
         except Exception as exc:
             source.save(folder/'failure.json',dict(state='failed',type=type(exc).__name__,error=str(exc)))
+            _write_state(folder,'failed',0,len(plan['problems']),str(exc))
             raise
     return verify(path,root)
 

@@ -101,3 +101,35 @@ def test_profile_is_bounded_records_batch_dependence_and_cannot_freeze_mock_gpu(
     review=tmp_path/'profile-review.json';review.write_text(json.dumps(dict(candidates=[str(plan)],
         reviewer='fixture',notes='Cannot qualify with fake evidence.')))
     assert cli(tmp_path,'select','--config',plan,'--review',review)==1
+
+
+def test_public_score_gate_retains_errors_and_never_qualifies_cpu(tmp_path,source_template):
+    from pilot_eval.training import file_hash
+    source,settings=setup(tmp_path,source_template)
+    data=json.loads(settings.read_text());data.update(mode='scores',problem_ids=list(range(20)))
+    audit=json.loads((tmp_path/'runs/sampling-sft/sample/results/source-audit.json').read_text())
+    rows=json.loads((tmp_path/audit['training']['config']['training_items_path']).read_text())
+    log=tmp_path/'runs/sampling-sft/sample/instrument/fixture-source/requests.jsonl';log.parent.mkdir(parents=True)
+    fixtures=[];records=[]
+    for i in range(20):
+        ids=[3] if i<10 else [65]*1024
+        request=dict(problem_id=i,prefix_ids=[],max_tokens=1024)
+        records.append(dict(kind='generate',requests=[request],outputs=[generation(ids,'stop' if i<10 else 'length',3 if i<10 else None)]))
+        fixtures.append(dict(trace_id=str(i),problem_id=i,prompt_ids=rows[i]['input_ids'][:rows[i]['prompt_tokens']],
+            response_ids=ids,categories=['short','finished','empty-prefix'] if i<10 else ['long','capped'],
+            generation_request=request,generation_record=dict(path=str(log.relative_to(tmp_path)),line=i,output_index=0)))
+    log.write_text(''.join(json.dumps(r)+'\n' for r in records))
+    (log.parent/'complete.json').write_text(json.dumps(dict(files={'requests.jsonl':file_hash(log)})))
+    fp=tmp_path/'score-fixtures.json';fp.write_text(json.dumps(fixtures));data['fixtures']=str(fp)
+    settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','scores')==0
+    left=tmp_path/'plans/scores/sampling-sft.instrument.json'
+    assert cli(tmp_path,'run','--config',left,deps=Dependencies())==0
+    data['mode']='oracle';settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','oracle')==0
+    right=tmp_path/'plans/oracle/sampling-sft.instrument.json'
+    assert cli(tmp_path,'run','--config',right,deps=Dependencies())==0
+    assert cli(tmp_path,'compare','--config',left,'--oracle',right)==0
+    receipt=json.loads((tmp_path/'runs/sampling-sft/sample/instrument/scores/score-receipt.json').read_text())
+    assert receipt['passed'] and receipt['gpu_qualified'] is False
+    assert len(receipt['traces'])==20

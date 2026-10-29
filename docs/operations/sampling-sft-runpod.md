@@ -2,7 +2,8 @@
 
 The CLI and `scripts/run_sampling_sft_job.py` are the primary execution path.
 The notebook is an optional client of the same commands. Ticket 02 implements
-lifecycle controls; sampling and engine qualification are later tickets.
+lifecycle controls. Ticket 03 adds bounded sampling, score comparison and
+throughput candidate workflows; their real GPU qualification is still pending.
 Nothing here provisions a Pod, deletes a volume, or grants paid-job approval.
 
 ## One authoritative budget
@@ -69,8 +70,9 @@ request needs a new job ID, and new source/code identities need a new attempt.
 Before the first spend, complete the source preflight and obtain the user's
 explicit go-ahead. Reserve the reviewed estimate before renting/launching work;
 Pod provisioning itself is outside this implementation. Training additionally
-requires the later data-gate approval. All scientific stage commands remain
-unimplemented until their respective tickets land.
+requires the later data-gate approval. Full generation, eligibility and training
+remain later stages. Bounded engine commands are documented in
+[sampling-sft-engine.md](sampling-sft-engine.md).
 
 A live request has kind `gpu`, mode `runpod`, the served stage, actual quoted
 `rate_usd_per_hour`, `estimated_hours`, `setup_hours`, the attached
