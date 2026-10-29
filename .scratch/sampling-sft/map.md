@@ -76,3 +76,9 @@ Ticket03 (bounded sampler, score qualification and profile) is the next implemen
 - Stage2 real qualification/plan review and active budgeted paid-job guards precede model loading. Completed collection is separate from human coverage review and training approval.
 - Combined98 CPU checks passed in169.44s; relocated synthetic three-arm evidence verified under artifacts/validation/sampling-sft-ticket05. No real GPU execution, spending or push.
 - CLI/runbook remains primary; optional notebook adds CPU generation-plan/status only. Ticket06 is next.
+
+## Ticket06 implementation
+- Resolved software slice: source-bound intended-answer review, separately confirmed human/agent revisions, immutable automatic scoring and reviewed coverage with original marked slots. Runbook:docs/operations/sampling-sft-review.md.
+- Combined111 CPU checks passed in311.75s; raw synthetic review, XML and validation receipt persisted under artifacts/validation/sampling-sft-ticket06. No real audit/paid execution or push.
+- Coverage conditions remain0 passes coverage only;1–5 requires T16 and later approval;>5 blocks. Common cohorts and pairwise uncovered differences are reported without changing arm-specific exposure.
+- Ticket07 descriptive gate report is next; actual collection, human decisions and training approval remain separate.
