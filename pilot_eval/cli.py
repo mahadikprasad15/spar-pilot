@@ -752,8 +752,7 @@ def main(argv=None, *, dependencies=None):
             elif operation=='report':result=pilot.report(args.config,args.output_root,args.forecast)
             elif operation=='recover-writer':result=pilot.recover_writer(args.config,args.output_root,args.lane,args.owner_token,args.review_notes)
             else:result=getattr(pilot,operation)(args.config,args.output_root)
-            from pilot_eval.sampling_sft_instrument import console
-            print(str(result) if isinstance(result,Path) else json.dumps(console(result),indent=2))
+            print(str(result) if isinstance(result,Path) else json.dumps(pilot.console(result),indent=2))
         elif args.command.startswith('sampling-sft-instrument-'):
             from pilot_eval import sampling_sft_instrument as instrument
             operation=args.command.removeprefix('sampling-sft-instrument-')

@@ -9,6 +9,7 @@ import os
 import platform
 import random
 import signal
+import statistics
 import time
 import uuid
 from datetime import datetime, timezone
@@ -99,6 +100,9 @@ def blocks(folder,plan):
         if (seal['config_sha256']!=_hash(plan) or seal['runtime_hash']!=plan['runtime_hash']
                 or seal['previous']!=previous or seal['block']!=index):
             raise ValueError('Pilot sealed block identity changed.')
+        env=folder/f'env.{seal["attempt"]}.json'
+        if file_hash(env)!=seal['env_sha256']:
+            raise ValueError('Pilot worker environment evidence changed.')
         for name,digest in seal['files'].items():
             if file_hash(inside(path,name))!=digest:raise ValueError('Pilot sealed scientific block changed.')
         state=json.loads((path/'state.json').read_text())
@@ -117,6 +121,10 @@ def scientific(folder,plan):
 def run(path,output_root,lane,job_path=None,*,stop_after_blocks=None,interrupt_after_block=None,dependencies=None):
     root,plan,parent=load(path,output_root);folder=lane_directory(parent,lane)
     if (folder/'complete.json').exists():return verify_lane(folder,plan)
+    existing=blocks(folder,plan)
+    if existing and all(s['end_state'] is not None for s in existing[-1][1]['states'].values()):
+        with _writer(folder):finalize(folder,plan,blocks(folder,plan))
+        return verify_lane(folder,plan)
     if stop_after_blocks is not None and (type(stop_after_blocks) is not int or stop_after_blocks<=0):
         raise ValueError('Stop-after-blocks must be a positive completed-block count.')
     if interrupt_after_block is not None and (lane!='resumed' or interrupt_after_block!=2):
@@ -162,6 +170,7 @@ def run(path,output_root,lane,job_path=None,*,stop_after_blocks=None,interrupt_a
                 partial.mkdir(exist_ok=True)
                 # Cache counters are operational and may differ across engine launches.
                 value=json.loads(json.dumps(value))
+                value.pop('replay',None)
                 for output in value.get('outputs',[]):output.pop('num_cached_tokens',None)
                 instrument.append(partial/'scientific.jsonl',value)
                 if dependencies is not None and hasattr(dependencies,'after_record'):dependencies.after_record(value)
@@ -171,20 +180,25 @@ def run(path,output_root,lane,job_path=None,*,stop_after_blocks=None,interrupt_a
 
             def checkpoint(block,states,rng):
                 partial.mkdir(exist_ok=True)
-                source.save(partial/'state.json',dict(next_block=block+1,states=states,rng=rng))
+                saved={pid:{**row,**(dict(text=tokenizer.decode(row['response_ids'],skip_special_tokens=True))
+                        if row['end_state'] is not None else {})} for pid,row in states.items()}
+                source.save(partial/'state.json',dict(next_block=block+1,states=saved,rng=rng))
                 previous=verified[-1][0]/'complete.json' if verified else None
                 seal=dict(block=block,config_sha256=_hash(plan),runtime_hash=plan['runtime_hash'],
+                    attempt=attempt,execution_kind=runtime['execution_kind'],
+                    env_sha256=file_hash(folder/f'env.{attempt}.json'),
                     previous=file_hash(previous) if previous else None,
                     files={p.name:file_hash(p) for p in partial.iterdir() if p.is_file()})
                 source.save(partial/'complete.json',seal)
                 target=folder/'blocks'/f'{block:03d}';target.parent.mkdir(exist_ok=True)
                 if target.exists():raise ValueError('Refuse to overwrite a sealed block.')
-                partial.rename(target);verified.append((target,dict(next_block=block+1,states=states,rng=rng)))
+                partial.rename(target);verified.append((target,dict(next_block=block+1,states=saved,rng=rng)))
                 count=sum(s['end_state'] is not None for s in states.values())
                 _write_state(folder,'running',count,32)
                 event(folder,'block-sealed',attempt=attempt,block=block+1,completed=count,
                     seal_sha256=file_hash(target/'complete.json'))
                 print(f'Pilot {lane}: {count}/32 terminal; {block+1}/32 blocks sealed.',flush=True)
+                if dependencies is not None and hasattr(dependencies,'after_checkpoint'):dependencies.after_checkpoint(block)
                 if interrupt_after_block==block+1:
                     event(folder,'qualification-kill-after-block2',attempt=attempt,job=str(inside(root,job_path).relative_to(root)) if job_path else None)
                     os.kill(os.getpid(),signal.SIGKILL)
@@ -200,31 +214,35 @@ def run(path,output_root,lane,job_path=None,*,stop_after_blocks=None,interrupt_a
             if result['state']=='paused':
                 _write_state(folder,'paused',sum(s['end_state'] is not None for s in result['traces']),32)
                 return dict(state='paused',sealed_blocks=len(verified),production_allowed=False)
-            traces=sorted(result['traces'],key=lambda row:row['problem_id'])
-            by_pid={p['problem_id']:p for p in plan['problems']}
-            for trace in traces:
-                text=tokenizer.decode(trace['response_ids'],skip_special_tokens=True)
-                problem=by_pid[trace['problem_id']]
-                trace.update(text=text,automatic_flexible_v3=score_gsm8k_flexible_v3(text,problem['gold'],
-                    capped=trace['end_state']!='finished'),automatic_strict=score_gsm8k(text,problem['gold'],
-                    capped=trace['end_state']!='finished')['strict'])
-            source.save(folder/'results.json',dict(state='completed',traces=traces,
-                execution_kind=runtime['execution_kind'],runtime_hash=plan['runtime_hash'],
-                sealed_blocks=len(verified),production_allowed=False))
-            # A finalization interrupted before its seal can be recreated from blocks.
-            responses=folder/'responses.jsonl'
-            source.save(folder/'responses.json',traces)
-            responses.write_text(''.join(json.dumps(row)+'\n' for row in traces))
-            _write_state(folder,'completed',32,32)
-            source.save(folder/'complete.json',dict(config_sha256=_hash(plan),
-                last_block=file_hash(verified[-1][0]/'complete.json'),
-                files={name:file_hash(folder/name) for name in ['results.json','responses.json','responses.jsonl']}))
+            finalize(folder,plan,verified)
         except BaseException as exc:
             event(folder,'interrupted',attempt=attempt,error=str(exc),type=type(exc).__name__)
             _write_state(folder,'failed',sum(s['end_state'] is not None for s in verified[-1][1]['states'].values()) if verified else 0,32,str(exc))
             raise
     return verify_lane(folder,plan)
 
+
+
+def finalize(folder,plan,verified):
+    traces=sorted((dict(r) for r in verified[-1][1]['states'].values()),key=lambda row:row['problem_id'])
+    by_pid={p['problem_id']:p for p in plan['problems']}
+    for trace in traces:
+        text=trace['text']
+        problem=by_pid[trace['problem_id']]
+        trace.update(text=text,automatic_flexible_v3=score_gsm8k_flexible_v3(text,problem['gold'],
+            capped=trace['end_state']!='finished'),automatic_strict=score_gsm8k(text,problem['gold'],
+            capped=trace['end_state']!='finished')['strict'])
+    source.save(folder/'results.json',dict(state='completed',traces=traces,
+        execution_kind=json.loads((verified[-1][0]/'complete.json').read_text())['execution_kind'],runtime_hash=plan['runtime_hash'],
+        sealed_blocks=len(verified),production_allowed=False))
+    event(folder,'finalized-from-sealed-blocks',sealed_blocks=len(verified))
+    responses=folder/'responses.jsonl'
+    source.save(folder/'responses.json',traces)
+    responses.write_text(''.join(json.dumps(row)+'\n' for row in traces))
+    _write_state(folder,'completed',32,32)
+    source.save(folder/'complete.json',dict(config_sha256=_hash(plan),
+        last_block=file_hash(verified[-1][0]/'complete.json'),
+        files={name:file_hash(folder/name) for name in ['results.json','responses.json','responses.jsonl','events.jsonl']}))
 
 def verify_lane(folder,plan):
     verified=blocks(folder,plan);marker=folder/'complete.json'
@@ -255,8 +273,11 @@ def compare(path,output_root):
         _,_,job_folder=_load(root/kill['job'],root)
         receipt=json.loads((job_folder/'execution.json').read_text())
         external_kill=receipt.get('returncode')==-signal.SIGKILL
-    real=all(r['execution_kind']=='real-cuda' for r in [left,right])
+    real=all(r['execution_kind']=='real-cuda' for r in [left,right]) and all(
+        json.loads((directory/'complete.json').read_text())['execution_kind']=='real-cuda'
+        for lane in LANES for directory,_ in blocks(folder/lane,plan))
     result=dict(scientific_equal=equal,compared_blocks=left['sealed_blocks'],
+        first_difference=first_difference(dict(scientific=a,traces=left['traces']),dict(scientific=b,traces=right['traces'])),
         uninterrupted_records=len(a),resumed_records=len(b),
         kill_after_block2_recorded=bool(kill),restart_from_block2=restarted,external_sigkill_confirmed=external_kill,
         gpu_qualified=real and equal and restarted and external_kill,production_allowed=False,
@@ -267,6 +288,22 @@ def compare(path,output_root):
     source.frozen(folder/'replay.json',result)
     if not equal:raise ValueError('Exact pilot replay failed; Stage2 blocked, no tolerance relaxation.')
     return result
+
+
+def first_difference(left,right,path=''):
+    if type(left) is not type(right):return dict(path=path,left_type=type(left).__name__,right_type=type(right).__name__)
+    if isinstance(left,dict):
+        if set(left)!=set(right):return dict(path=path,left_keys=sorted(left),right_keys=sorted(right))
+        for key in sorted(left):
+            difference=first_difference(left[key],right[key],path+'.'+str(key))
+            if difference:return difference
+    elif isinstance(left,list):
+        if len(left)!=len(right):return dict(path=path,left_length=len(left),right_length=len(right))
+        for i,(a,b) in enumerate(zip(left,right)):
+            difference=first_difference(a,b,f'{path}[{i}]')
+            if difference:return difference
+    elif left!=right:return dict(path=path,left=left,right=right)
+    return None
 
 
 def status(path,output_root):
@@ -299,7 +336,9 @@ def report(path,output_root,forecast_path):
     unfinished=sum(r['end_state'] in ['capped','block_budget_exhausted'] for r in traces)
     forecast=json.loads(Path(forecast_path).read_text())
     from pilot_eval.sampling_sft_budget import initialize, status as budget_status, number, micros,usd
-    if not isinstance(forecast.get('notes'),str) or not forecast['notes'].strip():raise ValueError('Describe the measured forecast basis.')
+    if (not isinstance(forecast,dict) or not {'rate_usd_per_hour','estimated_hours','setup_hours','notes'}<=set(forecast)
+            or not isinstance(forecast.get('notes'),str) or not forecast['notes'].strip()):
+        raise ValueError('Forecast needs quoted rate, estimated_hours, setup_hours and measured-basis notes.')
     rate=number(forecast['rate_usd_per_hour'],True);hours=number(forecast['estimated_hours'],True)
     setup=number(forecast['setup_hours'])
     reservation=micros(rate*(hours*Decimal('1.5')+setup))
@@ -312,21 +351,49 @@ def report(path,output_root,forecast_path):
     seconds=sum(t['seconds'] for t in timings)
     generated=sum(t['generated_tokens'] for t in timings)
     decisions=[r['decision'] for r in scientific(folder/'uninterrupted',plan) if 'decision' in r]
+    stats=length_statistics(lengths)
+    events=[json.loads(line) for line in (folder/'uninterrupted/events.jsonl').read_text().splitlines()]
     alarms=dict(unfinished=dict(value=unfinished/32,numerator=unfinished,denominator=32,threshold=0.02,
                 relation='>',triggered=unfinished/32>0.02),
         initial_correctness=dict(value=correct/32,numerator=correct,denominator=32,threshold=0.9,
                 relation='<',triggered=correct/32<0.9),
         budget=dict(reservation_usd=usd(reservation),headroom_usd=str(headroom),triggered=Decimal(usd(reservation))>headroom))
     report=dict(n_problems=32,k=5,initial_correct=correct,initial_unfinished=unfinished,
-        length_median=(lengths[15]+lengths[16])/2,length_p90=lengths[28]+0.9*(lengths[29]-lengths[28]),
+        strict_correct=sum(r['automatic_strict']['correct'] for r in traces),
+        strict_format_valid=sum(r['automatic_strict']['status']=='valid' for r in traces),
+        length_median=stats['median'],length_p90=stats['p90'],
         quantile_method='linear interpolation, index=(n-1)*p',
         acceptance_rate=sum(r['accepted'] for r in decisions)/len(decisions) if decisions else None,
+        acceptance_by_step={str(i):dict(accepted=sum(d['accepted'] for d in decisions if d['step']==i),
+            attempts=sum(d['step']==i for d in decisions)) for i in range(5)},
+        acceptance_by_cut_decile={str(i):dict(accepted=sum(d['accepted'] for d in decisions
+            if min(9,int(d['cut']/len(d['old_ids'])*10))==i),attempts=sum(
+            min(9,int(d['cut']/len(d['old_ids'])*10))==i for d in decisions)) for i in range(10)},
+        accepted_mean_score_gain_per_generated_token=sum(d['proposal_score']-d['old_score'] for d in decisions if d['accepted'])/generated if generated else None,
         engine_seconds=seconds,generated_tokens=generated,generated_tokens_per_engine_wall_second=generated/seconds if seconds else None,
         uncached_prefill_tokens=sum(t['input_tokens']-t['cached_tokens'] for t in timings),
+        attempt_wall_seconds=[e['seconds'] for e in events if e['event']=='attempt-ended'],
+        peak_gpu_memory=[e['memory'] for e in events if e['event']=='attempt-ended'],
         cold_cache_policy='clear at every completed block and process start; no un-cleared counterfactual claimed',
-        forecast=forecast,forecast_scope='explicit measured-basis estimate, not a reservation or proof of an upper bound',
+        forecast=forecast,forecast_sha256=file_hash(forecast_path),forecast_scope='explicit measured-basis estimate, not a reservation or proof of an upper bound',
         alarms=alarms,replay=replay,execution_kind=result['execution_kind'],
         ready_for_generation_review=replay['gpu_qualified'] and not any(a['triggered'] for a in alarms.values()),
         production_allowed=False,budget_snapshot_sha256=ledger['sha256'],runtime_hash=plan['runtime_hash'])
     source.save(folder/'report.json',report)
     return report
+
+
+def length_statistics(values):
+    return dict(median=statistics.median(values),p90=statistics.quantiles(values,n=10,method='inclusive')[8])
+
+
+def console(value):
+    if 'lanes' in value:
+        return dict(runtime_hash=value['runtime_hash'],lanes={lane:dict(state=r['state'],
+            sealed_blocks=r.get('sealed_blocks',0),terminal=len(r.get('traces',[]))) for lane,r in value['lanes'].items()},
+            production_allowed=False)
+    keys=['state','execution_kind','runtime_hash','sealed_blocks','scientific_equal','compared_blocks',
+          'kill_after_block2_recorded','restart_from_block2','external_sigkill_confirmed','gpu_qualified',
+          'n_problems','initial_correct','initial_unfinished','length_median','length_p90','alarms',
+          'ready_for_generation_review','production_allowed']
+    return {key:value[key] for key in keys if key in value}
