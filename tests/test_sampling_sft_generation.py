@@ -5,6 +5,7 @@ import pytest
 
 from pilot_eval.cli import main
 from pilot_eval.sampling_sft_sampler import request_seed
+from pilot_eval.sampling_sft_generation import plan_approval, reservation_fits
 from test_sampling_sft_instrument import source_template
 from test_sampling_sft_pilot import prepared as pilot_plan
 from test_sampling_sft_sampler import Engine, Tokenizer, generation
@@ -141,3 +142,42 @@ def test_modified_science_and_competing_writer_reject_resume(tmp_path,source_tem
     assert cli(tmp_path,'recover-writer','--config',plan,'--k','0','--owner-token','held','--review-notes','Confirmed dead fixture')==0
     target=folder/'rounds/0/blocks/000/scientific.jsonl';target.write_text('changed')
     assert cli(tmp_path,'run','--config',plan,'--k','0',deps=Dependencies())==1
+
+
+def test_pause_reports_verified_provisional_coverage_without_claiming_completion(tmp_path,source_template):
+    plan=prepare(tmp_path,source_template)
+    assert cli(tmp_path,'run','--config',plan,'--k','0','--stop-after-blocks','1',deps=Dependencies())==0
+    folder=directory(tmp_path)/'k0'
+    meta=json.loads((folder/'meta/status.json').read_text())
+    assert meta['completed']==508 and meta['state']=='paused'
+    from pilot_eval.sampling_sft_generation import status
+    value=status(plan,tmp_path)['arms']['0']
+    assert value['provisional_covered']==508 and value['attempt_count']==0
+    assert not (folder/'complete.json').exists()
+
+
+def test_approval_is_bound_to_plan_and_report_and_budget_math_is_exact(tmp_path,source_template):
+    from pilot_eval.workflow import _hash
+    plan=prepare(tmp_path,source_template);config=json.loads(plan.read_text())
+    # Missing report was observed by the plan, so do not mutate its parent: use an
+    # independent pure approval function, then test actual freeze refusal above.
+    review=dict(reviewer='researcher',notes='reviewed',generation_approved=True,
+                plan_sha256=_hash(config),pilot_report_sha256='r'*64)
+    plan_approval(config,review,'r'*64)
+    review['plan_sha256']='different'
+    with pytest.raises(ValueError):plan_approval(config,review,'r'*64)
+    ledger=dict(cap_exceeded=False,committed_usd='9.999999',stage_totals={'sampling':{'committed_usd':'9.999999'}})
+    assert reservation_fits(ledger,'0.000001')
+    assert not reservation_fits(ledger,'0.000002')
+
+
+def test_last_round_finalization_uses_sealed_state_without_model_reload(tmp_path,source_template):
+    plan=prepare(tmp_path,source_template)
+    class EndFailure(Dependencies):
+        def after_checkpoint(self,k,index,block):
+            if index==3:raise RuntimeError('after final round block seal')
+    assert cli(tmp_path,'run','--config',plan,'--k','0',deps=EndFailure())==1
+    class NoModel(Dependencies):
+        def open(self,*args):raise AssertionError('all remaining states are already sealed')
+    assert cli(tmp_path,'run','--config',plan,'--k','0',deps=NoModel())==0
+    assert cli(tmp_path,'verify','--config',plan,'--k','0')==0

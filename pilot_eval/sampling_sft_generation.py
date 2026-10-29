@@ -111,18 +111,28 @@ def freeze(path,output_root,review_path):
     root,plan,folder=load(path,output_root)
     report=qualification(root,plan)
     review=json.loads(Path(review_path).read_text())
-    if (review.get('generation_approved') is not True or review.get('plan_sha256')!=_hash(plan)
-            or review.get('pilot_report_sha256')!=file_hash(root/plan['pilot_report'])
-            or not all(isinstance(review.get(k),str) and review[k].strip() for k in ['reviewer','notes'])):
-        raise ValueError('Approve this exact generation plan and measured pilot report before Stage2.')
+    plan_approval(plan,review,file_hash(root/plan['pilot_report']))
     ledger=budget.status(root)
-    headroom=min(10-float(ledger['stage_totals']['sampling']['committed_usd']),25-float(ledger['committed_usd']))
-    if ledger['cap_exceeded'] or float(report['alarms']['budget']['reservation_usd'])>headroom:
+    if not reservation_fits(ledger,report['alarms']['budget']['reservation_usd']):
         raise ValueError('Stage2 forecast no longer fits current budget headroom.')
     receipt=dict(config_sha256=_hash(plan),review=review,budget_snapshot=snapshot(root),
                  pilot_report_sha256=file_hash(root/plan['pilot_report']),scope='generation only; per-job paid approval still required')
     source.frozen(folder/'generation.review.json',receipt)
     return receipt
+
+
+def plan_approval(plan,review,report_sha256):
+    if (not isinstance(review,dict) or review.get('generation_approved') is not True
+            or review.get('plan_sha256')!=_hash(plan) or review.get('pilot_report_sha256')!=report_sha256
+            or not all(isinstance(review.get(k),str) and review[k].strip() for k in ['reviewer','notes'])):
+        raise ValueError('Approve this exact generation plan and measured pilot report before Stage2.')
+
+
+def reservation_fits(ledger,reservation):
+    # Decimal/microdollar policy: never round a near-cap amount through a float.
+    headroom=min(budget.number(10)-budget.number(ledger['stage_totals']['sampling']['committed_usd']),
+                 budget.number(25)-budget.number(ledger['committed_usd']))
+    return not ledger['cap_exceeded'] and budget.number(reservation)<=headroom
 
 
 def arm_folder(folder,k):
@@ -212,19 +222,30 @@ def collect_rounds(plan,k,folder):
 def authorize(root,plan,path,folder,k,job_path):
     qualification(root,plan)
     receipt=json.loads((folder/'generation.review.json').read_text())
-    if (receipt['config_sha256']!=_hash(plan) or receipt['review'].get('generation_approved') is not True
+    plan_approval(plan,receipt['review'],file_hash(root/plan['pilot_report']))
+    if (receipt['config_sha256']!=_hash(plan)
             or receipt['pilot_report_sha256']!=file_hash(root/plan['pilot_report'])):
         raise ValueError('Missing exact Stage2 generation approval.')
     instrument.authorize(root,path,job_path,expected_command='sampling-sft-generation-run')
     from pilot_eval.sampling_sft_jobs import _load
     _,job,_=_load(job_path,root)
     argv=job['request']['command']
-    if '--k' not in argv or argv[argv.index('--k')+1]!=str(k):raise ValueError('Arm differs from approved job argv.')
+    if (job['source_plan']!=plan['source_plan'] or '--k' not in argv or argv[argv.index('--k')+1]!=str(k)):
+        raise ValueError('Source/arm differs from approved job argv.')
+
+
+def provisional(plan,k,index,prior,states):
+    known={a['problem_id'] for a in prior if a['eligible']}
+    by_pid={p['problem_id']:p for p in plan['problems']}
+    for pid,state in states.items():
+        if state['end_state'] is not None and attempt(k,index,state,by_pid[int(pid)])['eligible']:known.add(int(pid))
+    return len(known)
 
 
 def run(path,output_root,k,job_path=None,*,stop_after_blocks=None,dependencies=None):
     root,plan,parent=load(path,output_root);folder=arm_folder(parent,k)
-    if (folder/'complete.json').exists():return verify_arm(root,plan,k,folder)
+    if (folder/'complete.json').exists():
+        result=verify_arm(root,plan,k,folder);finish_all(root,plan,parent);return result
     if stop_after_blocks is not None and (type(stop_after_blocks) is not int or stop_after_blocks<=0):
         raise ValueError('Stop-after-blocks must be positive.')
     if dependencies is None:authorize(root,plan,path,parent,k,job_path)
@@ -232,7 +253,7 @@ def run(path,output_root,k,job_path=None,*,stop_after_blocks=None,dependencies=N
         if (folder/'terminal-error.json').exists():raise ValueError('Engine-error attempt is blocked; inspect before a new plan.')
         prior,problems,index=collect_rounds(plan,k,folder)
         if not problems or index==4:
-            return finish_arm(root,plan,k,folder,prior)
+            result=finish_arm(root,plan,k,folder,prior);finish_all(root,plan,parent);return result
         run_id=uuid.uuid4().hex;engine=tokenizer=runtime=None
         pilot.event(folder,'started',run_id=run_id,retry_index=index,job=str(inside(root,job_path).relative_to(root)) if job_path else None)
         _write_state(folder,'restoring',len({a['problem_id'] for a in prior if a['eligible']}),512)
@@ -295,9 +316,7 @@ def run(path,output_root,k,job_path=None,*,stop_after_blocks=None,dependencies=N
                         partial.rename(target);verified.append((target,dict(next_block=block+1,states=saved,rng=rng)))
                         new_blocks+=1
                         good_before=len({a['problem_id'] for a in prior if a['eligible']})
-                        good_now=sum(attempt(k,index,s,next(p for p in problems if p['problem_id']==int(pid)))['eligible']
-                            for pid,s in saved.items() if s['end_state'] is not None)
-                        resolved=good_before+good_now
+                        resolved=provisional(plan,k,index,prior,saved)
                         if index==3:resolved=good_before+sum(s['end_state'] is not None for s in saved.values())
                         _write_state(folder,'running',resolved,512)
                         source.save(parent/f'run_k{k}.json',dict(state='running',k=k,retry_index=index,
@@ -318,7 +337,8 @@ def run(path,output_root,k,job_path=None,*,stop_after_blocks=None,dependencies=N
                             failed_attempts_sha256=file_hash(current/'failed-attempts.jsonl'),budget_snapshot=snapshot(root)))
                         raise ValueError('Two engine/protocol failures block this arm; no model retry or completed dataset.')
                     if result['state']=='paused':
-                        _write_state(folder,'paused',len({a['problem_id'] for a in prior if a['eligible']}),512)
+                        count=provisional(plan,k,index,prior,verified[-1][1]['states'])
+                        _write_state(folder,'paused',count,512)
                         return dict(state='paused',k=k,retry_index=index,production_complete=False)
                     rows=finalize_round(root,plan,k,index,current,problems,verified)
                 prior.extend(rows)
@@ -332,7 +352,8 @@ def run(path,output_root,k,job_path=None,*,stop_after_blocks=None,dependencies=N
             return result
         except BaseException as exc:
             pilot.event(folder,'interrupted',run_id=run_id,k=k,retry_index=index,error=str(exc),type=type(exc).__name__)
-            _write_state(folder,'failed',len({a['problem_id'] for a in prior if a['eligible']}),512,str(exc))
+            states=verified[-1][1]['states'] if verified else {}
+            _write_state(folder,'failed',provisional(plan,k,min(index,3),prior,states),512,str(exc))
             raise
 
 
@@ -385,8 +406,12 @@ def finish_arm(root,plan,k,folder,attempts):
 def verify_arm(root,plan,k,folder):
     attempts,remaining,index=collect_rounds(plan,k,folder)
     if not (folder/'complete.json').exists():
+        current=folder/'rounds'/str(index)
+        verified=pilot.blocks(current,plan) if current.exists() else []
+        count=provisional(plan,k,min(index,3),attempts,verified[-1][1]['states'] if verified else {})
         return dict(state='blocked' if (folder/'terminal-error.json').exists() else 'partial',k=k,
-            attempt_count=len(attempts),covered=len({a['problem_id'] for a in attempts if a['eligible']}),remaining=len(remaining),retry_index=index)
+            attempt_count=len(attempts),covered=len({a['problem_id'] for a in attempts if a['eligible']}),
+            provisional_covered=count,remaining=len(remaining),retry_index=index)
     seal=json.loads((folder/'complete.json').read_text())
     if seal['config_sha256']!=_hash(plan):raise ValueError('Arm completion configuration changed.')
     for name,digest in seal['rounds'].items():
@@ -404,7 +429,9 @@ def verify_arm(root,plan,k,folder):
 
 def finish_all(root,plan,folder):
     results=[verify_arm(root,plan,k,arm_folder(folder,k)) for k in ARMS]
-    if any(r['state']!='completed' for r in results):return None
+    if any(r['state']!='completed' for r in results):
+        _write_state(folder,'partial',sum(r['state']=='completed' for r in results),3)
+        return None
     result=dict(state='completed',arms=results,runtime_hash=plan['runtime_hash'],training_allowed=False,
         execution_kind='real-cuda' if all(r['execution_kind']=='real-cuda' for r in results) else 'cpu-fixture')
     source.frozen(folder/'results/results.json',result)
