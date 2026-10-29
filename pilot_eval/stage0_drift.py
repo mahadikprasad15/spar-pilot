@@ -55,6 +55,28 @@ def _implementation():
         'stage0_evaluation.py','stage0_evaluation_backend.py','token_measurement_math.py','activation_profile.py']}
 
 
+# Verification-only predecessors: sealed products from these exact file versions stay
+# readable because the later change only affects CPU-side comparison (cross-CPU FP64).
+_VERIFICATION_PREDECESSORS={'stage0_drift.py':{'dfc40d2e1763cfa549cbfe53b72d03ca50cebace71964e58a74f736ffe31c649'}}
+
+
+def _implementation_matches(recorded):
+    current=_implementation()
+    if not isinstance(recorded,dict) or set(recorded)!=set(current):return False
+    return all(recorded[n]==h or recorded[n] in _VERIFICATION_PREDECESSORS.get(n,set()) for n,h in current.items())
+
+
+def _agrees(saved,recomputed):
+    """Exact structure/integers/strings; floats to rtol 1e-12 (BLAS/SIMD order differs across CPUs)."""
+    if isinstance(saved,float) or isinstance(recomputed,float):
+        return (isinstance(saved,float) and isinstance(recomputed,float)
+                and (saved==recomputed or abs(saved-recomputed)<=1e-12*max(abs(saved),abs(recomputed))))
+    if type(saved)!=type(recomputed):return False
+    if isinstance(saved,dict):return set(saved)==set(recomputed) and all(_agrees(saved[k],recomputed[k]) for k in saved)
+    if isinstance(saved,list):return len(saved)==len(recomputed) and all(_agrees(a,b) for a,b in zip(saved,recomputed))
+    return saved==recomputed
+
+
 def _configuration(execution_path,inputs_path,root,name,batch_size,batches_per_unit,context_chunk,workspace_bytes):
     safe_name(name);execution,qualification,_=_execution(execution_path,root)
     if execution.get('protocol')=='stage0-batched-execution-v1':
@@ -154,12 +176,13 @@ def prepare(execution_path,inputs_path,output_root,name,*,batch_size=1,batches_p
 
 def _load(path,root):
     config=json.loads(inside(root,path).read_text())
-    if config.get('protocol')!='stage0-fixed-context-v1' or config.get('implementation')!=_implementation():
+    if config.get('protocol')!='stage0-fixed-context-v1' or not _implementation_matches(config.get('implementation')):
         raise ValueError('Drift implementation changed; preserve evidence and use a new execution identity.')
     expected=_configuration(inside(root,config['execution_path']),inside(root,config['inputs_path']),root,config['name'],
         config['batch_size'],config['batches_per_unit'],config['context_chunk'],config['workspace_bytes'])
     directory=inside(root,config['run_path'])
-    if (config!=expected or json.loads((directory/'config.json').read_text())!=config
+    if (not _agrees(config,{**expected,'implementation':config['implementation']})
+            or json.loads((directory/'config.json').read_text())!=config
             or json.loads((directory/'meta/run_manifest.json').read_text())['config_sha256']!=_hash(config)):
         raise ValueError('Frozen drift source/configuration changed.')
     return config,directory
@@ -342,7 +365,8 @@ def _verify(config,directory,root):
     if any(b is None for b in saved):raise ValueError('Drift collection is incomplete.')
     result=_summary(config,directory,root,saved)
     records=[json.loads(s) for s in (directory/'results/per-document.jsonl').read_text().splitlines()]
-    if result!=json.loads((directory/'results/results.json').read_text()) or records!=result['per_document']:
+    if (not _agrees(json.loads((directory/'results/results.json').read_text()),result)
+            or not _agrees(records,result['per_document'])):
         raise ValueError('Drift aggregates disagree with sealed per-position measurements.')
     return result
 
