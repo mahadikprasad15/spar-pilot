@@ -15,6 +15,16 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','score','report','verify','status','request','approve','recover-writer']:
+        gate=commands.add_parser('sampling-sft-gate-'+operation,help='HF gate scores, CPU descriptive report and explicit training selection')
+        gate.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            gate.add_argument('--review',type=Path,required=True);gate.add_argument('--word-policy',type=Path,required=True);gate.add_argument('--name',required=True)
+        else:gate.add_argument('--config',type=Path,required=True)
+        if operation=='score':gate.add_argument('--job',type=Path);gate.add_argument('--max-new-units',type=int)
+        if operation=='request':gate.add_argument('--forecast',type=Path,required=True)
+        if operation=='approve':gate.add_argument('--approval',type=Path,required=True)
+        if operation=='recover-writer':gate.add_argument('--owner-token',required=True);gate.add_argument('--review-notes',required=True)
     for operation in ['prepare','export','import','status','freeze','verify']:
         review=commands.add_parser('sampling-sft-review-'+operation,help='separate human eligibility and reviewed coverage; CPU only')
         review.add_argument('--output-root',type=Path,required=True)
@@ -766,6 +776,16 @@ def main(argv=None, *, dependencies=None):
             elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
             else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('sampling-sft-gate-'):
+            from pilot_eval import sampling_sft_gate as gate
+            operation=args.command.removeprefix('sampling-sft-gate-')
+            if operation=='prepare':result=gate.prepare(args.review,args.output_root,args.word_policy,args.name)
+            elif operation=='score':result=gate.score(args.config,args.output_root,args.job,max_new_units=args.max_new_units,dependencies=dependencies)
+            elif operation=='request':result=gate.request(args.config,args.output_root,args.forecast)
+            elif operation=='approve':result=gate.approve(args.config,args.output_root,args.approval)
+            elif operation=='recover-writer':result=gate.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:result=getattr(gate,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(gate.console(result),indent=2))
         elif args.command.startswith('sampling-sft-review-'):
             from pilot_eval import sampling_sft_review as review
             operation=args.command.removeprefix('sampling-sft-review-')

@@ -172,3 +172,7 @@ The confirmed design and original supplied proposal are retained separately; thi
 Round-trip score agreement and exact replay are different gates. Optional training optimizer capture and valid optimizer resume are different contracts. Generation completion, answer correctness, human review and software completion remain distinct states.
 
 Metric normalization, p90 implementation, concrete fixture identities, engine version/defaults, actual stop metadata behavior and download/stop receipts must be made explicit in implementation preflight. A new scientific policy choice exposed there is escalated before execution. Do not introduce expensive profiling expansions under the name of verification.
+
+## Approved implementation clarification — 2026-10-29
+
+Leakage word policy is unicode-words-v1: Unicode NFKC, case-folding, curly apostrophe normalization, Unicode letter/digit words with internal apostrophes. Count repeated response4-gram occurrences separately against a set of cleaned-gold4-grams. Responses under4 words remain undefined. User approval recorded in design.md; no scientific acceptance numbers changed.

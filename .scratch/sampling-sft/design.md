@@ -154,3 +154,7 @@ All items below are incorporated and supersede conflicting statements in the sup
 - Deferred with separate approval: evaluation, internals, Stage0 research work (distinct from this sampler's Stage0 setup tests),512×8 baseline/offset,k10,k5+5,self-correct SFT,extra seeds.
 - USD25 ceiling;10/6/9 sub-caps; reservations before launch;80% pause; automatic own-Pod stop only after verified export; explicit deletion/unexported termination approval.
 - Design confirmation grants no paid-job permission. First sampling-GPU spend needs a separate post-preflight go-ahead.
+
+## Gate word normalization — approved 2026-10-29
+
+The user approved Unicode NFKC normalization, case-folding, converting curly apostrophes to straight ones, and letter/digit words with internal apostrophes retained. The diagnostic counts each response4-gram occurrence as a hit if its normalized tuple occurs anywhere in cleaned gold. Fewer than4 response words is undefined, not zero. This is descriptive lexical overlap, not semantic equivalence, causality or proof of memorization. Gate plans freeze the explicit unicode-words-v1 policy and its review provenance.
