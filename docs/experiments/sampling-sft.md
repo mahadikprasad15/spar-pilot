@@ -90,8 +90,8 @@ python -m pilot_eval sampling-sft-recover-writer --config artifacts/plans/sampli
 
 ## Next stages
 
-Tickets02–06 implement budget/export controls, bounded engine checks, the exact-resume pilot, full-arm generation and separate eligibility/coverage review. Real collection and human review remain execution steps.
-Gate statistics and approved training remain later implementation tickets. Sampling hardware is L40S; training requires verified
+Tickets02–07 implement budget/export controls, bounded engine checks, pilot replay, generation, reviewed coverage and the descriptive data gate. Real collection, human decisions and independent HF scoring remain execution steps.
+Training readiness and approved training remain later implementation tickets. Sampling hardware is L40S; training requires verified
 L4/FP32 gold metadata. GPU-version/scheduling/default settings and actual stop
 semantics are resolved before engine qualification, not fabricated by this CPU
 audit.
@@ -133,3 +133,11 @@ collection remains separate from human coverage review and training approval.
 labels have explicit human provenance and saved revisions, separate from agent
 suggestions and unchanged automatic scores. Reviewed coverage preserves original
 training slots and reports omissions/common cohorts without authorizing training.
+
+## Descriptive data gate
+
+[Gate runbook](../operations/sampling-sft-gate.md): independent HF FP32 scores
+are collected under the budgeted model-work route; CPU commands then produce
+raw NLL/length/format/leakage tables, paired common-cohort intervals and figures.
+The approved word policy, absent baseline and explicit k0/k5 selection request
+are preserved. No report or selection receipt launches training.

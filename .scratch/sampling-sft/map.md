@@ -82,3 +82,9 @@ Ticket03 (bounded sampler, score qualification and profile) is the next implemen
 - Combined111 CPU checks passed in311.75s; raw synthetic review, XML and validation receipt persisted under artifacts/validation/sampling-sft-ticket06. No real audit/paid execution or push.
 - Coverage conditions remain0 passes coverage only;1–5 requires T16 and later approval;>5 blocks. Common cohorts and pairwise uncovered differences are reported without changing arm-specific exposure.
 - Ticket07 descriptive gate report is next; actual collection, human decisions and training approval remain separate.
+
+## Ticket07 implementation
+- Resolved software: independent resumable HF score collection, CPU recipe gate tables/paired intervals/plots and explicit source/report/budget-bound training-selection intent. Runbook:docs/operations/sampling-sft-gate.md.
+- User approved unicode-words-v1 and occurrence-weighted4-gram overlap on2026-10-29; short responses undefined. No baseline/offset, automatic equivalence or causal attribution.
+-72 affected CPU checks passed in249.06s;13 review/UI baseline checks passed separately. Raw synthetic report/receipt under artifacts/validation/sampling-sft-ticket07; no real model work or paid execution.
+- Training remains unauthorized until Ticket08 readiness and Ticket09 paid controls. Ticket08 is next. Unrelated Stage0 changes preserved; local commits only.
