@@ -139,6 +139,7 @@ def test_saved_workflow_settles_only_baseline_reserves_and_writes_raw_outputs(tm
     assert len((directory / 'responses.jsonl').read_text().splitlines()) == 4
     product = json.loads((directory / 'complete.json').read_text())
     assert 'responses.jsonl' in product['files']
+    assert 'writer.json' not in product['files']
     states = reservations(root)
     assert states[previous['reservation_id']]['state'] == 'settled'
     if failed_reservation:

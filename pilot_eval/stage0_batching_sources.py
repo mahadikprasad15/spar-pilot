@@ -56,7 +56,13 @@ def sources(root, qualification_path, profile_path, batch_size):
             if file_hash(inside(folder,name))!=digest:raise ValueError(f'Adapter payload changed: {variant}/{name}')
     pconfig=read(profile/'config.json');pseal=read(profile/'complete.json')
     if pseal['config_sha256']!=_hash(pconfig):raise ValueError('Capacity-profile config changed.')
+    if (profile/'writer.json').exists():
+        raise ValueError('Capacity profile still has writer ownership; inspect it before consuming this product.')
     for name,digest in pseal['files'].items():
+        # The original v1 profiler sealed its temporary ownership marker before
+        # _writer removed it on successful exit. Preserve that historical receipt;
+        # the marker is not measurement data. Every durable payload remains checked.
+        if name=='writer.json' and pconfig.get('protocol')=='stage0-batch-performance-profile-v1':continue
         if file_hash(inside(profile,name))!=digest:raise ValueError(f'Capacity-profile payload changed: {name}')
     measurements=read(profile/'summary.json')
     measured=next((r for r in measurements if r['batch_size']==batch_size),None)

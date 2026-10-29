@@ -275,7 +275,7 @@ def main(args, *, memory_probe=None):
                 _write_json(directory / 'complete.json', dict(config_sha256=_hash(config),
                             files={str(p.relative_to(directory)): file_hash(p)
                                    for p in [*directory.glob('*.json'), *directory.glob('*.jsonl')]
-                                   if p.name != 'complete.json'}))
+                                   if p.name not in {'complete.json','writer.json'}}))
                 _state(directory, 'complete', len(results), len(args.batch_sizes),
                        stop_reason=results[-1].get('stop_reason'), reservation_id=allocation['reservation_id'])
         except BaseException as exc:

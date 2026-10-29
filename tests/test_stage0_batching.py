@@ -23,7 +23,7 @@ def observed(root, event, total):
     record_budget(root / 'plans/audit/stage0.plan.json', root, path)
 
 
-def prepared(root):
+def prepared(root,legacy_lock=False):
     observed(root, 'release-old', 1.03)
     for rid, row in reservations(root).items():
         if row['state'] == 'active': settle(root, rid)
@@ -31,14 +31,15 @@ def prepared(root):
     q = json.loads(qpath.read_text())
     profile = root / 'capacity'
     profile.mkdir()
-    config = dict(runtime=json.loads((root / q['run_path'] / 'meta/runtime.json').read_text()),
+    config = dict(protocol='stage0-batch-performance-profile-v1',runtime=json.loads((root / q['run_path'] / 'meta/runtime.json').read_text()),
                   qualification_sha256=file_hash(qpath), variants=q['variants'],
                   decoding={**q['decoding'], 'use_cache': True})
     (profile / 'config.json').write_text(json.dumps(config))
     (profile / 'summary.json').write_text(json.dumps([dict(batch_size=16, memory={'fits': True},
                     exact_singleton_token_agreement=True, production_authorized=False)]))
-    (profile / 'complete.json').write_text(json.dumps(dict(config_sha256=_hash(config), files={
-                    'summary.json': file_hash(profile / 'summary.json')})))
+    files={'summary.json': file_hash(profile / 'summary.json')}
+    if legacy_lock:files['writer.json']=_hash('temporary writer removed at successful exit')
+    (profile / 'complete.json').write_text(json.dumps(dict(config_sha256=_hash(config), files=files)))
     assert command(root, 'prepare', '--qualification', qpath, '--profile', profile,
                    '--name', 'batch16', '--batch-size', 16) == 0
     return root / 'plans/batch16/stage0.batch.json'
@@ -58,6 +59,17 @@ class BatchOracle(TinyEvaluation):
         return [dict(text='1 2', token_ids=[1, 2], generated_token_ids=[1, 2], stop_reason='eos') for row in rows]
     def check_integrity(self, full=False):
         return dict(base_unchanged=True, adapters_unchanged=True)
+
+
+def test_legacy_profile_lock_is_not_a_durable_input_but_missing_data_still_fails(source):
+    plan=prepared(source,legacy_lock=True)
+    assert command(source,'status','--config',plan)==0
+    profile=source/'capacity'
+    (profile/'writer.json').write_text('{}')
+    assert command(source,'status','--config',plan)==1
+    (profile/'writer.json').unlink()
+    (profile/'summary.json').unlink()
+    assert command(source,'status','--config',plan)==1
 
 
 def test_public_batch_agreement_resumes_and_preserves_scope(source):
