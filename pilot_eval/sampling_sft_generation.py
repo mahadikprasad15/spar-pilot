@@ -112,12 +112,19 @@ def freeze(path,output_root,review_path):
     report=qualification(root,plan)
     review=json.loads(Path(review_path).read_text())
     plan_approval(plan,review,file_hash(root/plan['pilot_report']))
+    target=folder/'generation.review.json'
+    if target.exists():
+        saved=json.loads(target.read_text())
+        if (saved['config_sha256']!=_hash(plan) or saved['review']!=review
+                or saved['pilot_report_sha256']!=file_hash(root/plan['pilot_report'])):
+            raise ValueError('Generation review changed; preserve the existing attempt.')
+        return saved
     ledger=budget.status(root)
     if not reservation_fits(ledger,report['alarms']['budget']['reservation_usd']):
         raise ValueError('Stage2 forecast no longer fits current budget headroom.')
     receipt=dict(config_sha256=_hash(plan),review=review,budget_snapshot=snapshot(root),
                  pilot_report_sha256=file_hash(root/plan['pilot_report']),scope='generation only; per-job paid approval still required')
-    source.frozen(folder/'generation.review.json',receipt)
+    source.frozen(target,receipt)
     return receipt
 
 
@@ -456,6 +463,8 @@ def verify(path,output_root,k=None):
 def status(path,output_root):
     root,plan,folder=load(path,output_root)
     return dict(arms={str(k):verify_arm(root,plan,k,arm_folder(folder,k)) for k in ARMS},
+        plan_sha256=_hash(plan),pilot_report_sha256=file_hash(root/plan['pilot_report']) if (root/plan['pilot_report']).exists() else None,
+        generation_reviewed=(folder/'generation.review.json').exists(),
         budget=snapshot(root),runtime_hash=plan['runtime_hash'],training_allowed=False)
 
 

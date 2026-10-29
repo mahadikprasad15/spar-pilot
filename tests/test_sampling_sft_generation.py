@@ -181,3 +181,57 @@ def test_last_round_finalization_uses_sealed_state_without_model_reload(tmp_path
         def open(self,*args):raise AssertionError('all remaining states are already sealed')
     assert cli(tmp_path,'run','--config',plan,'--k','0',deps=NoModel())==0
     assert cli(tmp_path,'verify','--config',plan,'--k','0')==0
+
+
+def test_exhausted_model_attempt_is_retried_without_mixing_engine_errors(tmp_path,source_template,monkeypatch):
+    monkeypatch.setattr('random.Random.randint',lambda self,a,b:0)
+    plan=prepare(tmp_path,source_template)
+    class Exhaust(Dependencies):
+        def open(self,config,root):
+            engine=GenerationEngine(config)
+            original=engine.generate
+            def generate(requests):
+                outputs=original(requests)
+                for i,r in enumerate(requests):
+                    initial=r['seed']==request_seed(0,r['problem_id'],r['block'],r['step'])
+                    if r['problem_id']==2 and initial and r['step']>=1:
+                        outputs[i]=generation([66]*r['max_tokens'])
+                return outputs
+            old_score=engine.score
+            def score(requests):
+                rows=old_score(requests)
+                for r,row in zip(requests,rows):
+                    if r['problem_id']==2:
+                        ids=r['response_ids'];value=-1.0 if ids[-1]==3 else -0.5 if len(ids)==1 else -2.0
+                        row['logprobs']=[value]*len(ids)
+                return rows
+            engine.generate=generate;engine.score=score
+            return engine,Tokenizer(),dict(execution_kind='cpu-fixture')
+    assert cli(tmp_path,'run','--config',plan,'--k','2',deps=Exhaust())==0
+    attempts=read_lines(directory(tmp_path)/'k2/attempts.jsonl')
+    rows=[a for a in attempts if a['problem_id']==2]
+    assert rows[0]['end_state']=='block_budget_exhausted' and rows[0]['blocks']==32
+    assert rows[1]['eligible'] and rows[1]['retry_index']==1
+    assert all(a['end_state']!='engine_error' for a in attempts)
+
+
+def test_generation_review_is_idempotent_after_ledger_changes(tmp_path,source_template,monkeypatch):
+    import pilot_eval.sampling_sft_generation as workflow
+    from pilot_eval.workflow import _hash
+    from pilot_eval.training import file_hash
+    pilot=pilot_plan(tmp_path,source_template)
+    pconf=json.loads(pilot.read_text())
+    report=tmp_path/pconf['run_path']/'report.json'
+    report.write_text(json.dumps(dict(alarms={'budget':{'reservation_usd':'1.000000'}})))
+    assert cli(tmp_path,'prepare','--pilot',pilot,'--name','generation')==0
+    plan=tmp_path/'plans/generation/sampling-sft.generation.json'
+    review=tmp_path/'approval.json';review.write_text(json.dumps(dict(reviewer='fixture',notes='Approval-unit test only',
+        generation_approved=True,plan_sha256=_hash(json.loads(plan.read_text())),pilot_report_sha256=file_hash(report))))
+    monkeypatch.setattr(workflow,'qualification',lambda *a:json.loads(report.read_text()))
+    assert cli(tmp_path,'freeze','--config',plan,'--review',review)==0
+    old=(directory(tmp_path)/'generation.review.json').read_bytes()
+    # Model a later ledger snapshot; this does not mutate the actual cost ledger.
+    saved=workflow.snapshot
+    monkeypatch.setattr(workflow,'snapshot',lambda root:{**saved(root),'sha256':'different-snapshot'})
+    assert cli(tmp_path,'freeze','--config',plan,'--review',review)==0
+    assert (directory(tmp_path)/'generation.review.json').read_bytes()==old
