@@ -86,7 +86,7 @@ def diagnostic(value):
 
 
 def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None, on_record=None,
-           on_timing=None, block_limit=32):
+           on_timing=None, block_limit=32, resume=None, stop_after_blocks=None):
     """One bounded attempt per problem; retries/production resume belong upstream.
 
     Errors replay the identical ordered logical batch once. An exhausted replay
@@ -100,6 +100,16 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
     states = {p['problem_id']:dict(problem_id=p['problem_id'], source_id=p.get('source_id'), response_ids=[],
                                    mean_logprob=None, end_state=None, blocks=0) for p in problems}
     rng = {p['problem_id']:random.Random((data_seed*1_000_003+p['problem_id']) % 2**31) for p in problems}
+    first_block=0
+    if resume is not None:
+        first_block=resume['next_block']
+        if type(first_block) is not int or not 0<=first_block<=32:
+            raise ValueError('Invalid completed-block resume boundary.')
+        def tuples(value):return tuple(tuples(v) for v in value) if isinstance(value,list) else value
+        if set(map(int,resume['states']))!=set(states) or set(map(int,resume['rng']))!=set(rng):
+            raise ValueError('Resume cohort identity differs.')
+        states={int(pid):dict(value) for pid,value in resume['states'].items()}
+        for pid,value in resume['rng'].items():rng[int(pid)].setstate(tuples(value))
     records, decisions, errors = [], [], []
 
     def call(kind, requests, validator):
@@ -129,7 +139,7 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
         raise ProtocolError('Same logical request failed twice; stop the run.')
 
     try:
-        for block in range(block_limit):
+        for block in range(first_block,block_limit):
             active = [p for p in problems if states[p['problem_id']]['end_state'] is None]
             if not active: break
             prefixes = [states[p['problem_id']]['response_ids'] for p in active]
@@ -170,10 +180,12 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
                                                end_state=terminal,blocks=block+1)
             engine.clear_cache()
             if on_block:on_block(block,states,{pid:r.getstate() for pid,r in rng.items()})
+            if stop_after_blocks is not None and block-first_block+1>=stop_after_blocks:break
     except ProtocolError:
         for state in states.values():
             if state['end_state'] is None:state['end_state']='engine_error'
-    return dict(state='engine-error' if any(s['end_state']=='engine_error' for s in states.values()) else 'completed',
+    return dict(state='engine-error' if any(s['end_state']=='engine_error' for s in states.values())
+                else 'paused' if any(s['end_state'] is None for s in states.values()) and block_limit==32 else 'completed',
                 traces=list(states.values()),steps=decisions,requests=records,errors=errors,
                 gpu_qualified=False)
 

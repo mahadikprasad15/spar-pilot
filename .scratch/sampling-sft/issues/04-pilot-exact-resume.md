@@ -4,7 +4,7 @@
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Type:** task
 
@@ -31,3 +31,5 @@ Parent: confirmed Sampling SFT specification. Read the confirmed design amendmen
 ## Comments
 
 2026-10-28: User approved the ten slices and all declared dependency edges. Published locally; not claimed or implemented.
+
+2026-10-29: Claimed after Ticket03 software closure at user request. No paid execution authorized.
