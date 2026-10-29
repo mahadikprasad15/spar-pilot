@@ -15,6 +15,16 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','build','verify','status','release']:
+        handoff=commands.add_parser('sampling-sft-handoff-'+operation,help='CPU artifact inventory and honest research status')
+        if operation=='release':handoff.add_argument('--commit',required=True)
+        else:
+            handoff.add_argument('--output-root',type=Path,required=True)
+            if operation=='prepare':
+                handoff.add_argument('--selection',type=Path,required=True)
+                handoff.add_argument('--name',required=True)
+                handoff.add_argument('--release-commit')
+            else:handoff.add_argument('--config',type=Path,required=True)
     for operation in ['prepare','run','verify','status','job-request','recover-writer']:
         train=commands.add_parser('sampling-sft-train-'+operation,help='post-gate gold-matched endpoint training and recovery')
         train.add_argument('--output-root',type=Path,required=True)
@@ -799,6 +809,13 @@ def main(argv=None, *, dependencies=None):
             elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
             else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('sampling-sft-handoff-'):
+            from pilot_eval import sampling_sft_handoff as handoff
+            operation=args.command.removeprefix('sampling-sft-handoff-')
+            if operation=='release':result=handoff.check_release(args.commit)
+            elif operation=='prepare':result=handoff.prepare(args.selection,args.output_root,args.name,args.release_commit)
+            else:result=getattr(handoff,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(handoff.console(result) if operation!='release' else result,indent=2))
         elif args.command.startswith('sampling-sft-train-'):
             from pilot_eval import sampling_sft_training as train
             operation=args.command.removeprefix('sampling-sft-train-')

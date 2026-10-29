@@ -4,7 +4,7 @@
 
 **Blocked by:** 07, 09.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Type:** task
 
@@ -31,3 +31,28 @@ Parent: confirmed Sampling SFT specification. Read the confirmed design amendmen
 ## Comments
 
 2026-10-28: User approved the ten slices and all declared dependency edges. Published locally; not claimed or implemented.
+
+## Implementation
+
+Added CPU handoff prepare/build/verify/status and local source-release validation.
+The manifest binds the original sources, frozen generation histories and IDs,
+review revisions and coverage, HF gate evidence/statistics, data/readiness, selected
+training logs/checkpoints, budget and lifecycle controls. Partial snapshots are
+first-class; fixture completion cannot establish real GPU qualification or overall
+research completion. Source-audited, software-tested, real-qualified, generated,
+reviewed, trained and exported/stopped states remain distinct.
+
+Optional absent observations retain explicit absence bindings. Required missing
+checkpoints and corrupt parents are errors. Handoff verification performs no
+model imports or live provider calls. Portable copies use exactly the declared
+inventory plus the handoff's four output/seal files. Existing validators can
+refresh disposable status projections; those are excluded from the scientific
+inventory. No earlier hash-bound execution module was changed.
+
+Receipt integrity, job identity, separate copy roles and external shutdown proof
+are verified. Stop-requested alone never counts as confirmed stopped. Deferred
+evaluation/internals/Stage0 research/baseline-offset/k2/k10/k5+5/self-correct/extra
+seeds remain explicit. Snapshot creation authorizes no paid or destructive action.
+CLI is primary; notebook19–20 are optional CPU clients. Runbook:
+docs/operations/sampling-sft-handoff.md. Source-pin finalization follows the
+implementation commit, without pushing.

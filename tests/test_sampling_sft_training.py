@@ -187,6 +187,7 @@ def test_optional_training_cells_are_safe_cpu_clients():
     notebook=json.loads((Path(__file__).parents[1]/'notebooks/sampling-sft.ipynb').read_text())
     for cell in notebook['cells']:
         if cell['cell_type']=='code':ast.parse(''.join(cell['source']))
-    text=''.join(''.join(c['source']) for c in notebook['cells'][-4:])
+    text=''.join(''.join(c['source']) for c in notebook['cells']
+        if c['cell_type']=='code' and 'sampling-sft-train-' in ''.join(c['source']))
     assert 'sampling-sft-train-prepare' in text and 'sampling-sft-train-job-request' in text
     assert 'sampling-sft-train-run' not in text

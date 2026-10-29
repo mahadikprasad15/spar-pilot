@@ -145,3 +145,5 @@ are preserved. No report or selection receipt launches training.
 [Training-data runbook](../operations/sampling-sft-training-data.md): gold-ordered stored-ID exports, exact checkpoint-0 identity and separate full-trainer short-batch readiness. No full arm is trained by Ticket 08.
 
 [Endpoint training runbook](../operations/sampling-sft-training.md): explicit k0/k5 plans, fresh paid-job gates, original step boundaries, required checkpoints and optimizer-state recovery. No paid execution is implied by implementation.
+
+[Final handoff and execution map](../operations/sampling-sft-handoff.md): release pin, CPU/GPU stages, a hashed raw-artifact inventory and separate partial/real-completion statuses. Deferred analyses remain explicit.
