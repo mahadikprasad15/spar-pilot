@@ -13,6 +13,25 @@ def a0_hash(factors):
     return h.hexdigest()
 
 
+def gamma(n):
+    """Deterministic FP32 accumulation constant gamma_n=n*u/(1-n*u), u=2**-24."""
+    u=2.0**-24
+    if type(n) is not int or n<0 or n*u>=1:raise ValueError('Invalid accumulation length.')
+    return n*u/(1-n*u)
+
+
+def reconstruction_allowance(oracle,abs_terms,abs_dot_terms,*,tokens,sequences,width):
+    """ADR 0016: max(legacy 1e-5 relative, a-priori FP32 bound on sum_t delta_t c_t).
+
+    abs_terms is sum_t |delta_t||c_t|; abs_dot_terms is sum_t |delta_t| sum_i |a_i x_ti|.
+    Accumulation over tokens and sequences gives gamma_(tokens+sequences); the FP32
+    coefficient c=a.x of input width d gives gamma_d. Both are fixed before any run.
+    """
+    oracle,abs_terms,abs_dot_terms=(np.asarray(v,dtype=np.float64).reshape(-1) for v in [oracle,abs_terms,abs_dot_terms])
+    bound=gamma(tokens+sequences)*abs_terms+gamma(width)*abs_dot_terms
+    return float(max(1e-5*np.linalg.norm(oracle),np.linalg.norm(bound)))
+
+
 def cosine(a,b):
     a,b=np.asarray(a,dtype=float),np.asarray(b,dtype=float);den=np.linalg.norm(a)*np.linalg.norm(b)
     return None if den==0 else float(np.clip(a@b/den,-1,1))
@@ -34,6 +53,7 @@ def summarize_vectors(gradients,tokens,counts):
     den=np.linalg.norm(pushes[full],axis=1).mean() if full.any() else 0.
     return dict(mean_push=mean.tolist(),mean_push_full_batches=None if full_mean is None else full_mean.tolist(),
         token_weighted_push=pooled.tolist(),consistency=None if den==0 else float(np.linalg.norm(full_mean)/den),
+        consistency_noise_reference=None if not full.any() else float(1/np.sqrt(full.sum())),
         full_batches=int(full.sum()),partial_batches=int((~full).sum()),batch_norms=np.linalg.norm(pushes,axis=1).tolist(),
         raw_norm_comparison_scope='descriptive within this condition only; cross-objective raw-norm comparisons forbidden')
 

@@ -2,7 +2,7 @@
 import numpy as np
 
 from pilot_eval.stage0_evaluation_backend import EvaluationDependencies, EvaluationEngine
-from pilot_eval.stage0_push_math import a0_hash
+from pilot_eval.stage0_push_math import a0_hash, reconstruction_allowance
 from pilot_eval.stage0_sources import factors, inside
 
 
@@ -22,16 +22,22 @@ def collect(model,body,head,module_factors,unit,*,context_chunk,device):
     """
     import torch
     from torch.utils.checkpoint import checkpoint
-    model.zero_grad(set_to_none=True);handles=[];reconstructed={};seen={}
+    model.zero_grad(set_to_none=True);handles=[];reconstructed={};seen={};abs_terms={};abs_dot_terms={};rows={}
     for name,(module,a,b) in module_factors.items():
         if bool(torch.any(b.detach()!=0)):raise ValueError('Initial B must be exactly zero.')
         reconstructed[name]=np.zeros(b.numel(),dtype=np.float64);seen[name]=0
+        abs_terms[name]=np.zeros(b.numel(),dtype=np.float64);abs_dot_terms[name]=np.zeros(b.numel(),dtype=np.float64);rows[name]=0
         def forward_hook(layer,args,output,*,key=name,a0=a.detach()):
             # A0 is rank one, alpha/r=1. The scientific source audit enforces it.
-            coefficient=(args[0].detach().double()*a0.double()).sum(-1)
+            x=args[0].detach().double();coefficient=(x*a0.double()).sum(-1)
+            magnitude=(x.abs()*a0.double().abs()).sum(-1)
             def backward_hook(delta):
-                value=(delta.detach().double()*coefficient[...,None]).reshape(-1,delta.shape[-1]).sum(0)
+                d=delta.detach().double().reshape(-1,delta.shape[-1])
+                value=(d*coefficient.reshape(-1)[:,None]).sum(0)
                 reconstructed[key][:]+=value.cpu().numpy();seen[key]+=1
+                abs_terms[key][:]+=(d.abs()*coefficient.reshape(-1)[:,None].abs()).sum(0).cpu().numpy()
+                abs_dot_terms[key][:]+=(d.abs()*magnitude.reshape(-1)[:,None]).sum(0).cpu().numpy()
+                rows[key]+=d.shape[0]
             if output.requires_grad:output.register_hook(backward_hook)
         handles.append(module.register_forward_hook(forward_hook))
     active=0
@@ -57,7 +63,7 @@ def collect(model,body,head,module_factors,unit,*,context_chunk,device):
             total.backward()
     finally:
         for handle in handles:handle.remove()
-    arrays={};errors={}
+    arrays={};errors={};allowances={}
     for index,(name,(_module,a,b)) in enumerate(module_factors.items()):
         if active and (a.grad is None or b.grad is None or seen[name]!=active):raise ValueError('Missing gradient or reconstruction hook: '+name)
         ga=np.zeros(tuple(a.shape),dtype=np.float32) if a.grad is None else a.grad.detach().cpu().numpy()
@@ -65,13 +71,16 @@ def collect(model,body,head,module_factors,unit,*,context_chunk,device):
         oracle=reconstructed[name].reshape(gb.shape);den=float(np.linalg.norm(oracle))
         numerator=float(np.linalg.norm(gb.astype(np.float64)-oracle))
         error=(0. if numerator==0 else None) if den==0 else numerator/den
+        bound=np.stack([abs_terms[name],abs_dot_terms[name]]).reshape(2,*gb.shape)
+        allowed=reconstruction_allowance(oracle,bound[0],bound[1],tokens=rows[name],sequences=max(active,1),width=int(a.shape[-1]))
         if not np.isfinite(ga).all() or not np.isfinite(gb).all() or np.any(ga):raise ValueError('A gradient must be finite and exactly zero at B=0: '+name)
-        if error is None or not error<1e-5:raise ValueError('Initial G@A0 reconstruction gate failed: '+name+': '+str(error))
-        arrays.update({f'gradient_b_{index}':gb,f'gradient_a_{index}':ga,f'push_{index}':-gb,f'reconstruction_{index}':oracle})
-        errors[name]=error
+        if not numerator<=allowed:raise ValueError('Initial G@A0 reconstruction bound failed: '+name+f': error {numerator} > allowed {allowed} (legacy relative {error})')
+        arrays.update({f'gradient_b_{index}':gb,f'gradient_a_{index}':ga,f'push_{index}':-gb,f'reconstruction_{index}':oracle,
+            f'reconstruction_bound_{index}':bound})
+        errors[name]=error;allowances[name]=dict(tokens=rows[name],sequences=max(active,1),width=int(a.shape[-1]),allowed=allowed,absolute_error=numerator)
     if any(p.grad is not None for n,p in model.named_parameters() if 'lora_' not in n and p.requires_grad is False):
         raise ValueError('A frozen base parameter received a gradient.')
-    return arrays,dict(a_gradient_exact_zero=True,reconstruction_relative_errors=errors,
+    return arrays,dict(a_gradient_exact_zero=True,reconstruction_relative_errors=errors,reconstruction_allowances=allowances,
         reconstruction_gate=1e-5,active_sequences=active,zero_advantage_sequences=len(unit['sequences'])-active,
         global_token_denominator=unit['token_count'],optimizer_steps=0,advantages_detached=True)
 

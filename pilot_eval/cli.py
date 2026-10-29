@@ -65,6 +65,13 @@ def main(argv=None, *, dependencies=None):
             push.add_argument('--approval',type=Path);push.add_argument('--max-new-units',type=int);push.add_argument('--no-progress',action='store_true')
         if operation in ['freeze','predict']:push.add_argument('--review',type=Path,required=True)
         if operation=='recover-writer':push.add_argument('--owner-token',required=True);push.add_argument('--review-notes',required=True)
+    for operation in ['prepare','verify']:
+        cohort=commands.add_parser('stage0-cohort-'+operation,help='matched-128 historical cohort for E0.6a/E0.5 (CPU)')
+        cohort.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            cohort.add_argument('--audit',type=Path,required=True);cohort.add_argument('--baseline',type=Path,required=True)
+            cohort.add_argument('--weights-dir',type=Path,required=True);cohort.add_argument('--name',required=True)
+        else:cohort.add_argument('--config',type=Path,required=True)
     for operation in ['prepare','runtime','run','status','forecast','freeze','verify-measurement','report','verify','recover-writer']:
         distance=commands.add_parser('stage0-distance-'+operation,help='optional teacher-forced NLL/entropy measurement')
         distance.add_argument('--output-root',type=Path,required=True)
@@ -623,6 +630,12 @@ def main(argv=None, *, dependencies=None):
                 result=reports.predict(args.config,args.output_root,args.review) if operation=='predict' else getattr(reports,operation)(args.config,args.output_root)
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['rows','modules','comparisons']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-cohort-'):
+            from pilot_eval import stage0_matched
+            if args.command=='stage0-cohort-prepare':
+                result=stage0_matched.prepare(args.audit,args.baseline,args.weights_dir,args.output_root,args.name,dependencies=dependencies)
+            else:result=stage0_matched.verify(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('stage0-distance-'):
             from pilot_eval import stage0_distance as workflow

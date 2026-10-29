@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+from pilot_eval.stage0_numeric import agrees
+
 from pilot_eval.stage0_distance import load,read_unit,verify_measurement
 from pilot_eval.stage0_distance_math import position_windows
 from pilot_eval.stage0_sources import inside
@@ -131,7 +133,7 @@ def verify(path,output_root):
     for p,digest in seal['files'].items():
         if file_hash(inside(directory,p))!=digest:raise ValueError('Distance report evidence changed.')
     result=json.loads((directory/'results/results.json').read_text())
-    if result!=calculate(config,directory,answers,memberships):raise ValueError('Distance statistics do not reconstruct from saved token arrays.')
+    if not agrees(result,json.loads(json.dumps(calculate(config,directory,answers,memberships)))):raise ValueError('Distance statistics do not reconstruct from saved token arrays.')
     import pyarrow.parquet as pq
-    if pq.read_table(directory/'summary.parquet').to_pylist()!=result['summaries']:raise ValueError('Distance summary Parquet differs.')
+    if not agrees(pq.read_table(directory/'summary.parquet').to_pylist(),result['summaries']):raise ValueError('Distance summary Parquet differs.')
     return result

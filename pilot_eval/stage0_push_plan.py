@@ -12,8 +12,7 @@ from pilot_eval.stage0_evaluation import _jsonl
 from pilot_eval.stage0_push_math import a0_hash
 from pilot_eval.stage0_sources import factors, inside
 from pilot_eval.stage0_spectral import _load, _verify_cache
-from pilot_eval.stage0_rollout_plan import load as load_rollouts
-from pilot_eval.stage0_rollout_results import verify as verify_rollouts
+from pilot_eval.stage0_cohort_source import load_cohort
 from pilot_eval.stage0_workflow import _writer, _state, _verify_parents
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash, _save_frozen
@@ -59,19 +58,18 @@ def batches(training,draws,datasets,cases):
 
 def implementation():
     folder=Path(__file__).parent
-    return {n:file_hash(folder/n) for n in ['stage0_push_plan.py','stage0_push_math.py','stage0_push_backend.py','stage0_pushes.py','stage0_push_report.py','grpo_algorithm.py','stage0_evaluation_backend.py']}
+    return {n:file_hash(folder/n) for n in ['stage0_push_plan.py','stage0_push_math.py','stage0_push_backend.py','stage0_pushes.py','stage0_push_report.py','grpo_algorithm.py','stage0_evaluation_backend.py','stage0_cohort_source.py','stage0_matched.py','stage0_numeric.py']}
 
 
 def prepare(spectral_path,rollouts_path,output_root,name,*,context_chunk=16):
     root=Path(output_root).resolve();safe_name(name)
     sp,rp=inside(root,spectral_path),inside(root,rollouts_path)
     spectral,audit=_load(sp,root);_verify_cache(spectral,inside(root,spectral['run_path']))
-    verify_rollouts(rp,root);rollout,source,training,_=load_rollouts(rp,root)
+    cohort=load_cohort(rp,root);rollout,source,training=cohort['config'],cohort['directory'],cohort['training']
     if spectral['audit_path']!=rollout['audit_path'] or spectral['weights_dir']!=rollout['weights_dir'] or not matching_execution_kinds(spectral['inventory']['execution_kind'],rollout['execution_kind']):
         raise ValueError('Spectral and R0 sources must use the same audited base and artifact inventory.')
     if type(context_chunk) is not int or context_chunk<1:raise ValueError('Positive context chunk required.')
-    draws=[json.loads(x) for x in (source/'results/rollouts.jsonl').read_text().splitlines()]
-    datasets=json.loads((source/'results/datasets.json').read_text());special=json.loads((source/'collection/inputs/special-tokens.json').read_text())
+    draws,datasets,special=cohort['draws'],cohort['datasets'],cohort['special']
     prepare_answers(training,draws,datasets,special['eos_token_id'])  # independent existing mask/EOS validation
     initial={arm:factors(inside(root,audit['sources'][arm]['checkpoints']['0']['path'])) for arm in ['sft','grpo']}
     hashes={arm:a0_hash(values) for arm,values in initial.items()}
@@ -80,13 +78,15 @@ def prepare(spectral_path,rollouts_path,output_root,name,*,context_chunk=16):
     for arm,digest in hashes.items():
         cases.setdefault(digest,dict(initialization_arm=arm,paired_arms=[],a0_sha256=digest))['paired_arms'].append(arm)
     cases={f'a0-{n}':v for n,v in enumerate(cases.values())};units=batches(training,draws,datasets,cases)
-    parents={str(p.relative_to(root)):file_hash(p) for p in [sp,rp,source/'complete.json']}
+    parents={str(p.relative_to(root)):file_hash(p) for p in [sp,rp,cohort['complete_path']]}
     directory=root/f'runs/stage0/{name}/e05_pushes';path=root/'plans'/name/'stage0.pushes.json'
     variants={v['initialization_arm']:dict(adapter_path=audit['sources'][v['initialization_arm']]['checkpoints']['0']['path']) for v in cases.values()}
     config=dict(protocol='stage0-pushes-v1',schema_version=1,name=name,run_path=str(directory.relative_to(root)),
         spectral_path=str(sp.relative_to(root)),rollouts_path=str(rp.relative_to(root)),parents=parents,implementation=implementation(),numpy_version=np.__version__,
         weights_dir=rollout['weights_dir'],model_identity=rollout['model_identity'],execution_kind=rollout['execution_kind'],
-        sampled_runtime=json.loads((rp.parent/'stage0.rollouts.execution.json').read_text())['runtime'],
+        sampled_runtime=cohort['sampled_runtime'],cohort=cohort['cohort'],
+        gradient_runtime_rule='every runtime field except git_commit must match the frozen first gradient session; commit recorded per unit (ADR 0016)',
+        reconstruction_rule='norm(GPU FP32 - FP64 hook reconstruction) <= max(1e-5 relative, a-priori FP32 accumulation bound) (ADR 0016)',
         gradient_runtime_policy='freeze first bounded gradient session; all paired objectives and continuations must match it; sampled tokens are immutable source data',
         variants=variants,variant_order=list(variants),seed=42,prompt_contract=rollout['legacy']['prompt_template'],
         decoding=dict(eos_token_id=special['eos_token_id'],pad_token_id=special['pad_token_id'],max_new_tokens=1024),
@@ -112,10 +112,11 @@ def prepare(spectral_path,rollouts_path,output_root,name,*,context_chunk=16):
 
 def load(path,root):
     config=json.loads(inside(root,path).read_text());directory=inside(root,config['run_path'])
-    if config.get('protocol')!='stage0-pushes-v1' or config['implementation']!=implementation() or config['numpy_version']!=np.__version__:raise ValueError('Push implementation/environment changed; preserve evidence and use a new plan.')
+    # NumPy version is recorded provenance; CPU and GPU runtimes may differ (ADR 0016).
+    if config.get('protocol')!='stage0-pushes-v1' or config['implementation']!=implementation():raise ValueError('Push implementation changed; preserve evidence and use a new plan.')
     if json.loads((directory/'config.json').read_text())!=config or json.loads((directory/'meta/run_manifest.json').read_text())['config_sha256']!=_hash(config):raise ValueError('Push frozen identity changed.')
     _verify_parents(root,config['parents']);spectral,_audit=_load(inside(root,config['spectral_path']),root)
-    _verify_cache(spectral,inside(root,spectral['run_path']));verify_rollouts(inside(root,config['rollouts_path']),root)
+    _verify_cache(spectral,inside(root,spectral['run_path']));load_cohort(inside(root,config['rollouts_path']),root)
     units=[json.loads(x) for x in (directory/'inputs/batches.jsonl').read_text().splitlines()]
     if _hash(units)!=config['units_sha256'] or [u['key'] for u in units]!=config['unit_keys'] or json.loads((directory/'inputs/initialization-audit.json').read_text())!=config['initialization_audit']:raise ValueError('Push input/A0 audit changed.')
     return config,directory,units

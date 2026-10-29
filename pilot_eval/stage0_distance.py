@@ -13,8 +13,8 @@ from pilot_eval.stage0_workflow import _writer,_state,_now,budget_status
 from pilot_eval.stage0_evaluation import _jsonl,_reservation,_attempt_timing,_recover_owner
 from pilot_eval.stage0_budget import reserve
 from pilot_eval.stage0_qualification_backend import deadline_guard
-from pilot_eval.stage0_rollout_plan import load as load_rollouts
-from pilot_eval.stage0_rollout_results import verify as verify_rollouts
+from pilot_eval.stage0_cohort_source import load_cohort
+from pilot_eval.stage0_numeric import environment as _environment
 from pilot_eval.stage0_distance_math import prepare_answers,check_arrays
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash,_save_frozen
@@ -22,22 +22,26 @@ from pilot_eval.workflow import _hash,_save_frozen
 
 def implementation():
     folder=Path(__file__).parent
-    return {n:file_hash(folder/n) for n in ['stage0_distance.py','stage0_distance_math.py','stage0_distance_backend.py','stage0_distance_report.py']}
+    return {n:file_hash(folder/n) for n in ['stage0_distance.py','stage0_distance_math.py','stage0_distance_backend.py','stage0_distance_report.py',
+        'stage0_cohort_source.py','stage0_matched.py','stage0_numeric.py']}
 
 
 def prepare(rollouts_path,output_root,name,*,context_chunk=16,workspace_bytes=536870912):
     root=Path(output_root).resolve();safe_name(name);rp=inside(root,rollouts_path)
-    result=verify_rollouts(rp,root);rollout,source,training,_=load_rollouts(rp,root)
-    execution=json.loads((rp.parent/'stage0.rollouts.execution.json').read_text())
+    cohort=load_cohort(rp,root);rollout,training=cohort['config'],cohort['training']
+    matched=cohort['kind']=='matched'
     if any(type(v) is not int or v<1 for v in [context_chunk,workspace_bytes]):raise ValueError('Positive scoring chunk/workspace required.')
-    draws=[json.loads(x) for x in (source/'results/rollouts.jsonl').read_text().splitlines()]
-    datasets=json.loads((source/'results/datasets.json').read_text())
-    special=json.loads((source/'collection/inputs/special-tokens.json').read_text());eos=special['eos_token_id']
+    draws,datasets=cohort['draws'],cohort['datasets'];eos=cohort['special']['eos_token_id']
     answers,memberships=prepare_answers(training,draws,datasets,eos)
     path=root/'plans'/name/'stage0.distance.json';directory=root/f'runs/stage0/{name}/e06a_distance'
     config=dict(protocol='stage0-distance-v1',schema_version=1,name=name,run_path=str(directory.relative_to(root)),
-        rollouts_path=str(rp.relative_to(root)),rollouts_sha256=file_hash(rp),rollouts_complete_sha256=file_hash(source/'complete.json'),
-        model_identity=rollout['model_identity'],weights_dir=rollout['weights_dir'],runtime=execution['runtime'],execution_kind=rollout['execution_kind'],
+        rollouts_path=str(rp.relative_to(root)),rollouts_sha256=file_hash(rp),rollouts_complete_sha256=file_hash(cohort['complete_path']),
+        model_identity=rollout['model_identity'],weights_dir=rollout['weights_dir'],execution_kind=rollout['execution_kind'],
+        cohort=cohort['cohort'],sampled_runtime=cohort['sampled_runtime'],
+        # R0 scores in its sampling session; matched historical samples freeze the first scoring session (ADR 0016).
+        runtime=None if matched else cohort['sampled_runtime'],
+        scoring_runtime_rule=('first scoring attempt frozen; later attempts match every field except git_commit (ADR 0016)' if matched
+            else 'sampled production session; later attempts match every field except git_commit'),
         context_chunk=context_chunk,workspace_bytes=workspace_bytes,implementation=implementation(),numpy_version=np.__version__,
         unique_answer_ids=[a['answer_id'] for a in answers],answers_sha256=_hash(answers),memberships_sha256=_hash(memberships),
         mask='saved SFT prompt masked; gold through supervised EOS; sampled generated IDs including observed EOS, no artificial EOS on cap',
@@ -46,7 +50,7 @@ def prepare(rollouts_path,output_root,name,*,context_chunk=16,workspace_bytes=53
         scored_eos_token_id=eos,answer_weighted_sensitivity=True,conventions_approved='user 2026-10-27; full padded vocabulary, disjoint windows, token primary and answer sensitivity',
         statistics=dict(draws=10000,seed=42,percentiles=[2.5,97.5],unit='whole problem',weighting='ratio of summed token surprise to summed token count'),
         premise=dict(sampled_distribution='HF temperature1, topk0, topp1',score_model='identical audited untuned weights',
-            runtime='same sampled production session',stopping='observed EOS included; cap gets no synthetic EOS',
+            runtime='historical Pilot 4 sampling runtime; scored in a new session with the same audited FP32 weights (ADR 0016)' if matched else 'same sampled production session',stopping='observed EOS included; cap gets no synthetic EOS',
             finite_sample_note='Token-pooled stopped-sequence ratios need not have exact zero finite-sample expectation; gate failure is retained, never widened.'))
     with _writer(directory):
         _save_frozen(path,config);_save_frozen(directory/'config.json',config)
@@ -59,18 +63,18 @@ def prepare(rollouts_path,output_root,name,*,context_chunk=16,workspace_bytes=53
 
 def load(path,root):
     config=json.loads(inside(root,path).read_text());directory=inside(root,config['run_path'])
-    if config.get('protocol')!='stage0-distance-v1' or config['implementation']!=implementation() or config['numpy_version']!=np.__version__ or config['own_all_gate']!=.02:raise ValueError('Distance implementation/settings changed; preserve evidence and use a new name.')
+    # NumPy version is recorded provenance; CPU and GPU runtimes may differ (ADR 0016).
+    if config.get('protocol')!='stage0-distance-v1' or config['implementation']!=implementation() or config['own_all_gate']!=.02:raise ValueError('Distance implementation/settings changed; preserve evidence and use a new name.')
     if json.loads((directory/'config.json').read_text())!=config or json.loads((directory/'meta/run_manifest.json').read_text())['config_sha256']!=_hash(config):raise ValueError('Distance plan identity changed.')
     rp=inside(root,config['rollouts_path'])
     if file_hash(rp)!=config['rollouts_sha256']:raise ValueError('R0 plan changed.')
-    rollout,source,_,_=load_rollouts(rp,root)
-    if file_hash(source/'complete.json')!=config['rollouts_complete_sha256']:raise ValueError('R0 completion changed.')
-    # R0 verifier checks all response, token, cohort and parent identities.
-    verify_rollouts(rp,root)
+    # The cohort loader verifies all response, token, membership and parent identities.
+    cohort=load_cohort(rp,root)
+    if file_hash(cohort['complete_path'])!=config['rollouts_complete_sha256']:raise ValueError('Cohort completion changed.')
     answers=[json.loads(x) for x in (directory/'inputs/answers.jsonl').read_text().splitlines()]
     memberships=json.loads((directory/'inputs/memberships.json').read_text())
     if _hash(answers)!=config['answers_sha256'] or _hash(memberships)!=config['memberships_sha256'] or [a['answer_id'] for a in answers]!=config['unique_answer_ids']:raise ValueError('Frozen answer/token/membership mapping changed.')
-    if json.loads((directory/'inputs/datasets.json').read_text())!=json.loads((source/'results/datasets.json').read_text()):raise ValueError('Cohort membership metadata changed.')
+    if json.loads((directory/'inputs/datasets.json').read_text())!=cohort['datasets']:raise ValueError('Cohort membership metadata changed.')
     return config,directory,answers,memberships
 
 
@@ -98,9 +102,17 @@ def _deps():
     return DistanceDependencies()
 
 
+def _scoring_runtime(config,directory):
+    """The session scoring must stay in: R0's sampling session, or the frozen first matched-cohort attempt."""
+    if config['runtime'] is not None:return config['runtime']
+    frozen=directory/'meta/runtime.json'
+    return json.loads(frozen.read_text()) if frozen.exists() else None
+
+
 def runtime(path,output_root,*,dependencies=None):
     root=Path(output_root).resolve();config,directory,_,_=load(path,root);deps=dependencies or _deps();info=deps.runtime()
-    return dict(runtime=info,matches_sampled_runtime=info==config['runtime'],budget=budget_status(root),model_loaded=False,
+    expected=_scoring_runtime(config,directory)
+    return dict(runtime=info,matches_scoring_runtime=None if expected is None else _environment(info)==_environment(expected),budget=budget_status(root),model_loaded=False,
         storage=deps.preflight(config,root) if hasattr(deps,'preflight') else dict(passed=True,scope='fixture'))
 
 
@@ -112,7 +124,8 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         saved=[read_unit(config,directory,a) for a in answers]
         if max_new_units==0:return _state(directory,'incomplete',sum(v is not None for v in saved),len(answers))
         deps=dependencies or _deps();info=deps.runtime()
-        if info!=config['runtime']:raise ValueError('Scoring requires the sampled production runtime/session; preserve this plan on a change.')
+        expected=_scoring_runtime(config,directory)
+        if expected is not None and _environment(info)!=_environment(expected):raise ValueError('Scoring requires its frozen runtime/session; preserve this plan on a change.')
         execution_path=Path(path).resolve().parent/'stage0.distance.execution.json'
         execution=_execution(config,directory,root,execution_path) if execution_path.exists() else {'reservation':{'job_sha256':_hash(config)}}
         if not execution_path.exists() and max_new_units!=1:
@@ -126,7 +139,8 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
             if time.monotonic()-started>=remaining:raise TimeoutError('Scoring allocation exhausted; reconcile before renewing.')
         try:
             with deadline_guard(remaining,config['execution_kind']=='real-cuda'):
-                deadline();_save_frozen(directory/'meta/runtime.json',info)
+                deadline()
+                if not (directory/'meta/runtime.json').exists():_save_frozen(directory/'meta/runtime.json',info if config['runtime'] is None else config['runtime'])
                 if hasattr(deps,'preflight'):deps.preflight(config,root)
                 if progress:print('Stage 0 distance: loading the local untuned FP32 model.',flush=True)
                 engine=deps.engine(config,root)
@@ -148,7 +162,8 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
                     folder=directory/'units'/answer['answer_id'];folder.mkdir(parents=True,exist_ok=True)
                     temporary=folder/'tokens.tmp.npz';np.savez(temporary,**arrays);temporary.replace(folder/'tokens.npz')
                     _write_json(folder/'metadata.json',dict(answer_id=answer['answer_id'],seconds=time.monotonic()-begin,
-                        attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=proof,vocabulary_sha256=file_hash(directory/'meta/vocabulary.json')))
+                        attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=proof,vocabulary_sha256=file_hash(directory/'meta/vocabulary.json'),
+                        code_git_commit=info.get('git_commit')))
                     _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),answer_sha256=_hash(answer)),files={k:file_hash(folder/k) for k in ['tokens.npz','metadata.json']}))
                     saved[n]=arrays;new+=1;_state(directory,'running',sum(v is not None for v in saved),len(answers),reservation_id=reservation['reservation_id'])
                     if progress:print(f'Stage 0 distance: {sum(v is not None for v in saved)}/{len(answers)} unique answers sealed; {len(answer["target_ids"])} supervised tokens.',flush=True)
@@ -180,7 +195,8 @@ def verify_measurement(path,output_root):
     if seal['config_sha256']!=_hash(config):raise ValueError('Scoring completion identity differs.')
     for p,digest in seal['files'].items():
         if file_hash(inside(directory,p))!=digest:raise ValueError('Scoring completed payload changed.')
-    if json.loads((directory/'meta/runtime.json').read_text())!=config['runtime'] or json.loads((directory/'meta/final-integrity.json').read_text()).get('base_unchanged') is not True:raise ValueError('Scoring runtime/final integrity mismatch.')
+    frozen=json.loads((directory/'meta/runtime.json').read_text())
+    if (config['runtime'] is not None and _environment(frozen)!=_environment(config['runtime'])) or json.loads((directory/'meta/final-integrity.json').read_text()).get('base_unchanged') is not True:raise ValueError('Scoring runtime/final integrity mismatch.')
     for answer in answers:
         if read_unit(config,directory,answer) is None:raise ValueError('Missing token-scoring unit.')
     return dict(measurement_complete=True,unique_answers=len(answers),real_gpu_measurement=config['execution_kind']=='real-cuda',cpu_report_pending=not (directory/'complete.json').exists())
@@ -229,7 +245,8 @@ def freeze(path,output_root,review_path):
     root=Path(output_root).resolve();config,directory,_,_=load(path,root);review=json.loads(Path(review_path).read_text())
     target=Path(path).resolve().parent/'stage0.distance.execution.json'
     required={'reviewer','notes','session_id','source_reviewed','max_units_per_hour','max_seconds','forecast_sha256'}
-    if set(review)!=required or review['session_id']!=config['runtime']['session_id']:raise ValueError('Separate same-session measured scoring review required.')
+    expected=_scoring_runtime(config,directory)
+    if set(review)!=required or expected is None or review['session_id']!=expected['session_id']:raise ValueError('Separate same-session measured scoring review required.')
     measured=json.loads((directory/'results/forecast.json').read_text())
     if review['forecast_sha256']!=file_hash(directory/'results/forecast.json') or measured['config_sha256']!=_hash(config) or review['max_seconds']<measured['conservative_total_seconds']:raise ValueError('Scoring production budget must bind and cover the measured forecast.')
     for name,digest in measured['evidence'].items():
