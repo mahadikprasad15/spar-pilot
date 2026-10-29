@@ -90,9 +90,8 @@ python -m pilot_eval sampling-sft-recover-writer --config artifacts/plans/sampli
 
 ## Next stages
 
-Budget/export controls are implemented in Ticket02. Engine/scoring qualification,
-the exact-resume pilot, production generation, review, gate statistics and approved
-training remain separate implementation tickets. Sampling hardware is L40S; training requires verified
+Tickets02–04 implement budget/export controls, bounded engine checks and the exact-resume pilot. Real execution of those checks remains pending.
+Production generation, review, gate statistics and approved training remain later implementation tickets. Sampling hardware is L40S; training requires verified
 L4/FP32 gold metadata. GPU-version/scheduling/default settings and actual stop
 semantics are resolved before engine qualification, not fabricated by this CPU
 audit.
@@ -112,3 +111,11 @@ Ticket02 adds the CLI-first budget/export/stop controls and the
 [RunPod handoff guide](../operations/sampling-sft-runpod.md).
 The optional notebook can inspect the ledger and run a disabled-by-default
 zero-cost smoke. No engine, live cloud qualification or paid approval is implied.
+
+## Bounded engine and pilot workflows
+
+[Engine checks](../operations/sampling-sft-engine.md) and the
+[fixed32 pilot](../operations/sampling-sft-pilot.md) use public saved-workflow
+commands behind the reserved-job entrypoint. The notebook exposes optional CPU
+plan cells; CLI/RunPod remains primary. CPU fixture and subprocess-kill evidence
+is not a real engine qualification or paid-job approval.

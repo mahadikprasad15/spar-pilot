@@ -329,7 +329,12 @@ def recover_writer(path,output_root,lane,owner_token,review_notes):
 
 def report(path,output_root,forecast_path):
     root,plan,folder=load(path,output_root)
-    replay=compare(path,root)
+    try:replay=compare(path,root)
+    except ValueError:
+        if not (folder/'replay.json').exists():raise
+        replay=json.loads((folder/'replay.json').read_text())
+        verify_parents(root,replay['parents'])
+        if replay.get('scientific_equal') is not False:raise
     result=verify_lane(folder/'uninterrupted',plan);traces=result['traces']
     lengths=sorted(len(r['response_ids']) for r in traces)
     correct=sum(r['automatic_flexible_v3']['correct'] for r in traces)
@@ -378,7 +383,8 @@ def report(path,output_root,forecast_path):
         forecast=forecast,forecast_sha256=file_hash(forecast_path),forecast_scope='explicit measured-basis estimate, not a reservation or proof of an upper bound',
         alarms=alarms,replay=replay,execution_kind=result['execution_kind'],
         ready_for_generation_review=replay['gpu_qualified'] and not any(a['triggered'] for a in alarms.values()),
-        production_allowed=False,budget_snapshot_sha256=ledger['sha256'],runtime_hash=plan['runtime_hash'])
+        production_allowed=False,budget_review_required=ledger['review_required'],
+        budget_snapshot_sha256=ledger['sha256'],runtime_hash=plan['runtime_hash'])
     source.save(folder/'report.json',report)
     return report
 

@@ -147,6 +147,11 @@ def test_replay_difference_stops_without_tolerance_and_changed_runtime_is_reject
     receipt=json.loads((tmp_path/'runs/sampling-sft/sample/pilot/pilot/replay.json').read_text())
     assert not receipt['scientific_equal'] and len(receipt['requalification_order'])==3
     assert 'logprobs' in receipt['first_difference']['path']
+    forecast=tmp_path/'failed-forecast.json';forecast.write_text(json.dumps(dict(rate_usd_per_hour='1',
+        estimated_hours='0.1',setup_hours='0',notes='Keep failure diagnostics visible.')))
+    assert cli(tmp_path,'report','--config',plan,'--forecast',forecast)==0
+    report=json.loads((tmp_path/'runs/sampling-sft/sample/pilot/pilot/report.json').read_text())
+    assert not report['ready_for_generation_review'] and not report['replay']['scientific_equal']
     value=json.loads(plan.read_text());value['settings']['runtime']['max_num_seqs']=64
     plan.write_text(json.dumps(value))
     assert cli(tmp_path,'status','--config',plan)==1

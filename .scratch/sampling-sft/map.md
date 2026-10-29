@@ -65,3 +65,8 @@ Ticket03 (bounded sampler, score qualification and profile) is the next implemen
 - Resolved software slice: bounded likelihood search, score and throughput workflow; public commands and runbook in docs/operations/sampling-sft-engine.md.
 - CPU regression78 passed; artifacts/validation/sampling-sft-ticket03/validation.json. Real L40S/T3/profile execution remains pending, not inferred from fixtures.
 - Ticket04 is next: fixed32 pilot and exact interruption/resume. No paid work or publication authorized.
+
+## Ticket04 implementation
+- Resolved software slice: fixed32 k5 pilot, block-sealed recovery, real fault-injection entrypoint, exact scientific replay and CPU alarm/forecast report. See docs/operations/sampling-sft-pilot.md.
+- Combined88 CPU tests passed; actual local SIGKILL/fresh-process demonstration saved under artifacts/validation/sampling-sft-ticket04. CPU evidence stays unqualified for L40S.
+- Runtime/profile/T3/real pilot execution and paid approval remain pending. Ticket05 production generation is the next implementation slice.
