@@ -101,6 +101,7 @@ The experiment compares data recipes. Search amount k is a within-recipe contras
 - Preserve flexible-v3 verdicts and strict diagnostics unchanged. Export flagged cases for human review. Separate confirmed intended-answer labels may correct eligibility when extraction failed; they cannot change tokens, supply gold, repair reasoning or complete an unfinished response. Agent suggestions remain separate from user confirmation.
 - Coverage0 uncovered passes only the coverage gate; training still needs all other gates and explicit approval. With1–5 uncovered, mark missing slots and retain64 nonempty optimizer steps. More than5 blocks training. No gold, incorrect trace, duplicate fallback or unlimited retry fills a slot.
 - T16 covers batch sizes3–7 under the existing total-supervised-token denominator: step completes, independent hand loss agrees, gradients are finite and scheduler advances exactly once. Failure stops for repair, without changing the gate or dataset policy.
+  Approved 2026-10-29: loss agreement uses atol=1e-6 and rtol=1e-6 against an independent FP64 calculation. Finite gradients and exactly one optimizer/scheduler step remain exact checks. An isolated loss-kernel diagnostic cannot replace the full pinned CPU-trainer check.
 - Train each arm on its own covered slots in gold's saved order. Report uncovered lists, union/intersection and pairwise symmetric differences; flag differences>5 before approval. This exposure difference remains a limitation of later trained-arm comparisons.
 
 ### Runtime freeze, qualification and replay

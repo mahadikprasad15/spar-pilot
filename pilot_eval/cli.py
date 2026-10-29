@@ -15,6 +15,12 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','export','verify','check','status']:
+        data=commands.add_parser('sampling-sft-training-data-'+operation,help='stored-ID training export and independent T15/T16 readiness')
+        data.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':data.add_argument('--review',type=Path,required=True);data.add_argument('--name',required=True)
+        else:data.add_argument('--config',type=Path,required=True)
+        if operation=='check':data.add_argument('--python',type=Path);data.add_argument('--mode',choices=['full','kernel'],default='full')
     for operation in ['prepare','score','report','verify','status','request','approve','recover-writer']:
         gate=commands.add_parser('sampling-sft-gate-'+operation,help='HF gate scores, CPU descriptive report and explicit training selection')
         gate.add_argument('--output-root',type=Path,required=True)
@@ -776,6 +782,14 @@ def main(argv=None, *, dependencies=None):
             elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
             else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('sampling-sft-training-data-'):
+            from pilot_eval import sampling_sft_training_data as data
+            operation=args.command.removeprefix('sampling-sft-training-data-')
+            if operation=='prepare':result=data.prepare(args.review,args.output_root,args.name)
+            elif operation=='check':result=data.check(args.config,args.output_root,args.python,args.mode)
+            else:result=getattr(data,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(data.console(result),indent=2))
+            if operation=='check' and not (result['t16_passed'] or result['kernel_passed']):return 1
         elif args.command.startswith('sampling-sft-gate-'):
             from pilot_eval import sampling_sft_gate as gate
             operation=args.command.removeprefix('sampling-sft-gate-')

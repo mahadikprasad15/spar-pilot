@@ -141,3 +141,5 @@ are collected under the budgeted model-work route; CPU commands then produce
 raw NLL/length/format/leakage tables, paired common-cohort intervals and figures.
 The approved word policy, absent baseline and explicit k0/k5 selection request
 are preserved. No report or selection receipt launches training.
+
+[Training-data runbook](../operations/sampling-sft-training-data.md): gold-ordered stored-ID exports, exact checkpoint-0 identity and separate full-trainer short-batch readiness. No full arm is trained by Ticket 08.
