@@ -103,3 +103,17 @@ Ticket03 (bounded sampler, score qualification and profile) is the next implemen
   docs/operations/sampling-sft-training.md. Real L4 execution is not performed.
 - Ticket08 full T16 remains an actual-execution blocker. Ticket10 is the remaining
   software handoff slice; no training or paid launch has been authorized here.
+
+## Ticket10 implementation — 2026-10-29
+
+- Resolved software: one hash-bound handoff inventory, JSON/Markdown status,
+  portable fresh-CPU verification, retained export and external stop proof,
+  explicit partial/real-completion distinction and deferred consumers.
+- Notebook19–20 and the final handoff runbook provide the shared restore route.
+  Source code pin:9f0e2f0ae2d1e5752efaf5744caf93844bb2ec79.
+-14 handoff/release tests and71 affected checks passed. Raw validation:
+  artifacts/validation/sampling-sft-ticket10/. Scientific fixture work is not
+  actual experiment execution. No paid operation or push occurred.
+- All ten implementation slices now have code. Ticket08's full pinned-trainer
+  T16 remains an unresolved execution check; real sampling/review/gates/training
+  and their required approvals still precede a completed research handoff.
