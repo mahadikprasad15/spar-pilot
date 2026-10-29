@@ -158,3 +158,12 @@ All items below are incorporated and supersede conflicting statements in the sup
 ## Gate word normalization — approved 2026-10-29
 
 The user approved Unicode NFKC normalization, case-folding, converting curly apostrophes to straight ones, and letter/digit words with internal apostrophes retained. The diagnostic counts each response4-gram occurrence as a hit if its normalized tuple occurs anywhere in cleaned gold. Fewer than4 response words is undefined, not zero. This is descriptive lexical overlap, not semantic equivalence, causality or proof of memorization. Gate plans freeze the explicit unicode-words-v1 policy and its review provenance.
+
+## Endpoint target-length clarification (2026-10-29)
+
+User approved preserving every retained token, recording each arm's actual
+maximum sequence length, and stopping only at the model context limit. Gold's
+saved max_length is a data-derived maximum, not a truncation rule for new data.
+Optimizer, masks and numerical settings still match gold. Verify the pinned
+model context before loading weights; do not truncate, omit or rewrite long
+targets. Record gold and arm-specific maxima separately.

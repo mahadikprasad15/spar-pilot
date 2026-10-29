@@ -88,3 +88,18 @@ Ticket03 (bounded sampler, score qualification and profile) is the next implemen
 - User approved unicode-words-v1 and occurrence-weighted4-gram overlap on2026-10-29; short responses undefined. No baseline/offset, automatic equivalence or causal attribution.
 -72 affected CPU checks passed in249.06s;13 review/UI baseline checks passed separately. Raw synthetic report/receipt under artifacts/validation/sampling-sft-ticket07; no real model work or paid execution.
 - Training remains unauthorized until Ticket08 readiness and Ticket09 paid controls. Ticket08 is next. Unrelated Stage0 changes preserved; local commits only.
+
+## Ticket09 implementation — 2026-10-29
+
+- Added selected k0/k5 training, fresh paid-job gates and exact original-step
+  boundaries. CLI/RunPod remains primary; notebook17–18 only prepare/inspect.
+- User approved preserving longer sampled targets, recording each arm's derived
+  maximum and stopping at model context overflow; no truncation.
+- Recovery is optional at declared checkpoints0/8/16/32/64; adapter-only resume
+  rejects. A new approved/reserved attempt either restores complete state or
+  explicitly restarts from gold checkpoint0. No source sampler-module changes.
+-9 Ticket09 CPU checks and48 affected checks passed. Raw validation artifacts:
+  artifacts/validation/sampling-sft-ticket09/. Runbook:
+  docs/operations/sampling-sft-training.md. Real L4 execution is not performed.
+- Ticket08 full T16 remains an actual-execution blocker. Ticket10 is the remaining
+  software handoff slice; no training or paid launch has been authorized here.

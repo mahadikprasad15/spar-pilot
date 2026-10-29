@@ -115,8 +115,9 @@ def test_optional_training_notebook_cells_are_disabled_and_syntax_valid():
     notebook=json.loads((Path(__file__).parents[1]/'notebooks/sampling-sft.ipynb').read_text())
     for cell in notebook['cells']:
         if cell['cell_type']=='code':ast.parse(''.join(cell['source']))
-    export=''.join(notebook['cells'][-3]['source'])
-    check=''.join(notebook['cells'][-1]['source'])
+    code=[''.join(c['source']) for c in notebook['cells'] if c['cell_type']=='code']
+    export=next(s for s in code if 'TRAINING_REVIEW = ' in s)
+    check=next(s for s in code if 'RUN_FULL_T16 = False' in s)
     assert 'TRAINING_REVIEW = ""' in export and 'training-data-export' in export
     assert 'RUN_FULL_T16 = False' in check and '--mode", "full"' in check
 

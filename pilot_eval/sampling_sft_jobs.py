@@ -143,7 +143,8 @@ def run(path,output_root,approval_path=None,*,provider=None):
             raise ValueError('Interrupted/uncertain job launch: inspect and reconcile; never relaunch automatically.')
         if request['mode']=='runpod':
             if request['stage']=='training':
-                raise ValueError('Training launches remain blocked until the post-gate Ticket09 workflow is implemented.')
+                from pilot_eval.sampling_sft_training import authorize_job
+                authorize_job(root,job)
             _approval(job,root,approval)
             pod_id=provider.own_pod_id();observed=provider.inspect(pod_id)
             if observed.get('id')!=pod_id or observed.get('networkVolumeId')!=request['network_volume_id']:

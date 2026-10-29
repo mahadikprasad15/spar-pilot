@@ -177,3 +177,12 @@ Metric normalization, p90 implementation, concrete fixture identities, engine ve
 ## Approved implementation clarification — 2026-10-29
 
 Leakage word policy is unicode-words-v1: Unicode NFKC, case-folding, curly apostrophe normalization, Unicode letter/digit words with internal apostrophes. Count repeated response4-gram occurrences separately against a set of cleaned-gold4-grams. Responses under4 words remain undefined. User approval recorded in design.md; no scientific acceptance numbers changed.
+
+## Endpoint target-length clarification (2026-10-29)
+
+User approved preserving every retained token, recording each arm's actual
+maximum sequence length, and stopping only at the model context limit. Gold's
+saved max_length is a data-derived maximum, not a truncation rule for new data.
+Optimizer, masks and numerical settings still match gold. Verify the pinned
+model context before loading weights; do not truncate, omit or rewrite long
+targets. Record gold and arm-specific maxima separately.
