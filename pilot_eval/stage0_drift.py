@@ -57,7 +57,17 @@ def _implementation():
 
 def _configuration(execution_path,inputs_path,root,name,batch_size,batches_per_unit,context_chunk,workspace_bytes):
     safe_name(name);execution,qualification,_=_execution(execution_path,root)
-    edits,_,audit,_=load_edits(inside(root,qualification['edits_path']),root)
+    if execution.get('protocol')=='stage0-batched-execution-v1':
+        # Actual adapter payloads were verified by the execution loader. SVD and
+        # random-basis arrays are construction inputs, not inference inputs.
+        from pilot_eval.stage0_spectral import _load as spectral_sources
+        edits=json.loads(inside(root,qualification['edits_path']).read_text())
+        spectral_path=inside(root,edits['spectral_path'])
+        if file_hash(spectral_path)!=edits['spectral_sha256']:raise ValueError('Changed spectral source identity.')
+        spectral,audit=spectral_sources(spectral_path,root)
+        if file_hash(inside(root,spectral['run_path'])/'complete.json')!=edits['spectral_complete_sha256']:
+            raise ValueError('Changed spectral completion identity.')
+    else:edits,_,audit,_=load_edits(inside(root,qualification['edits_path']),root)
     real=execution['real_gpu_authorized']
     inputs_path=inside(root,inputs_path);prepared=json.loads(inputs_path.read_text())
     if real and inputs_path!=inside(root,audit['sources']['sft']['path']):
@@ -111,6 +121,7 @@ def _configuration(execution_path,inputs_path,root,name,batch_size,batches_per_u
         variants=variants,variant_order=list(variants),controls=controls,modules=modules,adapter_files=adapter_files,
         factor_norm_sums=factor_norm_sums,batch_size=batch_size,batches_per_unit=batches_per_unit,
         context_chunk=context_chunk,workspace_bytes=workspace_bytes,units=units,seed=42,agreement=AGREEMENT,
+        output_head_precision='float64',decoder_precision='float32',
         kl_direction='variant||untuned',padding='right',position_ids='attention-cumsum-minus-one',
         write_definition='direct branch on adapted module inputs; sums of squared norms and per-token norm ratios',
         diagnostic_scope='all four zero-control documents; first document of the first group for each variant; strict repeat/chunk checks',

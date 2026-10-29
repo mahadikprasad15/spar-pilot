@@ -31,10 +31,19 @@ def _parents(evaluation_path, drift_path, root):
     if (evaluation['execution_sha256'] != measurement['execution_sha256']
             or evaluation['runtime'] != measurement['runtime']
             or evaluation['execution_kind'] != measurement['execution_kind']
-            or evaluation['batch_size'] != measurement['batch_size']
             or any(evaluation['adapter_files'][v] != measurement['adapter_files'][v]
                    for v in evaluation['variants'])):
         raise ValueError('Behavior/KL join requires matching frozen execution, runtime, inference batch and adapters.')
+    if evaluation['batch_size']!=measurement['batch_size']:
+        proof=evaluation.get('batch_agreement')
+        if measurement['batch_size']!=1 or not proof:
+            raise ValueError('Different schedules require reviewed generation batch agreement and singleton internals.')
+        from pilot_eval.stage0_batching import verify
+        batch=verify(inside(root,proof['plan_path']),root)
+        if (file_hash(inside(root,proof['plan_path']))!=proof['plan_sha256']
+                or file_hash(inside(root,proof['receipt_path']))!=proof['receipt_sha256']
+                or not batch['eligible_for_review'] or evaluation['batch_size'] not in batch['qualified_sizes']):
+            raise ValueError('Batch schedule join evidence changed or is ineligible.')
     return evaluation, measurement, edir, ddir
 
 
@@ -58,6 +67,8 @@ def prepare(evaluation_path, drift_path, output_root, name):
             evaluation_sha256=file_hash(ep), drift_path=str(dp.relative_to(root)), drift_sha256=file_hash(dp),
             execution_sha256=evaluation['execution_sha256'], runtime=evaluation['runtime'],
             execution_kind=evaluation['execution_kind'], contrasts=contrasts, statistics=STATISTICS,
+            inference_schedules=dict(behaviour_batch_size=evaluation['batch_size'],internals_batch_size=measurement['batch_size'],
+                batch_agreement=evaluation.get('batch_agreement')),
             noninferiority_margin=-.05, hypotheses=PREDICTIONS, limitations=LIMITS,
             registration=dict(recorded_at=_now(), status='after-collection-start; exploratory' if started else 'before-collection',
                 n150_risk='Non-inferiority may be inconclusive with 150 paired items.',
@@ -214,6 +225,7 @@ def run(path, output_root, *, max_new_units=None):
             result = dict(schema_version=1, mode='stage0-conditional-intruder-findings' if config.get('analysis_kind') else 'stage0-primary-findings', analysis_complete=True,
                 real_gpu_measurement=config['execution_kind'] == 'real-cuda', execution_kind=config['execution_kind'],
                 registration=config['registration'], statistics=config['statistics'], contrasts=summaries,
+                numerical_resolution=measurement.get('numerical_resolution'),
                 review=dict(state='not-prepared', scope='raw automatic scores; targeted review pending'),
                 source_seals=seals, analysis_runtime=dict(numpy_version=np.__version__, resource='CPU statistics'),
                 limitations=LIMITS, optional_work=config['optional_work'], conditional_v6=config['conditional_v6'])
@@ -286,7 +298,8 @@ def _verify(config, directory, root):
         if saved != expected or read('paired-items.jsonl') != items or read('paired-documents.jsonl') != docs:
             raise ValueError('Paired outcomes/bootstrap intervals do not reconcile with source records.')
         values.append(saved)
-    if result['contrasts'] != values or result['source_seals'] != seals or result['statistics'] != STATISTICS:
+    if (result.get('numerical_resolution')!=measurement.get('numerical_resolution')
+            or result['contrasts'] != values or result['source_seals'] != seals or result['statistics'] != STATISTICS):
         raise ValueError('Primary aggregate disagrees with saved comparisons.')
     return result
 

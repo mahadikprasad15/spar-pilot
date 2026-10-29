@@ -97,6 +97,19 @@ def main(argv=None, *, dependencies=None):
             rollout.add_argument('--owner-token',required=True)
             rollout.add_argument('--review-notes',required=True)
 
+    for operation in ['prepare','run','verify','status','approve','freeze']:
+        batch=commands.add_parser('stage0-batch-'+operation,help='saved generation batch agreement and bounded execution')
+        batch.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            batch.add_argument('--qualification',type=Path,required=True)
+            batch.add_argument('--profile',type=Path,required=True)
+            batch.add_argument('--name',required=True)
+            batch.add_argument('--batch-size',type=int,default=16)
+        else:batch.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            batch.add_argument('--approval',type=Path,required=True)
+            batch.add_argument('--max-new-units',type=int)
+        if operation in ['approve','freeze']:batch.add_argument('--review',type=Path,required=True)
     for operation in ['prepare','run','verify','status','recover-writer']:
         conditional=commands.add_parser('stage0-intruder-edits-'+operation,help='CPU conditional merged V6/V6c catalogues')
         conditional.add_argument('--output-root',type=Path,required=True)
@@ -683,6 +696,14 @@ def main(argv=None, *, dependencies=None):
                 result = getattr(sampling_sft, operation)(args.config, args.output_root)
                 result = sampling_sft.console_summary(result)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('stage0-batch-'):
+            from pilot_eval.stage0_batching import prepare,run,verify,status,approve,freeze
+            operation=args.command.removeprefix('stage0-batch-')
+            if operation=='prepare':result=prepare(args.qualification,args.profile,args.output_root,args.name,batch_size=args.batch_size)
+            elif operation=='run':result=run(args.config,args.output_root,args.approval,dependencies=dependencies,max_new_units=args.max_new_units)
+            elif operation in ['approve','freeze']:result=(approve if operation=='approve' else freeze)(args.config,args.output_root,args.review)
+            else:result=(verify if operation=='verify' else status)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('stage0-drift-'):
             from pilot_eval.stage0_drift import prepare,run,verify,status,recover_writer
             operation=args.command.removeprefix('stage0-drift-')

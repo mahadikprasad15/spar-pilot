@@ -56,10 +56,17 @@ class DriftEngine(EvaluationEngine):
             raise ValueError('Output-head chunk exceeds declared workspace.')
         values=[];max_sum=0.
         with torch.inference_mode(),torch.autocast('cuda',enabled=False):
+            # Upcast BEFORE projection: FP32 GEMM rounding depends on the number
+            # of token rows and can swamp small distribution differences.
+            # Keep the decoder and its actual output-head parameters unchanged.
+            if not hasattr(self,'_kl_head64'):
+                self._kl_head64=(head.weight.double(),None if head.bias is None else head.bias.double())
+            weight,bias=self._kl_head64
             for start in range(0,len(mapping),chunk):
                 targets=[p['context'] for p in mapping[start:start+chunk]]
-                p,q=head(adapted[0,targets]),head(baseline[0,targets])
-                if p.dtype!=torch.float32 or p.shape!=(len(targets),vocabulary) or q.shape!=p.shape:
+                p=torch.nn.functional.linear(adapted[0,targets].double(),weight,bias)
+                q=torch.nn.functional.linear(baseline[0,targets].double(),weight,bias)
+                if p.dtype!=torch.float64 or p.shape!=(len(targets),vocabulary) or q.shape!=p.shape:
                     raise ValueError('Full-vocabulary logit precision/shape mismatch.')
                 self._finite(p,q)
                 lp,lq=torch.log_softmax(p.double(),-1),torch.log_softmax(q.double(),-1)
@@ -150,7 +157,7 @@ class DriftEngine(EvaluationEngine):
         group=tuple(r['id'] for r in rows)
         if group!=self.cache_group:
             self.cache.clear();self.cache_group=group
-        outputs=[];fraction=0.;max_sum=0.
+        outputs=[];fraction=0.;max_sum=0.;chunk_comparison=None
         for i,row in enumerate(rows):
             value=self._one(row,variant,capture_coefficients=diagnostic and i==0)
             fraction=max(fraction,value['reconstruction_max_fraction']);max_sum=max(max_sum,value['max_abs_log_sum'])
@@ -164,6 +171,12 @@ class DriftEngine(EvaluationEngine):
                 chunk=max(1,self.config['context_chunk']//2)
                 if chunk==self.config['context_chunk']:chunk+=1
                 alt,alt_sum=self._kl(value['hidden'],value['baseline'],value['mapping']['predictions'],chunk)
+                error=np.abs(value['kl']-alt);index=int(error.argmax())
+                chunk_comparison=dict(max_absolute_error=float(error[index]),
+                    primary_kl=float(value['kl'][index]),alternate_kl=float(alt[index]),
+                    primary_chunk=self.config['context_chunk'],alternate_chunk=chunk,
+                    id=row['id'],position=value['mapping']['predictions'][index],
+                    scope='observed chunk disagreement; empirical resolution diagnostic, not a universal bound')
                 if not np.allclose(value['kl'],alt,**AGREEMENT):raise ValueError('Strict KL chunk agreement failed.')
                 max_sum=max(max_sum,alt_sum,repeat['max_abs_log_sum'])
                 fraction=max(fraction,repeat['reconstruction_max_fraction'])
@@ -182,8 +195,10 @@ class DriftEngine(EvaluationEngine):
                 chunk_passed=True if diagnostic else None,context_chunk=self.config['context_chunk'],
                 max_logit_contexts=min(self.config['context_chunk'],max(len(positions([r])['predictions']) for r in rows)),
                 workspace_bytes=self.config['workspace_bytes'],max_abs_log_sum=max_sum,
+                chunk_comparison=chunk_comparison,
                 kl_roundoff_bound=64*np.finfo(float).eps*(1+max_sum)))
 
     def close(self):
         self.cache.clear();self.modules=[];self.body=None
+        if hasattr(self,'_kl_head64'):del self._kl_head64
         super().close()

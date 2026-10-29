@@ -121,8 +121,20 @@ def summarize(config,batches,rows):
                     equal_example_mean=float(np.mean([r['kl_mean'] for r in valid])) if valid else None),
             writes=dict(documents=len(docs),tokens=tokens,modules=module_stats),
             sum_factor_norm_products=config['factor_norm_sums'][variant]))
+    observed=[r['validation'].get('chunk_comparison') for r in batches]
+    observed=[v for v in observed if v is not None]
+    differences=[]
+    for corpus,view in sorted({(c['corpus'],c['view']) for c in cells}):
+        group=[c for c in cells if (c['corpus'],c['view'])==(corpus,view) and c['kl']['token_mean'] is not None]
+        pairs=[dict(left=a['variant'],right=b['variant'],left_kl=a['kl']['token_mean'],right_kl=b['kl']['token_mean'],
+            absolute_difference=abs(a['kl']['token_mean']-b['kl']['token_mean']))
+            for i,a in enumerate(group) for b in group[i+1:]]
+        if pairs:differences.append(dict(corpus=corpus,view=view,**min(pairs,key=lambda p:p['absolute_difference'])))
+    resolution=dict(observed_max_chunk_disagreement_nats=max((v['max_absolute_error'] for v in observed),default=None),
+        diagnostics=observed,smallest_token_mean_variant_differences=differences,
+        scope='Observed numerical resolution only; not statistical uncertainty or a universal error bound.')
     return dict(schema_version=1,measurement_complete=True,real_gpu_measurement=config['execution_kind']=='real-cuda',
         execution_kind=config['execution_kind'],kl_direction='variant||untuned',units='nats',main_documents_per_variant=300,
         modules=config['modules'],controls=controls,cells=cells,per_document=documents,
-        historical_values_used=False,comparison_provenance=dict(runtime=config['runtime'],execution_sha256=config['execution_sha256']),
+        historical_values_used=False,numerical_resolution=resolution,comparison_provenance=dict(runtime=config['runtime'],execution_sha256=config['execution_sha256']),
         interpretation='Fixed supplied contexts; KL alone is not behavioral harm. No cross-session/historical join or non-inferiority claim.')

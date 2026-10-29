@@ -257,6 +257,8 @@ def test_real_engine_hook_and_chunk_path_against_dense_numpy_oracle():
     class Layer:
         def __init__(self,weight):self.weight=Tensor(np.asarray(weight,dtype=np.float32));self.hooks=[]
         def __call__(self,x):
+            if getattr(self,'is_output_head',False):
+                raise AssertionError('KL must project hidden states and head weights in FP64, before rounding logits.')
             value=Tensor(x@self.weight.T)
             for hook in self.hooks:hook(self,(x,),value)
             return value
@@ -287,7 +289,12 @@ def test_real_engine_hook_and_chunk_path_against_dense_numpy_oracle():
             old=self.disabled;self.disabled=True
             try:yield
             finally:self.disabled=old
-    model=Model();module=Module();output_head=Layer(head)
+    model=Model();module=Module();output_head=Layer(head);output_head.is_output_head=True;output_head.bias=None
+    projections=[]
+    def linear64(x,weight,bias=None):
+        assert x.dtype==weight.dtype==np.float64
+        projections.append((x.dtype,weight.dtype))
+        return Tensor(x@weight.T+(0 if bias is None else bias))
     def body(**inputs):
         ids=np.asarray(inputs['input_ids']);x=Tensor(np.stack([ids,ids+.5],axis=-1).astype(np.float32))
         return SimpleNamespace(last_hidden_state=module(x))
@@ -297,7 +304,7 @@ def test_real_engine_hook_and_chunk_path_against_dense_numpy_oracle():
     torch=SimpleNamespace(tensor=lambda value,**kwargs:Tensor(value),long='long',float32=np.dtype('float32'),float64=np.dtype('float64'),
         ones_like=lambda x:Tensor(np.ones_like(x)),zeros_like=lambda x:Tensor(np.zeros_like(x)),isfinite=np.isfinite,
         equal=np.array_equal,inference_mode=nullcontext,autocast=lambda *args,**kwargs:nullcontext(),
-        log_softmax=softmax,finfo=np.finfo)
+        log_softmax=softmax,finfo=np.finfo,nn=SimpleNamespace(functional=SimpleNamespace(linear=linear64)))
     engine=DriftEngine.__new__(DriftEngine)
     engine.torch=torch;engine.model=model;engine.body=body;engine.modules=[module];engine.cache={};engine.cache_group=None
     engine.config=dict(batch_size=1,context_chunk=2,workspace_bytes=4096,modules=['linear'],controls=['untuned','sft-zero'])
@@ -306,10 +313,12 @@ def test_real_engine_hook_and_chunk_path_against_dense_numpy_oracle():
     result=engine.measure([row],'V0a',diagnostic=True)
     x=np.stack([np.array([1,2,3]),np.array([1,2,3])+.5],axis=-1).astype(np.float32)
     base=x@w.T;branch=(x@a.T)@b.T;tuned=base+branch
-    expected=kl_values(tuned[:2]@head.T,base[:2]@head.T)
+    expected=kl_values(tuned[:2].astype(np.float64)@head.astype(np.float64).T,base[:2].astype(np.float64)@head.astype(np.float64).T)
     np.testing.assert_allclose(result['arrays']['kl'],expected,atol=1e-15)
     np.testing.assert_allclose(result['arrays']['write_sums'][0,2,0],write_sums(base,branch),atol=1e-12)
     assert result['validation']['repeat_passed'] and result['validation']['chunk_passed']
+    assert result['validation']['chunk_comparison']['max_absolute_error']<1e-14
+    assert projections and output_head.weight.dtype==np.float32
     for control in ['untuned','sft-zero']:
         value=engine.measure([row],control,diagnostic=True)
         np.testing.assert_array_equal(value['arrays']['kl'],np.zeros(2))
