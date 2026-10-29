@@ -1,6 +1,9 @@
 """Source-bound human eligibility, immutable scoring and coverage products."""
 import json
 import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -83,6 +86,7 @@ def test_public_review_roundtrip_freeze_keeps_auto_scores_and_original_slots(tmp
         arm=results['arms'][k]
         assert arm['uncovered_count']==1 and arm['coverage_decision']=='conditional-on-T16-and-training-approval'
         assert len(arm['dispositions'])==512 and len(arm['batches'])==64
+        assert json.loads((folder(tmp_path)/f'results/k{k}/batches.json').read_text())==arm['batches']
         assert sum(len(b['slots']) for b in arm['batches'])==512
         assert sum(s['missing'] for b in arm['batches'] for s in b['slots'])==1
         corrected=next(r for r in arm['dispositions'] if r['problem_id']==4)
@@ -90,6 +94,15 @@ def test_public_review_roundtrip_freeze_keeps_auto_scores_and_original_slots(tmp
         original=next(r for r in arm['attempts'] if r['attempt_id']==f'k{k}:p4:r0')
         assert original['automatic_flexible_v3']['status']=='invalid' and not original['eligible']
     assert cli(tmp_path,'import','--config',plan,'--labels',path,'--origin','human','--confirm-human')==1
+    script='''
+import sys
+from pilot_eval.cli import main
+code=main(['sampling-sft-review-verify','--config',sys.argv[1],'--output-root',sys.argv[2]])
+assert not any(name in sys.modules for name in ['torch','transformers','vllm'])
+raise SystemExit(code)
+'''
+    child=subprocess.run([sys.executable,'-c',script,str(plan),str(tmp_path)],cwd=Path(__file__).parents[1],capture_output=True,text=True)
+    assert child.returncode==0,child.stderr
 
 
 def test_agent_suggestions_and_partial_reviews_cannot_pass_required_review(tmp_path,collected):
@@ -146,3 +159,18 @@ def test_changed_generation_payload_rejects_review_restore(tmp_path,collected):
     source=tmp_path/'runs/sampling-sft/sample/generation/generation/k0/attempts.jsonl'
     source.write_text('tampered')
     assert cli(tmp_path,'status','--config',plan)==1
+
+
+def test_pairwise_coverage_flags_use_symmetric_difference_and_keep_common_cohort():
+    from pilot_eval.sampling_sft_review import cohort_summary
+    all_ids={f'p{i}' for i in range(512)}
+    missing={'0':{'p0','p1','p2'},'2':{'p3','p4','p5'},'5':{'p0','p1','p2'}}
+    arms={k:dict(uncovered_ids=sorted(ids),dispositions=[dict(source_id=i,
+        disposition='uncovered' if i in ids else 'covered') for i in sorted(all_ids)]) for k,ids in missing.items()}
+    result=cohort_summary(arms)
+    assert result['pairwise_uncovered_differences']['0-2']['count']==6
+    assert result['pairwise_uncovered_differences']['0-2']['flagged']
+    assert not result['pairwise_uncovered_differences']['0-5']['flagged']
+    assert len(result['common_covered_ids'])==506 and len(result['union_covered_ids'])==512
+    assert result['union_uncovered_ids']==[f'p{i}' for i in range(6)]
+    assert result['intersection_uncovered_ids']==[]

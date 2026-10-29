@@ -205,6 +205,31 @@ def coverage_arm(k,problems,batches,attempts,overrides):
         dispositions=dispositions,batches=marked,attempts=attempts,training_allowed=False)
 
 
+def build_coverage(root,config,folder,human,previous):
+    packet=json.loads((folder/'reviewer/packet.json').read_text())
+    _,plan,directory=generation.load(root/config['generation_plan'],root)
+    audit=source.verify(root/plan['source_plan'],root)['audit']
+    labels={r['response_id']:r for r in human['labels']};problems={p['problem_id']:p for p in plan['problems']}
+    arms={};decisions=[]
+    for k in generation.ARMS:
+        attempts=generation.read_lines(directory/f'k{k}/attempts.jsonl');overrides={}
+        for attempt in attempts:
+            if attempt['attempt_id'] in labels:
+                label=labels[attempt['attempt_id']]
+                eligible=eligibility_override(attempt,label,problems[attempt['problem_id']])
+                overrides[attempt['attempt_id']]=eligible
+                decisions.append(dict(attempt_id=attempt['attempt_id'],label=label,human_correct=eligible,
+                    origin='confirmed-human',reviewer=human['reviewer'],revision=human['base_revision'],
+                    original_automatic=attempt['automatic_flexible_v3']))
+        arms[str(k)]=coverage_arm(k,plan['problems'],audit['training']['batches'],attempts,overrides)
+    result=dict(protocol='sampling-sft-reviewed-coverage-v1',human_review_complete=True,
+        human_revision=human['base_revision'],human_revision_sha256=previous,
+        reviewer=human['reviewer'],required_reviews=len(packet),decisions=decisions,arms=arms,
+        **cohort_summary(arms),coverage_blocked=any(a['uncovered_count']>5 for a in arms.values()),
+        training_allowed=False,scope='reviewed coverage only; T16, data gate, budget and explicit training approval remain separate')
+    return result
+
+
 def freeze(path,output_root):
     root,config,folder=load(path,output_root)
     with run_lock(folder):
@@ -212,47 +237,37 @@ def freeze(path,output_root):
         human,previous=current(config,folder,'human')
         packet=json.loads((folder/'reviewer/packet.json').read_text())
         if any(r['status']=='pending' for r in human['labels']):raise ValueError('Finish every required human review before freezing coverage.')
-        _,plan,directory=generation.load(root/config['generation_plan'],root)
-        audit=source.verify(root/plan['source_plan'],root)['audit']
-        labels={r['response_id']:r for r in human['labels']};problems={p['problem_id']:p for p in plan['problems']}
-        arms={};decisions=[]
-        for k in generation.ARMS:
-            attempts=generation.read_lines(directory/f'k{k}/attempts.jsonl');overrides={}
-            for attempt in attempts:
-                if attempt['attempt_id'] in labels:
-                    label=labels[attempt['attempt_id']]
-                    eligible=eligibility_override(attempt,label,problems[attempt['problem_id']])
-                    overrides[attempt['attempt_id']]=eligible
-                    decisions.append(dict(attempt_id=attempt['attempt_id'],label=label,human_correct=eligible,
-                        origin='confirmed-human',reviewer=human['reviewer'],revision=human['base_revision'],
-                        original_automatic=attempt['automatic_flexible_v3']))
-            arms[str(k)]=coverage_arm(k,plan['problems'],audit['training']['batches'],attempts,overrides)
-        covered={k:{d['source_id'] for d in a['dispositions'] if d['disposition']=='covered'} for k,a in arms.items()}
-        missing={k:set(a['uncovered_ids']) for k,a in arms.items()}
-        pairs={a+'-'+b:dict(symmetric_difference_ids=sorted(missing[a]^missing[b]),
-            count=len(missing[a]^missing[b]),flagged=len(missing[a]^missing[b])>5) for a,b in [('0','2'),('0','5'),('2','5')]}
-        result=dict(protocol='sampling-sft-reviewed-coverage-v1',human_review_complete=True,
-            human_revision=human['base_revision'],human_revision_sha256=previous,
-            reviewer=human['reviewer'],required_reviews=len(packet),decisions=decisions,arms=arms,
-            common_covered_ids=sorted(set.intersection(*covered.values())),union_covered_ids=sorted(set.union(*covered.values())),
-            union_uncovered_ids=sorted(set.union(*missing.values())),intersection_uncovered_ids=sorted(set.intersection(*missing.values())),
-            pairwise_uncovered_differences=pairs,coverage_blocked=any(a['uncovered_count']>5 for a in arms.values()),
-            training_allowed=False,scope='reviewed coverage only; T16, data gate, budget and explicit training approval remain separate')
+        result=build_coverage(root,config,folder,human,previous)
         source.frozen(folder/'results/coverage.json',result)
+        files={'results/coverage.json':file_hash(folder/'results/coverage.json')}
+        for k,arm in result['arms'].items():
+            source.frozen(folder/f'results/k{k}/batches.json',arm['batches'])
+            source.frozen(folder/f'results/k{k}/dispositions.json',arm['dispositions'])
+            for name in ['batches.json','dispositions.json']:
+                files[f'results/k{k}/{name}']=file_hash(folder/f'results/k{k}/{name}')
         _write_state(folder,'coverage-frozen',len(packet),len(packet))
         source.frozen(folder/'complete.json',dict(config_sha256=_hash(config),human_revision_sha256=previous,
-            coverage_sha256=file_hash(folder/'results/coverage.json')))
+            files=files))
     return result
 
 
 def verify(path,output_root):
-    _,config,folder=load(path,output_root)
+    root,config,folder=load(path,output_root)
     human,previous=current(config,folder,'human')
     seal=json.loads((folder/'complete.json').read_text())
-    if (seal!={'config_sha256':_hash(config),'human_revision_sha256':previous,'coverage_sha256':file_hash(folder/'results/coverage.json')}
+    expected_files=['results/coverage.json']+[f'results/k{k}/{name}' for k in generation.ARMS for name in ['batches.json','dispositions.json']]
+    if (seal!={'config_sha256':_hash(config),'human_revision_sha256':previous,
+               'files':{name:file_hash(folder/name) for name in expected_files}}
             or any(r['status']=='pending' for r in human['labels'])):
         raise ValueError('Reviewed coverage/labels changed or required review is incomplete.')
-    return json.loads((folder/'results/coverage.json').read_text())
+    result=json.loads((folder/'results/coverage.json').read_text())
+    if result!=build_coverage(root,config,folder,human,previous):
+        raise ValueError('Coverage no longer reconciles with immutable attempts and confirmed labels.')
+    for k,arm in result['arms'].items():
+        if (json.loads((folder/f'results/k{k}/batches.json').read_text())!=arm['batches']
+                or json.loads((folder/f'results/k{k}/dispositions.json').read_text())!=arm['dispositions']):
+            raise ValueError('Marked slots or dispositions do not reconcile.')
+    return result
 
 
 def status(path,output_root):
@@ -267,7 +282,19 @@ def status(path,output_root):
 
 def console(value):
     if 'arms' not in value and 'coverage' not in value:return value
-    result={k:v for k,v in value.items() if k not in ['arms','coverage','decisions']}
+    large=['common_covered_ids','union_covered_ids','union_uncovered_ids','intersection_uncovered_ids']
+    result={k:v for k,v in value.items() if k not in ['arms','coverage','decisions',*large]}
+    result.update({key.removesuffix('_ids')+'_count':len(value[key]) for key in large if key in value})
     if 'arms' in value:result['arms']={k:{field:arm[field] for field in ['covered_count','uncovered_count','coverage_decision','t16_required']} for k,arm in value['arms'].items()}
     if 'coverage' in value:result['coverage']=console(value['coverage'])
     return result
+
+
+def cohort_summary(arms):
+    covered={k:{d['source_id'] for d in a['dispositions'] if d['disposition']=='covered'} for k,a in arms.items()}
+    missing={k:set(a['uncovered_ids']) for k,a in arms.items()}
+    pairs={a+'-'+b:dict(symmetric_difference_ids=sorted(missing[a]^missing[b]),
+        count=len(missing[a]^missing[b]),flagged=len(missing[a]^missing[b])>5) for a,b in [('0','2'),('0','5'),('2','5')]}
+    return dict(common_covered_ids=sorted(set.intersection(*covered.values())),union_covered_ids=sorted(set.union(*covered.values())),
+        union_uncovered_ids=sorted(set.union(*missing.values())),intersection_uncovered_ids=sorted(set.intersection(*missing.values())),
+        pairwise_uncovered_differences=pairs)
