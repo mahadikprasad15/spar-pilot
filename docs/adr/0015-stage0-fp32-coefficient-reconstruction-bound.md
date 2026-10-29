@@ -30,11 +30,11 @@ Decision:
 - The branch reconstruction, KL, repeat, chunk, zero-control, mapping and integrity
   gates keep their thresholds.
 - The failed v1 evidence is preserved. The replacement collection is
-  `…-batch16-fp64-fixed-context-v2`.
+  `…-batch16-fp64-fixed-context-v3` (v2 was prepared before the code-release fix and is preserved unused).
 
 Registration: the primary findings plan `…-batch16-primary-findings-v1` was frozen
 before behavioral collection. It binds the v1 drift plan. A new plan
-`…-batch16-primary-findings-v2` inherits that registration through
+`…-batch16-primary-findings-v3` inherits that registration through
 `--registered-from`, and only when these checks pass:
 
 - the source plan is intact and was recorded `before-collection`;
