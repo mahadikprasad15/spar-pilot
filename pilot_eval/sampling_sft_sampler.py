@@ -108,7 +108,7 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
         def tuples(value):return tuple(tuples(v) for v in value) if isinstance(value,list) else value
         if set(map(int,resume['states']))!=set(states) or set(map(int,resume['rng']))!=set(rng):
             raise ValueError('Resume cohort identity differs.')
-        states={int(pid):dict(value) for pid,value in resume['states'].items()}
+        states={int(pid):dict(value) for pid,value in sorted(resume['states'].items(),key=lambda item:int(item[0]))}
         for pid,value in resume['rng'].items():rng[int(pid)].setstate(tuples(value))
     records, decisions, errors = [], [], []
 
@@ -122,20 +122,21 @@ def sample(problems, k, engine, tokenizer, stops, *, data_seed=0, on_block=None,
                 if not isinstance(outputs,list) or len(outputs) != len(requests):
                     raise ProtocolError('Engine batch cardinality changed.')
                 checked = [validator(out, req) for out,req in zip(outputs,requests)]
-                entry = dict(kind=kind, requests=requests, outputs=outputs, replay=replay)
-                records.append(entry)
-                if on_record: on_record(entry)
-                if on_timing:on_timing(dict(kind=kind,seconds=elapsed,
-                    input_tokens=sum(len(r['prompt_ids'])+(len(r['response_ids']) if kind=='score' else 0) for r in requests),
-                    cached_tokens=sum(o.get('num_cached_tokens',0) or 0 for o in outputs),
-                    generated_tokens=sum(len(o['token_ids']) for o in outputs) if kind=='generate' else 0))
-                return checked
             except (RuntimeError, ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
                 error = dict(kind=kind, requests=requests, replay=replay,
                              error=str(exc), type=type(exc).__name__,
                              raw_outputs=diagnostic(outputs))
                 errors.append(error)
                 if on_record: on_record(dict(engine_error=error))
+                continue
+            entry = dict(kind=kind, requests=requests, outputs=outputs, replay=replay)
+            records.append(entry)
+            if on_record: on_record(entry)
+            if on_timing:on_timing(dict(kind=kind,seconds=elapsed,
+                input_tokens=sum(len(r['prompt_ids'])+(len(r['response_ids']) if kind=='score' else 0) for r in requests),
+                cached_tokens=sum(o.get('num_cached_tokens',0) or 0 for o in outputs),
+                generated_tokens=sum(len(o['token_ids']) for o in outputs) if kind=='generate' else 0))
+            return checked
         raise ProtocolError('Same logical request failed twice; stop the run.')
 
     try:

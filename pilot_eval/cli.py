@@ -15,6 +15,21 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run','status','compare','report','recover-writer']:
+        pilot=commands.add_parser('sampling-sft-pilot-'+operation,help='fixed32 k5 pilot, sealed recovery and exact replay')
+        pilot.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            pilot.add_argument('--instrument',type=Path,required=True)
+            pilot.add_argument('--name',required=True)
+        else:pilot.add_argument('--config',type=Path,required=True)
+        if operation in ['run','recover-writer']:pilot.add_argument('--lane',choices=['uninterrupted','resumed'],required=True)
+        if operation=='run':
+            pilot.add_argument('--job',type=Path)
+            pilot.add_argument('--stop-after-blocks',type=int)
+            pilot.add_argument('--interrupt-after-block',type=int)
+        if operation=='recover-writer':
+            pilot.add_argument('--owner-token',required=True);pilot.add_argument('--review-notes',required=True)
+        if operation=='report':pilot.add_argument('--forecast',type=Path,required=True)
     for operation in ['prepare','run','status','verify','compare','select']:
         instrument=commands.add_parser('sampling-sft-instrument-'+operation,help='bounded sampler, T3 and engine throughput evidence')
         instrument.add_argument('--output-root',type=Path,required=True)
@@ -728,6 +743,17 @@ def main(argv=None, *, dependencies=None):
             elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
             else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('sampling-sft-pilot-'):
+            from pilot_eval import sampling_sft_pilot as pilot
+            operation=args.command.removeprefix('sampling-sft-pilot-')
+            if operation=='prepare':result=pilot.prepare(args.instrument,args.output_root,args.name)
+            elif operation=='run':result=pilot.run(args.config,args.output_root,args.lane,args.job,
+                stop_after_blocks=args.stop_after_blocks,interrupt_after_block=args.interrupt_after_block,dependencies=dependencies)
+            elif operation=='report':result=pilot.report(args.config,args.output_root,args.forecast)
+            elif operation=='recover-writer':result=pilot.recover_writer(args.config,args.output_root,args.lane,args.owner_token,args.review_notes)
+            else:result=getattr(pilot,operation)(args.config,args.output_root)
+            from pilot_eval.sampling_sft_instrument import console
+            print(str(result) if isinstance(result,Path) else json.dumps(console(result),indent=2))
         elif args.command.startswith('sampling-sft-instrument-'):
             from pilot_eval import sampling_sft_instrument as instrument
             operation=args.command.removeprefix('sampling-sft-instrument-')

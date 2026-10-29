@@ -163,7 +163,7 @@ def load(path,output_root):
     return root,plan,folder
 
 
-def authorize(root,path,job_path):
+def authorize(root,path,job_path,*,expected_command='sampling-sft-instrument-run'):
     """A real child must match its already reserved/launched trusted job argv."""
     if not job_path:raise ValueError('Real engine work requires a launched budgeted job; no model imported.')
     from pilot_eval.sampling_sft_jobs import _load, _state
@@ -174,7 +174,7 @@ def authorize(root,path,job_path):
     request=job['request'];argv=request['command']
     if (request['mode']!='runpod' or request['stage']!='sampling'
             or launch['pod_id']!=os.environ.get('RUNPOD_POD_ID')
-            or len(argv)<4 or argv[3]!='sampling-sft-instrument-run'
+            or len(argv)<4 or argv[3]!=expected_command
             or '--config' not in argv or '--job' not in argv
             or inside(root,argv[argv.index('--config')+1])!=inside(root,path)
             or inside(root,argv[argv.index('--job')+1])!=inside(root,job_path)
