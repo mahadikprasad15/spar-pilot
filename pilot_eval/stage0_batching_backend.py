@@ -81,7 +81,7 @@ class BatchEngine(EvaluationEngine):
                 position_ids=packed['position_ids'][:,-1:]),past_key_values=state.past_key_values,use_cache=True)
             batch_logits=self.model.get_output_embeddings()(cached.last_hidden_state[index,-1])
             measured=float((logits.double()-batch_logits.double()).abs().max())
-            error=self.config['absolute_gate']
+            error=self.config['batch_gate']
             top=logits.topk(2).values
             chosen_gap=float((logits[reference[common]]-logits[actual[common]]).abs())
             margin=float(top[0]-top[1])
@@ -89,4 +89,4 @@ class BatchEngine(EvaluationEngine):
                 and float(logits[actual[common]])>=float(top[1]))
         return dict(near_tie=near,first_divergence=common,reference_token=reference[common],
             batch_token=actual[common],top2_margin=margin,chosen_gap=chosen_gap,
-            measured_error=measured,absolute_gate=error)
+            measured_error=measured,batch_gate=error)

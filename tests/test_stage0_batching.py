@@ -93,12 +93,14 @@ def test_public_batch_agreement_resumes_and_preserves_scope(source):
     report = json.loads((directory / 'results/agreement.json').read_text())
     assert report['eligible_for_review'] and not report['production_authorized']
     assert report['absolute_gate'] == pytest.approx(6e-6)
+    assert report['batch_gate'] == 1e-3
     assert sealed_path.read_bytes() == sealed
     assert report['variant_count'] == 10
     assert report['forecast']['batch_sizes'] == [16, 6]
     review=source/'batch-review.json'
     review.write_text(json.dumps(dict(reviewer='test',notes='exact saved evidence',
-        agreement_sha256=file_hash(directory/'complete.json'),absolute_gate=report['absolute_gate'])))
+        agreement_sha256=file_hash(directory/'complete.json'),absolute_gate=report['absolute_gate'],
+        batch_gate=report['batch_gate'])))
     assert command(source,'approve','--config',plan,'--review',review)==0
     observed(source,'after-agreement',1.05)
     for rid,row in reservations(source).items():
@@ -147,8 +149,39 @@ def test_numeric_gate_failure_saves_evidence_and_never_widens_it(source):
     approval.write_text(json.dumps(dict(reviewer='test', notes='fixture', session_id='session-a',
                     max_units_per_hour=1., max_seconds=600., source_reviewed=True)))
     assert command(source, 'run', '--config', plan, '--approval', approval,
-                   dependencies=BatchOracle(error=1e-3)) == 1
+                   dependencies=BatchOracle(error=2e-3)) == 1
     directory = source / json.loads(plan.read_text())['run_path']
     assert list((directory / 'units').glob('*/complete.json'))
     assert not (directory / 'complete.json').exists()
     assert json.loads((directory / 'meta/status.json').read_text())['state'] == 'failed'
+
+
+def test_batch_gate_is_the_pre_registered_hard_stop_not_the_loader_allowance(source):
+    """ADR 0014: FP32 batching rounding is judged by the spec's 1e-3 hard stop.
+
+    The fixture loader allowance 3E is 6e-6; a 5e-4 batch error (the measured
+    real-CUDA magnitude) exceeds it but is ordinary kernel rounding.
+    """
+    plan = prepared(source)
+    config = json.loads(plan.read_text())
+    assert config['batch_gate'] == 1e-3
+    assert config['absolute_gate'] == pytest.approx(6e-6)
+    approval = source / 'batch-budget.json'
+    approval.write_text(json.dumps(dict(reviewer='test', notes='fixture', session_id='session-a',
+                    max_units_per_hour=1., max_seconds=600., source_reviewed=True)))
+    assert command(source, 'run', '--config', plan, '--approval', approval,
+                   dependencies=BatchOracle(error=5.083e-4)) == 0
+    report = json.loads((source / config['run_path'] / 'results/agreement.json').read_text())
+    assert report['eligible_for_review']
+    assert report['max_absolute_error'] == pytest.approx(5.083e-4)
+    assert report['max_absolute_error'] > report['absolute_gate']
+    directory = source / config['run_path']
+    review = source / 'batch-review.json'
+    stale = dict(reviewer='test', notes='omits the batch gate',
+                 agreement_sha256=file_hash(directory / 'complete.json'), absolute_gate=report['absolute_gate'])
+    review.write_text(json.dumps(stale))
+    assert command(source, 'approve', '--config', plan, '--review', review) == 1
+    review.write_text(json.dumps({**stale, 'batch_gate': 2e-3}))
+    assert command(source, 'approve', '--config', plan, '--review', review) == 1
+    review.write_text(json.dumps({**stale, 'batch_gate': 1e-3}))
+    assert command(source, 'approve', '--config', plan, '--review', review) == 0

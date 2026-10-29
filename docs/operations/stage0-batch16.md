@@ -30,8 +30,10 @@ CPU report restoration selects the corresponding batch16 findings plan.
    padded. Exact token IDs **and stop reason** pass. Any divergence saves the
    first differing position and common-prefix top-two gap. A near tie requires
    that gap below the measured common-prefix error, itself within the unchanged
-   original numerical allowance. Other divergences stop. Counts are retained.
-3. **9D–9E, CPU:** inspect saved evidence, approve its original3E numerical gate,
+   batch gate. Other divergences stop. Counts are retained. Batched-vs-singleton
+   logits use the pre-registered 1e-3 hard stop, not 3E (ADR 0014); the
+   `-behavior-b16-v1` attempt failed the superseded 3E gate and is preserved.
+3. **9D–9E, CPU:** inspect saved evidence, approve the 1e-3 batch gate (3E recorded),
    reconcile agreement usage, then display the concrete production proposal.
    This includes the code commit, variants, decoding, batches, forecast and unit
    allowance. Send that proposal to the operator for approval.

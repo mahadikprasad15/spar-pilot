@@ -47,3 +47,11 @@ def test_actual_batch_backend_checks_unequal_lengths_and_cached_decode():
     assert any(cache for _,_,cache in calls)
     corrupt['cache']=True
     assert not numeric_ok(engine.compare(rows,'V1',tokens),1e-5)
+
+
+def test_near_tie_uses_batch_gate_and_requires_margin_below_measured_error():
+    import pilot_eval.stage0_batching_backend as backend
+    import inspect
+    source=inspect.getsource(backend.BatchEngine.divergence)
+    assert "self.config['batch_gate']" in source
+    assert "self.config['absolute_gate']" not in source

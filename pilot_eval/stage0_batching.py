@@ -14,6 +14,11 @@ from pilot_eval.sft import safe_name
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash
 
+# ADR 0014: batched-vs-singleton FP32 logits are judged against the spec's
+# pre-registered 1e-3 hard stop, not the merged-loader allowance 3E, which
+# measures a different rounding source. The loader gate stays unchanged.
+BATCH_GATE=1e-3
+
 
 def write(path, value):
     """Publish JSON only after flush/readback; completion markers are written last."""
@@ -58,7 +63,7 @@ def prepare(qualification_path, profile_path, output_root, name, *, batch_size=1
         profile_path=str(inside(root,profile_path).relative_to(root)),
         profile_complete_sha256=file_hash(inside(root,profile_path)/'complete.json'),
         batch_size=batch_size,qualified_sizes=sizes,units=units,
-        source_runtime=report['runtime'],absolute_gate=report['proposed_absolute_gate'],code_git_commit=_software()['git_commit'],
+        source_runtime=report['runtime'],absolute_gate=report['proposed_absolute_gate'],batch_gate=BATCH_GATE,code_git_commit=_software()['git_commit'],
         fixture=q['fixture'],scope='Fixed16, all10 numeric checks; V1/V5 greedy replay; full and tail batch shapes',
         production_authorized=False,budget_ceiling_units=20)
     path=root/'plans'/name/'stage0.batch.json';directory=inside(root,config['run_path'])
@@ -79,7 +84,7 @@ def load(path,root):
         raise ValueError('Batch source selection changed.')
     q,report,qdir,items,tokens=sources(root,config['qualification_path'],config['profile_path'],config['batch_size'])
     if (file_hash(qdir/'complete.json')!=config['source_diagnostic_sha256']
-            or config['absolute_gate']!=report['proposed_absolute_gate']):
+            or config['absolute_gate']!=report['proposed_absolute_gate'] or config.get('batch_gate')!=BATCH_GATE):
         raise ValueError('Original numerical calibration changed.')
     return config,directory,q,report,qdir,items,tokens
 
@@ -104,7 +109,7 @@ def numeric_ok(value,gate):
 def assess(config,values,load_seconds):
     numeric=[v for u,v in zip(config['units'],values) if u['kind']=='numeric']
     greedy=[v for u,v in zip(config['units'],values) if u['kind']=='greedy']
-    eligible=all(numeric_ok(v,config['absolute_gate']) for v in numeric) and all(v['acceptable'] for v in greedy)
+    eligible=all(numeric_ok(v,config['batch_gate']) for v in numeric) and all(v['acceptable'] for v in greedy)
     step_seconds=max(v['seconds']/max(1,max(len(r['generated_token_ids']) for r in v['responses'])) for v in greedy)
     batch_calls=10*math.ceil(150/config['batch_size'])
     forecast=dict(batch_size=config['batch_size'],batch_sizes=config['qualified_sizes'],
@@ -115,7 +120,7 @@ def assess(config,values,load_seconds):
         forecast_is_not_completion_guarantee=True,
         limitations='V1/V5 timing only; late-token slowdown and other edited-condition length tails remain uncertain; KL/write budget separate')
     return dict(eligible_for_review=eligible,production_authorized=False,
-        absolute_gate=config['absolute_gate'],max_absolute_error=max(v['max_absolute_error'] for v in numeric),
+        absolute_gate=config['absolute_gate'],batch_gate=config['batch_gate'],max_absolute_error=max(v['max_absolute_error'] for v in numeric),
         variant_count=10,qualified_sizes=config['qualified_sizes'],near_tie_count=sum(not c['exact'] and c['near_tie'] for v in greedy for c in v['checks']),forecast=forecast)
 
 
@@ -160,7 +165,7 @@ def run(path,output_root,approval_path,*,dependencies=None,max_new_units=None):
                     weights_dir=q['weights_dir'],model_identity=q['model_identity'],seed=42,
                     prompt_contract=q.get('evaluation_config',{}).get('prompt_template',{}),
                     decoding={**q['decoding'],'use_cache':True},execution_kind=runtime['execution_kind'],
-                    absolute_gate=config['absolute_gate'])
+                    batch_gate=config['batch_gate'])
                 begin=time.monotonic();engine=deps.engine(engine_config,root)
                 load_seconds=time.monotonic()-begin
                 selected=[r for r in items if r['id'] in q['sequence_ids']];by_id={r['id']:r for r in selected}
@@ -178,7 +183,7 @@ def run(path,output_root,approval_path,*,dependencies=None,max_new_units=None):
                     begin=time.monotonic()
                     if u['kind']=='numeric':
                         value=engine.compare(rows,u['variant'],tokens)
-                        passed=numeric_ok(value,config['absolute_gate'])
+                        passed=numeric_ok(value,config['batch_gate'])
                         engine.measured_error=max(getattr(engine,'measured_error',0.),value['max_absolute_error'])
                     else:
                         responses=engine.generate(rows,u['variant'],42)
@@ -257,10 +262,11 @@ def status(path,output_root):
 def approve(path,output_root,review_path):
     root=Path(output_root).resolve();config,directory,*_=load(path,root);result=verify(path,root)
     review=read(review_path)
-    if (set(review)!={'reviewer','notes','agreement_sha256','absolute_gate'}
+    if (set(review)!={'reviewer','notes','agreement_sha256','absolute_gate','batch_gate'}
             or not review['reviewer'].strip() or not review['notes'].strip()
             or review['agreement_sha256']!=file_hash(directory/'complete.json')
-            or review['absolute_gate']!=config['absolute_gate'] or not result['eligible_for_review']):
+            or review['absolute_gate']!=config['absolute_gate'] or review['batch_gate']!=config['batch_gate']
+            or not result['eligible_for_review']):
         raise ValueError('Review the exact saved batch evidence and unchanged numerical gate.')
     receipt=dict(config_sha256=_hash(config),review=review,qualified=True,
         real_gpu_qualified=not config['fixture'],runtime=result['runtime'],
@@ -289,7 +295,8 @@ def freeze(path,output_root,review_path):
         receipt=read(candidate);r=receipt['review']
         if (candidate.parent.name==_hash(r) and receipt['config_sha256']==_hash(config)
                 and r['agreement_sha256']==file_hash(directory/'complete.json')
-                and r['absolute_gate']==config['absolute_gate'] and receipt['qualified'] is True):receipts.append(candidate)
+                and r['absolute_gate']==config['absolute_gate'] and r.get('batch_gate')==config['batch_gate']
+                and receipt['qualified'] is True):receipts.append(candidate)
     if not receipts:raise ValueError('Record the separate numerical/batch review before production freeze.')
     target=root/'plans'/config['name']/'stage0.execution.json'
     with _writer(directory):
@@ -304,7 +311,7 @@ def freeze(path,output_root,review_path):
             qualification_receipt=str(receipts[0].relative_to(root)),qualification_receipt_sha256=file_hash(receipts[0]),
             budget_review=review,reservation=allocation,runtime=result['runtime'],variants=q['variants'],code_git_commit=commit,
             cohort_path=q['cohort_path'],cohort_sha256=q['cohort_sha256'],decoding=q['decoding'],
-            scorer=q['scorer'],strict_alongside=True,seed=42,absolute_gate=config['absolute_gate'],
+            scorer=q['scorer'],strict_alongside=True,seed=42,absolute_gate=config['absolute_gate'],batch_gate=config['batch_gate'],
             estimate=result['forecast'],qualified_sizes=config['qualified_sizes'],
             real_gpu_authorized=not config['fixture'],measurement_complete=False,
             run_path=f'runs/stage0/{config["name"]}/paired-evaluation')
@@ -323,6 +330,7 @@ def execution(path,root):
             or receipt['config_sha256']!=_hash(config) or receipt['qualified'] is not True
             or receipt['review']['agreement_sha256']!=file_hash(directory/'complete.json')
             or receipt['review']['absolute_gate']!=config['absolute_gate']
+            or receipt['review'].get('batch_gate')!=config['batch_gate'] or value.get('batch_gate')!=config['batch_gate']
             or value['qualified_sizes']!=config['qualified_sizes']
             or value['qualification_path']!=config['qualification_path']
             or value['qualification_sha256']!=config['qualification_sha256']
