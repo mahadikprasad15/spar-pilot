@@ -288,3 +288,31 @@ def test_reused_labels_keep_the_approved_single_reviewer_identity(source,monkeyp
     assert command(source,'audit-save','--config',plan(source),'--labels',patch)==1
     state=review.status(plan(source),source)
     assert state['reviewer_count']==1 and state['reviewer_identities']==['Prasad']
+
+
+def test_reidentified_drift_inherits_only_an_unchanged_precollection_registration(source):
+    """ADR 0015: a new drift identity keeps the original pre-collection registration."""
+    from pilot_eval.stage0_drift import prepare as drift_prepare
+    execution=source/'plans/qualify/stage0.execution.json'
+    evaluation=source/'plans/qualify/stage0.evaluation.json'
+    redo=drift_prepare(execution,source/'fixed/activation.prepared.json',source,'drift-v2',batch_size=64,batches_per_unit=1)
+    assert command(source,'prepare','--evaluation',evaluation,'--drift',redo,'--name','fresh')==0
+    fresh=json.loads((source/'plans/fresh/stage0.findings.json').read_text())
+    assert fresh['registration']['status']=='after-collection-start; exploratory'
+    assert command(source,'prepare','--evaluation',evaluation,'--drift',redo,'--name','inherited',
+                   '--registered-from',plan(source))==0
+    inherited=json.loads((source/'plans/inherited/stage0.findings.json').read_text())
+    original=json.loads(plan(source).read_text())
+    registration=inherited['registration']
+    assert registration['status']=='before-collection'
+    assert registration['inherited_from']['path']=='plans/primary/stage0.findings.json'
+    assert registration['inherited_from']['recorded_at']==original['registration']['recorded_at']
+    assert inherited['contrasts']==original['contrasts'] and inherited['hypotheses']==original['hypotheses']
+    # An exploratory plan cannot lend its registration.
+    assert command(source,'prepare','--evaluation',evaluation,'--drift',redo,'--name','laundered',
+                   '--registered-from',source/'plans/fresh/stage0.findings.json')==1
+    # A tampered original cannot lend its registration either.
+    tampered=dict(original,hypotheses='changed after results')
+    (source/'plans/primary/stage0.findings.json').write_text(json.dumps(tampered))
+    assert command(source,'prepare','--evaluation',evaluation,'--drift',redo,'--name','tampered',
+                   '--registered-from',plan(source))==1

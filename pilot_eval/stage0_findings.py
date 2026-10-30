@@ -31,14 +31,48 @@ def _parents(evaluation_path, drift_path, root):
     if (evaluation['execution_sha256'] != measurement['execution_sha256']
             or evaluation['runtime'] != measurement['runtime']
             or evaluation['execution_kind'] != measurement['execution_kind']
-            or evaluation['batch_size'] != measurement['batch_size']
             or any(evaluation['adapter_files'][v] != measurement['adapter_files'][v]
                    for v in evaluation['variants'])):
         raise ValueError('Behavior/KL join requires matching frozen execution, runtime, inference batch and adapters.')
+    if evaluation['batch_size']!=measurement['batch_size']:
+        proof=evaluation.get('batch_agreement')
+        if measurement['batch_size']!=1 or not proof:
+            raise ValueError('Different schedules require reviewed generation batch agreement and singleton internals.')
+        from pilot_eval.stage0_batching import verify
+        batch=verify(inside(root,proof['plan_path']),root)
+        if (file_hash(inside(root,proof['plan_path']))!=proof['plan_sha256']
+                or file_hash(inside(root,proof['receipt_path']))!=proof['receipt_sha256']
+                or not batch['eligible_for_review'] or evaluation['batch_size'] not in batch['qualified_sizes']):
+            raise ValueError('Batch schedule join evidence changed or is ineligible.')
     return evaluation, measurement, edir, ddir
 
 
-def prepare(evaluation_path, drift_path, output_root, name):
+_INHERITED_FIELDS = ['contrasts', 'statistics', 'hypotheses', 'limitations', 'noninferiority_margin']
+
+
+def _inherited_registration(prior_path, root, evaluation_path, config):
+    """ADR 0015: a re-identified instrument keeps only an unchanged pre-collection registration."""
+    prior_path = inside(root, prior_path); prior = json.loads(prior_path.read_text())
+    directory = inside(root, prior['run_path'])
+    if (prior.get('protocol') != 'stage0-primary-findings-v1'
+            or json.loads((directory/'config.json').read_text()) != prior
+            or json.loads((directory/'meta/run_manifest.json').read_text())['config_sha256'] != _hash(prior)):
+        raise ValueError('Registration source is not an intact frozen findings plan.')
+    if prior['registration'].get('status') != 'before-collection':
+        raise ValueError('Only a pre-collection registration can be inherited.')
+    if (prior['evaluation_path'] != config['evaluation_path'] or prior['evaluation_sha256'] != config['evaluation_sha256']
+            or prior['execution_sha256'] != config['execution_sha256']
+            or prior['inference_schedules'] != config['inference_schedules']
+            or any(prior[k] != config[k] for k in _INHERITED_FIELDS)):
+        raise ValueError('Inherited registration must bind the same behavior collection and comparison family.')
+    return dict(status='before-collection', recorded_at=_now(),
+        inherited_from=dict(path=str(prior_path.relative_to(root)), sha256=file_hash(prior_path),
+            recorded_at=prior['registration']['recorded_at'], drift_path=prior['drift_path']),
+        reason='Fixed-context instrument re-identified (ADR 0015); comparison family frozen before collection is unchanged.',
+        n150_risk=prior['registration']['n150_risk'])
+
+
+def prepare(evaluation_path, drift_path, output_root, name, registered_from=None):
     root = Path(output_root).resolve(); safe_name(name)
     ep, dp = inside(root, evaluation_path), inside(root, drift_path)
     evaluation, measurement, edir, ddir = _parents(ep, dp, root)
@@ -58,6 +92,8 @@ def prepare(evaluation_path, drift_path, output_root, name):
             evaluation_sha256=file_hash(ep), drift_path=str(dp.relative_to(root)), drift_sha256=file_hash(dp),
             execution_sha256=evaluation['execution_sha256'], runtime=evaluation['runtime'],
             execution_kind=evaluation['execution_kind'], contrasts=contrasts, statistics=STATISTICS,
+            inference_schedules=dict(behaviour_batch_size=evaluation['batch_size'],internals_batch_size=measurement['batch_size'],
+                batch_agreement=evaluation.get('batch_agreement')),
             noninferiority_margin=-.05, hypotheses=PREDICTIONS, limitations=LIMITS,
             registration=dict(recorded_at=_now(), status='after-collection-start; exploratory' if started else 'before-collection',
                 n150_risk='Non-inferiority may be inconclusive with 150 paired items.',
@@ -66,6 +102,9 @@ def prepare(evaluation_path, drift_path, output_root, name):
             optional_work='not required; absent products do not block primary findings',
             conditional_v6='not included; applicability has not been inferred from missing evidence')
         config.update(extension)
+        if registered_from is not None:
+            config['registration'] = dict(_inherited_registration(registered_from, root, ep, config),
+                observed_collection_units=config['registration']['observed_collection_units'])
         _save_frozen(path, config); _save_frozen(directory/'config.json', config)
         _save_frozen(directory/'meta/run_manifest.json', dict(config_sha256=_hash(config),
             model_calls=0, resources='CPU only', total_units=len(config['contrasts'])))
@@ -214,6 +253,7 @@ def run(path, output_root, *, max_new_units=None):
             result = dict(schema_version=1, mode='stage0-conditional-intruder-findings' if config.get('analysis_kind') else 'stage0-primary-findings', analysis_complete=True,
                 real_gpu_measurement=config['execution_kind'] == 'real-cuda', execution_kind=config['execution_kind'],
                 registration=config['registration'], statistics=config['statistics'], contrasts=summaries,
+                numerical_resolution=measurement.get('numerical_resolution'),
                 review=dict(state='not-prepared', scope='raw automatic scores; targeted review pending'),
                 source_seals=seals, analysis_runtime=dict(numpy_version=np.__version__, resource='CPU statistics'),
                 limitations=LIMITS, optional_work=config['optional_work'], conditional_v6=config['conditional_v6'])
@@ -286,7 +326,8 @@ def _verify(config, directory, root):
         if saved != expected or read('paired-items.jsonl') != items or read('paired-documents.jsonl') != docs:
             raise ValueError('Paired outcomes/bootstrap intervals do not reconcile with source records.')
         values.append(saved)
-    if result['contrasts'] != values or result['source_seals'] != seals or result['statistics'] != STATISTICS:
+    if (result.get('numerical_resolution')!=measurement.get('numerical_resolution')
+            or result['contrasts'] != values or result['source_seals'] != seals or result['statistics'] != STATISTICS):
         raise ValueError('Primary aggregate disagrees with saved comparisons.')
     return result
 

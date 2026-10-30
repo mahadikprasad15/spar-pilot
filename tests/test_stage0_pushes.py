@@ -81,6 +81,13 @@ def test_real_collector_matches_unchunked_tiny_autograd(objective):
     np.testing.assert_allclose(actual,model.block.lora_B.weight.grad.numpy(),rtol=1e-5,atol=1e-8)
     assert proof['a_gradient_exact_zero'] and proof['optimizer_steps']==0
     np.testing.assert_array_equal(arrays['push_0'],-actual)
+    # ADR 0016: per-module bound evidence is saved and covers the observed FP32 error.
+    bound=arrays['reconstruction_bound_0'];allowance=proof['reconstruction_allowances']['block']
+    assert bound.shape==(2,4,1) and bound.dtype==np.float64 and np.all(bound>=0) and np.any(bound>0)
+    assert allowance['width']==3 and allowance['sequences']==2 and allowance['tokens']==6
+    assert allowance['absolute_error']<=allowance['allowed']
+    oracle=arrays['reconstruction_0']
+    assert np.all(bound[0].reshape(-1)>=np.abs(oracle).reshape(-1)-1e-12)
     dead=dict(unit,sequences=[dict(s,advantage=0.) for s in sequences])
     arrays,proof=collect(model,model,model.head,{'block':(model.block,model.block.lora_A.weight,model.block.lora_B.weight)},dead,context_chunk=1,device='cpu')
     assert not np.any(arrays['gradient_b_0']) and proof['active_sequences']==0
@@ -116,8 +123,14 @@ class Gradients:
         self.calls.append(unit['key']);arrays={};active=sum(s['advantage']!=0 for s in unit['sequences'])
         for i,_ in enumerate(self.config['modules']):
             g=np.ones((64,1),np.float32)*(-1 if active else 0)
-            arrays.update({f'gradient_b_{i}':g,f'push_{i}':-g,f'gradient_a_{i}':np.zeros((1,64),np.float32),f'reconstruction_{i}':g.astype(np.float64)})
-        return arrays,dict(a_gradient_exact_zero=True,reconstruction_relative_errors={m:0. for m in self.config['modules']},
+            arrays.update({f'gradient_b_{i}':g,f'push_{i}':-g,f'gradient_a_{i}':np.zeros((1,64),np.float32),f'reconstruction_{i}':g.astype(np.float64),
+                f'reconstruction_bound_{i}':np.zeros((2,64,1),np.float64)})
+        from pilot_eval.stage0_push_math import reconstruction_allowance
+        tokens=sum(len(s['input_ids']) for s in unit['sequences'] if s['advantage']!=0);sequences=max(active,1)
+        allowances={m:dict(tokens=tokens,sequences=sequences,width=64,absolute_error=0.,
+            allowed=reconstruction_allowance(arrays[f'reconstruction_{i}'],np.zeros(64),np.zeros(64),tokens=tokens,sequences=sequences,width=64))
+            for i,m in enumerate(self.config['modules'])}
+        return arrays,dict(a_gradient_exact_zero=True,reconstruction_relative_errors={m:(0. if active else 0.) for m in self.config['modules']},reconstruction_allowances=allowances,
             optimizer_steps=0,advantages_detached=True,global_token_denominator=unit['token_count'],active_sequences=active,zero_advantage_sequences=len(unit['sequences'])-active)
     def check_integrity(self,*,full=False):return dict(base_unchanged=True,adapters_unchanged=True)
     def close(self):pass

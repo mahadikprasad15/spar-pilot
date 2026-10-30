@@ -7,6 +7,24 @@ from pilot_eval.token_measurement_math import full_vocabulary_kl, prediction_pos
 SUM_FIELDS = ['update_squared_sum', 'base_squared_sum', 'ratio_sum']
 
 
+def coefficient_fractions(dot, actual, sum_abs, length):
+    """Coefficient reconstruction use of its allowance (ADR 0015).
+
+    The legacy allowance 1e-6+1e-5|dot| is kept. An FP32 dot product of length
+    d may also err by the a-priori bound gamma_d*sum|a_i x_i|,
+    gamma_d=d*u/(1-d*u), u=2**-24: under heavy cancellation the legacy floor is
+    finer than FP32 can resolve. Returns (fraction, legacy_fraction).
+    """
+    dot,actual,sum_abs=(np.asarray(v,dtype=np.float64) for v in [dot,actual,sum_abs])
+    if (type(length) is not int or length<1 or dot.shape!=actual.shape or dot.shape!=sum_abs.shape
+            or not all(np.isfinite(v).all() for v in [dot,actual,sum_abs]) or np.any(sum_abs<0)):
+        raise ValueError('Malformed coefficient reconstruction evidence.')
+    if not dot.size:return 0.,0.
+    unit=2.0**-24;gamma=length*unit/(1-length*unit)
+    error=np.abs(dot-actual);legacy=1e-6+1e-5*np.abs(dot)
+    return float((error/np.maximum(legacy,gamma*sum_abs)).max()),float((error/legacy).max())
+
+
 def positions(rows):
     writes=[]
     for example,row in enumerate(rows):
@@ -121,8 +139,20 @@ def summarize(config,batches,rows):
                     equal_example_mean=float(np.mean([r['kl_mean'] for r in valid])) if valid else None),
             writes=dict(documents=len(docs),tokens=tokens,modules=module_stats),
             sum_factor_norm_products=config['factor_norm_sums'][variant]))
+    observed=[r['validation'].get('chunk_comparison') for r in batches]
+    observed=[v for v in observed if v is not None]
+    differences=[]
+    for corpus,view in sorted({(c['corpus'],c['view']) for c in cells}):
+        group=[c for c in cells if (c['corpus'],c['view'])==(corpus,view) and c['kl']['token_mean'] is not None]
+        pairs=[dict(left=a['variant'],right=b['variant'],left_kl=a['kl']['token_mean'],right_kl=b['kl']['token_mean'],
+            absolute_difference=abs(a['kl']['token_mean']-b['kl']['token_mean']))
+            for i,a in enumerate(group) for b in group[i+1:]]
+        if pairs:differences.append(dict(corpus=corpus,view=view,**min(pairs,key=lambda p:p['absolute_difference'])))
+    resolution=dict(observed_max_chunk_disagreement_nats=max((v['max_absolute_error'] for v in observed),default=None),
+        diagnostics=observed,smallest_token_mean_variant_differences=differences,
+        scope='Observed numerical resolution only; not statistical uncertainty or a universal error bound.')
     return dict(schema_version=1,measurement_complete=True,real_gpu_measurement=config['execution_kind']=='real-cuda',
         execution_kind=config['execution_kind'],kl_direction='variant||untuned',units='nats',main_documents_per_variant=300,
         modules=config['modules'],controls=controls,cells=cells,per_document=documents,
-        historical_values_used=False,comparison_provenance=dict(runtime=config['runtime'],execution_sha256=config['execution_sha256']),
+        historical_values_used=False,numerical_resolution=resolution,comparison_provenance=dict(runtime=config['runtime'],execution_sha256=config['execution_sha256']),
         interpretation='Fixed supplied contexts; KL alone is not behavioral harm. No cross-session/historical join or non-inferiority claim.')

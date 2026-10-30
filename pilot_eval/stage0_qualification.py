@@ -58,10 +58,10 @@ def prepare(edits_path,cohort_path,output_root,name,*,catalogue_path=None):
     tokenizer_files={}
     if not fixture:
         snapshot=inside(root,spectral['weights_dir'])
-        for name in ['tokenizer.json','tokenizer_config.json']:
-            asset=snapshot/name
+        for asset_name in ['tokenizer.json','tokenizer_config.json']:
+            asset=snapshot/asset_name
             if not asset.is_file():raise FileNotFoundError(f'Pinned tokenizer asset is missing: {asset}')
-            tokenizer_files[name]=file_hash(asset)
+            tokenizer_files[asset_name]=file_hash(asset)
     selected=rows[:16]
     config=dict(schema_version=1,protocol='stage0-loader-qualification-v1',name=name,
         run_path=f'runs/stage0/{name}/qualification',edits_path=str(edits_path.relative_to(root)),

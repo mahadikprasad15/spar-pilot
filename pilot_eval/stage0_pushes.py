@@ -8,7 +8,8 @@ import numpy as np
 
 from pilot_eval.run import _write_json
 from pilot_eval.stage0_push_plan import load,prepare
-from pilot_eval.stage0_push_math import instrument_check
+from pilot_eval.stage0_push_math import instrument_check, reconstruction_allowance
+from pilot_eval.stage0_numeric import agrees, environment as _environment
 from pilot_eval.stage0_sources import inside,factors
 from pilot_eval.stage0_evaluation import _reservation,_attempt_timing,_recover_owner
 from pilot_eval.stage0_workflow import _writer,_state,_now,budget_status
@@ -34,22 +35,27 @@ def runtime(path,output_root,*,dependencies=None):
     root=Path(output_root).resolve();config,directory,_=load(path,root);deps=dependencies or _deps();info=deps.runtime()
     frozen=directory/'meta/runtime.json'
     return dict(runtime=info,matches_sampled_runtime=info==config['sampled_runtime'],gradient_runtime_frozen=frozen.exists(),
-        matches_gradient_runtime=None if not frozen.exists() else info==json.loads(frozen.read_text()),model_loaded=False,budget=budget_status(root),
+        matches_gradient_runtime=None if not frozen.exists() else _environment(info)==_environment(json.loads(frozen.read_text())),model_loaded=False,budget=budget_status(root),
         storage=deps.preflight(config,root) if hasattr(deps,'preflight') else {'scope':'fixture'})
 
 
 def validate_arrays(config,unit,arrays,proof,root):
     expected=set();errors={}
     for i,name in enumerate(config['modules']):
-        for prefix in ['gradient_a','gradient_b','push','reconstruction']:expected.add(f'{prefix}_{i}')
+        for prefix in ['gradient_a','gradient_b','push','reconstruction','reconstruction_bound']:expected.add(f'{prefix}_{i}')
         shape=config['module_shapes'][name];ga=arrays[f'gradient_a_{i}'];gb=arrays[f'gradient_b_{i}'];push=arrays[f'push_{i}'];oracle=arrays[f'reconstruction_{i}']
         if list(ga.shape)!=shape['a'] or any(list(v.shape)!=shape['b'] for v in [gb,push,oracle]) or any(not np.isfinite(v).all() for v in [ga,gb,push,oracle]):raise ValueError('Gradient array dimensions/finiteness changed.')
         if any(v.dtype!=np.float32 for v in [ga,gb,push]) or oracle.dtype!=np.float64 or np.any(ga) or not np.array_equal(push,-gb):raise ValueError('Raw gradient precision/sign/A-zero gate failed.')
         numerator=float(np.linalg.norm(gb.astype(float)-oracle));den=float(np.linalg.norm(oracle))
         error=(0. if numerator==0 else None) if den==0 else numerator/den
-        if error is None or not error<config['reconstruction_gate']:raise ValueError('Independent gradient reconstruction gate failed.')
+        bound=arrays[f'reconstruction_bound_{i}'];recorded=proof.get('reconstruction_allowances',{}).get(name)
+        if bound.dtype!=np.float64 or list(bound.shape)!=[2,*shape['b']] or np.any(bound<0) or not isinstance(recorded,dict):
+            raise ValueError('Reconstruction bound evidence missing or malformed.')
+        allowed=reconstruction_allowance(oracle,bound[0],bound[1],tokens=recorded['tokens'],sequences=recorded['sequences'],width=recorded['width'])
+        if recorded['width']!=shape['a'][-1] or not agrees(allowed,recorded['allowed']) or not numerator<=allowed:
+            raise ValueError('Independent gradient reconstruction bound failed (ADR 0016).')
         errors[name]=error
-    if set(arrays)!=expected or proof.get('a_gradient_exact_zero') is not True or proof.get('optimizer_steps')!=0 or proof.get('advantages_detached') is not True or proof.get('global_token_denominator')!=unit['token_count'] or proof.get('reconstruction_relative_errors')!=errors:
+    if set(arrays)!=expected or proof.get('a_gradient_exact_zero') is not True or proof.get('optimizer_steps')!=0 or proof.get('advantages_detached') is not True or proof.get('global_token_denominator')!=unit['token_count'] or not agrees(proof.get('reconstruction_relative_errors'),errors):
         raise ValueError('Gradient proof/denominator mapping changed.')
     active=sum(s['advantage']!=0 for s in unit['sequences'])
     if proof.get('active_sequences')!=active or proof.get('zero_advantage_sequences')!=len(unit['sequences'])-active:raise ValueError('Dead group sequence count changed.')
@@ -98,7 +104,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         saved={u['key']:read_unit(config,directory,u,root) for u in units};done=lambda:sum(v is not None for v in saved.values())
         if max_new_units==0:return _state(directory,'incomplete',done(),len(units))
         deps=dependencies or _deps();info=deps.runtime()
-        if (directory/'meta/runtime.json').exists() and info!=json.loads((directory/'meta/runtime.json').read_text()):raise ValueError('Gradient comparisons require their frozen session/runtime; use a separately named comparison after a change.')
+        if (directory/'meta/runtime.json').exists() and _environment(info)!=_environment(json.loads((directory/'meta/runtime.json').read_text())):raise ValueError('Gradient comparisons require their frozen session/runtime; use a separately named comparison after a change.')
         target=inside(root,path).parent/'stage0.pushes.execution.json';production=target.exists()
         execution=_execution(config,directory,root,target) if production else {'reservation':{'job_sha256':_hash(config)}}
         allowed=set(config['unit_keys'] if production else profile_keys(units))
@@ -107,7 +113,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         if approval_path is None and not production and not (directory/'meta/active-reservation.json').exists():
             raise ValueError('Approve a separately bounded initial-gradient profile allocation first.')
         reservation,remaining=_reservation(config,execution,directory,root,info,approval_path)
-        _save_frozen(directory/'meta/runtime.json',info)
+        if not (directory/'meta/runtime.json').exists():_save_frozen(directory/'meta/runtime.json',info)
         attempt=directory/'attempts'/uuid.uuid4().hex;_save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],started_at=_now(),phase='production' if production else 'profile',runtime_sha256=file_hash(directory/'meta/runtime.json')))
         start=time.monotonic();engine=None;new=0
         def deadline():
@@ -116,7 +122,6 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
             with deadline_guard(remaining,config['execution_kind']=='real-cuda'):
                 deadline()
                 if hasattr(deps,'preflight'):deps.preflight(config,root)
-                _save_frozen(directory/'meta/runtime.json',info)
                 if progress:print('Stage 0 pushes: loading verified initialization; no optimizer.',flush=True)
                 engine=deps.engine(config,root)
                 for unit in pending:
@@ -126,7 +131,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
                     if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):raise ValueError('Initial weights changed during gradients.')
                     deadline();folder=directory/'units'/unit['key'];folder.mkdir(parents=True,exist_ok=True)
                     temporary=folder/'gradients.tmp.npz';np.savez(temporary,**arrays);temporary.replace(folder/'gradients.npz')
-                    _write_json(folder/'metadata.json',dict(seconds=time.monotonic()-begin,proof=proof,integrity=integrity,attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json')))
+                    _write_json(folder/'metadata.json',dict(seconds=time.monotonic()-begin,proof=proof,integrity=integrity,attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),code_git_commit=info.get('git_commit')))
                     _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),unit_sha256=_hash(unit)),files={n:file_hash(folder/n) for n in ['gradients.npz','metadata.json']}))
                     saved[unit['key']]=arrays;new+=1;_state(directory,'running',done(),len(units))
                     if progress:print(f'Stage 0 pushes: {done()}/{len(units)} batches sealed; {unit["case"]} {unit["objective"]}; {unit["question_count"]} questions; {unit["token_count"]} tokens.',flush=True)

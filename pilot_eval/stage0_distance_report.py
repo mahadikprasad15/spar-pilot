@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+from pilot_eval.stage0_numeric import agrees
+
 from pilot_eval.stage0_distance import load,read_unit,verify_measurement
 from pilot_eval.stage0_distance_math import position_windows
 from pilot_eval.stage0_sources import inside
@@ -13,6 +15,10 @@ from pilot_eval.stage0_workflow import _writer,_state
 from pilot_eval.run import _write_json
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash
+
+
+def _tag(rows,config):
+    return [dict(row,cohort=config.get('cohort','r0-512')) for row in rows]
 
 
 def calculate(config,directory,answers,memberships):
@@ -86,14 +92,18 @@ def calculate(config,directory,answers,memberships):
     top=sorted(top,key=lambda r:(-r['surprise'],r['problem_id'],r['answer_position']))[:50]
     own=next(r for r in summaries if r['dataset']=='own_all');gate=abs(own['excess_surprise'])<=.02
     return dict(schema_version=1,analysis_complete=True,real_gpu_measurement=config['execution_kind']=='real-cuda',
-        summaries=summaries,per_problem=problems,position_windows=windows,top_gold_tokens=top,statistics=config['statistics'],
+        # Every exported row names its cohort, so CSV/Parquet files stay interpretable outside this folder.
+        summaries=_tag(summaries,config),per_problem=_tag(problems,config),position_windows=_tag(windows,config),top_gold_tokens=_tag(top,config),statistics=config['statistics'],
         own_all_gate=dict(threshold=.02,observed=own['excess_surprise'],passed=gate,state='passed' if gate else 'failed',
             premise=config['premise'],note='Finite-cohort descriptive gate; no automatic tolerance change or distance=KL claim.'),
         limitations=['One sampled cohort and one seed; intervals resample whole problems and are pointwise.',
             'Primary means are token-weighted ratios; duplicates retain their cohort multiplicity despite one scoring forward.',
             'Excess surprise is descriptive, not KL. Whole-answer negative-log correctness is not comparable to per-token NLL.',
-            'A finite stopped-sequence token-weighted ratio is not an exact zero-expectation identity.'],
-        membership_counts={k:len(v) for k,v in memberships.items()},
+            'A finite stopped-sequence token-weighted ratio is not an exact zero-expectation identity.',
+            'Gold covers every question in the cohort; own_correct and own_correct_one cover only questions with a correct sample, so gold-versus-own differences include that selection.']
+            +(['Matched-128 historical cohort: samples were drawn on the Pilot 4 runtime and scored in a new session with the same audited FP32 weights (ADR 0016).']
+              if config.get('cohort')=='matched-128-historical' else []),
+        cohort=config.get('cohort','r0-512'),membership_counts={k:len(v) for k,v in memberships.items()},
         vocabulary=json.loads((directory/'meta/vocabulary.json').read_text()) if (directory/'meta/vocabulary.json').exists() else None)
 
 
@@ -116,7 +126,7 @@ def report(path,output_root):
         esc=lambda x:html.escape(str(x));rows=''.join('<tr>'+''.join('<td>'+esc(r[k])+'</td>' for k in ['dataset','n_answers','n_tokens','nll','entropy','excess_surprise','ci_low','ci_high'])+'</tr>' for r in result['summaries'])
         sensitivity=''.join('<tr>'+''.join('<td>'+esc(r[k])+'</td>' for k in ['dataset','answer_weighted_nll','answer_weighted_entropy','answer_weighted_excess_surprise','n_answers_under_64','first32_tokens','middle_tokens','last32_tokens','n_answers_without_end_of_turn'])+'</tr>' for r in result['summaries'])
         notice='<aside>Synthetic software fixture, not scientific results.</aside>' if config['execution_kind']=='synthetic-cpu-fixture' else ''
-        (directory/'report.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Answer NLL and excess surprise</title><style>body{max-width:1100px;margin:40px auto;padding:24px;background:#f7f8f5;color:#263e44;font:15px/1.6 system-ui}h1{font:36px Georgia}table{border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #ddd}aside{background:#fff0d8;padding:16px}</style><h1>Untuned answer likelihood</h1>'+notice+'<p>Each unique prompt/answer token sequence is scored once. Saved memberships restore sample multiplicity. Prompt tokens are masked; observed EOS is supervised and capped sequences receive no added EOS.</p><table><tr>'+''.join('<th>'+s+'</th>' for s in ['dataset','answers','tokens','NLL','entropy','excess surprise','NLL CI low','NLL CI high'])+'</tr>'+rows+'</table><h2>Answer-weighted sensitivity and window counts</h2><p>Equal answer means; intervals still resample whole problems, retaining all their samples. Under64 counts use the scored length including observed end-of-turn. Primary estimates remain token-weighted.</p><table><tr>'+''.join('<th>'+s+'</th>' for s in ['dataset','answer NLL','answer entropy','answer excess','answers under64','first32 tokens','middle tokens','last32 tokens','without end-of-turn'])+'</tr>'+sensitivity+'</table><h2>Full scored vocabulary</h2><pre>'+esc(json.dumps(result['vocabulary'],indent=2))+'</pre><h2>Own-all check</h2><pre>'+esc(json.dumps(result['own_all_gate'],indent=2))+'</pre><p>NLL is primary. Excess surprise is not KL. Intervals resample whole problems; negative-log(k/8) is separately reported in whole-answer units.</p><ul>'+''.join('<li>'+esc(s)+'</li>' for s in result['limitations'])+'</ul><p><a href="summary.parquet">Summary Parquet</a> · <a href="results/per-problem.csv">Per-problem values</a> · <a href="results/top-gold-tokens.csv">Top50 surprising gold tokens</a> · <a href="results/position-windows.csv">Disjoint answer-position windows</a> · <a href="results/results.json">Structured results</a> · <a href="config.json">Frozen configuration</a></p></html>')
+        (directory/'report.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Answer NLL and excess surprise</title><style>body{max-width:1100px;margin:40px auto;padding:24px;background:#f7f8f5;color:#263e44;font:15px/1.6 system-ui}h1{font:36px Georgia}table{border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #ddd}aside{background:#fff0d8;padding:16px}</style><h1>Untuned answer likelihood</h1>'+notice+'<p>Cohort: '+esc(result['cohort'])+'.</p><p>Each unique prompt/answer token sequence is scored once. Saved memberships restore sample multiplicity. Prompt tokens are masked; observed EOS is supervised and capped sequences receive no added EOS.</p><table><tr>'+''.join('<th>'+s+'</th>' for s in ['dataset','answers','tokens','NLL','entropy','excess surprise','NLL CI low','NLL CI high'])+'</tr>'+rows+'</table><h2>Answer-weighted sensitivity and window counts</h2><p>Equal answer means; intervals still resample whole problems, retaining all their samples. Under64 counts use the scored length including observed end-of-turn. Primary estimates remain token-weighted.</p><table><tr>'+''.join('<th>'+s+'</th>' for s in ['dataset','answer NLL','answer entropy','answer excess','answers under64','first32 tokens','middle tokens','last32 tokens','without end-of-turn'])+'</tr>'+sensitivity+'</table><h2>Full scored vocabulary</h2><pre>'+esc(json.dumps(result['vocabulary'],indent=2))+'</pre><h2>Own-all check</h2><pre>'+esc(json.dumps(result['own_all_gate'],indent=2))+'</pre><p>NLL is primary. Excess surprise is not KL. Intervals resample whole problems; negative-log(k/8) is separately reported in whole-answer units.</p><ul>'+''.join('<li>'+esc(s)+'</li>' for s in result['limitations'])+'</ul><p><a href="summary.parquet">Summary Parquet</a> · <a href="results/per-problem.csv">Per-problem values</a> · <a href="results/top-gold-tokens.csv">Top50 surprising gold tokens</a> · <a href="results/position-windows.csv">Disjoint answer-position windows</a> · <a href="results/results.json">Structured results</a> · <a href="config.json">Frozen configuration</a></p></html>')
         files=['report.html','summary.parquet','measurement.complete.json']+[str(p.relative_to(directory)) for sub in ['results','bootstrap'] for p in (directory/sub).rglob('*') if p.is_file()]
         _write_json(directory/'complete.json',dict(config_sha256=_hash(config),files={p:file_hash(directory/p) for p in files}))
         _state(directory,'complete' if result['own_all_gate']['passed'] else 'failed-gate',len(answers),len(answers),own_all_gate=result['own_all_gate']['passed'])
@@ -131,7 +141,7 @@ def verify(path,output_root):
     for p,digest in seal['files'].items():
         if file_hash(inside(directory,p))!=digest:raise ValueError('Distance report evidence changed.')
     result=json.loads((directory/'results/results.json').read_text())
-    if result!=calculate(config,directory,answers,memberships):raise ValueError('Distance statistics do not reconstruct from saved token arrays.')
+    if not agrees(result,json.loads(json.dumps(calculate(config,directory,answers,memberships)))):raise ValueError('Distance statistics do not reconstruct from saved token arrays.')
     import pyarrow.parquet as pq
-    if pq.read_table(directory/'summary.parquet').to_pylist()!=result['summaries']:raise ValueError('Distance summary Parquet differs.')
+    if not agrees(pq.read_table(directory/'summary.parquet').to_pylist(),result['summaries']):raise ValueError('Distance summary Parquet differs.')
     return result

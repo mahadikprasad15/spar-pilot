@@ -27,6 +27,9 @@ def _implementation():
 
 def _execution(path,root):
     path=inside(root,path);execution=json.loads(path.read_text())
+    if execution.get('protocol')=='stage0-batched-execution-v1':
+        from pilot_eval.stage0_batching import execution as checked_execution
+        return checked_execution(path,root)
     if execution.get('protocol')!='stage0-paired-execution-v1':
         raise ValueError('Use a frozen Ticket 04 paired execution plan.')
     qpath=inside(root,execution['qualification_path'])
@@ -71,7 +74,11 @@ def _configuration(path,root,batch_size,batches_per_unit):
     if type(batches_per_unit) is not int or not 1<=batches_per_unit<=150:
         raise ValueError('Batches per durable unit must be between 1 and 150.')
     kind=execution['runtime']['execution_kind']
-    if kind=='real-cuda' and batch_size!=1:
+    batched=execution.get('protocol')=='stage0-batched-execution-v1'
+    if batched and (batch_size!=execution['qualified_sizes'][0]
+            or any(n not in execution['qualified_sizes'] for n in [batch_size,150%batch_size] if n)):
+        raise ValueError('Requested full/tail sizes differ from the reviewed batch agreement.')
+    if kind=='real-cuda' and batch_size!=1 and not batched:
         raise ValueError('Ticket 04 qualified singleton generation; larger real batches need separate agreement evidence.')
     items=_items(root,execution['cohort_path'])
     decoding=execution['decoding']
@@ -117,6 +124,11 @@ def _configuration(path,root,batch_size,batches_per_unit):
     if conditional:
         config.update(mixed_catalogue_path=qualification['mixed_catalogue_path'],
             mixed_catalogue_sha256=qualification['mixed_catalogue_sha256'],collection_kind='conditional-intruders')
+    if batched:
+        config.update(batch_agreement=dict(plan_path=execution['batch_plan_path'],
+            plan_sha256=execution['batch_plan_sha256'],receipt_path=execution['qualification_receipt'],
+            receipt_sha256=execution['qualification_receipt_sha256'],qualified_sizes=execution['qualified_sizes']),
+            real_batch_qualification='reviewed full and tail sizes; all-condition teacher logits, cached decode and V1/V5 greedy replay')
     return config,execution,qdir
 
 
