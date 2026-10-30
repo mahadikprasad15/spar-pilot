@@ -5,6 +5,47 @@ import numpy as np
 import pytest
 
 
+def test_real_tokenizer_inventory_preserves_requested_qualification_name(tmp_path, monkeypatch):
+    from pilot_eval import stage0_qualification as q
+    from pilot_eval.cli import main
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+
+    identity = dict(model='Qwen/Qwen2.5-1.5B-Instruct', model_revision='pinned',
+                    tokenizer_revision='pinned')
+    cohort = dict(protocol_version='pilot4-behaviour-v1', **identity,
+                  dtype='float32', scorer='gsm8k-flexible-v3',
+                  items=[dict(id=str(i), prompt=f'Question {i}', gold='#### 2')
+                         for i in range(150)])
+    cohort_path = tmp_path / 'cohort.json'
+    cohort_path.write_text(json.dumps(cohort))
+    edits_path = tmp_path / 'edits.json'
+    edits_path.write_text('{}')
+    snapshot = tmp_path / 'weights'
+    snapshot.mkdir()
+    for asset_name in ('tokenizer.json', 'tokenizer_config.json'):
+        (snapshot / asset_name).write_text('{}')
+    monkeypatch.setattr(q, 'PILOT4_COHORT_SHA256', file_hash(cohort_path))
+    monkeypatch.setattr(q, 'load_edits', lambda *args: (
+        dict(execution_kind='cpu-local-pinned-weights', run_path='edits', modules=['module']),
+        dict(weights_dir='weights'), dict(sources={'sft': {'identity': identity}}), {}))
+    monkeypatch.setattr(q, 'verify_edits', lambda *args: {'variants': {}})
+
+    requested = 'stage0-loader-qualification-v1'
+    assert main(['stage0-qualification-prepare', '--edits', str(edits_path),
+                 '--cohort', str(cohort_path), '--output-root', str(tmp_path),
+                 '--name', requested]) == 0
+    path = tmp_path / 'plans' / requested / 'stage0.qualification.json'
+    assert path.is_file(), 'Tokenizer filenames must not replace the requested plan name.'
+    config = json.loads(path.read_text())
+    assert config['name'] == requested
+    assert config['run_path'] == f'runs/stage0/{requested}/qualification'
+    assert set(config['tokenizer_files']) == {'tokenizer.json', 'tokenizer_config.json'}
+    manifest = json.loads((tmp_path / config['run_path'] / 'meta/manifest.json').read_text())
+    assert manifest['config_sha256'] == _hash(config)
+    assert not (tmp_path / 'plans/tokenizer_config.json').exists()
+
+
 def test_logit_errors_use_every_answer_position_and_negative_control_is_sensitive():
     from pilot_eval.stage0_qualification_math import compare_logits, assess
     reference=np.array([[1.,2.,3.],[4.,5.,6.]])

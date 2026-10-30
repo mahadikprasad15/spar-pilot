@@ -84,6 +84,11 @@ def render(config, result, directory):
     else:
         sections.append(_table(['Variant', 'Source arm', 'Operation'], [(v, arm, operation) for v, (arm, operation) in VARIANTS.items()]))
     sections.append('<p>Behavior uses the same 150 held-out prompts, greedy decoding and 1,024-token cap. KL uses the fixed 150 GSM8K gold and 150 FineWeb sequences, with corpus/view results kept separate. All paired products bind one qualified execution, exact runtime and adapter payloads.</p>')
+    schedules=config.get('inference_schedules')
+    if schedules:
+        sections.append('<p>Recorded inference schedules: behavioral batch '+str(schedules['behaviour_batch_size'])+
+            '; fixed-context KL/effective-write batch '+str(schedules['internals_batch_size'])+
+            '. Different schedules require the saved reviewed batch-agreement receipt.</p>')
     sections.append('<h2>Accuracy</h2><p>Flexible-v3 is primary; strict scores remain alongside it in the tables. “Preserved” requires the lower 95% bound to be <em>strictly above −5 percentage points</em>. At 150 items, inconclusive outcomes are plausible. The intervals are pointwise, not simultaneous across this family.</p><img src="plots/accuracy.svg" alt="All paired accuracy estimates and intervals">')
     sections.append(_table(['Comparison', 'Flexible difference, pp [95%]', 'Preservation test', 'Gains / losses', 'Exact McNemar p', 'Strict difference, pp [95%]'],
         [(c['id'], _interval(c['behaviour']['flexible']['difference'], 100), c['behaviour']['flexible']['noninferiority'],
@@ -96,6 +101,14 @@ def render(config, result, directory):
           f"{100*c['behaviour']['length']['shorter_share']:.1f}%", c['behaviour']['length']['reference_cap_count'],
           c['behaviour']['length']['edited_cap_count']) for c in result['contrasts']]))
     sections.append('<h2>Fixed-context KL and effective writes</h2><p>KL is full-vocabulary KL(variant || untuned), in nats, averaged within each document before paired bootstrap. Token-weighted means remain separately available. Direct module-write sums were collected in the same runtime; module differences are descriptive, not independent-subject tests.</p>')
+    resolution=result.get('numerical_resolution')
+    if resolution:
+        floor=resolution['observed_max_chunk_disagreement_nats']
+        sections.append('<p>Observed maximum chunk disagreement: '+('not measured' if floor is None else f'{floor:.6g} nats')+
+            '. This is an empirical numerical-resolution diagnostic, not statistical uncertainty or a universal bound.</p>')
+        sections.append(_table(['Corpus','View','Variant pair','Smallest absolute token-mean KL difference','Observed chunk disagreement'],
+            [(r['corpus'],r['view'],r['left']+' / '+r['right'],r['absolute_difference'],floor)
+             for r in resolution['smallest_token_mean_variant_differences']]))
     for corpus, view in sorted({(v['corpus'], v['view']) for c in result['contrasts'] for v in c['drift']}):
         sections.append(f'<h3>{html.escape(corpus)} / {html.escape(view)}</h3><img src="plots/kl-{corpus}-{view}.svg" alt="Paired fixed-context KL changes">')
     sections.append('<p>KL is a distributional change on supplied contexts; lower KL alone is not demonstrated behavioral improvement. <a href="results/writes.csv">Module write differences</a> preserve all module identities.</p>')

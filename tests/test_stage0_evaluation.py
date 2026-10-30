@@ -320,18 +320,18 @@ def test_loaded_adapter_factors_must_equal_the_saved_payload(monkeypatch,tmp_pat
         def detach(self):return self
         def cpu(self):return self
         def numpy(self):return self.value
-    actual={k:Tensor(v.copy()) for k,v in expected.items()};selected=[]
-    def state(model,adapter_name):selected.append(adapter_name);return actual
-    monkeypatch.setitem(sys.modules,'peft',SimpleNamespace(get_peft_model_state_dict=state))
+    actual={k:Tensor(v.copy()) for k,v in expected.items()}
+    model=SimpleNamespace(state_dict=lambda: {k[:-len('.weight')]+'.V4.weight':v
+                                             for k,v in actual.items()})
     monkeypatch.setitem(sys.modules,'safetensors.numpy',SimpleNamespace(load_file=lambda path:expected))
-    result=verify_loaded_adapter(object(),'V4',tmp_path)
-    assert selected==['V4'] and result==dict(variant='V4',tensor_count=2,exact_payload_match=True)
+    result=verify_loaded_adapter(model,'V4',tmp_path)
+    assert result==dict(variant='V4',tensor_count=2,exact_payload_match=True)
     actual['linear.lora_B.weight'].value[0,0]=0
     with pytest.raises(ValueError,match='loaded adapter'):
-        verify_loaded_adapter(object(),'V4',tmp_path)
+        verify_loaded_adapter(model,'V4',tmp_path)
     del actual['linear.lora_B.weight']
     with pytest.raises(ValueError,match='mapping'):
-        verify_loaded_adapter(object(),'V4',tmp_path)
+        verify_loaded_adapter(model,'V4',tmp_path)
 
 
 def test_status_reconciles_counts_if_collection_finishes_during_inspection(monkeypatch,tmp_path):

@@ -17,10 +17,13 @@ class EvaluationDependencies(QualificationDependencies):
 def verify_loaded_adapter(model,variant,directory):
     """Check every actual PEFT factor against its saved FP32 tensor payload."""
     import numpy as np
-    from peft import get_peft_model_state_dict
     from safetensors.numpy import load_file
     expected=load_file(str(directory/'adapter_model.safetensors'))
-    actual=get_peft_model_state_dict(model,adapter_name=variant)
+    # PEFT0.18's export selects by substring: V4 also selects V4-input.
+    # Select the exact final LoRA adapter segment, then remove only that segment.
+    suffix=f'.{variant}.weight'
+    actual={name[:-len(suffix)]+'.weight':value for name,value in model.state_dict().items()
+            if any(name.endswith(f'.{factor}{suffix}') for factor in ['lora_A','lora_B'])}
     if set(actual)!=set(expected):
         raise ValueError(f'Actual adapter mapping differs from saved payload: {variant}')
     for name,value in actual.items():

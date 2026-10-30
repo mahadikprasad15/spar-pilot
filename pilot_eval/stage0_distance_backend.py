@@ -1,6 +1,7 @@
 """One local untuned FP32 body forward per unique answer; bounded vocabulary head."""
 import numpy as np
 
+from pilot_eval.stage0_numeric import require_eager_attention
 from pilot_eval.stage0_rollout_backend import RolloutDependencies,RolloutEngine
 
 
@@ -13,6 +14,7 @@ class DistanceDependencies(RolloutDependencies):
 class DistanceEngine(RolloutEngine):
     def __init__(self,config,root):
         super().__init__(dict(config,generation_settings=dict(seed=42)),root)
+        require_eager_attention(self.backend.model)
         self.body=self.backend.model.model;self.head=self.backend.model.get_output_embeddings()
         vocabulary,width=self.head.weight.shape
         self.vocabulary_size=int(vocabulary)

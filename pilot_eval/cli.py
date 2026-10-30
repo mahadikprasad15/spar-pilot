@@ -189,6 +189,13 @@ def main(argv=None, *, dependencies=None):
             push.add_argument('--approval',type=Path);push.add_argument('--max-new-units',type=int);push.add_argument('--no-progress',action='store_true')
         if operation in ['freeze','predict']:push.add_argument('--review',type=Path,required=True)
         if operation=='recover-writer':push.add_argument('--owner-token',required=True);push.add_argument('--review-notes',required=True)
+    for operation in ['prepare','verify']:
+        cohort=commands.add_parser('stage0-cohort-'+operation,help='matched-128 historical cohort for E0.6a/E0.5 (CPU)')
+        cohort.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            cohort.add_argument('--audit',type=Path,required=True);cohort.add_argument('--baseline',type=Path,required=True)
+            cohort.add_argument('--weights-dir',type=Path,required=True);cohort.add_argument('--name',required=True)
+        else:cohort.add_argument('--config',type=Path,required=True)
     for operation in ['prepare','runtime','run','status','forecast','freeze','verify-measurement','report','verify','recover-writer']:
         distance=commands.add_parser('stage0-distance-'+operation,help='optional teacher-forced NLL/entropy measurement')
         distance.add_argument('--output-root',type=Path,required=True)
@@ -221,6 +228,19 @@ def main(argv=None, *, dependencies=None):
             rollout.add_argument('--owner-token',required=True)
             rollout.add_argument('--review-notes',required=True)
 
+    for operation in ['prepare','run','verify','status','approve','freeze']:
+        batch=commands.add_parser('stage0-batch-'+operation,help='saved generation batch agreement and bounded execution')
+        batch.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            batch.add_argument('--qualification',type=Path,required=True)
+            batch.add_argument('--profile',type=Path,required=True)
+            batch.add_argument('--name',required=True)
+            batch.add_argument('--batch-size',type=int,default=16)
+        else:batch.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            batch.add_argument('--approval',type=Path,required=True)
+            batch.add_argument('--max-new-units',type=int)
+        if operation in ['approve','freeze']:batch.add_argument('--review',type=Path,required=True)
     for operation in ['prepare','run','verify','status','recover-writer']:
         conditional=commands.add_parser('stage0-intruder-edits-'+operation,help='CPU conditional merged V6/V6c catalogues')
         conditional.add_argument('--output-root',type=Path,required=True)
@@ -255,6 +275,7 @@ def main(argv=None, *, dependencies=None):
             findings.add_argument('--evaluation',type=Path,required=True)
             findings.add_argument('--drift',type=Path,required=True)
             findings.add_argument('--name',required=True)
+            findings.add_argument('--registered-from',type=Path)
         else:findings.add_argument('--config',type=Path,required=True)
         if operation=='run':findings.add_argument('--max-new-units',type=int)
         if operation=='audit-prepare':
@@ -734,6 +755,12 @@ def main(argv=None, *, dependencies=None):
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['rows','modules','comparisons']}
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('stage0-cohort-'):
+            from pilot_eval import stage0_matched
+            if args.command=='stage0-cohort-prepare':
+                result=stage0_matched.prepare(args.audit,args.baseline,args.weights_dir,args.output_root,args.name,dependencies=dependencies)
+            else:result=stage0_matched.verify(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('stage0-distance-'):
             from pilot_eval import stage0_distance as workflow
             operation=args.command.removeprefix('stage0-distance-')
@@ -783,7 +810,8 @@ def main(argv=None, *, dependencies=None):
         elif args.command.startswith('stage0-findings-'):
             from pilot_eval import stage0_findings as workflow
             operation=args.command.removeprefix('stage0-findings-')
-            if operation=='prepare':result=workflow.prepare(args.evaluation,args.drift,args.output_root,args.name)
+            if operation=='prepare':result=workflow.prepare(args.evaluation,args.drift,args.output_root,args.name,
+                registered_from=args.registered_from)
             elif operation=='run':result=workflow.run(args.config,args.output_root,max_new_units=args.max_new_units)
             elif operation.startswith('audit-'):
                 from pilot_eval import stage0_findings_review as review
@@ -904,6 +932,14 @@ def main(argv=None, *, dependencies=None):
                 result = getattr(sampling_sft, operation)(args.config, args.output_root)
                 result = sampling_sft.console_summary(result)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
+        elif args.command.startswith('stage0-batch-'):
+            from pilot_eval.stage0_batching import prepare,run,verify,status,approve,freeze
+            operation=args.command.removeprefix('stage0-batch-')
+            if operation=='prepare':result=prepare(args.qualification,args.profile,args.output_root,args.name,batch_size=args.batch_size)
+            elif operation=='run':result=run(args.config,args.output_root,args.approval,dependencies=dependencies,max_new_units=args.max_new_units)
+            elif operation in ['approve','freeze']:result=(approve if operation=='approve' else freeze)(args.config,args.output_root,args.review)
+            else:result=(verify if operation=='verify' else status)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('stage0-drift-'):
             from pilot_eval.stage0_drift import prepare,run,verify,status,recover_writer
             operation=args.command.removeprefix('stage0-drift-')

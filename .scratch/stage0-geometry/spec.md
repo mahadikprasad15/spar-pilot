@@ -648,3 +648,35 @@ approximation valid without a separate criterion.
 Proposed follow-up only; do not implement or execute here: exactly match
 GRPO64's parameter size by rescaling SFT64 as W0+c*b*aᵀ, with
 c=||ΔW_GRPO64||/||ΔW_SFT64||, then measure KL under a separately approved plan.
+
+### Matched-128 E0.6a/E0.5 amendment approved 29 October 2026
+
+R0 (384 missing questions × 8 draws) is deferred for cost. E0.6a and E0.5 run on the
+128 training questions whose original untuned eight-draw groups exist, matched across
+every dataset. The historical groups are loaded and verified by the existing R0 source
+audit (`read_sources`). The cohort rule, seed-42 selection, masks, losses, batch size 8,
+statistics and every existing gate are unchanged. All outputs carry
+`cohort: matched-128-historical`. A later R0 run supersedes them through the unchanged
+512 path. The matched results remain a separately named product.
+
+- Gold is scored on the matched 128 only.
+- own_all excess-surprise gate stays ±0.02 nats/token. Its premise differs: samples were
+  drawn on the Pilot 4 runtime and are scored in a new session with the same audited
+  FP32 weights. The difference is recorded. A failure is a documented incompatibility,
+  never a reason to widen the gate.
+- E0.6a scoring and E0.5 gradients freeze their own first GPU session. Later attempts
+  must match it in every runtime field except the code commit, which is recorded per
+  sealed unit. The sampling runtime is retained as provenance.
+- E0.5 consistency is reported beside its pure-noise reference 1/√N, where N is the
+  number of full batches for that objective.
+- E0.5 reconstruction gate (pre-registered before any real run): the norm of
+  (GPU FP32 gradient − FP64 hook reconstruction) must not exceed
+  max(1e-5·‖reconstruction‖, ‖B‖). B is the a-priori FP32 bound per component:
+  γ_n·Σ_t|δ_t||c_t| + γ_d·Σ_t|δ_t|·Σ_i|a_i x_ti|, with γ_k = k·u/(1−k·u), u = 2⁻²⁴,
+  n = scored tokens plus sequences in the batch, and d the module input width. Both the
+  legacy relative error and the bound are recorded per module.
+- Cross-machine verification records the NumPy version and compares recomputed floats
+  to relative 1e-12, as for fixed-context drift.
+- Sampling-SFT datasets are a later, separately named extension.
+- E0.2/E0.3 have not been viewed. Order: E0.5 run → predictions frozen → E0.2/E0.3
+  reveal.
