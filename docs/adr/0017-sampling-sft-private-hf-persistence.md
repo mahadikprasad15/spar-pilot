@@ -19,3 +19,11 @@ Failures retain evidence and require operator attention within the existing
 budget; no GPU provisioning, deletion, budget increase or scientific scope
 expansion is authorized by adding this transport. Full later analyses remain
 separate consumers of the frozen sample/adapters bundle.
+
+
+Resilience follow-up approved2026-10-30: retry only transient acknowledgement
+transport errors with bounded backoff and persisted events. Start the ack clock
+after upload, cap it by remaining total allocation, and interrupt stalled HF calls
+at that bound. Forecast allowance from compressed/unpacked size and measured
+rates; preflight disk capacity on artifact/cache/destination filesystems. Existing
+independent-copy, no-delete and hard-budget policies remain unchanged.

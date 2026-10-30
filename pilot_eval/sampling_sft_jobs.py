@@ -266,33 +266,50 @@ def confirm(path,output_root,*,provider=None):
         return status(path,output_root)
 
 
+def acknowledgement_remaining(*,now,ack_started,wait,total_remaining):
+    return max(0.,min(float(wait)-(now-ack_started),float(total_remaining)))
+
+
 def execute(path,output_root,network_root,download_receipt,approval_path=None,max_wait_seconds=0,*,provider=None,hf_repo=None,hf_client=None):
     """Run script path: work, network export, bounded external-ack wait, own stop."""
     wait=budget.number(max_wait_seconds)
     root,job,directory=_load(path,output_root)
     maximum=(budget.number(job['request']['estimated_hours'],True)*3600*budget.number('1.5')) if job['request']['mode']=='runpod' else 0
     if wait>maximum:raise ValueError('Download-ack wait exceeds this job’s bounded estimate.')
-    began=time.monotonic()
     run(path,root,approval_path,provider=provider)
     network=directory/'network-receipt.json'
     export(path,root,network_root,'network',network,provider=provider)
+    def total_remaining():
+        if job['request']['mode']!='runpod':return float('inf')
+        launch=json.loads((directory/'launch.json').read_text())
+        age=(datetime.now(timezone.utc)-datetime.fromisoformat(launch['started_at'])).total_seconds()
+        return float(maximum)-age
     archive=None
     if hf_repo:
         from pilot_eval import sampling_sft_hf as hf
-        archive=hf.upload(directory/'export-manifest.json',root,repo=hf_repo,client=hf_client)
+        remaining=total_remaining()
+        if remaining<=0:raise ValueError('Total job allocation exhausted before HF transfer; reconcile budget.')
+        with hf.transfer_deadline(remaining,job['request']['mode']=='runpod'):
+            archive=hf.upload(directory/'export-manifest.json',root,repo=hf_repo,client=hf_client)
         print('HF archive: '+json.dumps(archive),flush=True)
+    ack_started=time.monotonic();delay=2.
+    def retry_event(event):
+        with run_lock(directory):_event(directory,job,**event)
+        print(json.dumps(event),flush=True)
     while not Path(download_receipt).is_file():
-        if archive and hf.receive_ack(archive,download_receipt,client=hf_client):break
-        remaining=float(wait)-(time.monotonic()-began)
-        if job['request']['mode']=='runpod':
-            launch=json.loads((directory/'launch.json').read_text())
-            age=(datetime.now(timezone.utc)-datetime.fromisoformat(launch['started_at'])).total_seconds()
-            remaining=min(remaining,float(maximum)-age)
+        remaining=acknowledgement_remaining(now=time.monotonic(),ack_started=ack_started,
+            wait=wait,total_remaining=total_remaining())
+        # Allow one immediate nonblocking receipt poll for offline/no-wait handoffs.
+        if archive and (remaining>0 or job['request']['mode']=='noop'):
+            with hf.transfer_deadline(remaining,job['request']['mode']=='runpod'):
+                if hf.receive_ack(archive,download_receipt,client=hf_client,on_retry=retry_event):break
+        remaining=acknowledgement_remaining(now=time.monotonic(),ack_started=ack_started,
+            wait=wait,total_remaining=total_remaining())
         if remaining<=0:
             with run_lock(directory):
-                _event(directory,job,'export-blocked',reason='External download receipt missing; reservation retained; operator action required.')
+                _event(directory,job,'export-blocked',reason='External download receipt missing; acknowledgement or total job deadline reached; operator action required.')
             raise ValueError('Downloaded-copy verification is missing. No stop/delete attempted; inspect immediately, costs remain reserved.')
-        print('Waiting for external downloaded-copy receipt; not a completed job.',flush=True)
-        time.sleep(min(10,remaining))
+        print(f'Waiting for external downloaded-copy receipt; {remaining:.1f}s left; not a completed job.',flush=True)
+        time.sleep(min(delay,remaining));delay=min(delay*2,30.)
     if archive:hf.checked_ack(archive,json.loads(Path(download_receipt).read_text()))
     return finish(path,root,network,download_receipt,provider=provider)

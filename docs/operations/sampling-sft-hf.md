@@ -26,12 +26,15 @@ python scripts/run_sampling_sft_job.py \
   --job "$JOB_PLAN" --output-root "$ARTIFACT_ROOT" \
   --approval "$PAID_APPROVAL" --network-root "$NETWORK_ARTIFACT_ROOT" \
   --download-receipt "$ARTIFACT_ROOT/notebook/downloaded-JOB.json" \
-  --max-wait-seconds 600 \
+  --max-wait-seconds "$ACK_WAIT_SECONDS" \
   --hf-repo Prasadmahadik/spar-sampling-sft-artifacts
 ```
 
-Choose a job-specific receipt name. Wait must fit the existing reserved job
-bound; the actual launch age is checked while waiting. Work, export, upload,
+Choose a job-specific receipt name. The acknowledgement clock starts after
+network export and HF upload. It is capped by the remaining overall job
+allocation, measured from the recorded launch time; it never resets that budget.
+Choose ACK_WAIT_SECONDS using measured transfer/hash rates and bundle size,
+and include that allowance in the reservation before launch. Work, export, upload,
 setup and waiting all count toward the stage budget. Transfer errors preserve
 sealed work and prevent shutdown; they require prompt operator attention.
 Provider/network outages cannot be treated as confirmed stops or free time.
@@ -101,3 +104,41 @@ RunPod mounting, supported stop API behavior, independent-machine receipt flow,
 worker numerical settings, score agreement, exact sampling replay or throughput.
 Those remain real preflight checks before full paid generation. No GPU was
 provisioned by this implementation step.
+
+## Transfer resilience and sizing
+
+Temporary acknowledgement fetch failures (network timeouts/resets, HTTP429 and
+HTTP5xx) are logged as `hf-ack-retry` and polled again with2/4/8/16/30-second
+bounded backoff. Missing receipts are also polled. Authentication/permission,
+malformed acknowledgement and hash failures remain fatal. Each real transfer
+call is limited by the remaining allocation; expiry is distinct from an ordinary
+network timeout and cannot be retried. Nothing automatically enlarges a cap.
+
+Estimate the acknowledgement allowance using measured laptop throughput:
+
+```sh
+python -m pilot_eval.sampling_sft_hf forecast \
+  --upload-receipt "$PROFILE_UPLOAD_RECEIPT" \
+  --download-bytes-per-second "$MEASURED_DOWNLOAD_RATE" \
+  --verify-bytes-per-second "$MEASURED_HASH_RATE" \
+  --overhead-seconds 60
+```
+
+The forecast includes compressed download size, unpacked hash/read size, a1.5
+allowance factor and explicit overhead. It recommends a wait, not spending
+approval. Before the full bundle exists, scale measured profile sizes to the
+planned run conservatively and reserve the allowance. Recheck actual bundle
+size after upload; if existing budget headroom is insufficient, report and
+reconcile rather than silently extending the paid wait.
+
+Before bundling, the worker checks space for conservative tar/gzip overhead and
+both archive construction and readback. The real Hub cache filesystem is also
+checked. Restore checks destination/cache capacity before download and actual
+unpacked member sizes before extraction. These checks reduce predictable disk
+failures; concurrent processes can still consume space afterward.
+
+Use a fine-grained HF token restricted to this private dataset, supplied as a
+RunPod secret/environment variable. Anyone with Pod administrative access may
+inspect its environment; do not use a broad personal token. Revoke the dedicated
+token when the experiment is finished. Self-hashed receipts provide integrity
+and job binding, not cryptographic identity; trust the controller and repo writers.
