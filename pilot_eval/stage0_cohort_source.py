@@ -14,8 +14,11 @@ def load_cohort(path, root):
     from pilot_eval.stage0_rollout_results import verify as verify_rollouts
     verify_rollouts(path, root); rollout, source, training, _ = load_rollouts(path, root)
     read = lambda name: [json.loads(x) for x in (source / name).read_text().splitlines()]
+    datasets = json.loads((source / 'results/datasets.json').read_text())
+    # Gold rows follow the cohort's training order (datasets['gold']); stored file order may differ.
+    by_id = {r['id']: r for r in training}
     return dict(kind='r0', cohort='r0-512', plan_path=path, config=rollout, directory=source,
-        complete_path=source / 'complete.json', training=training, draws=read('results/rollouts.jsonl'),
-        datasets=json.loads((source / 'results/datasets.json').read_text()),
+        complete_path=source / 'complete.json', training=[by_id[i] for i in datasets['gold']], draws=read('results/rollouts.jsonl'),
+        datasets=datasets,
         special=json.loads((source / 'collection/inputs/special-tokens.json').read_text()),
         sampled_runtime=json.loads((path.parent / 'stage0.rollouts.execution.json').read_text())['runtime'])

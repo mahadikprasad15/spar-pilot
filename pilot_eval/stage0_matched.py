@@ -65,7 +65,9 @@ def prepare(audit_path, baseline_path, weights_dir, output_root, name, *, depend
     ids = {r['group_id'] for r in draws}
     if len(ids) != 128 or len(draws) != 1024:
         raise ValueError('Expected the 128 verified historical eight-draw groups.')
-    training = [r for r in source['training'] if r['id'] in ids]
+    # Gold rows follow the optimizer training order, like every derived membership; file order may differ.
+    by_id = {r['id']: r for r in source['training']}
+    training = [by_id[i] for i in source['training_order'] if i in ids]
     datasets = cohorts(draws, source['training_order'], selection_seed=42)
     directory = root / f'runs/stage0/{name}/cohort'; path = root / 'plans' / name / 'stage0.cohort.json'
     config = dict(protocol=PROTOCOL, schema_version=1, name=name, run_path=str(directory.relative_to(root)), cohort=COHORT,

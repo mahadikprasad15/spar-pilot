@@ -347,3 +347,18 @@ def test_every_standalone_export_names_its_cohort(push_ready):
         assert rows and all(r['cohort'] == label for r in rows), name
     page = (directory / 'endpoints.html').read_text()
     assert label in page and '128' in page
+
+
+def test_gold_rows_follow_training_order_when_file_order_differs(source, monkeypatch):
+    """Real Pilot data stores items in file order, not optimizer order."""
+    import pilot_eval.stage0_matched as matched_module
+    from test_stage0_distance import cmd
+    original = matched_module.read_sources
+    monkeypatch.setattr(matched_module, 'read_sources',
+                        lambda *a, **k: (lambda v: dict(v, training=list(reversed(v['training']))))(original(*a, **k)))
+    plan = matched(source)
+    cohort = json.loads(plan.read_text())
+    order = [i for i in cohort['training_order'] if i in set(cohort['question_ids'])]
+    assert cohort['question_ids'] == order
+    monkeypatch.setattr(matched_module, 'read_sources', original)
+    assert cmd(source, 'prepare', '--rollouts', plan, '--name', 'distance') == 0
