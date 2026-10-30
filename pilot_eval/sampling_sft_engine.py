@@ -1,7 +1,7 @@
 """Optional real engines for bounded qualification; imports stay behind job gates.
 
 Versioned vLLM adapter uses public token-in/token-out, prompt_logprobs and
-collective_rpc/apply_model APIs. No automatic installs, downloads or fallback.
+named collective_rpc worker-extension APIs. No automatic installs, downloads or fallback.
 """
 import importlib.metadata
 import json
@@ -51,6 +51,23 @@ def peak_memory(model):
     import torch
     torch.cuda.synchronize()
     return dict(allocated_bytes=torch.cuda.max_memory_allocated(),reserved_bytes=torch.cuda.max_memory_reserved())
+
+
+class SamplingSFTWorkerExtension:
+    """Imported by vLLM 0.11.1 inside its worker; RPC carries method names only.
+
+    Passing Python functions through apply_model requires insecure pickle
+    fallback in V1. This extension keeps that fallback disabled and accesses
+    the same resident model through the pinned worker's model_runner.
+    """
+    def sampling_sft_worker_evidence(self):
+        return worker_evidence(self.model_runner.model)
+
+    def sampling_sft_reset_memory(self):
+        return reset_memory(self.model_runner.model)
+
+    def sampling_sft_peak_memory(self):
+        return peak_memory(self.model_runner.model)
 
 
 class VLLMEngine:
@@ -108,8 +125,8 @@ class VLLMEngine:
 
     def clear_cache(self):self.llm.reset_prefix_cache()
 
-    def measurement_start(self):self.llm.apply_model(reset_memory)
-    def measurement_end(self):return self.llm.apply_model(peak_memory)
+    def measurement_start(self):self.llm.collective_rpc('sampling_sft_reset_memory')
+    def measurement_end(self):return self.llm.collective_rpc('sampling_sft_peak_memory')
 
 
 class HFOracle:
@@ -176,8 +193,9 @@ def open_engine(plan,root):
             trust_remote_code=False,tensor_parallel_size=1,quantization=None,enforce_eager=True,
             seed=0,max_model_len=r['max_model_len'],gpu_memory_utilization=r['gpu_memory_utilization'],
             enable_prefix_caching=r['prefix_caching'],max_num_seqs=r['max_num_seqs'],
-            max_num_batched_tokens=r['max_num_batched_tokens'],generation_config='vllm')
-        evidence=llm.apply_model(worker_evidence)
+            max_num_batched_tokens=r['max_num_batched_tokens'],generation_config='vllm',
+            worker_extension_cls='pilot_eval.sampling_sft_engine.SamplingSFTWorkerExtension')
+        evidence=llm.collective_rpc('sampling_sft_worker_evidence')
         if len(evidence)!=1:raise ValueError('One actual inference worker required.')
         evidence=evidence[0];check_worker(evidence,r)
         engine=VLLMEngine(llm,r)

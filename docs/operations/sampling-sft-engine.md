@@ -86,6 +86,21 @@ are used directly. The code makes no automatic installation or precision
 fallback. A different engine release requires a reviewed adapter and new plan.
 TF32 flags and FP32 weight dtypes are checked in the actual inference worker.
 
+Worker inspection and peak-memory measurements use the importable
+`pilot_eval.sampling_sft_engine.SamplingSFTWorkerExtension`, registered through
+`worker_extension_cls`. Each `collective_rpc` carries a method name and returns
+small plain-data results. Do not replace these calls with `apply_model(function)`:
+vLLM V1's default serializer rejects function payloads. The first L40S smoke
+loaded the model but failed at that boundary before producing responses.
+`VLLM_ALLOW_INSECURE_SERIALIZATION` is not enabled as a workaround.
+
+After this repair, prepare a new instrument/job identity: the code fingerprint
+changes, and the failed attempt remains separate. CPU regression tests cover
+extension registration, named-message transport, and dispatch to the resident
+worker model. They do not replace a new real four-problem smoke. Reconcile the
+previous job against the authoritative budget ledger on the network volume
+before reserving another paid attempt.
+
 ## Run only inside an approved budgeted job
 
 Use Ticket 02's request → reservation/approval → execution → export → stop
