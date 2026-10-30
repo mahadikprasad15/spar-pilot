@@ -34,7 +34,7 @@ configuration. For example:
 
 ```json
 {
-  "sft": "plans/pilot2-sft-fp32-l4-batch2-v1/sft.config.json",
+  "sft": "plans/pilot3-inputs-v1/activation.prepared.json",
   "grpo": "plans/pilot4-grpo-fp32-v1-writes-v1/activation.prepared.json"
 }
 ```
@@ -147,3 +147,10 @@ are preserved. No report or selection receipt launches training.
 [Endpoint training runbook](../operations/sampling-sft-training.md): explicit k0/k5 plans, fresh paid-job gates, original step boundaries, required checkpoints and optimizer-state recovery. No paid execution is implied by implementation.
 
 [Final handoff and execution map](../operations/sampling-sft-handoff.md): release pin, CPU/GPU stages, a hashed raw-artifact inventory and separate partial/real-completion statuses. Deferred analyses remain explicit.
+
+The gold selector follows the saved Pilot 3 source to the measured batch-8 SFT
+run; source audit verifies the original checkpoint identities and training order.
+Generation stops on either configured stop token, but training eligibility also
+requires gold's audited end token. Correct answers with another ending are saved
+unchanged, marked `wrong-end-token`, and retried within the existing limit.
+Human extraction overrides cannot waive this requirement.

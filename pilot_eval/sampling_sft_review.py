@@ -168,6 +168,8 @@ def eligibility_override(attempt,label,problem):
     if label['status']=='pending':raise ValueError('Required human review is unfinished.')
     if label['status'] not in ['numeric','absent','ambiguous']:raise ValueError('Unknown human decision.')
     if label['status']!='numeric':return False
+    ids=attempt['response_ids'];eos=problem['gold_end_token_id']
+    if not ids or ids[-1]!=eos or ids.count(eos)!=1:return False
     if not label['evidence'].strip() or label['evidence'] not in attempt['text']:
         raise ValueError('Human transcription needs response evidence; gold cannot supply missing text.')
     return _numeric_value(label['answer'])==_numeric_value(problem['gold'].rsplit('####',1)[-1].strip())

@@ -186,3 +186,21 @@ saved max_length is a data-derived maximum, not a truncation rule for new data.
 Optimizer, masks and numerical settings still match gold. Verify the pinned
 model context before loading weights; do not truncate, omit or rewrite long
 targets. Record gold and arm-specific maxima separately.
+
+### Gold reference and ending eligibility amendment — approved 2026-10-30
+
+Select gold through `plans/pilot3-inputs-v1/activation.prepared.json`, following its
+explicit source reference. Saved Pilot 4 write evidence resolves this to
+`pilot2-sft-fp32-l4-batch8-v1`; the execution source audit must still verify the
+original payloads, initialization and saved training order. Do not infer training
+batch size from the run name.
+
+Generation continues to stop on both `<|im_end|>` and `<|endoftext|>`. Freeze the
+required training end token from the audited gold prompt-mask contract in each
+problem. Training eligibility requires a finished answer, exactly one occurrence
+of that token at the final position, and automatic correctness or a separately
+confirmed human extraction override. Human review cannot waive the ending rule.
+Keep correctness and raw response IDs unchanged. Record `wrong-end-token`
+separately from mathematical failure and use the existing bounded model retries.
+Training export retains its independent ending check. Changed plans require new
+names; never rewrite old manifests or completion seals.

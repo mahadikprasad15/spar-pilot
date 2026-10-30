@@ -51,7 +51,8 @@ def prepare(pilot_path,output_root,name):
     _,rows,_=load_sft(root/audit['training']['config_path'],root)
     problems=[dict(problem_id=i,source_id=row['id'],gold=row['gold'],
         user_message=gsm8k_messages(row['question'])[0]['content'],
-        scorer_prompt_ids=row['input_ids'][:row['prompt_tokens']]) for i,row in enumerate(rows)]
+        scorer_prompt_ids=row['input_ids'][:row['prompt_tokens']],
+        gold_end_token_id=audit['training']['prompt_mask_contract']['eos_token_id']) for i,row in enumerate(rows)]
     parents={str(inside(root,pilot_path).relative_to(root)):file_hash(inside(root,pilot_path))}
     report=observe(root,directory/'report.json',parents)
     settings={**parent['settings'],'mode':'generation','problem_ids':list(range(512))}
@@ -62,7 +63,7 @@ def prepare(pilot_path,output_root,name):
         retry_indices=[0,1,2,3],retry_data_seeds=[retry_seed(i) for i in range(4)],
         algorithm_hash=_hash(source.recipe()),runtime_hash=parent['runtime_hash'],
         implementation=implementation(),parents=parents,run_path=str(folder.relative_to(root)),
-        baseline='deferred',eligibility='finished and automatic flexible-v3 correct; human review separate',training_allowed=False)
+        baseline='deferred',eligibility='finished, gold ending, and automatic flexible-v3 correct; human review cannot override ending',training_allowed=False)
     path=root/'plans'/name/'sampling-sft.generation.json'
     source.frozen(path,plan);source.frozen(folder/'meta/run_manifest.json',dict(config_sha256=_hash(plan)))
     budget.initialize(root/plan['source_plan'],root)
@@ -164,13 +165,14 @@ def attempt(k,index,state,problem):
     text=state.get('text','')
     flexible=score_gsm8k_flexible_v3(text,problem['gold'],capped=end!='finished')
     strict=score_gsm8k(text,problem['gold'],capped=end!='finished')['strict']
-    eligible=end=='finished' and flexible['correct']
+    ending_ok=bool(ids) and ids[-1]==problem['gold_end_token_id'] and ids.count(problem['gold_end_token_id'])==1
+    eligible=end=='finished' and ending_ok and flexible['correct']
     return dict(attempt_id=f'k{k}:p{problem["problem_id"]}:r{index}',k=k,
         problem_id=problem['problem_id'],source_id=problem['source_id'],retry_index=index,data_seed=retry_seed(index),
         end_state=end,response_ids=ids,text=text,mean_logprob=state['mean_logprob'],blocks=state['blocks'],
         finish=dict(stop_token_id=ids[-1] if end=='finished' else None,tokens=len(ids),capped=end=='capped'),
         automatic_flexible_v3=flexible,automatic_strict=strict,eligible=eligible,
-        rejection_reason=None if eligible else end if end!='finished' else 'automatic-answer-incorrect-or-unextractable',
+        rejection_reason=None if eligible else end if end!='finished' else 'wrong-end-token' if not ending_ok else 'automatic-answer-incorrect-or-unextractable',
         eligibility_scope='automatic-only; human overrides are a separate product')
 
 
