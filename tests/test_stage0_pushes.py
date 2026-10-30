@@ -259,3 +259,22 @@ def test_cpu_weight_inventory_is_compatible_with_real_cuda_execution():
     assert matching_execution_kinds('synthetic-cpu-fixture','synthetic-cpu-fixture')
     assert not matching_execution_kinds('synthetic-cpu-fixture','real-cuda')
     assert not matching_execution_kinds('cpu-local-pinned-weights','synthetic-cpu-fixture')
+
+
+def test_profile_and_production_are_allowed_beyond_twenty_units(ready):
+    """ADR 0017: the cumulative cap is removed; reservations and time caps remain."""
+    from test_stage0_workflow import write_json
+    from test_stage0_rollouts import usage
+    from pilot_eval.training import file_hash
+    root=ready;plan=root/'plans/pushes/stage0.pushes.json';directory=root/'runs/stage0/pushes/e05_pushes'
+    usage(root,'past-twenty',21.)
+    approval=root/'push-budget.json';write_json(approval,dict(reviewer='test',notes='bounded gradient fixture',session_id='session-a',source_reviewed=True,max_units_per_hour=1.,max_seconds=600.))
+    assert cmd(root,'run','--config',plan,'--approval',approval,dependencies=Gradients())==0
+    usage(root,'past-twenty-profiled',21.5)
+    assert cmd(root,'forecast','--config',plan)==0
+    review=root/'push-review.json';write_json(review,dict(reviewer='test',notes='production',session_id='session-a',source_reviewed=True,
+        max_units_per_hour=1.,max_seconds=json.loads((directory/'results/forecast.json').read_text())['conservative_total_seconds']+600,
+        forecast_sha256=file_hash(directory/'results/forecast.json')))
+    assert cmd(root,'freeze','--config',plan,'--review',review)==0
+    assert cmd(root,'run','--config',plan,dependencies=Gradients())==0
+    assert cmd(root,'verify-measurement','--config',plan)==0

@@ -14,6 +14,7 @@ from pilot_eval.stage0_sources import factors, inside
 from pilot_eval.stage0_spectral import _load, _verify_cache
 from pilot_eval.stage0_cohort_source import load_cohort
 from pilot_eval.stage0_numeric import dependency_fingerprint
+from pilot_eval.stage0_job_budget import POLICY as BUDGET_POLICY
 from pilot_eval.stage0_workflow import _writer, _state, _verify_parents
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash, _save_frozen
@@ -105,7 +106,7 @@ def prepare(spectral_path,rollouts_path,output_root,name,*,context_chunk=16):
         primary='batch mean push=-gradient; with and without final partial; consistency excludes partial',
         secondary='token-weighted pooled push',comparison='same A0 hash only; direction only across objectives',
         endpoint='orient paired a64,b64 so a64 dot A0>0; zero dot undefined; report flips',
-        cohorts=dict(eligible_questions=len(datasets['own_correct_one']),grpo_questions=len(training),dropped=len(datasets['dropped'])),budget_ceiling_units=20)
+        cohorts=dict(eligible_questions=len(datasets['own_correct_one']),grpo_questions=len(training),dropped=len(datasets['dropped'])),budget_ceiling_units=None,budget_policy=BUDGET_POLICY)
     with _writer(directory):
         _save_frozen(path,config);_save_frozen(directory/'config.json',config)
         _jsonl(directory/'inputs/batches.jsonl',units);_save_frozen(directory/'inputs/initialization-audit.json',config['initialization_audit'])

@@ -10,8 +10,8 @@ from pilot_eval.run import _write_json
 from pilot_eval.sft import safe_name
 from pilot_eval.stage0_sources import inside
 from pilot_eval.stage0_workflow import _writer,_state,_now,budget_status
-from pilot_eval.stage0_evaluation import _jsonl,_reservation,_attempt_timing,_recover_owner
-from pilot_eval.stage0_budget import reserve
+from pilot_eval.stage0_evaluation import _jsonl,_attempt_timing,_recover_owner
+from pilot_eval.stage0_job_budget import POLICY as BUDGET_POLICY, reservation as _job_reservation, reserve
 from pilot_eval.stage0_qualification_backend import deadline_guard
 from pilot_eval.stage0_cohort_source import load_cohort
 from pilot_eval.stage0_numeric import dependency_fingerprint, environment as _environment
@@ -47,7 +47,7 @@ def prepare(rollouts_path,output_root,name,*,context_chunk=16,workspace_bytes=53
         unique_answer_ids=[a['answer_id'] for a in answers],answers_sha256=_hash(answers),memberships_sha256=_hash(memberships),
         mask='saved SFT prompt masked; gold through supervised EOS; sampled generated IDs including observed EOS, no artificial EOS on cap',
         units='nats per answer token',primary='nll',excess_surprise='nll minus model entropy; descriptive, not KL',
-        rank='1 + vocabulary logits strictly greater than target; ties share rank',position_windows='disjoint first32/middle/last32; first32 precedence on answers shorter than64',own_all_gate=.02,budget_ceiling_units=20,
+        rank='1 + vocabulary logits strictly greater than target; ties share rank',position_windows='disjoint first32/middle/last32; first32 precedence on answers shorter than64',own_all_gate=.02,budget_ceiling_units=None,budget_policy=BUDGET_POLICY,
         scored_eos_token_id=eos,answer_weighted_sensitivity=True,conventions_approved='user 2026-10-27; full padded vocabulary, disjoint windows, token primary and answer sensitivity',
         statistics=dict(draws=10000,seed=42,percentiles=[2.5,97.5],unit='whole problem',weighting='ratio of summed token surprise to summed token count'),
         premise=dict(sampled_distribution='HF temperature1, topk0, topp1',score_model='identical audited untuned weights',
@@ -132,7 +132,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         if not execution_path.exists() and max_new_units!=1:
             raise ValueError('Before production, run one bounded answer, inspect its forecast and freeze a separately reviewed measured budget.')
         if approval_path is None and not (directory/'meta/active-reservation.json').exists() and not execution_path.exists():raise ValueError('Approve a separately bounded scoring allocation first.')
-        reservation,remaining=_reservation(config,execution,directory,root,info,approval_path)
+        reservation,remaining=_job_reservation(config,execution,directory,root,info,approval_path,_attempt_timing)
         attempt=directory/'attempts'/uuid.uuid4().hex
         _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],remaining_seconds=remaining,started_at=_now()))
         started=time.monotonic();engine=None;new=0

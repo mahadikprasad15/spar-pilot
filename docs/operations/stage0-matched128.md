@@ -50,7 +50,7 @@ The audit hashes the pinned weights, so this takes a while on Drive.
 AUDIT_RESULT = ARTIFACT_ROOT / json.loads(PLAN.read_text())['run_path'] / 'results' / 'source-audit.json'
 revision = json.loads(AUDIT_RESULT.read_text())['sources']['sft']['identity']['model_revision']
 WEIGHTS_DIR = ARTIFACT_ROOT / 'inputs' / 'models' / revision
-COHORT_NAME = STAGE0_NAME + '-matched128-cohort-v1'
+COHORT_NAME = STAGE0_NAME + '-matched128-cohort-v2'
 COHORT_PLAN = ARTIFACT_ROOT / 'plans' / COHORT_NAME / 'stage0.cohort.json'
 run_stage0('cohort-prepare', '--audit', PLAN, '--baseline', BASELINE, '--weights-dir', WEIGHTS_DIR, '--name', COHORT_NAME)
 run_stage0('cohort-verify', '--config', COHORT_PLAN)
@@ -60,9 +60,9 @@ run_stage0('cohort-verify', '--config', COHORT_PLAN)
 
 ```python
 SPECTRAL_PLAN = ARTIFACT_ROOT / 'plans' / (STAGE0_NAME + '-spectral-v1') / 'stage0.spectral.json'
-DISTANCE_NAME = STAGE0_NAME + '-matched128-distance-v1'
+DISTANCE_NAME = STAGE0_NAME + '-matched128-distance-v2'
 DISTANCE_PLAN = ARTIFACT_ROOT / 'plans' / DISTANCE_NAME / 'stage0.distance.json'
-PUSH_NAME = STAGE0_NAME + '-matched128-pushes-v1'
+PUSH_NAME = STAGE0_NAME + '-matched128-pushes-v2'
 PUSH_PLAN = ARTIFACT_ROOT / 'plans' / PUSH_NAME / 'stage0.pushes.json'
 run_stage0('distance-prepare', '--rollouts', COHORT_PLAN, '--name', DISTANCE_NAME)
 run_stage0('pushes-prepare', '--spectral', SPECTRAL_PLAN, '--rollouts', COHORT_PLAN, '--name', PUSH_NAME)
@@ -74,6 +74,10 @@ print('distance answers:', len(d['unique_answer_ids']), '| push batches:', len(p
 Release the CPU runtime. GPU steps follow.
 
 ## GPU runtime: one session for both measurements
+
+There is no cumulative Stage 0 cap for these two jobs (ADR 0017). Every reading still goes
+in the ledger, and each job is still profiled, forecast and frozen with a wall-time limit.
+The `-v1` distance and push plans are superseded by `-v2`; they measured nothing.
 
 Run GPU notebook sections 1–4 first: setup, the dependency check and status. Then define a
 helper for usage readings. Every reading is the current cumulative Stage 0 total from

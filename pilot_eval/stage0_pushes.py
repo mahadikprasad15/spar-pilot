@@ -11,9 +11,9 @@ from pilot_eval.stage0_push_plan import load,prepare
 from pilot_eval.stage0_push_math import instrument_check, reconstruction_allowance
 from pilot_eval.stage0_numeric import agrees, environment as _environment
 from pilot_eval.stage0_sources import inside,factors
-from pilot_eval.stage0_evaluation import _reservation,_attempt_timing,_recover_owner
+from pilot_eval.stage0_evaluation import _attempt_timing,_recover_owner
 from pilot_eval.stage0_workflow import _writer,_state,_now,budget_status
-from pilot_eval.stage0_budget import reserve
+from pilot_eval.stage0_job_budget import reservation as _job_reservation, reserve
 from pilot_eval.stage0_qualification_backend import deadline_guard
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash,_save_frozen
@@ -112,7 +112,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         if not pending:return dict(state='profile-complete',production_frozen=False,completed=done(),total=len(units))
         if approval_path is None and not production and not (directory/'meta/active-reservation.json').exists():
             raise ValueError('Approve a separately bounded initial-gradient profile allocation first.')
-        reservation,remaining=_reservation(config,execution,directory,root,info,approval_path)
+        reservation,remaining=_job_reservation(config,execution,directory,root,info,approval_path,_attempt_timing)
         if not (directory/'meta/runtime.json').exists():_save_frozen(directory/'meta/runtime.json',info)
         attempt=directory/'attempts'/uuid.uuid4().hex;_save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],started_at=_now(),phase='production' if production else 'profile',runtime_sha256=file_hash(directory/'meta/runtime.json')))
         start=time.monotonic();engine=None;new=0

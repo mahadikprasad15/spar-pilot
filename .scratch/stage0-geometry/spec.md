@@ -211,6 +211,9 @@ absence does not prevent a primary intervention report.
   diagnostics, references, controls, repeated work and supporting jobs. Stop and
   ask before exceeding it. Approval of the overall ceiling is not an instruction
   to spend it all or approval of an unmeasured production job.
+- 2026-10-30, ADR 0017: at the real reading of 21 units the user removed the
+  cumulative cap for the matched-128 E0.6a/E0.5 jobs. Their ledger, reservations
+  and per-job wall-time caps remain. Other capped jobs still stop at 20.
 - Maintain a durable append-only usage/accounting ledger with timestamps, observed
   unit readings, session identity, per-job measured seconds, forecasts and budget
   approval references. Distinguish observed from estimated consumption; missing

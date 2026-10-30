@@ -153,10 +153,13 @@ def test_measured_scoring_freeze_required_before_unbounded_production(ready):
 def test_sampling_session_and_budget_are_checked_before_scoring(ready):
     root=ready;plan=root/'plans/distance/stage0.distance.json';engine=Scores(session='new-session')
     assert cmd(root,'run','--config',plan,'--approval',approval(root),'--max-new-units',1,dependencies=engine)==1 and engine.loads==0
+    # ADR 0017: no cumulative cap; usage beyond 20 units is recorded, not refused.
     from test_stage0_rollouts import usage
-    usage(root,'ceiling',20.)
+    usage(root,'past-twenty',21.)
     engine=Scores()
-    assert cmd(root,'run','--config',plan,'--approval',approval(root),'--max-new-units',1,dependencies=engine)==1 and engine.loads==0
+    assert cmd(root,'run','--config',plan,'--approval',approval(root),'--max-new-units',1,dependencies=engine)==0 and engine.loads==1
+    from pilot_eval.stage0_budget import reservations
+    assert [r['starting_units'] for r in reservations(root).values() if r['state']=='active']==[21.]
 
 
 def test_scoring_failed_full_integrity_invalidates_sealed_answer(ready):
