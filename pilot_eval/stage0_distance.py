@@ -14,7 +14,7 @@ from pilot_eval.stage0_evaluation import _jsonl,_reservation,_attempt_timing,_re
 from pilot_eval.stage0_budget import reserve
 from pilot_eval.stage0_qualification_backend import deadline_guard
 from pilot_eval.stage0_cohort_source import load_cohort
-from pilot_eval.stage0_numeric import environment as _environment
+from pilot_eval.stage0_numeric import dependency_fingerprint, environment as _environment
 from pilot_eval.stage0_distance_math import prepare_answers,check_arrays
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash,_save_frozen
@@ -22,8 +22,9 @@ from pilot_eval.workflow import _hash,_save_frozen
 
 def implementation():
     folder=Path(__file__).parent
-    return {n:file_hash(folder/n) for n in ['stage0_distance.py','stage0_distance_math.py','stage0_distance_backend.py','stage0_distance_report.py',
-        'stage0_cohort_source.py','stage0_matched.py','stage0_numeric.py']}
+    # Whole numerical dependency chain, including the model loader (ADR 0016 review).
+    return dependency_fingerprint(['stage0_distance.py','stage0_distance_math.py','stage0_distance_backend.py','stage0_distance_report.py',
+        'stage0_cohort_source.py','stage0_matched.py','stage0_numeric.py','stage0_rollout_plan.py','stage0_rollout_results.py'],folder)
 
 
 def prepare(rollouts_path,output_root,name,*,context_chunk=16,workspace_bytes=536870912):

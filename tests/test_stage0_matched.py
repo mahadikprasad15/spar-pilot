@@ -107,6 +107,10 @@ def test_distance_on_matched_cohort_freezes_its_first_scoring_session(source):
     usage(source, 'scored', 4.05)
     assert cmd(source, 'report', '--config', dplan) == 0
     assert cmd(source, 'verify', '--config', dplan) == 0
+    results = json.loads((directory / 'results/results.json').read_text())
+    assert results['cohort'] == 'matched-128-historical'
+    assert any('selection' in s for s in results['limitations'])
+    assert 'matched-128-historical' in (directory / 'report.html').read_text()
 
 
 @pytest.fixture
@@ -159,3 +163,127 @@ def test_push_gradient_session_allows_only_a_recorded_code_release_change(push_r
     commits = [json.loads(p.read_text()).get('code_git_commit')
                for p in (push_ready / 'runs/stage0/pushes/e05_pushes/units').glob('*/metadata.json')]
     assert 'later' in commits
+
+
+# --- Review findings on 5c72c88 (Codex), ADR 0016 follow-up ---
+
+def _helper(kind):
+    from pathlib import Path
+    notebook = json.loads((Path(__file__).parents[1] / f'notebooks/stage-0-{kind}-colab.ipynb').read_text())
+    return next(''.join(c['source']) for c in notebook['cells'] if 'def run_stage0' in ''.join(c['source']))
+
+
+@pytest.mark.parametrize('kind', ['cpu', 'gpu'])
+def test_interrupted_notebook_helper_stops_and_reaps_its_worker(kind):
+    import signal, subprocess, types
+    source = _helper(kind)
+    start = source.index('def run_stage0'); end = source.find('\n\n', start)
+    events = []
+
+    class Worker:
+        returncode = None
+        def __init__(self, *args, **kwargs):
+            self.stdout = self._lines()
+        def _lines(self):
+            yield 'started\n'
+            raise KeyboardInterrupt
+        def send_signal(self, value): events.append(('signal', value))
+        def terminate(self): events.append(('terminate',))
+        def kill(self): events.append(('kill',))
+        def wait(self, timeout=None):
+            events.append(('wait', timeout))
+            if len([e for e in events if e[0] == 'wait']) < 3:
+                raise subprocess.TimeoutExpired('worker', timeout)
+            self.returncode = -9
+            return -9
+    fake = types.SimpleNamespace(Popen=Worker, PIPE=subprocess.PIPE, STDOUT=subprocess.STDOUT,
+                                 TimeoutExpired=subprocess.TimeoutExpired, CompletedProcess=subprocess.CompletedProcess)
+    namespace = dict(subprocess=fake, sys=__import__('sys'), signal=signal, ARTIFACT_ROOT='root', REPO_DIR='repo')
+    exec(source[start:end if end > 0 else None], namespace)
+    with pytest.raises(KeyboardInterrupt):
+        namespace['run_stage0']('status')
+    assert events[0] == ('signal', signal.SIGINT)
+    assert ('terminate',) in events and ('kill',) in events and events[-1][0] == 'wait'
+
+
+def test_fingerprints_cover_the_whole_numerical_dependency_chain(tmp_path):
+    from pilot_eval.stage0_numeric import dependency_fingerprint
+    package = tmp_path / 'pilot_eval'; package.mkdir()
+    (package / 'top.py').write_text('from pilot_eval.middle import f\n')
+    (package / 'middle.py').write_text('def f():\n    from pilot_eval import leaf\n')
+    (package / 'leaf.py').write_text('ATTENTION = "eager"\n')
+    before = dependency_fingerprint(['top.py'], package)
+    assert set(before) == {'top.py', 'middle.py', 'leaf.py'}
+    (package / 'leaf.py').write_text('ATTENTION = "sdpa"\n')
+    assert dependency_fingerprint(['top.py'], package) != before
+    from pilot_eval import stage0_distance, stage0_push_plan
+    for implementation in [stage0_distance.implementation(), stage0_push_plan.implementation()]:
+        assert {'stage0_qualification_backend.py', 'stage0_evaluation_backend.py', 'stage0_sources.py'} <= set(implementation)
+    assert 'stage0_rollout_backend.py' in stage0_distance.implementation()
+
+
+def test_loaded_model_must_actually_use_eager_attention():
+    from types import SimpleNamespace
+    from pilot_eval.stage0_numeric import require_eager_attention
+    require_eager_attention(SimpleNamespace(config=SimpleNamespace(_attn_implementation='eager')))
+    with pytest.raises(ValueError, match='eager'):
+        require_eager_attention(SimpleNamespace(config=SimpleNamespace(_attn_implementation='sdpa')))
+
+
+def test_matched_reload_tolerates_cross_cpu_float_rounding_only(source, monkeypatch):
+    import pilot_eval.stage0_matched as matched_module
+    from pilot_eval.stage0_cohort_source import load_cohort
+    plan = matched(source)
+    original = matched_module.cohorts
+
+    def perturbed(scale):
+        def inner(*args, **kwargs):
+            value = original(*args, **kwargs)
+            key = next(k for k, v in value['neg_log_p_correct'].items() if v)
+            value['neg_log_p_correct'][key] *= 1 + scale
+            return value
+        return inner
+    monkeypatch.setattr(matched_module, 'cohorts', perturbed(2e-16))
+    load_cohort(plan, source)
+    monkeypatch.setattr(matched_module, 'cohorts', perturbed(1e-6))
+    with pytest.raises(ValueError, match='reconstruct'):
+        load_cohort(plan, source)
+
+
+def test_matched_cohort_rejects_an_incompatible_sampling_policy(source, monkeypatch):
+    import pilot_eval.stage0_matched as matched_module
+    original = matched_module.read_sources
+    monkeypatch.setattr(matched_module, 'read_sources', lambda *a, **k: dict(original(*a, **k), policy_matches=False))
+    from test_stage0_rollouts import Tiny
+    assert mcmd(source, 'prepare', '--audit', source / 'plans/audit/stage0.plan.json',
+                '--baseline', source / 'plans/baseline/baseline.config.json',
+                '--weights-dir', source / 'weights', '--name', 'matched', dependencies=Tiny()) == 1
+    assert not (source / 'plans/matched/stage0.cohort.json').exists()
+
+
+def test_push_report_describes_actual_counts_and_carries_the_cohort(push_ready):
+    from test_stage0_pushes import cmd, Gradients
+    from test_stage0_rollouts import usage
+    from test_stage0_workflow import write_json
+    root = push_ready; plan = root / 'plans/pushes/stage0.pushes.json'; directory = root / 'runs/stage0/pushes/e05_pushes'
+    config = json.loads(plan.read_text())
+    assert '512' not in config['grpo']
+    usage(root, 'push-start', 4.)
+    approval = root / 'push-budget.json'
+    write_json(approval, dict(reviewer='test', notes='bounded profile', session_id='session-a', source_reviewed=True,
+                              max_units_per_hour=1., max_seconds=600.))
+    engine = Gradients()
+    assert cmd(root, 'run', '--config', plan, '--approval', approval, dependencies=engine) == 0
+    assert cmd(root, 'forecast', '--config', plan) == 0
+    usage(root, 'push-profiled', 4.01)
+    review = root / 'push-production.json'
+    write_json(review, dict(reviewer='test', notes='production', session_id='session-a', source_reviewed=True,
+        max_units_per_hour=1., max_seconds=6000., forecast_sha256=file_hash(directory / 'results/forecast.json')))
+    assert cmd(root, 'freeze', '--config', plan, '--review', review) == 0
+    assert cmd(root, 'run', '--config', plan, '--no-progress', dependencies=engine) == 0
+    assert cmd(root, 'report', '--config', plan) == 0
+    summary = json.loads((directory / 'results/summary.json').read_text())
+    assert summary['cohort'] == 'matched-128-historical'
+    page = (directory / 'report.html').read_text()
+    assert 'matched-128-historical' in page and '512' not in page and '128 questions' in page
+    assert all('512' not in c['scope'] for c in summary['comparisons'])

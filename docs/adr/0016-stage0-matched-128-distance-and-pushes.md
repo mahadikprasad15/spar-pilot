@@ -26,3 +26,25 @@ Limits: 128 questions, so intervals are wider than 512 would give. Historical sa
 were drawn on a different GPU from the one that scores them. E0.5 has about 16 GRPO
 batches and fewer SFT batches per a₀. The E0.5-to-geometry link stays confirmatory only
 while E0.2/E0.3 remain unviewed until the E0.5 predictions are frozen.
+
+## Review follow-up (29–30 October 2026, before any GPU run)
+
+An independent review of `5c72c88` found five gaps. All were fixed before use:
+
+- The notebook `run_stage0` now stops and reaps its worker on interrupt: SIGINT, then
+  terminate, then kill. A cancelled cell can no longer leave GPU work running or a writer
+  lock held.
+- E0.6a, E0.5 and the matched cohort fingerprint their whole transitive `pilot_eval`
+  import chain, including the model loader. The loaded model's attention implementation
+  is checked to be eager, rather than trusted from the declared runtime. A commit-only
+  difference can therefore no longer hide a numerical code change.
+- The matched cohort reload compares floats to relative 1e-12. IDs, order, memberships
+  and counts stay exact.
+- Cohort preparation rejects historical sampling whose settings differ from temperature 1,
+  top-k 0, top-p 1, cap 1024 and one question per group.
+- Reports derive question counts from the cohort and carry
+  `cohort: matched-128-historical`. E0.6a limitations state the gold-versus-own selection
+  effect: own_correct covers only questions with a correct sample.
+
+The files fingerprinted by the completed behavior, internals and findings products are
+unchanged.

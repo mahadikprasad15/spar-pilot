@@ -13,6 +13,7 @@ from pilot_eval.stage0_push_math import a0_hash
 from pilot_eval.stage0_sources import factors, inside
 from pilot_eval.stage0_spectral import _load, _verify_cache
 from pilot_eval.stage0_cohort_source import load_cohort
+from pilot_eval.stage0_numeric import dependency_fingerprint
 from pilot_eval.stage0_workflow import _writer, _state, _verify_parents
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash, _save_frozen
@@ -58,7 +59,10 @@ def batches(training,draws,datasets,cases):
 
 def implementation():
     folder=Path(__file__).parent
-    return {n:file_hash(folder/n) for n in ['stage0_push_plan.py','stage0_push_math.py','stage0_push_backend.py','stage0_pushes.py','stage0_push_report.py','grpo_algorithm.py','stage0_evaluation_backend.py','stage0_cohort_source.py','stage0_matched.py','stage0_numeric.py']}
+    # Whole numerical dependency chain, including the model loader (ADR 0016 review).
+    return dependency_fingerprint(['stage0_push_plan.py','stage0_push_math.py','stage0_push_backend.py','stage0_pushes.py','stage0_push_report.py',
+        'grpo_algorithm.py','stage0_evaluation_backend.py','stage0_cohort_source.py','stage0_matched.py','stage0_numeric.py',
+        'stage0_rollout_plan.py','stage0_rollout_results.py'],folder)
 
 
 def prepare(spectral_path,rollouts_path,output_root,name,*,context_chunk=16):
@@ -96,7 +100,7 @@ def prepare(spectral_path,rollouts_path,output_root,name,*,context_chunk=16):
         context_chunk=context_chunk,microbatch_sequences=1,question_batch=8,
         objectives=['gold','own_correct_one','grpo'],reconstruction_gate=1e-5,directional_gate=1e-3,finite_difference_epsilon=1e-4,
         reductions='sum loss-bearing tokens / whole question-batch completion-token count; no extra accumulation division',
-        grpo='initial-policy DAPO gradient; detached sample-SD(ddof1)+1e-4 advantages, cap reward zero; all 512 groups; no optimizer',
+        grpo=f'initial-policy DAPO gradient; detached sample-SD(ddof1)+1e-4 advantages, cap reward zero; all {len(training)} groups of this cohort; no optimizer',
         reward='recorded historical training reward where present; otherwise frozen flexible-v3 binary reward',
         primary='batch mean push=-gradient; with and without final partial; consistency excludes partial',
         secondary='token-weighted pooled push',comparison='same A0 hash only; direction only across objectives',

@@ -2,6 +2,7 @@
 import numpy as np
 
 from pilot_eval.stage0_evaluation_backend import EvaluationDependencies, EvaluationEngine
+from pilot_eval.stage0_numeric import require_eager_attention
 from pilot_eval.stage0_push_math import a0_hash, reconstruction_allowance
 from pilot_eval.stage0_sources import factors, inside
 
@@ -88,6 +89,7 @@ def collect(model,body,head,module_factors,unit,*,context_chunk,device):
 class PushEngine(EvaluationEngine):
     def __init__(self,config,root):
         super().__init__(config,root)
+        require_eager_attention(self.model)
         self.model.config.use_cache=False
         self.body=self.model.get_base_model().model;self.head=self.model.get_output_embeddings()
         self.source={arm:factors(inside(root,entry['adapter_path'])) for arm,entry in config['variants'].items()}

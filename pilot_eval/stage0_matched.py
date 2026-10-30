@@ -5,6 +5,7 @@ from pathlib import Path
 from pilot_eval.run import _write_json
 from pilot_eval.sft import safe_name
 from pilot_eval.stage0_evaluation import _jsonl
+from pilot_eval.stage0_numeric import agrees, dependency_fingerprint
 from pilot_eval.stage0_rollout_math import cohorts
 from pilot_eval.stage0_rollout_plan import validate_training_membership
 from pilot_eval.stage0_rollout_sources import read_sources
@@ -20,7 +21,7 @@ FILES = ['config.json', 'results/rollouts.jsonl', 'results/gold.jsonl', 'results
 
 def implementation():
     folder = Path(__file__).parent
-    return {n: file_hash(folder / n) for n in ['stage0_matched.py', 'stage0_rollout_sources.py', 'stage0_rollout_math.py', 'scoring.py']}
+    return dependency_fingerprint(['stage0_matched.py'], folder)
 
 
 def _order(draws, order):
@@ -33,6 +34,9 @@ def prepare(audit_path, baseline_path, weights_dir, output_root, name, *, depend
     source = read_sources(audit_path, baseline_path, root)
     if source['state'] != 'audited':
         raise ValueError('Historical raw groups/runtime are incomplete; restore the missing files listed by the R0 source audit.')
+    if source['policy_matches'] is not True:
+        # The own_all gate and the temperature-1 premise depend on the sampling distribution.
+        raise ValueError('Historical sampling settings differ from temperature 1, top-k 0, top-p 1, cap 1024, one question per group.')
     if dependencies is None:
         from pilot_eval.stage0_weights import LocalWeights
         dependencies = LocalWeights()
@@ -88,7 +92,7 @@ def load(path, root):
     read = lambda name: [json.loads(x) for x in (directory / name).read_text().splitlines()]
     draws, training = read('results/rollouts.jsonl'), read('results/gold.jsonl')
     datasets = json.loads((directory / 'results/datasets.json').read_text())
-    if (datasets != json.loads(json.dumps(cohorts(draws, config['training_order'], selection_seed=config['selection_seed'])))
+    if (not agrees(datasets, json.loads(json.dumps(cohorts(draws, config['training_order'], selection_seed=config['selection_seed']))))
             or [r['id'] for r in training] != config['question_ids'] or {r['group_id'] for r in draws} != set(config['question_ids'])):
         raise ValueError('Matched cohort memberships do not reconstruct from its sealed draws.')
     return dict(kind='matched', cohort=COHORT, plan_path=path, config=config, directory=directory,
