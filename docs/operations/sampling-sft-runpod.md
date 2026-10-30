@@ -166,3 +166,10 @@ Stopping a Pod does not release the storage reservation or imply a deleted volum
 Deletion of network volumes, or termination of an unexported Pod, still requires
 explicit approval and is not automated here. Actual provider billing and
 multi-machine storage/locking behavior remain real-environment checks.
+
+## Private Hugging Face archive
+
+The execute command also accepts `--hf-repo`. See
+[sampling-sft-hf.md](sampling-sft-hf.md) for the worker upload and external
+restore/acknowledgement commands. This preserves the existing independent-copy
+requirement; it does not convert HF upload success into permission to stop.

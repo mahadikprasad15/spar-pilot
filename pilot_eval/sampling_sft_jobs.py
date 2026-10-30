@@ -21,7 +21,7 @@ def now():return datetime.now(timezone.utc).isoformat()
 def _implementation():
     parent=Path(__file__).parent
     return {name:file_hash(parent/name) for name in ['sampling_sft_jobs.py','sampling_sft_budget.py',
-        'sampling_sft_exports.py','sampling_sft_provider.py']}
+        'sampling_sft_exports.py','sampling_sft_provider.py','sampling_sft_hf.py']}
 
 
 def prepare(config,output_root,request_path):
@@ -266,7 +266,7 @@ def confirm(path,output_root,*,provider=None):
         return status(path,output_root)
 
 
-def execute(path,output_root,network_root,download_receipt,approval_path=None,max_wait_seconds=0,*,provider=None):
+def execute(path,output_root,network_root,download_receipt,approval_path=None,max_wait_seconds=0,*,provider=None,hf_repo=None,hf_client=None):
     """Run script path: work, network export, bounded external-ack wait, own stop."""
     wait=budget.number(max_wait_seconds)
     root,job,directory=_load(path,output_root)
@@ -276,7 +276,13 @@ def execute(path,output_root,network_root,download_receipt,approval_path=None,ma
     run(path,root,approval_path,provider=provider)
     network=directory/'network-receipt.json'
     export(path,root,network_root,'network',network,provider=provider)
+    archive=None
+    if hf_repo:
+        from pilot_eval import sampling_sft_hf as hf
+        archive=hf.upload(directory/'export-manifest.json',root,repo=hf_repo,client=hf_client)
+        print('HF archive: '+json.dumps(archive),flush=True)
     while not Path(download_receipt).is_file():
+        if archive and hf.receive_ack(archive,download_receipt,client=hf_client):break
         remaining=float(wait)-(time.monotonic()-began)
         if job['request']['mode']=='runpod':
             launch=json.loads((directory/'launch.json').read_text())
@@ -288,4 +294,5 @@ def execute(path,output_root,network_root,download_receipt,approval_path=None,ma
             raise ValueError('Downloaded-copy verification is missing. No stop/delete attempted; inspect immediately, costs remain reserved.')
         print('Waiting for external downloaded-copy receipt; not a completed job.',flush=True)
         time.sleep(min(10,remaining))
+    if archive:hf.checked_ack(archive,json.loads(Path(download_receipt).read_text()))
     return finish(path,root,network,download_receipt,provider=provider)

@@ -204,3 +204,15 @@ Keep correctness and raw response IDs unchanged. Record `wrong-end-token`
 separately from mathematical failure and use the existing bounded model retries.
 Training export retains its independent ending check. Changed plans require new
 names; never rewrite old manifests or completion seals.
+
+### Private HF persistence — approved 2026-10-30
+
+Use RunPod network storage plus private dataset
+`Prasadmahadik/spar-sampling-sft-artifacts`. Archive sealed job payloads at exact
+HF commit revisions, preserving canonical paths and hashes. Verify private
+visibility before transfer. The external controller restores and verifies the
+actual copy, then publishes its downloaded-copy receipt through HF. The worker
+validates that receipt using the existing network/download/own-Pod-stop contract.
+HF upload alone does not authorize shutdown. Keep credentials outside artifacts;
+no deletion, paid job or cap increase is implied. See ADR 0017 and
+`docs/operations/sampling-sft-hf.md` for commands and evidence limits.

@@ -126,6 +126,7 @@ def main(argv=None, *, dependencies=None):
         if operation == 'execute':
             job.add_argument('--network-root', type=Path, required=True)
             job.add_argument('--max-wait-seconds', type=float, default=0)
+            job.add_argument('--hf-repo', help='Private HF dataset repository for sealed export and external acknowledgement')
     for operation in ['init', 'status', 'reserve', 'settle', 'extend', 'observe']:
         budget = commands.add_parser('sampling-sft-budget-' + operation, help='shared USD ledger; reservations do not launch paid work')
         budget.add_argument('--output-root', type=Path, required=True)
@@ -807,7 +808,7 @@ def main(argv=None, *, dependencies=None):
                 result = receipt(args.manifest, args.copy_root, args.role, args.receipt, provider=dependencies)
             elif operation == 'finish': result = jobs.finish(args.job, args.output_root, args.network_receipt, args.download_receipt, provider=dependencies)
             elif operation == 'confirm': result = jobs.confirm(args.job, args.output_root, provider=dependencies)
-            else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies)
+            else: result = jobs.execute(args.job, args.output_root, args.network_root, args.download_receipt, args.approval, args.max_wait_seconds, provider=dependencies, hf_repo=args.hf_repo)
             print(str(result) if isinstance(result, Path) else json.dumps(result, indent=2))
         elif args.command.startswith('sampling-sft-handoff-'):
             from pilot_eval import sampling_sft_handoff as handoff
