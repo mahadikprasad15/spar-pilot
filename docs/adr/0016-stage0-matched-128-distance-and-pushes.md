@@ -48,3 +48,9 @@ An independent review of `5c72c88` found five gaps. All were fixed before use:
 
 The files fingerprinted by the completed behavior, internals and findings products are
 unchanged.
+
+Second review round (30 October 2026): cohort preparation also requires the baseline's
+separate `decoding` block to match its `settings`: sampling on, one beam, no repetition
+penalty, and the same temperature, top-p, top-k and cap. Contradictory provenance is
+rejected. Every standalone export (CSV, Parquet, JSONL, endpoint JSON and HTML) carries
+the cohort label and question counts.

@@ -111,6 +111,12 @@ def test_distance_on_matched_cohort_freezes_its_first_scoring_session(source):
     assert results['cohort'] == 'matched-128-historical'
     assert any('selection' in s for s in results['limitations'])
     assert 'matched-128-historical' in (directory / 'report.html').read_text()
+    import csv
+    import pyarrow.parquet as pq
+    assert all(r['cohort'] == 'matched-128-historical' for r in pq.read_table(directory / 'summary.parquet').to_pylist())
+    for name in ['summary.csv', 'per-problem.csv', 'position-windows.csv', 'top-gold-tokens.csv']:
+        rows = list(csv.DictReader((directory / 'results' / name).open()))
+        assert rows and all(r['cohort'] == 'matched-128-historical' for r in rows), name
 
 
 @pytest.fixture
@@ -287,3 +293,57 @@ def test_push_report_describes_actual_counts_and_carries_the_cohort(push_ready):
     page = (directory / 'report.html').read_text()
     assert 'matched-128-historical' in page and '512' not in page and '128 questions' in page
     assert all('512' not in c['scope'] for c in summary['comparisons'])
+
+
+def test_matched_cohort_rejects_decoding_that_contradicts_settings(source, monkeypatch):
+    import pilot_eval.stage0_matched as matched_module
+    from test_stage0_rollouts import Tiny
+    original = matched_module.read_sources
+
+    def contradictory(*a, **k):
+        value = original(*a, **k)
+        legacy = dict(value['legacy'], decoding=dict(value['legacy']['decoding'], temperature=0.7, do_sample=False))
+        return dict(value, legacy=legacy)
+    monkeypatch.setattr(matched_module, 'read_sources', contradictory)
+    assert mcmd(source, 'prepare', '--audit', source / 'plans/audit/stage0.plan.json',
+                '--baseline', source / 'plans/baseline/baseline.config.json',
+                '--weights-dir', source / 'weights', '--name', 'matched', dependencies=Tiny()) == 1
+    assert not (source / 'plans/matched/stage0.cohort.json').exists()
+
+
+def test_every_standalone_export_names_its_cohort(push_ready):
+    import csv
+    from test_stage0_pushes import cmd, Gradients
+    from test_stage0_rollouts import usage
+    from test_stage0_workflow import write_json
+    root = push_ready; plan = root / 'plans/pushes/stage0.pushes.json'; directory = root / 'runs/stage0/pushes/e05_pushes'
+    usage(root, 'push-start', 4.)
+    approval = root / 'push-budget.json'
+    write_json(approval, dict(reviewer='test', notes='bounded profile', session_id='session-a', source_reviewed=True,
+                              max_units_per_hour=1., max_seconds=600.))
+    engine = Gradients()
+    assert cmd(root, 'run', '--config', plan, '--approval', approval, dependencies=engine) == 0
+    assert cmd(root, 'forecast', '--config', plan) == 0
+    usage(root, 'push-profiled', 4.01)
+    review = root / 'push-production.json'
+    write_json(review, dict(reviewer='test', notes='production', session_id='session-a', source_reviewed=True,
+        max_units_per_hour=1., max_seconds=6000., forecast_sha256=file_hash(directory / 'results/forecast.json')))
+    assert cmd(root, 'freeze', '--config', plan, '--review', review) == 0
+    assert cmd(root, 'run', '--config', plan, '--no-progress', dependencies=engine) == 0
+    assert cmd(root, 'report', '--config', plan) == 0
+    predictions = root / 'predictions.json'
+    write_json(predictions, dict(reviewer='test', notes='frozen first', predictions='fixture', prior_exposure=False))
+    assert cmd(root, 'predict', '--config', plan, '--review', predictions) == 0
+    assert cmd(root, 'reveal', '--config', plan) == 0
+    assert cmd(root, 'verify', '--config', plan) == 0
+    label = 'matched-128-historical'
+    endpoints = json.loads((directory / 'results/endpoints.json').read_text())
+    assert endpoints['cohort'] == label and endpoints['questions']['grpo'] == 128
+    for name in ['modules.jsonl', 'directions.jsonl', 'endpoint-alignments.jsonl']:
+        rows = [json.loads(x) for x in (directory / 'results' / name).read_text().splitlines()]
+        assert rows and all(r['cohort'] == label for r in rows), name
+    for name in ['summary.csv', 'endpoints.csv']:
+        rows = list(csv.DictReader((directory / 'results' / name).open()))
+        assert rows and all(r['cohort'] == label for r in rows), name
+    page = (directory / 'endpoints.html').read_text()
+    assert label in page and '128' in page

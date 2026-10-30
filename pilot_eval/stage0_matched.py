@@ -37,6 +37,12 @@ def prepare(audit_path, baseline_path, weights_dir, output_root, name, *, depend
     if source['policy_matches'] is not True:
         # The own_all gate and the temperature-1 premise depend on the sampling distribution.
         raise ValueError('Historical sampling settings differ from temperature 1, top-k 0, top-p 1, cap 1024, one question per group.')
+    # The baseline records settings and a separate decoding block; both must describe the same sampler.
+    settings = source['legacy']['settings']
+    expected = dict(do_sample=True, num_beams=1, repetition_penalty=1.0, no_repeat_ngram_size=0,
+                    **{k: settings[k] for k in ['temperature', 'top_p', 'top_k', 'max_new_tokens']})
+    if source['legacy'].get('decoding') != expected:
+        raise ValueError('Historical decoding provenance contradicts its recorded settings; inspect the baseline config.')
     if dependencies is None:
         from pilot_eval.stage0_weights import LocalWeights
         dependencies = LocalWeights()

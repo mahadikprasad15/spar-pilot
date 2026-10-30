@@ -17,6 +17,10 @@ from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash
 
 
+def _tag(rows,config):
+    return [dict(row,cohort=config.get('cohort','r0-512')) for row in rows]
+
+
 def calculate(config,directory,answers,memberships):
     arrays={a['answer_id']:read_unit(config,directory,a) for a in answers}
     datasets=json.loads((directory/'inputs/datasets.json').read_text());summaries=[];problems=[];windows=[]
@@ -88,7 +92,8 @@ def calculate(config,directory,answers,memberships):
     top=sorted(top,key=lambda r:(-r['surprise'],r['problem_id'],r['answer_position']))[:50]
     own=next(r for r in summaries if r['dataset']=='own_all');gate=abs(own['excess_surprise'])<=.02
     return dict(schema_version=1,analysis_complete=True,real_gpu_measurement=config['execution_kind']=='real-cuda',
-        summaries=summaries,per_problem=problems,position_windows=windows,top_gold_tokens=top,statistics=config['statistics'],
+        # Every exported row names its cohort, so CSV/Parquet files stay interpretable outside this folder.
+        summaries=_tag(summaries,config),per_problem=_tag(problems,config),position_windows=_tag(windows,config),top_gold_tokens=_tag(top,config),statistics=config['statistics'],
         own_all_gate=dict(threshold=.02,observed=own['excess_surprise'],passed=gate,state='passed' if gate else 'failed',
             premise=config['premise'],note='Finite-cohort descriptive gate; no automatic tolerance change or distance=KL claim.'),
         limitations=['One sampled cohort and one seed; intervals resample whole problems and are pointwise.',

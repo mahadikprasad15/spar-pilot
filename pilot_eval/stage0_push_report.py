@@ -39,7 +39,7 @@ def report(path,output_root):
             _verify_seal(config,directory,'summary.complete.json');return json.loads((directory/'results/summary.json').read_text())
         spectral,_=_load(inside(root,config['spectral_path']),root);cache=_verify_cache(spectral,inside(root,spectral['run_path']))
         cache_rows={r['module']:r for r in cache['module_results']}
-        saved={u['key']:read_unit(config,directory,u,root) for u in units};rows=[];vectors={};comparisons=[]
+        saved={u['key']:read_unit(config,directory,u,root) for u in units};rows=[];vectors={};comparisons=[];label=config.get('cohort','r0-512')
         for i,module in enumerate(config['modules']):
             row=cache_rows[module]
             with np.load(inside(root,spectral['run_path'])/row['arrays_path'],allow_pickle=False) as basis:principal=basis['u'][:,:row['k50']]
@@ -54,7 +54,7 @@ def report(path,output_root):
                     for key,value in vector_stats.items():
                         if value is not None:vectors[stem+'-'+key]=np.array(value)
                     mean=means[objective]
-                    rows.append(dict(case=case,a0_sha256=config['cases'][case]['a0_sha256'],objective=objective,module=module,vector_key=stem,
+                    rows.append(dict(cohort=label,case=case,a0_sha256=config['cases'][case]['a0_sha256'],objective=objective,module=module,vector_key=stem,
                         **stats,mean_push_norm=float(np.linalg.norm(mean)),pi_out=projection(mean,principal),chance=chance,
                         mean_without_partial_pi_out=None if vector_stats['mean_push_full_batches'] is None else projection(vector_stats['mean_push_full_batches'],principal),
                         token_weighted_pi_out=projection(vector_stats['token_weighted_push'],principal),
@@ -63,7 +63,7 @@ def report(path,output_root):
                         dead_groups=sum(u['dead_groups'] for u in selected),batch_direction_cosines=[cosine(mean,-saved[u['key']][f'gradient_b_{i}'].reshape(-1)) for u in selected],
                         cosine_to_initial_b=None,initial_b_note='exact zero factor: alignment undefined'))
                 for first,second in itertools.combinations(config['objectives'],2):
-                    comparisons.append(dict(case=case,a0_sha256=config['cases'][case]['a0_sha256'],module=module,first=first,second=second,
+                    comparisons.append(dict(cohort=label,case=case,a0_sha256=config['cases'][case]['a0_sha256'],module=module,first=first,second=second,
                         cosine=cosine(means[first],means[second]),sign_push_cosine=cosine(np.sign(means[first]),np.sign(means[second])),
                         scope=f"direction only; GRPO uses all {config['cohorts']['grpo_questions']} questions, CE uses identical eligible batches"))
         summary=dict(config_sha256=_hash(config),real_gpu_measurement=config['execution_kind']=='real-cuda',endpoint_revealed=False,cohort=config.get('cohort','r0-512'),
@@ -72,7 +72,7 @@ def report(path,output_root):
         _write_json(directory/'results/summary.json',summary);_jsonl(directory/'results/modules.jsonl',rows);_jsonl(directory/'results/directions.jsonl',comparisons)
         np.savez(directory/'results/mean-pushes.npz',**vectors)
         with (directory/'results/summary.csv').open('w',newline='') as stream:
-            fields=['case','objective','module','questions','full_batches','partial_batches','consistency','pi_out','mean_without_partial_pi_out','token_weighted_pi_out','mean_push_norm','cross_objective_norms_comparable']
+            fields=['cohort','case','objective','module','questions','full_batches','partial_batches','consistency','pi_out','mean_without_partial_pi_out','token_weighted_pi_out','mean_push_norm','cross_objective_norms_comparable']
             writer=csv.DictWriter(stream,fieldnames=fields);writer.writeheader();writer.writerows({k:r[k] for k in fields} for r in rows)
         esc=lambda value:html.escape(str(value))
         table=''.join('<tr>'+''.join('<td>'+esc(r[k])+'</td>' for k in ['case','objective','module','consistency','pi_out','partial_batches'])+'</tr>' for r in rows)
@@ -130,23 +130,25 @@ def reveal(path,output_root):
                                 key=f'{case}-{objective}-{i}-{aggregation}'
                                 if key not in vectors:continue
                                 push=vectors[key];alignment=None if b is None else cosine(push,b)
-                                rows.append(dict(case=case,arm=arm,module=module,objective=objective,aggregation=aggregation,
+                                rows.append(dict(cohort=config.get('cohort','r0-512'),case=case,arm=arm,module=module,objective=objective,aggregation=aggregation,
                                     cosine_push_endpoint_b=alignment,cosine_sign_push_endpoint_b=None if b is None else cosine(np.sign(push),b),
                                     orientation=orientation,gaussian_cosine_mean=float(np.mean(random_cos)) if random_cos else None,
                                     gaussian_cosine_p05=float(np.percentile(random_cos,5)) if random_cos else None,gaussian_cosine_p95=float(np.percentile(random_cos,95)) if random_cos else None,
                                     gaussian_draws=100,gaussian_seed=42))
-        result=dict(config_sha256=_hash(config),prediction_status=prediction['prediction_status'],flipped_modules=len(flipped),undefined_orientation_modules=len(undefined),rows=rows,
+        result=dict(config_sha256=_hash(config),cohort=config.get('cohort','r0-512'),
+            questions=dict(grpo=config['cohorts']['grpo_questions'],eligible=config['cohorts']['eligible_questions']),
+            prediction_status=prediction['prediction_status'],flipped_modules=len(flipped),undefined_orientation_modules=len(undefined),rows=rows,
             flipped_modules_by_arm={arm:sum(a==arm for a,m in flipped) for arm in ['sft','grpo']},
             undefined_orientation_modules_by_arm={arm:sum(a==arm for a,m in undefined) for arm in ['sft','grpo']},
             real_gpu_measurement=config['execution_kind']=='real-cuda',causal_claim=False)
         _write_json(directory/'results/endpoints.json',result);_jsonl(directory/'results/endpoint-alignments.jsonl',rows)
         with (directory/'results/endpoints.csv').open('w',newline='') as stream:
-            fields=['case','arm','module','objective','aggregation','cosine_push_endpoint_b','cosine_sign_push_endpoint_b','a64_a0_cosine','flipped','gaussian_cosine_mean','gaussian_cosine_p05','gaussian_cosine_p95']
+            fields=['cohort','case','arm','module','objective','aggregation','cosine_push_endpoint_b','cosine_sign_push_endpoint_b','a64_a0_cosine','flipped','gaussian_cosine_mean','gaussian_cosine_p05','gaussian_cosine_p95']
             writer=csv.DictWriter(stream,fieldnames=fields);writer.writeheader()
             writer.writerows({k:r['orientation'][k] if k in ['a64_a0_cosine','flipped'] else r[k] for k in fields} for r in rows)
         esc=lambda value:html.escape(str(value))
         cells=''.join('<tr>'+''.join('<td>'+esc(r[k])+'</td>' for k in ['case','arm','objective','module','cosine_push_endpoint_b','cosine_sign_push_endpoint_b'])+'</tr>' for r in rows if r['aggregation']=='mean_push')
-        (directory/'endpoints.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Push and endpoint alignment</title><style>body{font:16px/1.55 system-ui;max-width:1200px;margin:40px auto;padding:20px;background:#f6f8f5;color:#243c43}table{border-collapse:collapse;font-size:13px}td,th{padding:8px;border-bottom:1px solid #ccd}</style><h1>Initial push and trained endpoint alignment</h1><p>'+esc(config['execution_kind'])+' · '+esc(prediction['prediction_status'])+'</p><p>Primary batch-mean pushes, including the final partial batch where present. CSV and JSON also contain full-batch-only and token-weighted sensitivity results, raw/oriented A alignment, and 100 seeded Gaussian controls. A cosine measures direction agreement; it does not reconstruct AdamW or establish a causal behavioral effect.</p><p>Flipped modules by arm: '+esc(result['flipped_modules_by_arm'])+'. Undefined orientations: '+esc(result['undefined_orientation_modules_by_arm'])+'.</p><table><thead><tr><th>A₀</th><th>Endpoint</th><th>Objective</th><th>Module</th><th>Push cosine</th><th>Sign-push cosine</th></tr></thead><tbody>'+cells+'</tbody></table><p><a href="results/endpoints.csv">All alignments CSV</a> · <a href="results/endpoints.json">Full JSON</a> · <a href="predictions.json">Frozen predictions</a> · <a href="report.html">Pre-reveal summaries</a></p></html>')
+        (directory/'endpoints.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Push and endpoint alignment</title><style>body{font:16px/1.55 system-ui;max-width:1200px;margin:40px auto;padding:20px;background:#f6f8f5;color:#243c43}table{border-collapse:collapse;font-size:13px}td,th{padding:8px;border-bottom:1px solid #ccd}</style><h1>Initial push and trained endpoint alignment</h1><p>'+esc(config['execution_kind'])+' · '+esc(prediction['prediction_status'])+'</p><p>Cohort: '+esc(result['cohort'])+'. GRPO pushes use '+esc(result['questions']['grpo'])+' questions; CE pushes use '+esc(result['questions']['eligible'])+' eligible questions.</p><p>Primary batch-mean pushes, including the final partial batch where present. CSV and JSON also contain full-batch-only and token-weighted sensitivity results, raw/oriented A alignment, and 100 seeded Gaussian controls. A cosine measures direction agreement; it does not reconstruct AdamW or establish a causal behavioral effect.</p><p>Flipped modules by arm: '+esc(result['flipped_modules_by_arm'])+'. Undefined orientations: '+esc(result['undefined_orientation_modules_by_arm'])+'.</p><table><thead><tr><th>A₀</th><th>Endpoint</th><th>Objective</th><th>Module</th><th>Push cosine</th><th>Sign-push cosine</th></tr></thead><tbody>'+cells+'</tbody></table><p><a href="results/endpoints.csv">All alignments CSV</a> · <a href="results/endpoints.json">Full JSON</a> · <a href="predictions.json">Frozen predictions</a> · <a href="report.html">Pre-reveal summaries</a></p></html>')
         _save_frozen(directory/'exposure.json',dict(config_sha256=_hash(config),spectral_config_sha256=_hash(spectral),prediction_sha256=file_hash(directory/'predictions.json'),revealed_at=_now()))
         _seal(directory,'complete.json',['summary.complete.json','predictions.json','predictions.complete.json','results/endpoints.json','results/endpoint-alignments.jsonl','results/endpoints.csv','endpoints.html','exposure.json'],config)
         _state(directory,'complete',len(units),len(units),prediction_status=prediction['prediction_status']);return dict(analysis_complete=True,flipped_modules=len(flipped),prediction_status=prediction['prediction_status'])
