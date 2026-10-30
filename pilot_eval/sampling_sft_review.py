@@ -163,16 +163,20 @@ def import_labels(path,output_root,labels_path,origin,confirm_human=False):
     return dict(origin=origin,saved_revision=revision,human_reviewed=count,required=len(packet),training_allowed=False)
 
 
-def eligibility_override(attempt,label,problem):
+def human_answer_correct(attempt,label,problem):
     if not selected(attempt):raise ValueError('Overrides apply only to finished extraction failures, never valid wrong or unfinished text.')
     if label['status']=='pending':raise ValueError('Required human review is unfinished.')
     if label['status'] not in ['numeric','absent','ambiguous']:raise ValueError('Unknown human decision.')
     if label['status']!='numeric':return False
-    ids=attempt['response_ids'];eos=problem['gold_end_token_id']
-    if not ids or ids[-1]!=eos or ids.count(eos)!=1:return False
     if not label['evidence'].strip() or label['evidence'] not in attempt['text']:
         raise ValueError('Human transcription needs response evidence; gold cannot supply missing text.')
     return _numeric_value(label['answer'])==_numeric_value(problem['gold'].rsplit('####',1)[-1].strip())
+
+
+def eligibility_override(attempt,label,problem):
+    correct=human_answer_correct(attempt,label,problem)
+    ids=attempt['response_ids'];eos=problem['gold_end_token_id']
+    return correct and bool(ids) and ids[-1]==eos and ids.count(eos)==1
 
 
 def coverage_arm(k,problems,batches,attempts,overrides):
@@ -220,7 +224,8 @@ def build_coverage(root,config,folder,human,previous):
                 label=labels[attempt['attempt_id']]
                 eligible=eligibility_override(attempt,label,problems[attempt['problem_id']])
                 overrides[attempt['attempt_id']]=eligible
-                decisions.append(dict(attempt_id=attempt['attempt_id'],label=label,human_correct=eligible,
+                decisions.append(dict(attempt_id=attempt['attempt_id'],label=label,human_correct=human_answer_correct(attempt,label,problems[attempt['problem_id']]),
+                    training_eligible=eligible,
                     origin='confirmed-human',reviewer=human['reviewer'],revision=human['base_revision'],
                     original_automatic=attempt['automatic_flexible_v3']))
         arms[str(k)]=coverage_arm(k,plan['problems'],audit['training']['batches'],attempts,overrides)

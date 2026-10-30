@@ -23,6 +23,8 @@ def test_human_cannot_override_wrong_ending():
     row=dict(end_state='finished',automatic_flexible_v3={'status':'invalid'},text='Answer: 42',response_ids=[7,4])
     label=dict(status='numeric',answer='42',evidence='42')
     assert eligibility_override(row,label,problem) is False
+    from pilot_eval.sampling_sft_review import human_answer_correct
+    assert human_answer_correct(row,label,problem) is True
 
 def test_notebook_selects_measured_gold_source():
     notebook=json.loads(Path('notebooks/sampling-sft.ipynb').read_text())
