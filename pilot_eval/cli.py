@@ -106,6 +106,17 @@ def main(argv=None, *, dependencies=None):
     pipeline_gate=commands.add_parser('sampling-sft-pipeline-prepare-gate',help='prepare gate from verified human coverage')
     pipeline_gate.add_argument('--review',type=Path,required=True);pipeline_gate.add_argument('--word-policy',type=Path,required=True)
     pipeline_gate.add_argument('--name',required=True);pipeline_gate.add_argument('--output-root',type=Path,required=True)
+    pipeline_array=commands.add_parser('sampling-sft-pipeline-replace-entry',help='write a new reconciled job array')
+    for field in ['output-root','entries','new-job','evidence','target']:
+        pipeline_array.add_argument('--'+field,type=Path,required=True)
+    pipeline_array.add_argument('--arm',type=int,choices=[0,2,5],required=True)
+    pipeline_copy=commands.add_parser('sampling-sft-pipeline-verify-copy',help='verify dynamic scientific inventory on an external host')
+    pipeline_copy.add_argument('--inventory',type=Path,required=True);pipeline_copy.add_argument('--copy-root',type=Path,required=True)
+    pipeline_copy.add_argument('--receipt',type=Path,required=True);pipeline_copy.add_argument('--source-host',required=True)
+    pipeline_replace=commands.add_parser('sampling-sft-pipeline-replace-generation',help='prepare new job for reconciled failed generation arm')
+    pipeline_replace.add_argument('--config',type=Path,required=True);pipeline_replace.add_argument('--output-root',type=Path,required=True)
+    pipeline_replace.add_argument('--arm',type=int,choices=[0,2,5],required=True);pipeline_replace.add_argument('--prior-job',type=Path,required=True)
+    pipeline_replace.add_argument('--name',required=True);pipeline_replace.add_argument('--estimated-hours',required=True)
     pipeline_prepare=commands.add_parser('sampling-sft-pipeline-prepare-generation',help='prepare three separate bounded generation jobs')
     pipeline_prepare.add_argument('--config',type=Path,required=True);pipeline_prepare.add_argument('--output-root',type=Path,required=True)
     for field in ['volume-id','rate','reviewer','hours-k0','hours-k2','hours-k5','setup-hours']:
@@ -972,6 +983,15 @@ def main(argv=None, *, dependencies=None):
         elif args.command=='sampling-sft-pipeline-prepare-gate':
             from pilot_eval.sampling_sft_pipeline import gate_prepare
             print(json.dumps(gate_prepare(args.review,args.output_root,args.word_policy,args.name),indent=2))
+        elif args.command=='sampling-sft-pipeline-replace-entry':
+            from pilot_eval.sampling_sft_pipeline import replace_job_entry
+            print(replace_job_entry(args.output_root,args.entries,args.arm,args.new_job,args.evidence,args.target))
+        elif args.command=='sampling-sft-pipeline-verify-copy':
+            from pilot_eval.sampling_sft_pipeline import verify_external_inventory
+            print(json.dumps(verify_external_inventory(args.inventory,args.copy_root,args.receipt,source_host=args.source_host),indent=2))
+        elif args.command=='sampling-sft-pipeline-replace-generation':
+            from pilot_eval.sampling_sft_pipeline import prepare_generation_replacement
+            print(prepare_generation_replacement(args.config,args.output_root,args.arm,args.prior_job,args.name,args.estimated_hours))
         elif args.command=='sampling-sft-pipeline-prepare-generation':
             from pilot_eval.sampling_sft_pipeline import prepare_generation_jobs
             print(prepare_generation_jobs(args.config,args.output_root,args.volume_id,args.rate,args.reviewer,{'0':args.hours_k0,'2':args.hours_k2,'5':args.hours_k5},args.setup_hours))

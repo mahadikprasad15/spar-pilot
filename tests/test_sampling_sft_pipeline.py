@@ -130,13 +130,14 @@ def test_pipeline_runs_real_lifecycle_sequentially_and_inventory_includes_blocks
         k=int(job.parent.name[1:]);calls.append(k);completed.add(str(job))
         path=folder/f'k{k}/rounds/0/blocks/000';path.mkdir(parents=True)
         (path/'scientific.jsonl').write_text('saved\n')
+        (folder/f'k{k}/complete.json').write_text('{}')
         return dict(work_complete=True,workload_success=True)
     monkeypatch.setattr(j,'run',run)
     (folder/'complete.json').write_text('{}')
-    monkeypatch.setattr(g,'verify',lambda *a:{'execution_kind':'real-cuda'})
+    monkeypatch.setattr(g,'verify',lambda *a,**kw:{'execution_kind':'real-cuda'})
     result=p.generation(config,root,ep)
     inventory=json.loads(Path(result['inventory']).read_text())
-    assert calls==[0,2,5] and len(inventory['files'])==4
+    assert calls==[0,2,5] and len(inventory['files'])==10
     assert sum('/rounds/0/blocks/000/scientific.jsonl' in name for name in inventory['files'])==3
     assert str((folder/'complete.json').relative_to(root)) in inventory['files']
     p.generation(config,root,ep);assert calls==[0,2,5]
@@ -392,3 +393,99 @@ def test_job_runner_stops_when_prior_success_does_not_verify_science(tmp_path):
     from pilot_eval.sampling_sft_pipeline import advance_generation
     with pytest.raises(ValueError,match='returned without'):
         advance_generation(lambda arm:False,lambda arm:None)
+
+
+def test_inventory_ignores_refreshable_status_projections(tmp_path):
+    from pilot_eval.sampling_sft_pipeline import scientific_inventory
+    folder=tmp_path/'arm';(folder/'meta').mkdir(parents=True);(folder/'logs').mkdir()
+    (folder/'complete.json').write_text('{}');(folder/'meta/status.json').write_text('{"at":1}')
+    (folder/'logs/run.log').write_text('status\n')
+    first=scientific_inventory(tmp_path,folder)
+    (folder/'meta/status.json').write_text('{"at":2}');(folder/'logs/run.log').write_text('more\n')
+    assert scientific_inventory(tmp_path,folder)==first
+
+
+def test_replacement_job_requires_failed_sealed_work_and_reconciled_budget(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import sampling_sft_pipeline as p, sampling_sft_jobs as jobs, sampling_sft_generation as gen, sampling_sft_budget as budget
+    root=tmp_path;folder=root/'runs/source/generation/g';folder.mkdir(parents=True)
+    config=root/'plans/g.json';config.parent.mkdir();config.write_text('{}')
+    plan={'name':'g','source_plan':'plans/source.json','run_path':'runs/source/generation/g'}
+    prior=root/'runs/source/jobs/old/job.plan.json';prior.parent.mkdir(parents=True);prior.write_text('{}')
+    request={'job_id':'old','kind':'gpu','mode':'runpod','stage':'sampling','network_volume_id':'v',
+      'rate_usd_per_hour':'0.6','estimated_hours':'1','setup_hours':'0',
+      'command':['python','-m','pilot_eval','sampling-sft-generation-run','--config',str(config),'--k','0','--job',str(prior),'--output-root',str(root)],
+      'outputs':[plan['run_path']+'/k0/'+n for n in ['complete.json','results.json','attempts.jsonl','dispositions.jsonl']]}
+    job={'source_plan':plan['source_plan'],'request':request}
+    prior.write_text(json.dumps(job))
+    monkeypatch.setattr(gen,'load',lambda *a:(root,plan,folder))
+    monkeypatch.setattr(jobs,'_load',lambda *a:(root,job,prior.parent))
+    monkeypatch.setattr(jobs,'status',lambda *a:{'work_complete':True,'workload_success':False})
+    monkeypatch.setattr(budget,'status',lambda *a:{'jobs':{'old':{'state':'reserved','launch_recorded':True}}})
+    monkeypatch.setattr(jobs,'prepare',lambda source,root,request:root/'runs/source/jobs/new/job.plan.json')
+    with pytest.raises(ValueError,match='reconcil'):p.prepare_generation_replacement(config,root,0,prior,'new','2')
+    monkeypatch.setattr(budget,'status',lambda *a:{'jobs':{'old':{'state':'settled','launch_recorded':True}}})
+    (folder/'k0').mkdir();(folder/'k0/writer.json').write_text('{}')
+    with pytest.raises(ValueError,match='writer'):p.prepare_generation_replacement(config,root,0,prior,'new','2')
+
+
+def test_replacement_creates_new_job_without_touching_prior_and_binds_scientific_progress(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import sampling_sft_pipeline as p, sampling_sft_jobs as jobs, sampling_sft_generation as gen, sampling_sft_budget as budget
+    root=tmp_path;folder=root/'runs/source/generation/g';folder.mkdir(parents=True)
+    cfg=root/'plans/g.json';cfg.parent.mkdir();cfg.write_text('{}')
+    plan={'name':'g','source_plan':'plans/source.json','run_path':'runs/source/generation/g'}
+    old=root/'runs/source/jobs/old/job.plan.json';old.parent.mkdir(parents=True)
+    req={'job_id':'old','kind':'gpu','mode':'runpod','stage':'sampling','estimated_hours':'1',
+         'command':['python','-m','pilot_eval','sampling-sft-generation-run','--config',str(cfg),'--k','0','--job',str(old)],
+         'outputs':[plan['run_path']+'/k0/'+n for n in ['complete.json','results.json','attempts.jsonl','dispositions.jsonl']]}
+    job={'source_plan':plan['source_plan'],'request':req};old.write_text(json.dumps(job));before=old.read_bytes()
+    for name in ['execution.json','export-manifest.json']:(old.parent/name).write_text('{}')
+    monkeypatch.setattr(gen,'load',lambda *a:(root,plan,folder));monkeypatch.setattr(gen,'verify_arm',lambda *a:{'state':'partial','retry_index':1})
+    monkeypatch.setattr(jobs,'_load',lambda *a:(root,job,old.parent));monkeypatch.setattr(jobs,'status',lambda *a:{'work_complete':True,'workload_success':False})
+    monkeypatch.setattr(budget,'status',lambda *a:{'jobs':{'old':{'state':'settled'}}})
+    monkeypatch.setattr(jobs,'prepare',lambda source,root,request:root/'runs/source/jobs/new/job.plan.json')
+    new=p.prepare_generation_replacement(cfg,root,0,old,'new','3')
+    saved=json.loads((folder/'pipeline/replacements/new/request.json').read_text())
+    assert new.parent.name=='new' and saved['job_id']=='new' and saved['estimated_hours']=='3'
+    assert saved['command'][saved['command'].index('--job')+1]==str(new)
+    assert old.read_bytes()==before
+
+
+def test_external_copy_receipt_verifies_every_inventory_file(tmp_path):
+    import json
+    from pilot_eval import sampling_sft_pipeline as p
+    from pilot_eval.workflow import _hash
+    root=tmp_path/'source';copy=tmp_path/'copy';(root/'runs').mkdir(parents=True);(copy/'runs').mkdir(parents=True)
+    (root/'runs/a').write_text('science');(copy/'runs/a').write_text('science')
+    inv={'protocol':'sampling-sft-full-generation-inventory-v1','source_host':'worker','files':p.scientific_inventory(root,root/'runs')}
+    inv['sha256']=_hash(inv);path=root/'inventory.json';path.write_text(json.dumps(inv))
+    receipt=p.verify_external_inventory(path,copy,root/'receipt.json',source_host='worker',copy_host='laptop')
+    assert receipt['verified_files']==1
+    (copy/'runs/a').write_text('changed')
+    with pytest.raises(ValueError,match='mismatch'):p.verify_external_inventory(path,copy,root/'receipt2.json',source_host='worker',copy_host='laptop')
+    with pytest.raises(ValueError,match='separate'):p.verify_external_inventory(path,copy,root/'receipt3.json',source_host='worker',copy_host='worker')
+
+
+def test_completed_arm_inventory_is_persisted_before_next_job(tmp_path):
+    from pilot_eval.sampling_sft_pipeline import run_prepared_jobs
+    calls=[];sealed=[];entries=[{'arm':k,'job':str(tmp_path/f'k{k}.json'),'approval':str(tmp_path/f'k{k}.approval')} for k in (0,2,5)]
+    def run(job,root,approval):
+        calls.append(job.name)
+        if job.name=='k2.json':raise RuntimeError('second failure')
+        return {'work_complete':True,'workload_success':True}
+    with pytest.raises(RuntimeError):
+        run_prepared_jobs(tmp_path,entries,lambda job:{'work_complete':False},run,on_complete=lambda entry:sealed.append(entry['arm']))
+    assert calls==['k0.json','k2.json'] and sealed==[0]
+
+
+def test_replacement_array_preserves_other_arms_and_requires_bound_prior(tmp_path):
+    import json
+    from pilot_eval import sampling_sft_pipeline as p
+    root=tmp_path;old=root/'old.json';old.write_text(json.dumps([{'arm':k,'job':f'jobs/{k}.json','reviewer':'Prasad'} for k in (0,2,5)]))
+    evidence=root/'evidence.json';evidence.write_text(json.dumps({'prior_job':'jobs/2.json','replacement_job':'new2'}))
+    target=root/'new.json'
+    result=p.replace_job_entry(root,old,2,'jobs/new2/job.plan.json',evidence,target)
+    rows=json.loads(target.read_text());assert rows[0]['job']=='jobs/0.json' and rows[2]['job']=='jobs/5.json'
+    assert rows[1]['job']=='jobs/new2/job.plan.json' and result==target
+    with pytest.raises(ValueError):p.replace_job_entry(root,old,0,'jobs/new2/job.plan.json',evidence,root/'bad.json')

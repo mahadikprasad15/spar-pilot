@@ -35,7 +35,7 @@ def advance_generation(verified, execute, uncertain=lambda arm:False):
         if not verified(arm):raise ValueError('Job returned without a verified completed arm.')
 
 
-def run_prepared_jobs(root, entries, status, run):
+def run_prepared_jobs(root, entries, status, run, on_complete=None):
     """Run three already-reviewed lifecycle jobs, serially; no implicit retries."""
     from pathlib import Path
     if [e['arm'] for e in entries] != [0,2,5]:raise ValueError('Require ordered k0/k2/k5 jobs.')
@@ -44,12 +44,14 @@ def run_prepared_jobs(root, entries, status, run):
         state=status(job)
         if state['work_complete']:
             if not state['workload_success']:raise ValueError('Prior job failed; inspect and reconcile before continuation.')
+            if on_complete:on_complete(entry)
             continue
         if (job.parent/'launch.json').exists():raise ValueError('Prior launch uncertain; inspect and reconcile.')
         if approval is None:approval=create_job_approval(root,job,entry['reviewer'])
         outcome=run(job,root,approval)
         if not outcome.get('work_complete') or not outcome.get('workload_success'):
             raise ValueError('Job failed or did not seal work; inspect before continuation.')
+        if on_complete:on_complete(entry)
 
 
 def validate_generation_job(root,config,plan,source_plan,arm,job_path):
@@ -79,6 +81,8 @@ def scientific_inventory(root,folder):
         if path.name == 'writer.json':
             raise ValueError('Active or unrecovered writer in scientific inventory.')
         if path.name == '.lock':continue
+        if path.is_file() and path.relative_to(folder).as_posix() in ('meta/status.json','logs/run.log','checkpoints/progress.json'):
+            continue
         if path.is_symlink():raise ValueError('Scientific inventory refuses symlink.')
         if path.is_file():files.append(str(path.relative_to(root)))
     if not files:raise ValueError('Empty scientific inventory.')
@@ -123,18 +127,32 @@ def generation(config, output_root, entries_path):
         watcher=threading.Thread(target=follow,daemon=True);watcher.start()
         try:return jobs.run(job,root,approval)
         finally:done.set();watcher.join(timeout=5)
-    run_prepared_jobs(root,entries,status,run)
+    def seal_arm(entry):
+        import platform
+        arm=entry['arm']; verified=gen.verify(config,root,k=arm)
+        if verified.get('execution_kind')!='real-cuda':raise ValueError('Real CUDA arm evidence required.')
+        arm_dir=folder/f'k{arm}'; files=scientific_inventory(root,arm_dir)
+        value=dict(protocol='sampling-sft-arm-inventory-v1',source_host=platform.node(),
+            config_sha256=_hash(plan),arm=arm,arm_complete_sha256=file_hash(arm_dir/'complete.json'),files=files,
+            scope='verified arm tree; external copy still required')
+        target=folder/'pipeline/inventories'/f'k{arm}.json'
+        if target.exists():value['source_host']=json.loads(target.read_text())['source_host']
+        value['sha256']=_hash(value);source.frozen(target,value)
+    run_prepared_jobs(root,entries,status,run,on_complete=seal_arm)
     result=gen.verify(config,root)
     if result['execution_kind']!='real-cuda':raise ValueError('Real CUDA generation evidence required.')
     # Inventory all generation controls and all dynamic arm trees. Exclude only
     # this inventory itself on re-verification to avoid self-reference.
     scientific=scientific_inventory(root,folder)
     scientific.pop(str((folder/'results/full-scientific-inventory.json').relative_to(root)),None)
-    value=dict(protocol='sampling-sft-full-generation-inventory-v1',config_sha256=_hash(plan),
+    import platform
+    value=dict(protocol='sampling-sft-full-generation-inventory-v1',source_host=platform.node(),config_sha256=_hash(plan),
         generation_complete_sha256=file_hash(folder/'complete.json'),files=scientific,
         scope='dynamic arm trees after verified generation; external copy still required',training_authorized=False)
+    existing=folder/'results/full-scientific-inventory.json'
+    if existing.exists():value['source_host']=json.loads(existing.read_text())['source_host']
     value['sha256']=_hash(value)
-    source.frozen(folder/'results/full-scientific-inventory.json',value)
+    source.frozen(existing,value)
     return dict(state='generation-verified',inventory=str(folder/'results/full-scientific-inventory.json'),
                 files=len(scientific),next_step='prepare eligibility review; human labels are required if packet is nonempty')
 
@@ -241,10 +259,12 @@ def training(data_config,output_root,entries_path):
         raise ValueError('All three verified real training runs must complete 64 steps.')
     files={}
     for folder in folders:files.update(scientific_inventory(root,folder))
-    result=dict(protocol='sampling-sft-three-training-inventory-v1',selection=next(iter(selection_paths)),
+    import platform
+    result=dict(protocol='sampling-sft-three-training-inventory-v1',source_host=platform.node(),selection=next(iter(selection_paths)),
         arms=[0,2,5],files=files,scope='verified training trees; external copy and cost reconciliation pending')
-    result['sha256']=_hash(result)
     target=inside(root,data['run_path'])/'results/three-training-inventory.json'
+    if target.exists():result['source_host']=json.loads(target.read_text())['source_host']
+    result['sha256']=_hash(result)
     source.frozen(target,result)
     return dict(state='training-verified',inventory=str(target),files=len(files),external_copy_verified=False)
 
@@ -338,10 +358,13 @@ def gate_score(config,root,job_path,reviewer):
     score_result=gate.verify_scores(plan,folder)
     if score_result.get('execution_kind')!='real-cuda':raise ValueError('Real independent score evidence required.')
     files=scientific_inventory(root,folder/'scores')
-    value=dict(protocol='sampling-sft-gate-score-inventory-v1',config_sha256=_hash(plan),files=files,
+    import platform
+    value=dict(protocol='sampling-sft-gate-score-inventory-v1',source_host=platform.node(),config_sha256=_hash(plan),files=files,
         scope='complete dynamic HF score tree; external copy still required',training_authorized=False)
+    target=folder/'score-scientific-inventory.json'
+    if target.exists():value['source_host']=json.loads(target.read_text())['source_host']
     value['sha256']=_hash(value)
-    target=folder/'score-scientific-inventory.json';source.frozen(target,value)
+    source.frozen(target,value)
     return dict(state='scores-verified',inventory=str(target),files=len(files))
 
 
@@ -427,3 +450,79 @@ def prepare_gate_job(config,output_root,name,volume_id,rate,reviewer,estimated_h
     path=folder/'pipeline'/(name+'-request.json');source.frozen(path,request)
     job=jobs.prepare(root/plan['source_plan'],root,path)
     return dict(job=str(job),reviewer=reviewer)
+
+
+def prepare_generation_replacement(config,output_root,arm,prior_job,name,estimated_hours):
+    """Prepare a fresh job only after a failed work receipt is reconciled."""
+    import copy
+    from pilot_eval import sampling_sft as source, sampling_sft_generation as gen, sampling_sft_jobs as jobs, sampling_sft_budget as budget
+    from pilot_eval.sampling_sft_sources import inside
+    from pilot_eval.sft import safe_name
+    from pilot_eval.training import file_hash
+    root,plan,folder=gen.load(config,output_root);safe_name(name);budget.number(estimated_hours,True)
+    prior_job=inside(root,prior_job);_,old,old_dir=jobs._load(prior_job,root)
+    validate_generation_job(root,config,plan,plan['source_plan'],arm,prior_job)
+    prior=jobs.status(prior_job,root)
+    if not prior['work_complete'] or prior['workload_success']:
+        raise ValueError('Prior job must have a sealed failed work receipt; inspect uncertain or completed work.')
+    record=budget.status(root)['jobs'].get(old['request']['job_id'],{})
+    if record.get('state')!='settled':raise ValueError('Prior job cost requires reconciliation before replacement.')
+    arm_folder=folder/f'k{arm}'
+    if (arm_folder/'writer.json').exists():raise ValueError('Inspect and recover prior writer before replacement.')
+    state=gen.verify_arm(root,plan,arm,arm_folder)
+    if state['state']!='partial':raise ValueError('Only verified partial arm work can resume; inspect blocked/completed state.')
+    target=old_dir.parent/name/'job.plan.json'
+    if target.exists():raise ValueError('Replacement name already exists.')
+    request=copy.deepcopy(old['request']);request.update(job_id=name,estimated_hours=str(estimated_hours))
+    argv=request['command'];argv[argv.index('--job')+1]=str(target)
+    review=dict(prior_job=str(prior_job.relative_to(root)),prior_job_sha256=file_hash(prior_job),
+        prior_execution_sha256=file_hash(old_dir/'execution.json'),prior_manifest_sha256=file_hash(old_dir/'export-manifest.json'),
+        reconciliation_state=record,arm_state=state,replacement_job=name)
+    control=folder/'pipeline/replacements'/name
+    source.frozen(control/'prior-evidence.json',review)
+    source.frozen(control/'request.json',request)
+    return jobs.prepare(root/plan['source_plan'],root,control/'request.json')
+
+
+def verify_external_inventory(inventory_path,copy_root,receipt_path,*,source_host,copy_host=None):
+    """Verify every copied file against a sealed inventory; no transport or stop."""
+    import json,platform
+    from pathlib import Path
+    from pilot_eval import sampling_sft as source
+    from pilot_eval.sampling_sft_exports import inventory
+    from pilot_eval.workflow import _hash
+    from pilot_eval.training import file_hash
+    copy_host=copy_host or platform.node()
+    if not source_host or not copy_host or source_host==copy_host:
+        raise ValueError('Verification must run on a separate external host.')
+    path=Path(inventory_path).resolve();value=json.loads(path.read_text())
+    if value.get('sha256')!=_hash({k:v for k,v in value.items() if k!='sha256'}) or not value.get('files'):
+        raise ValueError('Inventory seal invalid or empty.')
+    if value.get('source_host')!=source_host:
+        raise ValueError('Source host differs from sealed inventory.')
+    root=Path(copy_root).resolve()
+    if inventory(root,value['files'])!=value['files']:raise ValueError('External copy inventory mismatch.')
+    result=dict(inventory_sha256=file_hash(path),inventory_identity=value['sha256'],
+        source_host=source_host,copy_host=copy_host,copy_root=str(root),verified_files=len(value['files']),
+        scope='external client hash verification; does not authorize Pod stop')
+    target=Path(receipt_path).resolve();source.frozen(target,result)
+    return result
+
+
+def replace_job_entry(output_root,entries_path,arm,new_job,evidence_path,target_path):
+    """Write a new immutable array, preserving prior and other arm entries."""
+    import copy,json
+    from pathlib import Path
+    from pilot_eval import sampling_sft as source
+    from pilot_eval.sampling_sft_sources import inside
+    root=Path(output_root).resolve();entries=json.loads(inside(root,entries_path).read_text())
+    evidence=json.loads(inside(root,evidence_path).read_text());new_job=inside(root,new_job)
+    if [e.get('arm') for e in entries]!=[0,2,5] or arm not in (0,2,5):raise ValueError('Invalid arm array.')
+    row=next(e for e in entries if e['arm']==arm)
+    if (str(inside(root,row['job']).relative_to(root))!=evidence['prior_job']
+        or new_job.parent.name!=evidence['replacement_job']):
+        raise ValueError('Replacement evidence does not match the prior arm job.')
+    updated=copy.deepcopy(entries);next(e for e in updated if e['arm']==arm)['job']=str(new_job.relative_to(root))
+    target=inside(root,target_path)
+    if target.exists():raise ValueError('Replacement array exists; preserve it.')
+    source.frozen(target,updated);return target

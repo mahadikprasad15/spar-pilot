@@ -41,3 +41,34 @@ independent host and verify all hashes before requesting any Pod stop. Static
 lifecycle manifests list only declared outputs and are not a complete substitute.
 No deletion, Pod stop or termination is performed by these commands. The current
 machine-critical warning should be considered before starting a long run.
+
+## Reconciled generation continuation and independent verification
+
+A failed sealed job is not retried automatically. Inspect its execution/child
+log, verify the prior worker is dead, recover any saved writer through the
+existing public command, and settle its actual observed cost in the shared ledger.
+Then prepare a distinct job with a fresh name and bounded estimate:
+
+```sh
+python -m pilot_eval sampling-sft-pipeline-replace-generation --config plans/GENERATION/sampling-sft.generation.json --arm ARM --prior-job runs/sampling-sft/SOURCE/jobs/OLD/job.plan.json --name NEW_JOB --estimated-hours ESTIMATE --output-root artifacts
+python -m pilot_eval sampling-sft-pipeline-replace-entry --output-root artifacts --entries OLD_JOB_ARRAY.json --arm ARM --new-job runs/sampling-sft/SOURCE/jobs/NEW_JOB/job.plan.json --evidence runs/sampling-sft/SOURCE/generation/GENERATION/pipeline/replacements/NEW_JOB/prior-evidence.json --target NEW_JOB_ARRAY.json
+python -m pilot_eval sampling-sft-pipeline-generation --config plans/GENERATION/sampling-sft.generation.json --jobs NEW_JOB_ARRAY.json --output-root artifacts
+```
+
+Only a sealed failed lifecycle result with settled cost and verified partial arm
+state is accepted. A recorded but unfinished launch remains uncertain and must
+be investigated. Prior arrays, jobs, logs and blocks are retained. Every completed
+arm gets an inventory before the next arm starts, so an interruption later does
+not prevent independent verification of the finished arm.
+
+Copy an inventory and every listed relative file to an independent host, then
+from that host's checkout run:
+
+```sh
+python -m pilot_eval sampling-sft-pipeline-verify-copy --inventory COPIED_INVENTORY.json --copy-root COPIED_ARTIFACT_ROOT --receipt NEW_RECEIPT.json --source-host SOURCE_HOST_FROM_INVENTORY
+```
+
+This checks every size and SHA256 and records the external host. The inventory
+covers scientific trees, not the entire plans/source/budget ledger; copy and
+verify those separately. The receipt is client-side evidence, not automatic
+permission to stop or terminate the Pod.
