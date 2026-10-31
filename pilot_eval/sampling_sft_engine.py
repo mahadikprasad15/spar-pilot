@@ -38,6 +38,20 @@ def configure_precision(precision,cache_parent):
                 vllm_cache=str(vllm_cache),cache_initially_empty=True)
 
 
+def precision_worker_evidence():
+    import triton
+    return dict(environment=os.environ.get('TRITON_F32_DEFAULT'),
+        effective_knob=triton.knobs.language.fp32_default,
+        triton_cache=os.environ.get('TRITON_CACHE_DIR'),vllm_cache=os.environ.get('VLLM_CACHE_ROOT'),
+        sources=precision_sources())
+
+
+def check_precision_worker(actual,expected):
+    if (actual.get('environment')!='ieee' or actual.get('effective_knob')!='ieee' or
+        any(actual.get(k)!=expected[k] for k in ['triton_cache','vllm_cache','sources'])):
+        raise ValueError('Actual worker precision or source identity differs from configured IEEE runtime.')
+
+
 def numeric_flags():
     import torch
     torch.backends.cuda.matmul.allow_tf32=False
@@ -58,7 +72,7 @@ def worker_evidence(model):
     if len(driver)!=1:raise ValueError('Require one visible physical GPU in the bounded runtime.')
     return dict(gpu=torch.cuda.get_device_name(),driver=driver[0],cuda=torch.version.cuda,
         torch_version=importlib.metadata.version('torch'),worker_numeric_flags=flags,
-        parameter_dtypes=dtypes,parameter_devices=devices)
+        parameter_dtypes=dtypes,parameter_devices=devices,triton_precision=precision_worker_evidence())
 
 
 def check_worker(actual,expected):
@@ -182,6 +196,10 @@ class HFOracle:
 
 
 def open_engine(plan,root):
+    settings=plan['settings'];r=settings['runtime']
+    source_plan=json.loads((Path(root)/plan['source_plan']).read_text())
+    cache_parent=Path(root)/source_plan['run_path']/'compiler-cache'
+    precision=configure_precision(r['triton_precision'],cache_parent)
     os.environ['HF_HUB_OFFLINE']='1'
     os.environ['TRANSFORMERS_OFFLINE']='1'
     import torch
@@ -189,7 +207,6 @@ def open_engine(plan,root):
     from pilot_eval.sampling_sft import verify
     if not torch.cuda.is_available() or torch.cuda.device_count()!=1:
         raise ValueError('Bounded engine requires one visible CUDA GPU.')
-    settings=plan['settings'];r=settings['runtime']
     if importlib.metadata.version('transformers')!='4.57.6':
         raise ValueError('Independent tokenizer/HF adapter requires transformers4.57.6.')
     audit=verify(root/plan['source_plan'],root)['audit'];identity=audit['training']['identity']
@@ -214,6 +231,7 @@ def open_engine(plan,root):
         model=AutoModelForCausalLM.from_pretrained(model_path,local_files_only=True,trust_remote_code=False,
             torch_dtype=torch.float32,attn_implementation='eager').to('cuda').eval()
         evidence=worker_evidence(model);check_worker(evidence,r)
+        check_precision_worker(evidence['triton_precision'],precision)
         engine=HFOracle(model)
     else:
         if importlib.metadata.version('vllm')!=r['vllm_version']:
@@ -228,7 +246,9 @@ def open_engine(plan,root):
         evidence=llm.collective_rpc('sampling_sft_worker_evidence')
         if len(evidence)!=1:raise ValueError('One actual inference worker required.')
         evidence=evidence[0];check_worker(evidence,r)
+        check_precision_worker(evidence['triton_precision'],precision)
         engine=VLLMEngine(llm,r)
     return engine,tokenizer,dict(execution_kind='real-cuda',worker=evidence,
         transformers_version=importlib.metadata.version('transformers'),runtime_hash=plan['runtime_hash'],
+        precision_configuration=precision,
         model_files='frozen local snapshot inventory; upstream download verification is preflight evidence')

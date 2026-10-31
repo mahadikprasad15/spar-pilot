@@ -31,7 +31,7 @@ END_STATES=('finished','capped','block_budget_exhausted','engine_error')
 def implementation():
     return {name:file_hash(Path(__file__).with_name(name)) for name in
         ['sampling_sft_generation.py','sampling_sft_pilot.py','sampling_sft_sampler.py',
-         'sampling_sft_engine.py','scoring.py']}
+         'sampling_sft_engine.py','sampling_sft_ieee_diagnostic.py','scoring.py']}
 
 
 def retry_seed(index):

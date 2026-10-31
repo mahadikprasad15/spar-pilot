@@ -34,7 +34,7 @@ LANES=['uninterrupted','resumed']
 def implementation():
     return {name:file_hash(Path(__file__).with_name(name)) for name in
         ['sampling_sft_pilot.py','sampling_sft_sampler.py','sampling_sft_engine.py',
-         'sampling_sft_instrument.py','scoring.py']}
+         'sampling_sft_instrument.py','sampling_sft_ieee_diagnostic.py','scoring.py']}
 
 
 def prepare(instrument_path,output_root,name):

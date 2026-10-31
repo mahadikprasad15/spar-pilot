@@ -105,7 +105,11 @@ def test_open_engine_registers_extension_and_checks_worker_without_function_tran
     import pilot_eval.sampling_sft_engine as module
     import pilot_eval.sampling_sft as workflow
     runtime=dict(vllm_version='0.11.1',actual_stop_ids=[3,4],max_model_len=4096,
-        gpu_memory_utilization=.85,prefix_caching=True,max_num_seqs=32,max_num_batched_tokens=8192)
+        gpu_memory_utilization=.85,prefix_caching=True,max_num_seqs=32,max_num_batched_tokens=8192,
+        triton_precision={'mode':'ieee'})
+    (tmp_path/'source.json').write_text(json.dumps({'run_path':'runs/source'}))
+    monkeypatch.setattr(module,'configure_precision',lambda actual,cache: {'mode':'ieee'})
+    monkeypatch.setattr(module,'check_precision_worker',lambda actual,expected: None)
     model=tmp_path/'revision';model.mkdir();(model/'config.json').write_text('{}')
     tokenizer=SimpleNamespace(chat_template='template',eos_token_id=3,
         convert_tokens_to_ids=lambda value:3 if value=='<|im_end|>' else 4)
@@ -120,7 +124,7 @@ def test_open_engine_registers_extension_and_checks_worker_without_function_tran
     monkeypatch.setattr(workflow,'verify',lambda *args:dict(audit=dict(training=dict(
         identity=dict(model_revision='revision',tokenizer_revision='revision'),
         prompt_mask_contract=dict(chat_template_sha256=module._hash('template'))))))
-    evidence={'actual_worker':True};checked=[];created=[]
+    evidence={'actual_worker':True,'triton_precision':{'effective_knob':'ieee'}};checked=[];created=[]
     def make_llm(**kwargs):
         assert kwargs['worker_extension_cls']=='pilot_eval.sampling_sft_engine.SamplingSFTWorkerExtension'
         llm=NamedRPC(SimpleNamespace(sampling_sft_worker_evidence=lambda:evidence))
@@ -166,3 +170,20 @@ def test_precision_setup_requires_frozen_sources_and_isolates_caches(tmp_path, m
     assert first['triton_cache']!=second['triton_cache']
     with pytest.raises(ValueError,match='source'):
         module.configure_precision({**precision,'sources':{}},tmp_path)
+
+
+def test_worker_precision_evidence_rejects_mismatch(monkeypatch):
+    from pilot_eval import sampling_sft_engine as module
+    sources={'source':'frozen'}
+    monkeypatch.setattr(module,'precision_sources',lambda:sources)
+    monkeypatch.setitem(sys.modules,'triton',SimpleNamespace(knobs=SimpleNamespace(language=SimpleNamespace(fp32_default='ieee'))))
+    monkeypatch.setenv('TRITON_F32_DEFAULT','ieee')
+    monkeypatch.setenv('TRITON_CACHE_DIR','/fresh/triton')
+    monkeypatch.setenv('VLLM_CACHE_ROOT','/fresh/vllm')
+    actual=module.precision_worker_evidence()
+    expected=dict(mode='ieee',sources=sources,triton_cache='/fresh/triton',vllm_cache='/fresh/vllm',cache_initially_empty=True)
+    module.check_precision_worker(actual,expected)
+    assert actual['effective_knob']=='ieee'
+    actual['effective_knob']='tf32'
+    with pytest.raises(ValueError,match='worker precision'):
+        module.check_precision_worker(actual,expected)
