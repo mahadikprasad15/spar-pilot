@@ -117,7 +117,9 @@ The failed IEEE pilot remains the original evidence. A candidate with prefix
 caching disabled needs a new settings file, qualification name, fixtures, T3,
 profile, selection and pilot; exact replay remains required. The existing
 runtime accepts the setting directly, so no sampler or engine code change is
-needed. Run this CPU-only preparation in the same checkout on the Pod:
+needed. The source below is the saved settings input for the completed profile stage;
+the stage helper recorded it under the original qualification name. Run this
+CPU-only preparation in the same checkout on the Pod:
 
 ```bash
 python - <<'PY'
@@ -126,7 +128,7 @@ import json
 from pathlib import Path
 from pilot_eval.sampling_sft_instrument import validate_runtime
 
-old = Path('/workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-v1.json')
+old = Path('/workspace/artifacts/runs/sampling-sft/sampling-sft-v1/qualification/a40-q-ieee-v1/profile/settings.json')
 new = Path('/workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-nocache-v1.json')
 data = json.loads(old.read_text())
 validate_runtime(data['runtime'])
