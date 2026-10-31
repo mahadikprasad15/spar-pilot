@@ -83,11 +83,15 @@ class VLLMEngine:
             stop_token_ids=r['actual_stop_ids'],**kwargs)
 
     def generate(self,requests):
+        for request in requests:
+            if 'qualification_min_tokens' in request and (request['qualification_min_tokens']!=1024
+                    or request['max_tokens']!=1024 or request.get('prefix_ids')!=[]):
+                raise ProtocolError('Forced-length control is only for an empty-prefix1024-token score fixture.')
         if any(len(r['prompt_ids'])+r['max_tokens']>self.settings['max_model_len'] for r in requests):
             raise ProtocolError('Proposer context overflow; truncation forbidden.')
         prompts=[dict(prompt_token_ids=r['prompt_ids']) for r in requests]
         params=[self.params(temperature=0.6,top_p=1.0,repetition_penalty=1.1,
-            max_tokens=r['max_tokens'],min_tokens=0,seed=r['seed']) for r in requests]
+            max_tokens=r['max_tokens'],min_tokens=r.get('qualification_min_tokens',0),seed=r['seed']) for r in requests]
         outputs=self.llm.generate(prompts,params,use_tqdm=False)
         result=[]
         for request,out in zip(requests,outputs):

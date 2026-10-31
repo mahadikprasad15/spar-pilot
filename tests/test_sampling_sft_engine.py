@@ -135,3 +135,15 @@ def test_open_engine_registers_extension_and_checks_worker_without_function_tran
     assert checked==[(evidence,runtime)]
     assert created[0].calls==['sampling_sft_worker_evidence']
     assert receipt['worker']==evidence
+
+
+def test_forced_cap_is_explicit_and_default_stop_policy_stays_unchanged(monkeypatch):
+    value,llm=engine(monkeypatch)
+    value.generate([dict(prompt_ids=[1,2],prefix_ids=[],max_tokens=1024,seed=0,
+                         qualification_min_tokens=1024)])
+    assert llm.params[0].values['min_tokens']==1024
+    value.generate([dict(prompt_ids=[1,2],max_tokens=64,seed=0)])
+    assert llm.params[0].values['min_tokens']==0
+    with pytest.raises(ProtocolError):
+        value.generate([dict(prompt_ids=[1,2],prefix_ids=[],max_tokens=64,seed=0,
+                             qualification_min_tokens=64)])

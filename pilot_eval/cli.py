@@ -81,6 +81,13 @@ def main(argv=None, *, dependencies=None):
             generation.add_argument('--job',type=Path);generation.add_argument('--stop-after-blocks',type=int)
         if operation=='recover-writer':
             generation.add_argument('--owner-token',required=True);generation.add_argument('--review-notes',required=True)
+    qualification=commands.add_parser('sampling-sft-qualification-stage',help='explicit bounded qualification handoff; no full generation')
+    for field in ['config','settings','output-root']:
+        qualification.add_argument('--'+field,type=Path,required=True)
+    for field in ['name','stage','reviewer','volume-id','rate']:
+        qualification.add_argument('--'+field,required=True)
+    qualification.add_argument('--estimated-hours',default='0.5',help='explicit work estimate; runner timeout includes1.5 buffer')
+    qualification.add_argument('--run',action='store_true',help='execute this explicitly approved paid qualification stage')
     for operation in ['prepare','run','status','compare','report','recover-writer']:
         pilot=commands.add_parser('sampling-sft-pilot-'+operation,help='fixed32 k5 pilot, sealed recovery and exact replay')
         pilot.add_argument('--output-root',type=Path,required=True)
@@ -892,6 +899,11 @@ def main(argv=None, *, dependencies=None):
             elif operation=='recover-writer':result=generation.recover_writer(args.config,args.output_root,args.k,args.owner_token,args.review_notes)
             else:result=generation.status(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command=='sampling-sft-qualification-stage':
+            from pilot_eval.sampling_sft_qualification import stage
+            result=stage(args.config,args.output_root,args.settings,args.name,args.stage,args.reviewer,
+                args.volume_id,args.rate,execute=args.run,estimated_hours=args.estimated_hours)
+            print(json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-pilot-'):
             from pilot_eval import sampling_sft_pilot as pilot
             operation=args.command.removeprefix('sampling-sft-pilot-')

@@ -214,3 +214,7 @@ remain truthful. Missing historical records must be labelled incomplete, not
 silently treated as zero. No environment variable or automatic fallback waives a
 cap. A stale or unbound waiver is rejected. This supports the bounded instrument;
 production generation and training retain their separate gate reviews.
+
+The staged A40 handoff and fixed20 score-fixture capture are documented in
+[sampling-sft-qualification.md](sampling-sft-qualification.md). This preserves
+T3 limits and distinguishes the deliberately forced cap from normal outcomes.

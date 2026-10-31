@@ -146,3 +146,42 @@ def test_a40_bounded_plan_records_actual_gpu_without_qualifying_fixture(tmp_path
     assert cli(tmp_path, 'run', '--config', plan, deps=Dependencies()) == 0
     result = json.loads((tmp_path / 'runs/sampling-sft/sample/instrument/a40/results.json').read_text())
     assert not result['gpu_qualified']
+
+
+def test_public_fixture_capture_freezes_twenty_provenanced_traces_before_scoring(tmp_path, source_template):
+    source, settings = setup(tmp_path, source_template)
+    data=json.loads(settings.read_text())
+    data.update(mode='fixtures', k=0, problem_ids=list(range(20)))
+    settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','fixtures')==0
+    plan=tmp_path/'plans/fixtures/sampling-sft.instrument.json'
+    deps=Dependencies()
+    deps.engine=Engine([generation([65,3],'stop',3)]*19+[generation([65]*1024)])
+    assert cli(tmp_path,'run','--config',plan,deps=deps)==0
+    directory=tmp_path/'runs/sampling-sft/sample/instrument/fixtures'
+    fixtures=json.loads((directory/'fixtures.json').read_text())
+    assert len(fixtures)==20
+    assert fixtures[-1]['generation_request']['qualification_min_tokens']==1024
+    assert fixtures[-1]['categories']==['empty-prefix','long','capped']
+    assert all('qualification_min_tokens' not in f['generation_request'] for f in fixtures[:-1])
+    assert json.loads((directory/'results.json').read_text())['training_eligible'] is False
+    for mode in ['scores','oracle']:
+        data.update(mode=mode,fixtures=str(directory/'fixtures.json'))
+        settings.write_text(json.dumps(data))
+        assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name',mode)==0
+    (directory/'requests.jsonl').write_text('changed')
+    assert cli(tmp_path,'verify','--config',plan)==1
+
+
+def test_forced_cap_failure_replays_same_request_and_never_seals_fixtures(tmp_path, source_template):
+    source,settings=setup(tmp_path,source_template)
+    data=json.loads(settings.read_text());data.update(mode='fixtures',k=0,problem_ids=list(range(20)))
+    settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','bad-fixtures')==0
+    plan=tmp_path/'plans/bad-fixtures/sampling-sft.instrument.json'
+    deps=Dependencies();deps.engine=Engine([generation([3],'stop',3)]*40)
+    assert cli(tmp_path,'run','--config',plan,deps=deps)==1
+    assert deps.engine.requests[:20]==deps.engine.requests[20:]
+    folder=tmp_path/'runs/sampling-sft/sample/instrument/bad-fixtures'
+    assert not (folder/'complete.json').exists() and not (folder/'fixtures.json').exists()
+    assert (folder/'failure.json').exists()

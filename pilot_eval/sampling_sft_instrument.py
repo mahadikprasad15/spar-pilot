@@ -68,12 +68,14 @@ def prepare(config_path, output_root, settings_path, name):
     if set(settings) not in [required,required|{'fixtures'}]:raise ValueError('Unexpected bounded settings schema.')
     validate_runtime(settings['runtime'])
     mode=settings['mode']
-    if mode not in ['bounded','profile','scores','oracle']:raise ValueError('Unknown bounded mode.')
+    if mode not in ['bounded','profile','scores','oracle','fixtures']:raise ValueError('Unknown bounded mode.')
     if settings['k'] not in [0,2,5]:raise ValueError('Only approved k0/2/5.')
     pids=settings['problem_ids']
     if (not isinstance(pids,list) or not 1<=len(pids)<=64 or pids!=sorted(set(pids))
             or any(type(i) is not int or not 0<=i<512 for i in pids)):
         raise ValueError('Predeclare1–64 ordered problem ordinals within the saved512 cohort.')
+    if mode=='fixtures' and (settings['k']!=0 or len(pids)!=20):
+        raise ValueError('Score-fixture capture requires20 predeclared problems at k0.')
     if mode=='profile' and (len(pids)!=64 or settings['k']!=2):
         raise ValueError('Throughput profile requires64 fixed problems and k2, one block.')
     parents={str(inside(root,config_path).relative_to(root)):file_hash(inside(root,config_path)),
@@ -211,7 +213,15 @@ def run(path,output_root,job_path=None,*,dependencies=None):
                 runtime={**runtime,'execution_kind':'cpu-fixture'}
             source.save(folder/'env.json',runtime)
             settings=plan['settings'];mode=settings['mode']
-            if mode in ['scores','oracle']:
+            if dependencies is None:
+                for problem in plan['problems']:
+                    actual=tokenizer.apply_chat_template([dict(role='user',content=problem['user_message'])],
+                        tokenize=True,add_generation_prompt=True)
+                    if list(actual)!=problem['scorer_prompt_ids']:
+                        raise ValueError('Pinned scorer prompt retokenization mismatch.')
+            if mode=='fixtures':
+                result=capture_fixtures(plan,root,folder,engine,tokenizer)
+            elif mode in ['scores','oracle']:
                 fixtures=json.loads((root/settings['fixtures']).read_text())
                 values=engine.score(fixtures)
                 # Validate now; malformed scores cannot become a comparison receipt later.
@@ -220,13 +230,6 @@ def run(path,output_root,job_path=None,*,dependencies=None):
                 if len(values)!=20:raise ValueError('Score engine cardinality mismatch.')
                 result=dict(state='completed',scores=values,fixture_sha256=file_hash(root/settings['fixtures']))
             else:
-                # Scorer retokenization is independent of the old stored IDs.
-                if dependencies is None:
-                    for problem in plan['problems']:
-                        actual=tokenizer.apply_chat_template([dict(role='user',content=problem['user_message'])],
-                            tokenize=True,add_generation_prompt=True)
-                        if list(actual)!=problem['scorer_prompt_ids']:
-                            raise ValueError('Pinned scorer prompt retokenization mismatch.')
                 timings=[]
                 if hasattr(engine,'measurement_start'):engine.measurement_start()
                 def timing(value):
@@ -274,6 +277,59 @@ def run(path,output_root,job_path=None,*,dependencies=None):
             _write_state(folder,'failed',0,len(plan['problems']),str(exc))
             raise
     return verify(path,root)
+
+
+
+def capture_fixtures(plan,root,folder,engine,tokenizer):
+    """Twenty fixed scorer fixtures; one explicitly forced cap, never training data."""
+    from pilot_eval.sampling_sft_sampler import proposer, generated, request_seed, ProtocolError, diagnostic
+    problems=plan['problems'];stops=plan['settings']['runtime']['actual_stop_ids']
+    requests=[dict(problem_id=p['problem_id'],block=0,step=-1,
+        seed=request_seed(0,p['problem_id'],0,-1),prefix_ids=[],
+        prompt_ids=proposer(p,[],tokenizer),max_tokens=1024) for p in problems]
+    requests[-1]['qualification_min_tokens']=1024
+    print('Score-fixture capture:20 fixed requests; final request forced to1024 tokens; not training data.',flush=True)
+    if hasattr(engine,'clear_cache'):engine.clear_cache()
+    errors=[]
+    for replay in range(2):
+        outputs=None
+        try:
+            started=time.monotonic();outputs=engine.generate(requests)
+            if not isinstance(outputs,list) or len(outputs)!=20:
+                raise ProtocolError('Fixture capture requires20 aligned generation outputs.')
+            ids=[generated(out,1024,stops) for out in outputs]
+            if len(ids[-1])!=1024 or any(token in stops for token in ids[-1]):
+                raise ProtocolError('Predeclared forced-cap fixture did not reach1024 without stops.')
+            append(folder/'requests.jsonl',dict(kind='generate',requests=requests,outputs=outputs,replay=replay))
+            append(folder/'timings.jsonl',dict(kind='generate',seconds=time.monotonic()-started))
+            break
+        except (RuntimeError,ValueError,TypeError,KeyError,IndexError,AttributeError) as exc:
+            error=dict(replay=replay,type=type(exc).__name__,error=str(exc),raw_outputs=diagnostic(outputs))
+            errors.append(error);append(folder/'requests.jsonl',dict(engine_error=error))
+    else:raise ProtocolError('Same fixed fixture generation failed twice; stop.')
+    low=min(map(len,ids));high=max(map(len,ids))
+    if low==high:raise ValueError('Fixed fixture capture lacks distinct short/long traces; stop before scoring.')
+    # Length-only labels are fixed before either scorer runs. Never select on score agreement.
+    line=len((folder/'requests.jsonl').read_text().splitlines())-1
+    fixtures=[]
+    for index,(problem,request,response) in enumerate(zip(problems,requests,ids)):
+        cats=['empty-prefix']
+        if len(response)==low:cats.append('short')
+        if len(response)==high:cats.append('long')
+        if response[-1] in stops:cats.append('finished')
+        elif len(response)==1024:cats.append('capped')
+        fixture=dict(trace_id=f"fixed-{problem['problem_id']}",problem_id=problem['problem_id'],
+            prompt_ids=problem['scorer_prompt_ids'],response_ids=response,categories=cats,
+            generation_request=request,generation_record=dict(path=str((folder/'requests.jsonl').relative_to(root)),
+                                                              line=line,output_index=index))
+        fixtures.append(fixture)
+        append(folder/'responses.jsonl',dict(**fixture,training_eligible=False,
+            text=tokenizer.decode(response,skip_special_tokens=False)))
+    validate_fixtures(fixtures,stops,problems)
+    source.frozen(folder/'fixtures.json',fixtures)
+    print(f'Score-fixture capture complete:20 traces; lengths {low}–{high}; frozen before score comparison.',flush=True)
+    return dict(state='completed',traces=fixtures,errors=errors,training_eligible=False,
+        scope='Fixed scoring fixtures; final trace forced to1024 tokens by min_tokens, not a model outcome.')
 
 
 def batch_dependence(engine,result):
