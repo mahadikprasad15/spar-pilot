@@ -43,3 +43,30 @@ the saved HF reference. This tests scheduler sequence concurrency, not all cause
 of numerical differences: chunked prefill, kernel shapes and cache behavior can
 also depend on the scheduler. Run under a new diagnostic name. Each result and
 runtime identity is preserved, and the original T3 gate remains unchanged.
+
+## Triton IEEE diagnostic
+
+Under a fresh name, `--mode ieee` uses the original20 fixtures and scores once
+with `TRITON_F32_DEFAULT=ieee`; it compares raw token scores against both saved
+vLLM and HF results using the original0.01 token and0.001 mean limits. It
+fingerprints the installed vLLM attention source and Triton precision mechanism,
+then requires the actual inference worker to report the same source hashes,
+environment, effective Triton knob and isolated cache. The child sets these
+before importing Triton/vLLM. A new name supplies a fresh Triton and vLLM cache;
+failed or interrupted attempts are preserved and require a new name. No package
+files or existing runtime receipts are changed. For example:
+
+```bash
+python -m pilot_eval.sampling_sft_cache_diagnostic \
+  --output-root /workspace/artifacts --name a40-ieee-diagnostic-v1 --mode ieee \
+  --volume-id cmuptiucb000007l5dnohe861 --rate 0.60 --reviewer Prasad
+```
+
+The preflight stops if the installed source mechanism cannot be recognized.
+A worker knob and source match do not prove that this particular attention
+backend executed or that every kernel uses the default; inspect backend logs and
+compiled kernels if the result needs a mechanistic interpretation. IEEE can be
+slower and the existing22.5-minute job timeout still applies. A passing score
+comparison does not qualify production or reverse the original failed gate.
+The newer upstream [vLLM issue](https://github.com/vllm-project/vllm/issues/62582)
+is motivation, not evidence that this particular version and backend were affected.

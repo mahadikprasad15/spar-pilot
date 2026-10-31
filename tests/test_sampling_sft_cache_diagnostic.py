@@ -29,3 +29,9 @@ def test_singleton_settings_change_only_scheduler_limit():
     assert variants==[('singleton',{'runtime':{'prefix_caching':True,'max_num_seqs':1,'dtype':'float32'},'mode':'scores'})]
     assert original['runtime']['max_num_seqs']==32
     with pytest.raises(ValueError):diagnostic_variants(original,'unknown')
+
+
+def test_ieee_variant_keeps_original_runtime():
+    from pilot_eval.sampling_sft_cache_diagnostic import diagnostic_variants
+    original={'runtime':{'prefix_caching':True,'max_num_seqs':32},'mode':'scores'}
+    assert diagnostic_variants(original,'ieee')==[('ieee',original)]

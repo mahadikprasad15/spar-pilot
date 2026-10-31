@@ -43,7 +43,8 @@ def configure_child(plan_path, root, expected_hash=None):
     if not path.is_relative_to(root) or not path.is_file() or file_hash(path)!=expected_hash:
         raise ValueError('Invalid precision plan or hash.')
     plan=json.loads(path.read_text())
-    if plan.get('sources')!=installed_sources() or plan.get('precision')!='ieee':
+    if (plan.get('sources')!=installed_sources() or plan.get('precision')!='ieee'
+            or plan.get('diagnostic_code_sha256')!=file_hash(Path(__file__))):
         raise ValueError('Precision plan source fingerprint differs.')
     cache=Path(plan['triton_cache']).resolve()
     if not cache.is_relative_to(path.parent) or not cache.is_dir():
@@ -82,9 +83,12 @@ class IEEEWorkerExtension(SamplingSFTWorkerExtension):
         plan=json.loads(path.read_text())
         if (os.environ.get('TRITON_F32_DEFAULT')!='ieee' or
             os.environ.get('TRITON_CACHE_DIR')!=plan['triton_cache'] or
+            os.environ.get('VLLM_CACHE_ROOT')!=str(path.parent/'vllm-cache') or
+            file_hash(Path(__file__))!=plan['diagnostic_code_sha256'] or
             triton.knobs.language.fp32_default!='ieee' or installed_sources()!=plan['sources']):
             raise ValueError('Worker precision or source evidence differs.')
         evidence=super().sampling_sft_worker_evidence()
         evidence['triton_precision']=dict(environment='ieee',effective_knob=triton.knobs.language.fp32_default,
-            cache=os.environ['TRITON_CACHE_DIR'],plan_sha256=file_hash(path),sources=plan['sources'])
+            cache=os.environ['TRITON_CACHE_DIR'],vllm_cache=os.environ['VLLM_CACHE_ROOT'],
+            plan_sha256=file_hash(path),sources=plan['sources'])
         return evidence

@@ -37,13 +37,13 @@ def compare_scores(fixtures,on,off,hf):
 
 
 def diagnostic_variants(original,mode):
-    if mode not in ['cache','singleton']:raise ValueError('Unknown diagnostic mode.')
-    choices=[('on',True),('off',False)] if mode=='cache' else [('singleton',None)]
+    if mode not in ['cache','singleton','ieee']:raise ValueError('Unknown diagnostic mode.')
+    choices=[('on',True),('off',False)] if mode=='cache' else [(mode,None)]
     variants=[]
     for label,cache in choices:
         settings=json.loads(json.dumps(original))
         if mode=='cache':settings['runtime']['prefix_caching']=cache
-        else:settings['runtime']['max_num_seqs']=1
+        elif mode=='singleton':settings['runtime']['max_num_seqs']=1
         variants.append((label,settings))
     return variants
 
@@ -73,6 +73,16 @@ def run(root,name,volume,rate,reviewer,mode='cache'):
     source_plan=root/old_plan['source_plan'];_,parent,_=source.load(source_plan,root)
     control=root/parent['run_path']/'diagnostics'/name
     control.mkdir(parents=True,exist_ok=True)
+    precision_path=None
+    if mode=='ieee':
+        from pilot_eval import sampling_sft_ieee_diagnostic as ieee
+        precision_path=control/'precision-plan.json'
+        cache=control/'triton-cache'
+        if not precision_path.exists() and cache.exists():
+            raise ValueError('A fresh isolated Triton cache is required; use a new name.')
+        cache.mkdir(exist_ok=True)
+        source.frozen(precision_path,dict(precision='ieee',triton_cache=str(cache),
+            sources=ieee.installed_sources(),diagnostic_code_sha256=file_hash(Path(ieee.__file__))))
     source.frozen(control/'inputs.json',dict(score_plan=str(old.relative_to(root)),
         score_plan_sha256=file_hash(old),oracle_plan=str(old_oracle.relative_to(root)),
         oracle_plan_sha256=file_hash(old_oracle),fixture_sha256=file_hash(fixture_path),
@@ -91,6 +101,9 @@ def run(root,name,volume,rate,reviewer,mode='cache'):
             command=[sys.executable,'-m','pilot_eval','sampling-sft-instrument-run','--config',str(plan),
                      '--job',str(job_path),'--output-root',str(root)],
             outputs=[cfg['run_path']+'/'+p for p in ['complete.json','results.json','env.json']])
+        if precision_path:
+            request['command'] += ['--precision-plan',str(precision_path),
+                                   '--precision-sha256',file_hash(precision_path)]
         source.frozen(control/f'request-{label}.json',request)
         job_path=jobs.prepare(source_plan,root,control/f'request-{label}.json')
         ledger=budget.initialize(source_plan,root);approval=control/f'approval-{label}.json'
@@ -114,6 +127,11 @@ def run(root,name,volume,rate,reviewer,mode='cache'):
         if not status['workload_success']:raise ValueError('Diagnostic job failed: '+str(log))
         result=instrument.verify(plan,root)['result']
         if result['execution_kind']!='real-cuda':raise ValueError('Real GPU evidence required.')
+        if precision_path:
+            runtime=json.loads((root/cfg['run_path']/'env.json').read_text())
+            proof=runtime['worker']['triton_precision']
+            if proof['plan_sha256']!=file_hash(precision_path) or proof['effective_knob']!='ieee':
+                raise ValueError('Worker IEEE precision evidence does not match the plan.')
         results[label]=result['scores']
         evidence[label]=dict(plan=str(plan.relative_to(root)),plan_sha256=file_hash(plan),
             runtime_hash=cfg['runtime_hash'],results=str((root/cfg['run_path']/'results.json').relative_to(root)),
@@ -122,10 +140,14 @@ def run(root,name,volume,rate,reviewer,mode='cache'):
     if mode=='cache':
         comparisons=compare_scores(fixtures,results['on'],results['off'],oracle_result['scores'])
         comparisons['fresh_on_vs_original_vllm']=compare_scores(fixtures,results['on'],old_result['scores'],oracle_result['scores'])['on_vs_off']
-    else:
+    elif mode=='singleton':
         raw=compare_scores(fixtures,old_result['scores'],results['singleton'],oracle_result['scores'])
         comparisons=dict(batched_vs_singleton=raw['on_vs_off'],batched_vs_hf=raw['on_vs_hf'],
                          singleton_vs_hf=raw['off_vs_hf'])
+    else:
+        raw=compare_scores(fixtures,old_result['scores'],results['ieee'],oracle_result['scores'])
+        comparisons=dict(original_vs_ieee=raw['on_vs_off'],original_vs_hf=raw['on_vs_hf'],
+                         ieee_vs_hf=raw['off_vs_hf'])
     report=dict(state='completed',scope='diagnostic only; original T3 failure and production gate unchanged',
         fixture_sha256=file_hash(fixture_path),old_runtime_hash=old_plan['runtime_hash'],
         comparisons=comparisons,evidence=evidence,inputs=str((control/'inputs.json').relative_to(root)))
@@ -135,7 +157,7 @@ def run(root,name,volume,rate,reviewer,mode='cache'):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--output-root',required=True);p.add_argument('--name',required=True)
-    p.add_argument('--mode',choices=['cache','singleton'],default='cache')
+    p.add_argument('--mode',choices=['cache','singleton','ieee'],default='cache')
     p.add_argument('--volume-id',required=True);p.add_argument('--rate',required=True);p.add_argument('--reviewer',required=True)
     a=p.parse_args()
     try: print(json.dumps(run(a.output_root,a.name,a.volume_id,a.rate,a.reviewer,a.mode),indent=2))
