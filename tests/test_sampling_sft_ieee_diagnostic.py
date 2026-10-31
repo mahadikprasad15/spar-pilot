@@ -25,3 +25,12 @@ def test_child_rejects_unsealed_plan_before_loading_gpu(tmp_path, monkeypatch):
         configure_child(tmp_path/'missing.json', tmp_path)
     import os
     assert os.environ.get('TRITON_F32_DEFAULT') is None
+
+
+def test_precision_cli_rejects_missing_plan_before_job_launch(tmp_path, capsys):
+    from pilot_eval.cli import main
+    code=main(['sampling-sft-instrument-run','--output-root',str(tmp_path),
+               '--config',str(tmp_path/'missing-config'),'--job',str(tmp_path/'missing-job'),
+               '--precision-plan',str(tmp_path/'missing-plan'),'--precision-sha256','x'])
+    assert code==1
+    assert 'precision plan' in capsys.readouterr().err.lower()

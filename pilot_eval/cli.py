@@ -110,7 +110,10 @@ def main(argv=None, *, dependencies=None):
         if operation=='prepare':
             instrument.add_argument('--settings',type=Path,required=True)
             instrument.add_argument('--name',required=True)
-        if operation=='run':instrument.add_argument('--job',type=Path)
+        if operation=='run':
+            instrument.add_argument('--job',type=Path)
+            instrument.add_argument('--precision-plan',type=Path)
+            instrument.add_argument('--precision-sha256')
         if operation=='compare':instrument.add_argument('--oracle',type=Path,required=True)
         if operation=='select':instrument.add_argument('--review',type=Path,required=True)
     for operation in ['prepare', 'run', 'status', 'export', 'receipt', 'finish', 'confirm', 'execute']:
@@ -918,7 +921,13 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval import sampling_sft_instrument as instrument
             operation=args.command.removeprefix('sampling-sft-instrument-')
             if operation=='prepare':result=instrument.prepare(args.config,args.output_root,args.settings,args.name)
-            elif operation=='run':result=instrument.run(args.config,args.output_root,args.job,dependencies=dependencies)
+            elif operation=='run':
+                if args.precision_plan or args.precision_sha256:
+                    if not args.precision_plan or not args.precision_sha256 or dependencies is not None:
+                        raise ValueError('A precision plan and hash are required for real diagnostic work.')
+                    from pilot_eval.sampling_sft_ieee_diagnostic import configure_child
+                    configure_child(args.precision_plan,args.output_root,args.precision_sha256)
+                result=instrument.run(args.config,args.output_root,args.job,dependencies=dependencies)
             elif operation=='compare':result=instrument.compare(args.config,args.output_root,args.oracle)
             elif operation=='select':result=instrument.select(args.config,args.output_root,args.review)
             else:result=getattr(instrument,operation)(args.config,args.output_root)
