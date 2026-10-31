@@ -107,6 +107,7 @@ def run(config, output_root, lane, job, *, dependencies=None):
         if (path/'started.json').exists():raise ValueError('Failed or interrupted lane preserved; use a new diagnostic name.')
         source.frozen(path/'started.json',dict(config_sha256=_hash(plan),lane=lane))
         source.save(path/'status.json',dict(state='running'))
+        previous_env=os.environ.get(ENV_NAME)
         try:
             if 'vllm' in sys.modules:raise ValueError('vLLM already imported before setting diagnostic environment.')
             os.environ[ENV_NAME]=ENV_VALUE
@@ -139,6 +140,9 @@ def run(config, output_root, lane, job, *, dependencies=None):
         except BaseException as exc:
             source.save(path/'status.json',dict(state='failed',error=str(exc),type=type(exc).__name__))
             raise
+        finally:
+            if previous_env is None:os.environ.pop(ENV_NAME,None)
+            else:os.environ[ENV_NAME]=previous_env
 
 
 def report(config, output_root):
@@ -148,6 +152,12 @@ def report(config, output_root):
     if any(x['runtime_hash']!=plan['runtime_hash'] or x['fixture_sha256']!=plan['fixture_sha256']
            or x['environment']!={ENV_NAME:ENV_VALUE} for x in (a,b)):
         raise ValueError('Lane evidence differs from diagnostic identity.')
+    if any(x['worker'].get('execution_kind')=='real-cuda' and
+           x['worker'].get('vllm_effective_multiprocessing') is not False for x in (a,b)):
+        raise ValueError('Real CUDA lane lacks effective deterministic scheduling evidence.')
+    if (all(x['worker'].get('execution_kind')=='real-cuda' for x in (a,b))
+            and (a['host'],a['pid'])==(b['host'],b['pid'])):
+        raise ValueError('Real CUDA lanes must use distinct fresh processes.')
     fixtures=json.loads((root/plan['fixture']).read_text())
     result=dict(scope='20 frozen fixtures; repeated scoring, not pilot replay or qualification',
         runtime_hash=plan['runtime_hash'], fixture_sha256=plan['fixture_sha256'],
