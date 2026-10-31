@@ -6,6 +6,8 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+import urllib.request
+import urllib.parse
 
 
 class RunPodProvider:
@@ -22,7 +24,26 @@ class RunPodProvider:
         value=value.get('data',value)
         if not isinstance(value,dict) or value.get('id')!=pod_id:
             raise ValueError('Unrecognized RunPod CLI identity/schema; qualify the installed CLI before use.')
-        return {key:value.get(key) for key in ['id','desiredStatus','runtimeStatus','networkVolumeId','costPerHr']}
+        result={key:value.get(key) for key in ['id','desiredStatus','runtimeStatus','networkVolumeId','costPerHr']}
+        if not result['networkVolumeId'] and os.environ.get('RUNPOD_API_KEY'):
+            request=urllib.request.Request(
+                'https://api.runpod.io/v2/pods/'+urllib.parse.quote(pod_id, safe=''),
+                headers={'Authorization':'Bearer '+os.environ['RUNPOD_API_KEY']})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                current=json.load(response)
+            if current.get('id')!=pod_id:
+                raise ValueError('RunPod v2 Pod identity mismatch.')
+            mounts=[(kind, mount) for kind in ['network','global']
+                    for mount in current.get('mounts',{}).get(kind,[])]
+            if len(mounts)!=1:
+                raise ValueError('Expected one independently persistent storage mount.')
+            kind,mount=mounts[0]
+            if not mount.get('volumeId') or not mount.get('path') or not Path(mount['path']).is_absolute():
+                raise ValueError('Storage mount identity/path missing.')
+            result.update(storageVolumeId=mount['volumeId'], storageMountPath=mount['path'],
+                          storageType=kind, desiredStatus=current.get('status'),
+                          runtimeStatus=current.get('status'), costPerHr=current.get('cost'))
+        return result
 
     def stop(self,pod_id):
         if self.own_pod_id()!=pod_id:raise ValueError('Refusing to stop any Pod other than this job’s own Pod.')

@@ -147,8 +147,10 @@ def run(path,output_root,approval_path=None,*,provider=None):
                 authorize_job(root,job)
             _approval(job,root,approval)
             pod_id=provider.own_pod_id();observed=provider.inspect(pod_id)
-            if observed.get('id')!=pod_id or observed.get('networkVolumeId')!=request['network_volume_id']:
+            if observed.get('id')!=pod_id or observed.get('storageVolumeId',observed.get('networkVolumeId'))!=request['network_volume_id']:
                 raise ValueError('Own Pod/network-volume identity mismatch.')
+            if observed.get('storageMountPath') and not root.is_relative_to(Path(observed['storageMountPath'])):
+                raise ValueError('Artifact root is outside the verified persistent storage mount.')
             if budget.number(observed.get('costPerHr'),True)>budget.number(request['rate_usd_per_hour'],True):
                 raise ValueError('Provider hourly quote exceeds the reserved rate; re-estimate before launch.')
         else:pod_id=None
