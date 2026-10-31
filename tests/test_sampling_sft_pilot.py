@@ -210,3 +210,11 @@ def test_saved_replay_diagnostic_reads_real_sealed_fixture(tmp_path, source_temp
     assert not result['structure']['issues']
     assert result['scores']['different_values'] == 0
     assert all(block['ordered_records_equal'] for block in result['blocks'].values())
+    # Corrupt a sealed scientific payload without touching its seal or replay.
+    scientific = folder/'resumed/blocks/000/scientific.jsonl'
+    scientific.write_text(scientific.read_text().replace('\n', ' \n', 1))
+    tampered = diagnose(folder)
+    assert not tampered['structure']['integrity_valid']
+    assert any(issue['issue'] == 'sealed file missing or hash mismatch'
+               and issue.get('file') == 'scientific.jsonl'
+               for issue in tampered['structure']['issues'])
