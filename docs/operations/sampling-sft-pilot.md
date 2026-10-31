@@ -153,3 +153,25 @@ Engine failure blocks the attempt separately. A replay failure remains visible
 in the report. No prompt, J64 or cap1024 is changed automatically. Production
 always remains disabled here; Ticket05 requires qualified evidence and the
 subsequent reviewed budget/approval handoff.
+
+## Inspect a saved replay mismatch on CPU
+
+This standalone diagnostic reads both saved lanes and writes a new diagnostic
+folder without changing the frozen pilot implementation or replay report. It
+requires no model, GPU, network, or paid job. Run from a checkout that contains
+`pilot_eval/sampling_sft_replay_diagnostic.py`:
+
+```sh
+python -m pilot_eval.sampling_sft_replay_diagnostic --pilot-dir artifacts/runs/sampling-sft/SOURCE/pilot/PILOT --name replay-inspection-1
+```
+
+The name must be new; the command refuses to overwrite an existing directory.
+`diagnostics/NAME/summary.json` contains score counts and maximum absolute
+error, decision and final-trace counts, per-block localization, source hashes,
+and structural/integrity issues. `differences.jsonl` includes the corresponding
+individual score, generation, decision and final-trace differences. Blocks 1–2
+are before the recorded interruption boundary; later blocks are after it.
+Requests are compared only if their full saved inputs match. Changed, missing or
+duplicate requests are reported separately, so score counts cover aligned
+requests only. An integrity failure invalidates conclusions until investigated.
+This is descriptive evidence; it does not change or pass the exact replay gate.

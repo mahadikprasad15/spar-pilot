@@ -196,3 +196,17 @@ def test_completed_blocks_finalize_without_reloading_a_model(tmp_path,source_tem
     class NoModel(Dependencies):
         def open(self,*args):raise AssertionError('Completed work must not reload a model')
     assert cli(tmp_path,'run','--config',plan,'--lane','resumed',deps=NoModel())==0
+
+
+def test_saved_replay_diagnostic_reads_real_sealed_fixture(tmp_path, source_template):
+    from pilot_eval.sampling_sft_replay_diagnostic import diagnose
+    plan = prepared(tmp_path, source_template)
+    for lane in ['uninterrupted', 'resumed']:
+        assert cli(tmp_path, 'run', '--config', plan, '--lane', lane, deps=Dependencies()) == 0
+    folder = tmp_path/'runs/sampling-sft/sample/pilot/pilot'
+    assert cli(tmp_path, 'compare', '--config', plan) == 0
+    result = diagnose(folder)
+    assert result['structure']['integrity_valid']
+    assert not result['structure']['issues']
+    assert result['scores']['different_values'] == 0
+    assert all(block['ordered_records_equal'] for block in result['blocks'].values())
