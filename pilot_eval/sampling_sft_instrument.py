@@ -21,7 +21,8 @@ from pilot_eval.workflow import _hash
 
 RUNTIME_FIELDS = {'vllm_version','torch_version','cuda','driver','gpu','dtype','tf32',
     'worker_numeric_flags','max_num_seqs','max_num_batched_tokens','gpu_memory_utilization',
-    'prefix_caching','max_model_len','top_k','min_p','presence_penalty','frequency_penalty','actual_stop_ids'}
+    'prefix_caching','max_model_len','top_k','min_p','presence_penalty','frequency_penalty','actual_stop_ids',
+    'triton_precision'}
 
 
 def implementation():
@@ -32,6 +33,21 @@ def implementation():
 def validate_runtime(value):
     if not isinstance(value,dict) or set(value)!=RUNTIME_FIELDS:
         raise ValueError('Resolve every engine control explicitly; no implicit runtime defaults.')
+    precision=value['triton_precision']
+    if (not isinstance(precision,dict) or set(precision)!={'mode','cache_policy','sources'} or
+        precision['mode']!='ieee' or precision['cache_policy']!='isolated-per-engine'):
+        raise ValueError('Explicit IEEE precision and isolated-per-engine cache required.')
+    sources=precision['sources']
+    if (not isinstance(sources,dict) or set(sources)!={'vllm_version','triton_version','unqualified_dots','files'}
+        or sources['vllm_version']!='0.11.1' or not isinstance(sources['triton_version'],str)
+        or not sources['triton_version'] or type(sources['unqualified_dots']) is not int or sources['unqualified_dots']<1
+        or not isinstance(sources['files'],dict) or set(sources['files'])!={'vllm_attention','triton_core','triton_knobs'}):
+        raise ValueError('Explicit installed precision source identity required.')
+    for item in sources['files'].values():
+        if (not isinstance(item,dict) or set(item)!={'path','sha256'} or not isinstance(item['path'],str)
+            or not item['path'] or not isinstance(item['sha256'],str) or len(item['sha256'])!=64
+            or any(c not in '0123456789abcdef' for c in item['sha256'])):
+            raise ValueError('Invalid precision source fingerprint.')
     if (value['vllm_version']!='0.11.1' or not isinstance(value['gpu'], str) or not value['gpu'].strip()
             or value['dtype']!='float32' or value['tf32'] is not False
             or value['worker_numeric_flags']!=dict(matmul_tf32=False,cudnn_tf32=False,matmul_precision='highest')):

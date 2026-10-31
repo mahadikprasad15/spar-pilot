@@ -24,7 +24,10 @@ def setup(tmp_path,source_template):
         gpu='NVIDIA L40S',dtype='float32',tf32=False,worker_numeric_flags=dict(matmul_tf32=False,
         cudnn_tf32=False,matmul_precision='highest'),max_num_seqs=32,max_num_batched_tokens=8192,
         gpu_memory_utilization=0.85,prefix_caching=True,max_model_len=16384,
-        top_k=-1,min_p=0.0,presence_penalty=0.0,frequency_penalty=0.0,actual_stop_ids=[3,4])
+        top_k=-1,min_p=0.0,presence_penalty=0.0,frequency_penalty=0.0,actual_stop_ids=[3,4],
+        triton_precision=dict(mode='ieee',cache_policy='isolated-per-engine',sources=dict(
+            vllm_version='0.11.1',triton_version='fixture',unqualified_dots=2,
+            files={k:dict(path='/fixture/'+k,sha256='a'*64) for k in ['vllm_attention','triton_core','triton_knobs']})))
     settings=dict(runtime=runtime,mode='bounded',k=0,problem_ids=[0],
                   local_model='inputs/model',local_tokenizer='inputs/tokenizer')
     # CPU fixtures use the same local-file inventory contract without loading weights.
@@ -185,3 +188,13 @@ def test_forced_cap_failure_replays_same_request_and_never_seals_fixtures(tmp_pa
     folder=tmp_path/'runs/sampling-sft/sample/instrument/bad-fixtures'
     assert not (folder/'complete.json').exists() and not (folder/'fixtures.json').exists()
     assert (folder/'failure.json').exists()
+
+
+def test_new_runtime_requires_explicit_ieee_and_source_identity(tmp_path,source_template):
+    source,settings=setup(tmp_path,source_template)
+    data=json.loads(settings.read_text())
+    del data['runtime']['triton_precision'];settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','legacy')==1
+    data['runtime']['triton_precision']={'mode':'tf32','cache_policy':'isolated-per-engine','sources':{}}
+    settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','unsafe')==1
