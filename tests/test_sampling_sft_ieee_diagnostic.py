@@ -77,3 +77,17 @@ def test_execution_identity_separately_binds_precision_plan(tmp_path):
     assert result['legacy_runtime_hash']=='legacy-runtime'
     assert result['precision_plan_sha256'] != 'legacy-runtime'
     assert result['production_qualified'] is False
+
+
+def test_child_rejects_prepopulated_compiler_cache(tmp_path, monkeypatch):
+    import json
+    from pilot_eval import sampling_sft_ieee_diagnostic as ieee
+    from pilot_eval.training import file_hash
+    sources={'test':'sources'}
+    monkeypatch.setattr(ieee,'installed_sources',lambda:sources)
+    cache=tmp_path/'cache';cache.mkdir();(cache/'old-kernel').write_text('stale')
+    plan=tmp_path/'precision.json'
+    plan.write_text(json.dumps(dict(precision='ieee',triton_cache=str(cache),sources=sources,
+        cache_initially_empty=True,diagnostic_code_sha256=file_hash(ieee.__file__))))
+    with pytest.raises(ValueError,match='isolated Triton cache'):
+        ieee.configure_child(plan,tmp_path,file_hash(plan))

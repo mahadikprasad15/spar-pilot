@@ -53,7 +53,7 @@ def configure_child(plan_path, root, expected_hash=None):
             or plan.get('diagnostic_code_sha256')!=file_hash(Path(__file__))):
         raise ValueError('Precision plan source fingerprint differs.')
     cache=Path(plan['triton_cache']).resolve()
-    if not cache.is_relative_to(path.parent) or not cache.is_dir():
+    if not cache.is_relative_to(path.parent) or not cache.is_dir() or any(cache.iterdir()):
         raise ValueError('Invalid isolated Triton cache.')
     if any(x == 'triton' or x.startswith('triton.') or x == 'vllm' or x.startswith('vllm.') for x in sys.modules):
         raise ValueError('Precision must be configured before Triton or vLLM import.')
