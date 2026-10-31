@@ -31,8 +31,10 @@ def implementation():
 
 
 def validate_runtime(value):
-    if not isinstance(value,dict) or set(value)!=RUNTIME_FIELDS:
+    if not isinstance(value,dict) or set(value) not in [RUNTIME_FIELDS,RUNTIME_FIELDS|{'v1_multiprocessing'}]:
         raise ValueError('Resolve every engine control explicitly; no implicit runtime defaults.')
+    if 'v1_multiprocessing' in value and value['v1_multiprocessing'] is not False:
+        raise ValueError('Explicit V1 multiprocessing setting must be false.')
     precision=value['triton_precision']
     if (not isinstance(precision,dict) or set(precision)!={'mode','cache_policy','sources'} or
         precision['mode']!='ieee' or precision['cache_policy']!='isolated-per-engine'):

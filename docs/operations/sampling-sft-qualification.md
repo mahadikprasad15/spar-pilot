@@ -228,3 +228,75 @@ vLLM and records the effective value. vLLM can change random state in the
 calling process in this mode. A successful result does not establish equality
 for pilot-sized or dynamically changing batches, and T3, reviewed pilot alarms
 and exact kill/restart replay remain required for generation.
+
+## Pilot with explicit deterministic V1 scheduling
+
+This is a new runtime and instrument implementation, so retain the prior release
+to inspect historical runs. The new runtime binds `v1_multiprocessing: false`;
+the engine sets `VLLM_ENABLE_V1_MULTIPROCESSING=0` before importing vLLM and
+checks its effective value in the actual worker. The IEEE precision controls and
+no-prefix-cache setting remain intact. An ambient unbound override is rejected.
+The V1 same-process mode can reset user-code random states; the sampler's cut RNG
+is maintained in separate per-problem `random.Random` instances. The prior score
+diagnostic is evidence, not pilot qualification.
+
+The completed v2 fixture capture can be reused: the new scorer plans verify its
+historical capture plan, source parents and sealed files and independently
+verify each generation record. This avoids regenerating fixtures. Re-run the
+actual new-runtime vLLM and HF score checks (T3), profile and selection, then
+both pilot lanes and the controlled kill/restart comparison. Existing gates,
+thresholds and runtime/source validation remain unchanged. The earlier k2
+refinement was exploratory and is not required by the selection code.
+
+In the same activated Pod environment and checkout, create new settings:
+
+```bash
+python - <<'PY'
+import copy, json
+from pathlib import Path
+from pilot_eval.sampling_sft_instrument import validate_runtime
+old=Path('/workspace/artifacts/runs/sampling-sft/sampling-sft-v1/qualification/a40-q-ieee-nocache-v2/profile/settings.json')
+new=Path('/workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-nocache-detsched-v1.json')
+data=json.loads(old.read_text()); validate_runtime(data['runtime'])
+assert data['runtime']['prefix_caching'] is False
+assert data['runtime']['triton_precision']['mode']=='ieee'
+assert 'v1_multiprocessing' not in data['runtime']
+updated=copy.deepcopy(data); updated['runtime']['v1_multiprocessing']=False
+validate_runtime(updated['runtime'])
+with new.open('x') as f:
+    json.dump(updated,f,indent=2);f.write('\n')
+assert json.loads(new.read_text())==updated
+print('Created',new)
+PY
+```
+
+Recheck the selected Pod, persistent volume, rate and reviewer. The stage helper
+records the previously authorized budget waiver for each job. Its `--run`
+launches paid work; run and inspect each stage individually, stopping on error.
+Preserve failed job artifacts and reconcile cost. These commands do not rent,
+stop or delete a Pod.
+
+```bash
+qualify_detsched() {
+  python -m pilot_eval sampling-sft-qualification-stage \
+    --config /workspace/artifacts/plans/sampling-sft-v1/sampling-sft.plan.json \
+    --settings /workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-nocache-detsched-v1.json \
+    --output-root /workspace/artifacts --name a40-q-ieee-nocache-detsched-v1 \
+    --volume-id cmuptiucb000007l5dnohe861 --rate 0.60 --reviewer Prasad \
+    --fixture-source /workspace/artifacts/plans/a40-q-ieee-nocache-v2-fixtures/sampling-sft.instrument.json \
+    --stage "$1" "${@:2}"
+}
+qualify_detsched scores --run
+qualify_detsched oracle --run
+qualify_detsched profile --run
+qualify_detsched select
+qualify_detsched pilot-reference --run
+qualify_detsched pilot-kill --run
+qualify_detsched pilot-resume --run
+qualify_detsched compare
+```
+
+A successful exact pilot remains subject to the pilot alarm report, generation
+review and budget handoff. Host or driver changes require the recorded runtime
+checks and appropriate new qualification. A prior machine-critical alert is
+not evidence that the original score drift was caused by hardware.

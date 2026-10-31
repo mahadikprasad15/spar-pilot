@@ -96,6 +96,7 @@ def main(argv=None, *, dependencies=None):
         qualification.add_argument('--'+field,type=Path,required=True)
     for field in ['name','stage','reviewer','volume-id','rate']:
         qualification.add_argument('--'+field,required=True)
+    qualification.add_argument('--fixture-source',type=Path,help='verified historical fixture capture plan for scores/oracle')
     qualification.add_argument('--estimated-hours',default='0.5',help='explicit work estimate; runner timeout includes1.5 buffer')
     qualification.add_argument('--run',action='store_true',help='execute this explicitly approved paid qualification stage')
     for operation in ['prepare','run','status','compare','report','recover-writer']:
@@ -925,7 +926,7 @@ def main(argv=None, *, dependencies=None):
         elif args.command=='sampling-sft-qualification-stage':
             from pilot_eval.sampling_sft_qualification import stage
             result=stage(args.config,args.output_root,args.settings,args.name,args.stage,args.reviewer,
-                args.volume_id,args.rate,execute=args.run,estimated_hours=args.estimated_hours)
+                args.volume_id,args.rate,execute=args.run,estimated_hours=args.estimated_hours,fixture_source=args.fixture_source)
             print(json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-pilot-'):
             from pilot_eval import sampling_sft_pilot as pilot

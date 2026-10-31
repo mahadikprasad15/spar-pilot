@@ -239,3 +239,15 @@ def test_deterministic_score_real_saved_fixture_plan_and_paid_job_binding(tmp_pa
     assert diag.run(config,tmp_path,'a',None,dependencies=Dependencies())['within_process']['different_values']==0
     assert diag.run(config,tmp_path,'b',None,dependencies=Dependencies())['within_process']['different_values']==0
     assert diag.report(config,tmp_path)['between_first']['different_values']==0
+
+
+def test_deterministic_scheduling_runtime_is_explicit_and_changes_identity(tmp_path,source_template):
+    from pilot_eval.workflow import _hash
+    source,settings=setup(tmp_path,source_template)
+    data=json.loads(settings.read_text());legacy=_hash(data['runtime'])
+    data['runtime']['v1_multiprocessing']=False;settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','deterministic')==0
+    plan=json.loads((tmp_path/'plans/deterministic/sampling-sft.instrument.json').read_text())
+    assert plan['runtime_hash']!=legacy and plan['settings']['runtime']['v1_multiprocessing'] is False
+    data['runtime']['v1_multiprocessing']=True;settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','invalid')==1

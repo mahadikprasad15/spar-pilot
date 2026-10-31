@@ -187,3 +187,24 @@ def test_worker_precision_evidence_rejects_mismatch(monkeypatch):
     actual['effective_knob']='tf32'
     with pytest.raises(ValueError,match='worker precision'):
         module.check_precision_worker(actual,expected)
+
+
+def test_explicit_v1_scheduling_is_bound_before_import_and_checked(monkeypatch):
+    import sys
+    from pilot_eval.sampling_sft_engine import configure_scheduling, check_scheduling
+    monkeypatch.delenv('VLLM_ENABLE_V1_MULTIPROCESSING',raising=False)
+    assert configure_scheduling({'v1_multiprocessing':False}) == {'environment':'0','enabled':False}
+    assert __import__('os').environ['VLLM_ENABLE_V1_MULTIPROCESSING']=='0'
+    check_scheduling({'environment':'0','effective':False},{'v1_multiprocessing':False})
+    with pytest.raises(ValueError,match='scheduling'):
+        check_scheduling({'environment':'0','effective':True},{'v1_multiprocessing':False})
+    monkeypatch.setitem(sys.modules,'vllm',object())
+    with pytest.raises(ValueError,match='before importing'):
+        configure_scheduling({'v1_multiprocessing':False})
+
+
+def test_unbound_deterministic_environment_cannot_change_historical_runtime(monkeypatch):
+    from pilot_eval.sampling_sft_engine import configure_scheduling
+    monkeypatch.setenv('VLLM_ENABLE_V1_MULTIPROCESSING','0')
+    with pytest.raises(ValueError,match='unbound'):
+        configure_scheduling({})

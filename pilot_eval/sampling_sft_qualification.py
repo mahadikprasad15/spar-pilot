@@ -10,7 +10,7 @@ from pilot_eval import sampling_sft_instrument as instrument
 from pilot_eval import sampling_sft_pilot as pilot
 from pilot_eval import sampling_sft_jobs as jobs
 from pilot_eval import sampling_sft_budget as budget
-from pilot_eval.sampling_sft_sources import inside
+from pilot_eval.sampling_sft_sources import inside, verify_parents
 from pilot_eval.sft import safe_name
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash
@@ -19,7 +19,33 @@ STAGES=['fixtures','refinement','scores','oracle','profile','select',
         'pilot-reference','pilot-kill','pilot-resume','compare']
 
 
-def stage(config,output_root,settings_path,name,operation,reviewer,volume_id,rate,*,execute=False,estimated_hours='0.5'):
+def historical_fixtures(root, capture_config, source_config):
+    """Verify a frozen old capture without asserting its code equals this release."""
+    root=Path(root).resolve(); capture_config=inside(root,capture_config)
+    old=json.loads(capture_config.read_text()); folder=inside(root,old['run_path'])
+    if (old.get('protocol')!='sampling-sft-bounded-instrument-v1'
+        or old['settings']['mode']!='fixtures'
+        or inside(root,old['source_plan'])!=inside(root,source_config)
+        or old['runtime_hash']!=_hash(old['settings']['runtime'])
+        or json.loads((folder/'plan-seal.json').read_text())!={'config_sha256':_hash(old)}):
+        raise ValueError('Historical fixture capture plan identity mismatch.')
+    source_path=inside(root,source_config)
+    source_plan=json.loads(source_path.read_text())
+    if 'run_path' not in source_plan:raise ValueError('Historical source plan is incomplete.')
+    audit=inside(root,source_plan['run_path'])/'results/source-audit.json'
+    required={str(source_path.relative_to(root)),str(audit.relative_to(root))}
+    if not required <= set(old.get('parents',{})):
+        raise ValueError('Historical fixture capture lacks source/audit parent bindings.')
+    verify_parents(root,old['parents'])
+    seal=json.loads((folder/'complete.json').read_text())
+    if seal.get('config_sha256')!=_hash(old) or not {'fixtures.json','requests.jsonl'} <= set(seal.get('files',{})):
+        raise ValueError('Historical fixture capture seal is incomplete.')
+    for name,digest in seal['files'].items():
+        if file_hash(inside(folder,name))!=digest:raise ValueError('Historical fixture capture seal mismatch.')
+    return folder/'fixtures.json'
+
+
+def stage(config,output_root,settings_path,name,operation,reviewer,volume_id,rate,*,execute=False,estimated_hours='0.5',fixture_source=None):
     root,parent,_=source.load(config,output_root)
     safe_name(name)
     if operation not in STAGES or not reviewer.strip() or not volume_id.strip():
@@ -71,10 +97,19 @@ def stage(config,output_root,settings_path,name,operation,reviewer,volume_id,rat
         if operation=='fixtures':settings.update(mode='fixtures',k=0,
             problem_ids=sorted(random.Random(0).sample(range(512),32))[:20])
         if operation in ['scores','oracle']:
-            _,fixture_plan,fixtures_dir=instrument.load(path('fixtures'),root)
-            instrument.verify(path('fixtures'),root)
+            if fixture_source:
+                capture=inside(root,fixture_source)
+                fixture_file=historical_fixtures(root,capture,config)
+                fixture_plan=json.loads(capture.read_text())
+                source.frozen(control/'fixture-source.json',dict(plan=str(capture.relative_to(root)),
+                    plan_sha256=file_hash(capture),complete_sha256=file_hash(fixture_file.parent/'complete.json'),
+                    fixture_sha256=file_hash(fixture_file)))
+            else:
+                _,fixture_plan,fixtures_dir=instrument.load(path('fixtures'),root)
+                instrument.verify(path('fixtures'),root)
+                fixture_file=fixtures_dir/'fixtures.json'
             settings.update(mode=operation,k=0,problem_ids=[p['problem_id'] for p in fixture_plan['problems']],
-                fixtures=str((fixtures_dir/'fixtures.json').relative_to(root)))
+                fixtures=str(fixture_file.relative_to(root)))
         if operation=='profile':
             instrument.compare(path('scores'),root,path('oracle'))
             settings.update(mode='profile',k=2,problem_ids=list(range(64)))

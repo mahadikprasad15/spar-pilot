@@ -52,6 +52,33 @@ def check_precision_worker(actual,expected):
         raise ValueError('Actual worker precision or source identity differs from configured IEEE runtime.')
 
 
+def configure_scheduling(runtime):
+    """Apply explicit V1 scheduler policy before any vLLM import."""
+    if 'v1_multiprocessing' not in runtime:
+        if os.environ.get('VLLM_ENABLE_V1_MULTIPROCESSING','1') != '1':
+            raise ValueError('Refuse unbound V1 multiprocessing environment override.')
+        return None  # Historical runtime: retain the vLLM default.
+    if runtime['v1_multiprocessing'] is not False:
+        raise ValueError('Explicit V1 scheduling supports only multiprocessing=false.')
+    if any(x=='vllm' or x.startswith('vllm.') for x in sys.modules):
+        raise ValueError('Configure V1 scheduling before importing vLLM.')
+    os.environ['VLLM_ENABLE_V1_MULTIPROCESSING']='0'
+    return dict(environment='0',enabled=False)
+
+
+def scheduling_worker_evidence():
+    from vllm import envs
+    return dict(environment=os.environ.get('VLLM_ENABLE_V1_MULTIPROCESSING'),
+                effective=envs.VLLM_ENABLE_V1_MULTIPROCESSING)
+
+
+def check_scheduling(actual,runtime):
+    if ('v1_multiprocessing' in runtime and
+            (runtime['v1_multiprocessing'] is not False or
+             not isinstance(actual,dict) or actual.get('environment')!='0' or actual.get('effective') is not False)):
+        raise ValueError('Actual vLLM scheduling differs from explicit runtime.')
+
+
 def numeric_flags():
     import torch
     torch.backends.cuda.matmul.allow_tf32=False
@@ -72,7 +99,8 @@ def worker_evidence(model):
     if len(driver)!=1:raise ValueError('Require one visible physical GPU in the bounded runtime.')
     return dict(gpu=torch.cuda.get_device_name(),driver=driver[0],cuda=torch.version.cuda,
         torch_version=importlib.metadata.version('torch'),worker_numeric_flags=flags,
-        parameter_dtypes=dtypes,parameter_devices=devices,triton_precision=precision_worker_evidence())
+        parameter_dtypes=dtypes,parameter_devices=devices,triton_precision=precision_worker_evidence(),
+        scheduling=scheduling_worker_evidence() if 'vllm' in sys.modules else None)
 
 
 def check_worker(actual,expected):
@@ -199,6 +227,7 @@ def open_engine(plan,root):
     settings=plan['settings'];r=settings['runtime']
     source_plan=json.loads((Path(root)/plan['source_plan']).read_text())
     cache_parent=Path(root)/source_plan['run_path']/'compiler-cache'
+    scheduling=configure_scheduling(r)
     precision=configure_precision(r['triton_precision'],cache_parent)
     os.environ['HF_HUB_OFFLINE']='1'
     os.environ['TRANSFORMERS_OFFLINE']='1'
@@ -237,6 +266,7 @@ def open_engine(plan,root):
         if importlib.metadata.version('vllm')!=r['vllm_version']:
             raise ValueError('Installed vLLM differs from declared supported version.')
         from vllm import LLM
+        if scheduling is not None:check_scheduling(scheduling_worker_evidence(),r)
         llm=LLM(model=str(model_path),tokenizer=str(tokenizer_path),dtype='float32',
             trust_remote_code=False,tensor_parallel_size=1,quantization=None,enforce_eager=True,
             seed=0,max_model_len=r['max_model_len'],gpu_memory_utilization=r['gpu_memory_utilization'],
@@ -246,9 +276,10 @@ def open_engine(plan,root):
         evidence=llm.collective_rpc('sampling_sft_worker_evidence')
         if len(evidence)!=1:raise ValueError('One actual inference worker required.')
         evidence=evidence[0];check_worker(evidence,r)
+        if scheduling is not None:check_scheduling(evidence['scheduling'],r)
         check_precision_worker(evidence['triton_precision'],precision)
         engine=VLLMEngine(llm,r)
     return engine,tokenizer,dict(execution_kind='real-cuda',worker=evidence,
         transformers_version=importlib.metadata.version('transformers'),runtime_hash=plan['runtime_hash'],
-        precision_configuration=precision,
+        precision_configuration=precision,scheduling_configuration=scheduling,
         model_files='frozen local snapshot inventory; upstream download verification is preflight evidence')
