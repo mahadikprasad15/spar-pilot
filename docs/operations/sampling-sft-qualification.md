@@ -110,3 +110,75 @@ fixtures, pilot partial/abandoned history, `compiler-cache`, and the current led
 phase backup. Keep credentials outside every archive. Only after verified
 exports request own-Pod stop through the existing lifecycle and verify externally.
 Do not delete the Global Volume or other account storage.
+
+## Separate no-prefix-cache replay investigation
+
+The failed IEEE pilot remains the original evidence. A candidate with prefix
+caching disabled needs a new settings file, qualification name, fixtures, T3,
+profile, selection and pilot; exact replay remains required. The existing
+runtime accepts the setting directly, so no sampler or engine code change is
+needed. Run this CPU-only preparation in the same checkout on the Pod:
+
+```bash
+python - <<'PY'
+import copy
+import json
+from pathlib import Path
+from pilot_eval.sampling_sft_instrument import validate_runtime
+
+old = Path('/workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-v1.json')
+new = Path('/workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-nocache-v1.json')
+data = json.loads(old.read_text())
+validate_runtime(data['runtime'])
+assert data['runtime']['prefix_caching'] is True
+assert data['runtime']['triton_precision']['mode'] == 'ieee'
+updated = copy.deepcopy(data)
+updated['runtime']['prefix_caching'] = False
+validate_runtime(updated['runtime'])
+# Exclusive creation preserves both the old settings and any earlier candidate.
+with new.open('x') as f:
+    json.dump(updated, f, indent=2)
+    f.write('\n')
+assert json.loads(new.read_text()) == updated
+print('Created', new, 'with prefix_caching=false; all other settings copied.')
+PY
+```
+
+Prepare the following shell function without calling it yet. **The stage helper
+writes a paid-execution approval and a budget-limit waiver even without
+`--run`.** Calling it prepares those records; `--run` also starts the corresponding job.
+The values below are from the prior Pod handoff; recheck the volume, rate and
+reviewer for this attempt.
+
+```bash
+qualify_nocache() {
+  python -m pilot_eval sampling-sft-qualification-stage \
+    --config /workspace/artifacts/plans/sampling-sft-v1/sampling-sft.plan.json \
+    --settings /workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-nocache-v1.json \
+    --output-root /workspace/artifacts --name a40-q-ieee-nocache-v1 \
+    --volume-id cmuptiucb000007l5dnohe861 --rate 0.60 \
+    --reviewer Prasad --stage "$1" "${@:2}"
+}
+```
+
+Run and inspect each stage in order when ready to execute the bounded work. `--run` executes a GPU workload for the stages
+that prepare jobs; `select` and `compare` are CPU operations. The controlled
+kill is an expected SIGKILL and resume uses the saved external receipt.
+
+```bash
+qualify_nocache fixtures --run
+qualify_nocache refinement --run
+qualify_nocache scores --run
+qualify_nocache oracle --run
+qualify_nocache profile --run
+qualify_nocache select
+qualify_nocache pilot-reference --run
+qualify_nocache pilot-kill --run
+qualify_nocache pilot-resume --run
+qualify_nocache compare
+```
+
+Stop on a failed stage and inspect its retained evidence. Score qualification
+and the exact replay gate are unchanged. Compare the new replay diagnostic's
+per-block results with the original; this experiment tests a runtime change and
+cannot by itself establish the mechanism of any numerical discrepancy.
