@@ -23,8 +23,10 @@ silently changing the earlier plan's parents.
 
 Real generation requires the actual Stage0.5 worker/profile/T3 selection, real
 pilot kill/restart replay and the pilot alarm report. The collector revalidates
-those products. Any failed replay, score check, source/runtime mismatch or pilot
-alarm blocks model loading. CPU fixtures cannot satisfy the real gates.
+those products. Any failed replay, score check, source/runtime mismatch or unfinished-attempt
+threshold blocks model loading. Under the explicitly recorded ADR 0022 policy,
+initial correctness is descriptive and an authorized budget waiver is recorded
+as waived; the historical pilot report is not rewritten. CPU fixtures cannot satisfy the real gates.
 
 `generation-status` reports `plan_sha256` and `pilot_report_sha256`. Record a
 review JSON with those values and the decision:
@@ -32,6 +34,8 @@ review JSON with those values and the decision:
 ```json
 {
   "generation_approved": true,
+  "alarm_policy": "descriptive-correctness-v1",
+  "waive_budget_limits": true,
   "plan_sha256": "COPY_FROM_STATUS",
   "pilot_report_sha256": "COPY_FROM_STATUS",
   "reviewer": "REVIEWER",
@@ -43,11 +47,13 @@ review JSON with those values and the decision:
 python -m pilot_eval sampling-sft-generation-freeze --config plans/sampling-generation-v1/sampling-sft.generation.json --review artifacts/plans/sampling-generation-v1/review.json --output-root artifacts
 ```
 
-This writes `generation.review.json`, bound to the exact plan and report. An
+This writes `generation.review.json`, bound to the exact plan and report, with
+the observed correctness and the explicit waived budget state. An
 unchanged decision is reused after later ledger updates; it does not create a
 new reservation. Each paid job still needs Ticket02's current quote, conservative
-reservation, required80% review and explicit paid-job approval. Limits remain
-$25 total, $10 sampling, $6 training and $9 storage/shared overhead. Unknown
+reservation, required review and request-bound paid-job approval. The explicit user waiver
+must also be bound to the current ledger and each job request; accounting and
+the recorded caps remain visible. Unknown
 prior job cost remains reserved until reconciled.
 
 ## Run through the budgeted job entrypoint

@@ -227,7 +227,7 @@ def test_generation_review_is_idempotent_after_ledger_changes(tmp_path,source_te
     plan=tmp_path/'plans/generation/sampling-sft.generation.json'
     review=tmp_path/'approval.json';review.write_text(json.dumps(dict(reviewer='fixture',notes='Approval-unit test only',
         generation_approved=True,plan_sha256=_hash(json.loads(plan.read_text())),pilot_report_sha256=file_hash(report))))
-    monkeypatch.setattr(workflow,'qualification',lambda *a:json.loads(report.read_text()))
+    monkeypatch.setattr(workflow,'qualification',lambda *a:(json.loads(report.read_text()),{'policy':'historical'}))
     assert cli(tmp_path,'freeze','--config',plan,'--review',review)==0
     old=(directory(tmp_path)/'generation.review.json').read_bytes()
     # Model a later ledger snapshot; this does not mutate the actual cost ledger.
@@ -235,3 +235,69 @@ def test_generation_review_is_idempotent_after_ledger_changes(tmp_path,source_te
     monkeypatch.setattr(workflow,'snapshot',lambda root:{**saved(root),'sha256':'different-snapshot'})
     assert cli(tmp_path,'freeze','--config',plan,'--review',review)==0
     assert (directory(tmp_path)/'generation.review.json').read_bytes()==old
+
+
+def test_explicit_policy_keeps_correctness_descriptive_and_budget_waiver_visible():
+    from pilot_eval.sampling_sft_generation import assess_pilot_alarms
+    report=dict(n_problems=32,initial_correct=19,initial_unfinished=0,
+        alarms=dict(unfinished=dict(triggered=False),initial_correctness=dict(triggered=True),
+                    budget=dict(triggered=True,reservation_usd='41.6',headroom_usd='-3.7')),
+        ready_for_generation_review=False)
+    review=dict(alarm_policy='descriptive-correctness-v1',waive_budget_limits=True)
+    value=assess_pilot_alarms(report,19,0,review)
+    assert value['correctness']['state']=='descriptive' and value['correctness']['numerator']==19
+    assert value['budget']['state']=='waived' and value['unfinished']['state']=='passed'
+    with pytest.raises(ValueError):assess_pilot_alarms(report,19,1,review)
+    with pytest.raises(ValueError):assess_pilot_alarms(report,19,0,{})
+    with pytest.raises(ValueError):assess_pilot_alarms(report,19,0,dict(alarm_policy='descriptive-correctness-v1'))
+
+
+def test_qualification_keeps_replay_and_unfinished_gates_under_new_policy(tmp_path,monkeypatch):
+    from pilot_eval import sampling_sft_generation as g
+    replay={'gpu_qualified':True};folder=tmp_path/'pilot';folder.mkdir()
+    (folder/'inputs').mkdir();(folder/'inputs/runtime-review.json').write_text('{"reviewer":"r"}')
+    selection=tmp_path/'selection.json';selection.write_text(json.dumps({'review':{'reviewer':'r'}}))
+    report=dict(replay=replay,runtime_hash='runtime',n_problems=32,initial_correct=19,initial_unfinished=0,
+        alarms=dict(unfinished=dict(triggered=False),initial_correctness=dict(triggered=True),
+                    budget=dict(triggered=True,reservation_usd='41.6',headroom_usd='-3.7')),
+        ready_for_generation_review=False)
+    (tmp_path/'report.json').write_text(json.dumps(report))
+    parent=dict(selection='selection.json',instrument_plan='profile.json')
+    plan=dict(pilot_plan='pilot.json',pilot_report='report.json',runtime_hash='runtime')
+    traces=[{'automatic_flexible_v3':{'correct':i<19},'end_state':'finished'} for i in range(32)]
+    monkeypatch.setattr(g.pilot,'load',lambda *a:(tmp_path,parent,folder))
+    monkeypatch.setattr(g.pilot,'compare',lambda *a:replay)
+    monkeypatch.setattr(g.instrument,'select',lambda *a:None)
+    monkeypatch.setattr(g.pilot,'verify_lane',lambda *a:{'traces':traces})
+    review=dict(alarm_policy='descriptive-correctness-v1',waive_budget_limits=True)
+    _,assessment=g.qualification(tmp_path,plan,review)
+    assert assessment['correctness']['state']=='descriptive' and assessment['budget']['state']=='waived'
+    traces[0]['end_state']='capped'
+    with pytest.raises(ValueError):g.qualification(tmp_path,plan,review)
+    traces[0]['end_state']='finished';replay['gpu_qualified']=False
+    with pytest.raises(ValueError,match='replay'):g.qualification(tmp_path,plan,review)
+
+
+def test_freeze_records_policy_and_waiver_without_rewriting_pilot_report(tmp_path,monkeypatch):
+    from pilot_eval import sampling_sft_generation as g
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+    report=tmp_path/'pilot-report.json';report.write_text('{"original":"preserve"}')
+    original=report.read_bytes();folder=tmp_path/'generation';folder.mkdir()
+    plan={'pilot_report':'pilot-report.json'}
+    review={'reviewer':'Prasad','notes':'Explicit user decision','generation_approved':True,
+        'alarm_policy':'descriptive-correctness-v1','waive_budget_limits':True,
+        'plan_sha256':_hash(plan),'pilot_report_sha256':file_hash(report)}
+    review_path=tmp_path/'decision.json';review_path.write_text(json.dumps(review))
+    assessment={'policy':'descriptive-correctness-v1','budget':{'state':'waived'}}
+    monkeypatch.setattr(g,'load',lambda *a:(tmp_path,plan,folder))
+    monkeypatch.setattr(g,'qualification',lambda *a:({'alarms':{'budget':{'reservation_usd':'50'}}},assessment))
+    monkeypatch.setattr(g.budget,'status',lambda *a:{'sha256':'h','spent_usd':'1','reserved_usd':'20',
+        'committed_usd':'21','review_required':True,'cap_exceeded':True,
+        'stage_totals':{'sampling':{'committed_usd':'21'}}})
+    receipt=g.freeze('ignored',tmp_path,review_path)
+    assert receipt['alarm_assessment']['budget']['state']=='waived'
+    assert report.read_bytes()==original and g.freeze('ignored',tmp_path,review_path)==receipt
+    saved=json.loads((folder/'generation.review.json').read_text());saved['alarm_assessment']['budget']['state']='passed'
+    (folder/'generation.review.json').write_text(json.dumps(saved))
+    with pytest.raises(ValueError,match='changed'):g.freeze('ignored',tmp_path,review_path)

@@ -84,47 +84,74 @@ def load(path,output_root):
     return root,plan,folder
 
 
-def qualification(root,plan):
+def assess_pilot_alarms(report,correct,unfinished,review):
+    """Apply only an explicitly recorded generation-review policy."""
+    if (report['n_problems']!=32 or report['initial_correct']!=correct
+            or report['initial_unfinished']!=unfinished):
+        raise ValueError('Pilot report does not reconcile with saved attempts.')
+    alarms=report['alarms']
+    if (alarms['unfinished']['triggered'] != (unfinished/32>0.02)
+            or alarms['initial_correctness']['triggered'] != (correct/32<0.9)):
+        raise ValueError('Historical pilot alarm does not reconcile.')
+    policy=review.get('alarm_policy') if isinstance(review,dict) else None
+    if policy not in (None,'descriptive-correctness-v1'):
+        raise ValueError('Unknown pilot alarm policy.')
+    if unfinished/32>0.02:
+        raise ValueError('Unfinished pilot attempts exceed the unchanged 2% gate.')
+    if policy is None:
+        if any(a['triggered'] for a in alarms.values()) or not report['ready_for_generation_review']:
+            raise ValueError('Historical pilot alarms block Stage2.')
+        return dict(policy='historical',correctness=dict(state='passed',numerator=correct,denominator=32),
+            unfinished=dict(state='passed',numerator=unfinished,denominator=32),budget=dict(state='passed'))
+    waived=review.get('waive_budget_limits') is True
+    if alarms['budget']['triggered'] and not waived:
+        raise ValueError('Budget alarm requires an explicit waiver.')
+    return dict(policy=policy,correctness=dict(state='descriptive',numerator=correct,denominator=32),
+        unfinished=dict(state='passed',numerator=unfinished,denominator=32),
+        budget=dict(state='waived' if waived else 'passed',historical_alarm_triggered=alarms['budget']['triggered'],
+                    reservation_usd=alarms['budget']['reservation_usd'],headroom_usd=alarms['budget']['headroom_usd']))
+
+
+def qualification(root,plan,review=None):
     """Recompute real evidence, rather than trusting a report's ready flag."""
     _,parent,pilot_folder=pilot.load(root/plan['pilot_plan'],root)
     replay=pilot.compare(root/plan['pilot_plan'],root)
     if not replay['gpu_qualified']:raise ValueError('Real qualified pilot kill/restart replay is required.')
     if not parent['selection']:raise ValueError('Missing selected runtime/T3 evidence.')
     selection=json.loads((root/parent['selection']).read_text())
-    review=pilot_folder/'inputs/runtime-review.json'
-    if not review.exists() or json.loads(review.read_text())!=selection['review']:
+    runtime_review=pilot_folder/'inputs/runtime-review.json'
+    if not runtime_review.exists() or json.loads(runtime_review.read_text())!=selection['review']:
         raise ValueError('Missing reviewed runtime selection handoff.')
-    instrument.select(root/parent['instrument_plan'],root,review)
+    instrument.select(root/parent['instrument_plan'],root,runtime_review)
     report=json.loads((root/plan['pilot_report']).read_text())
     left=pilot.verify_lane(pilot_folder/'uninterrupted',parent)
     correct=sum(t['automatic_flexible_v3']['correct'] for t in left['traces'])
     unfinished=sum(t['end_state'] in ['capped','block_budget_exhausted'] for t in left['traces'])
-    if (report['replay']!=replay or report['runtime_hash']!=plan['runtime_hash']
-            or report['n_problems']!=32 or report['initial_correct']!=correct
-            or report['initial_unfinished']!=unfinished or unfinished/32>0.02 or correct/32<0.9
-            or any(a['triggered'] for a in report['alarms'].values())
-            or not report['ready_for_generation_review']):
-        raise ValueError('Pilot alarms or inconsistent report block Stage2; do not retune automatically.')
-    return report
+    if report['replay']!=replay or report['runtime_hash']!=plan['runtime_hash']:
+        raise ValueError('Pilot replay or runtime differs from report.')
+    assessment=assess_pilot_alarms(report,correct,unfinished,review)
+    return report,assessment
 
 
 def freeze(path,output_root,review_path):
     root,plan,folder=load(path,output_root)
-    report=qualification(root,plan)
     review=json.loads(Path(review_path).read_text())
     plan_approval(plan,review,file_hash(root/plan['pilot_report']))
+    report,assessment=qualification(root,plan,review)
     target=folder/'generation.review.json'
     if target.exists():
         saved=json.loads(target.read_text())
         if (saved['config_sha256']!=_hash(plan) or saved['review']!=review
-                or saved['pilot_report_sha256']!=file_hash(root/plan['pilot_report'])):
+                or saved['pilot_report_sha256']!=file_hash(root/plan['pilot_report'])
+                or saved.get('alarm_assessment')!=assessment):
             raise ValueError('Generation review changed; preserve the existing attempt.')
         return saved
     ledger=budget.status(root)
-    if not reservation_fits(ledger,report['alarms']['budget']['reservation_usd']):
+    waived=(review.get('alarm_policy')=='descriptive-correctness-v1' and review.get('waive_budget_limits') is True)
+    if not waived and not reservation_fits(ledger,report['alarms']['budget']['reservation_usd']):
         raise ValueError('Stage2 forecast no longer fits current budget headroom.')
     receipt=dict(config_sha256=_hash(plan),review=review,budget_snapshot=snapshot(root),
-                 pilot_report_sha256=file_hash(root/plan['pilot_report']),scope='generation only; per-job paid approval still required')
+                 pilot_report_sha256=file_hash(root/plan['pilot_report']),alarm_assessment=assessment,scope='generation only; per-job paid approval still required')
     source.frozen(target,receipt)
     return receipt
 
@@ -229,9 +256,11 @@ def collect_rounds(plan,k,folder):
 
 
 def authorize(root,plan,path,folder,k,job_path):
-    qualification(root,plan)
     receipt=json.loads((folder/'generation.review.json').read_text())
     plan_approval(plan,receipt['review'],file_hash(root/plan['pilot_report']))
+    _,assessment=qualification(root,plan,receipt['review'])
+    if receipt.get('alarm_assessment')!=assessment:
+        raise ValueError('Recorded pilot alarm policy assessment differs.')
     if (receipt['config_sha256']!=_hash(plan)
             or receipt['pilot_report_sha256']!=file_hash(root/plan['pilot_report'])):
         raise ValueError('Missing exact Stage2 generation approval.')
