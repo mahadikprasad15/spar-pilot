@@ -32,3 +32,14 @@ supports a cache-related lead; similar on/off discrepancies point elsewhere;
 non-reproduction of the original cache-on run calls for runtime/batching review.
 The existing scientific gates, tolerance numbers and failed receipt are never
 modified or overridden. A cached-off production candidate must be requalified.
+
+## Batch-size diagnostic
+
+For `--mode singleton`, the diagnostic runs one new vLLM scoring job against the
+same sealed20 fixtures, changing only `max_num_seqs` from the saved runtime to1.
+It retains the original cache setting, weights, token IDs, limits and settings.
+The report compares original batched vLLM versus singleton vLLM, and each versus
+the saved HF reference. This tests scheduler sequence concurrency, not all causes
+of numerical differences: chunked prefill, kernel shapes and cache behavior can
+also depend on the scheduler. Run under a new diagnostic name. Each result and
+runtime identity is preserved, and the original T3 gate remains unchanged.

@@ -36,7 +36,20 @@ def compare_scores(fixtures,on,off,hf):
     return result
 
 
-def run(root,name,volume,rate,reviewer):
+def diagnostic_variants(original,mode):
+    if mode not in ['cache','singleton']:raise ValueError('Unknown diagnostic mode.')
+    choices=[('on',True),('off',False)] if mode=='cache' else [('singleton',None)]
+    variants=[]
+    for label,cache in choices:
+        settings=json.loads(json.dumps(original))
+        if mode=='cache':settings['runtime']['prefix_caching']=cache
+        else:settings['runtime']['max_num_seqs']=1
+        variants.append((label,settings))
+    return variants
+
+
+def run(root,name,volume,rate,reviewer,mode='cache'):
+
     root=Path(root).resolve();safe_name(name)
     if not reviewer.strip() or not volume.strip():raise ValueError('Reviewer and volume required.')
     budget.number(rate,True)
@@ -66,12 +79,10 @@ def run(root,name,volume,rate,reviewer):
         old_score_complete_sha256=file_hash(root/old_plan['run_path']/'complete.json'),
         oracle_complete_sha256=file_hash(root/oracle_plan['run_path']/'complete.json'),
         diagnostic_code_sha256=file_hash(Path(__file__)),
-        description='Cache on/off diagnosis; no production qualification or threshold change.'))
+        description=mode+' diagnostic; no production qualification or threshold change.'))
     results={}; evidence={}
-    for enabled in [True,False]:
-        label='on' if enabled else 'off';stage=f'{name}-{label}'
-        settings=json.loads(json.dumps(old_plan['settings']))
-        settings['runtime']['prefix_caching']=enabled
+    for label,settings in diagnostic_variants(old_plan['settings'],mode):
+        stage=f'{name}-{label}'
         source.frozen(control/f'settings-{label}.json',settings)
         plan=instrument.prepare(source_plan,root,control/f'settings-{label}.json',stage)
         cfg=json.loads(plan.read_text());job_path=root/parent['run_path']/'jobs'/stage/'job.plan.json'
@@ -97,7 +108,7 @@ def run(root,name,volume,rate,reviewer):
                     if chunk:print(chunk,end='',flush=True)
                 if done.wait(0.3):break
         watcher=threading.Thread(target=follow,daemon=True);watcher.start()
-        print(f'Starting fixed-fixture scoring: prefix caching {label}.',flush=True)
+        print(f'Starting fixed-fixture diagnostic: {mode} / {label}.',flush=True)
         try:status=jobs.run(job_path,root,approval)
         finally:done.set();watcher.join(timeout=5)
         if not status['workload_success']:raise ValueError('Diagnostic job failed: '+str(log))
@@ -108,8 +119,13 @@ def run(root,name,volume,rate,reviewer):
             runtime_hash=cfg['runtime_hash'],results=str((root/cfg['run_path']/'results.json').relative_to(root)),
             results_sha256=file_hash(root/cfg['run_path']/'results.json'),
             completion_sha256=file_hash(root/cfg['run_path']/'complete.json'))
-    comparisons=compare_scores(fixtures,results['on'],results['off'],oracle_result['scores'])
-    comparisons['fresh_on_vs_original_vllm']=compare_scores(fixtures,results['on'],old_result['scores'],oracle_result['scores'])['on_vs_off']
+    if mode=='cache':
+        comparisons=compare_scores(fixtures,results['on'],results['off'],oracle_result['scores'])
+        comparisons['fresh_on_vs_original_vllm']=compare_scores(fixtures,results['on'],old_result['scores'],oracle_result['scores'])['on_vs_off']
+    else:
+        raw=compare_scores(fixtures,old_result['scores'],results['singleton'],oracle_result['scores'])
+        comparisons=dict(batched_vs_singleton=raw['on_vs_off'],batched_vs_hf=raw['on_vs_hf'],
+                         singleton_vs_hf=raw['off_vs_hf'])
     report=dict(state='completed',scope='diagnostic only; original T3 failure and production gate unchanged',
         fixture_sha256=file_hash(fixture_path),old_runtime_hash=old_plan['runtime_hash'],
         comparisons=comparisons,evidence=evidence,inputs=str((control/'inputs.json').relative_to(root)))
@@ -119,9 +135,10 @@ def run(root,name,volume,rate,reviewer):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--output-root',required=True);p.add_argument('--name',required=True)
+    p.add_argument('--mode',choices=['cache','singleton'],default='cache')
     p.add_argument('--volume-id',required=True);p.add_argument('--rate',required=True);p.add_argument('--reviewer',required=True)
     a=p.parse_args()
-    try: print(json.dumps(run(a.output_root,a.name,a.volume_id,a.rate,a.reviewer),indent=2))
+    try: print(json.dumps(run(a.output_root,a.name,a.volume_id,a.rate,a.reviewer,a.mode),indent=2))
     except (ValueError,OSError,KeyError) as exc:
         print('Diagnostic stopped:',str(exc),file=sys.stderr);return 1
     return 0

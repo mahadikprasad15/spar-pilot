@@ -20,3 +20,12 @@ def test_comparison_rejects_missing_or_nonfinite_scores():
     bad=[dict(token_ids=[2],positions=[1],logprobs=[float('nan')])]
     with pytest.raises(ValueError):compare_scores(fixture,good,good,[])
     with pytest.raises(ValueError):compare_scores(fixture,good,bad,good)
+
+
+def test_singleton_settings_change_only_scheduler_limit():
+    from pilot_eval.sampling_sft_cache_diagnostic import diagnostic_variants
+    original={'runtime':{'prefix_caching':True,'max_num_seqs':32,'dtype':'float32'},'mode':'scores'}
+    variants=diagnostic_variants(original,'singleton')
+    assert variants==[('singleton',{'runtime':{'prefix_caching':True,'max_num_seqs':1,'dtype':'float32'},'mode':'scores'})]
+    assert original['runtime']['max_num_seqs']==32
+    with pytest.raises(ValueError):diagnostic_variants(original,'unknown')
