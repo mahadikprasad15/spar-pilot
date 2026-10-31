@@ -3,7 +3,9 @@
 This handoff follows the successful four-problem smoke. It runs no full512
 sampling and no training. Previously sealed artifacts remain untouched; new
 instrument code requires a fresh name such as a40-q-v1. Keep the old smoke's
-pinned release and independent backup as its verification record.
+pinned release and independent backup as its verification record. The corrected
+IEEE runtime requires new settings, a new name, and fresh fixtures. See
+[ADR 0021](../adr/0021-sampling-sft-ieee-runtime.md).
 
 ## Preparation and execution
 
@@ -16,6 +18,17 @@ export HF_HUB_ENABLE_HF_TRANSFER=0
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 ```
 
+Create a fresh settings file from the earlier smoke settings. This reads the
+installed source files without importing Triton, saves their fingerprints, and
+does not modify the original settings:
+
+```bash
+python -m pilot_eval.sampling_sft_runtime \
+  --output-root /workspace/artifacts \
+  --input /workspace/artifacts/plans/sampling-sft-v1/engine-a40-smoke-v1.json \
+  --output /workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-v1.json
+```
+
 Define this convenience function in that same SSH shell. The volume ID below
 belongs to the currently verified A40 setup; another deployment must supply its
 own volume ID, settings and rate.
@@ -24,8 +37,8 @@ own volume ID, settings and rate.
 qualify() {
   python -m pilot_eval sampling-sft-qualification-stage \
     --config /workspace/artifacts/plans/sampling-sft-v1/sampling-sft.plan.json \
-    --settings /workspace/artifacts/plans/sampling-sft-v1/engine-a40-smoke-v1.json \
-    --output-root /workspace/artifacts --name a40-q-v1 \
+    --settings /workspace/artifacts/plans/sampling-sft-v1/engine-a40-ieee-v1.json \
+    --output-root /workspace/artifacts --name a40-q-ieee-v1 \
     --volume-id cmuptiucb000007l5dnohe861 --rate 0.60 \
     --reviewer Prasad --stage "$1" --run
 }
@@ -93,7 +106,7 @@ also blocks full generation; follow the existing reviewed requalification order.
 Before ending the GPU phase, back up the complete source-run tree, plans and
 notebook controls to HF plus an independently downloaded, hash-verified copy.
 The generic job export contains declared outputs only; include blocks, requests,
-fixtures, pilot partial/abandoned history and the current ledger in the complete
+fixtures, pilot partial/abandoned history, `compiler-cache`, and the current ledger in the complete
 phase backup. Keep credentials outside every archive. Only after verified
 exports request own-Pod stop through the existing lifecycle and verify externally.
 Do not delete the Global Volume or other account storage.
