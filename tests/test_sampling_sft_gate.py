@@ -120,3 +120,38 @@ def test_misaligned_scoring_replays_once_and_blocks_report(tmp_path,reviewed):
     errors=[json.loads(s) for s in (directory(tmp_path)/'scores/events.jsonl').read_text().splitlines()]
     assert sum(r['event']=='score-engine-error' for r in errors)==2
     assert cli(tmp_path,'report','--config',plan)==1
+
+
+def test_three_arm_forecast_is_explicit_and_preserves_cost_accounting():
+    from pilot_eval.sampling_sft_gate import training_forecast
+    ledger=dict(committed_usd='2',review_required=False,stage_totals={'training':{'committed_usd':'1'}})
+    forecast=dict(arms=[0,2,5],per_arm={str(k):dict(rate_usd_per_hour='0.5',estimated_hours='1',setup_hours='0') for k in [0,2,5]},notes='Three user-selected arms')
+    result=training_forecast(forecast,ledger)
+    assert result['arms']==[0,2,5] and result['reservation_usd']=='2.250000'
+
+
+def test_gate_selection_budget_waiver_never_waives_coverage(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import sampling_sft_gate as g
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+    folder=tmp_path/'gate'; (folder/'training-requests').mkdir(parents=True); (folder/'results').mkdir()
+    config={'run_path':'gate'}; report={'coverage':{'blocked':False},'execution_kind':'real-cuda'}
+    (folder/'results/report.json').write_text(json.dumps(report))
+    ledger={'sha256':'ledger','committed_usd':'25','review_required':True,'stage_totals':{'training':{'committed_usd':'7'}}}
+    forecast={'arms':[0,2,5],'per_arm':{str(k):{'rate_usd_per_hour':'0.5','estimated_hours':'1','setup_hours':'0'} for k in [0,2,5]},'notes':'Explicit three arms'}
+    request={'config_sha256':_hash(config),'report_sha256':file_hash(folder/'results/report.json'),
+       'budget_snapshot':{'sha256':'ledger'},'selection':g.training_forecast(forecast,ledger),
+       'required_acknowledgments':[],'coverage_blocked':False,'pending_readiness':[]}
+    path=folder/'training-requests/request.json';path.write_text(json.dumps(request))
+    approval={'request_path':str(path.relative_to(tmp_path)),'request_sha256':file_hash(path),
+      'report_sha256':request['report_sha256'],'budget_sha256':'ledger','reviewer':'Prasad','notes':'explicit waiver',
+      'gate_approved':True,'acknowledged_coverage_flags':[],'review_80_percent':True,'waive_budget_limits':True}
+    decision=tmp_path/'approval.json';decision.write_text(json.dumps(approval))
+    monkeypatch.setattr(g,'load',lambda *a:(tmp_path,config,folder))
+    monkeypatch.setattr(g,'verify',lambda *a:report)
+    monkeypatch.setattr(g.budget,'status',lambda *a:ledger)
+    value=g.approve('ignored',tmp_path,decision)
+    assert value['arms']==[0,2,5] and value['budget_assessment']=='waived'
+    report['coverage']['blocked']=True
+    with pytest.raises(ValueError,match='Coverage'):g.approve('ignored',tmp_path,decision)

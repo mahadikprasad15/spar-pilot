@@ -273,8 +273,8 @@ def training_forecast(forecast,ledger):
     if not isinstance(forecast,dict) or set(forecast)!={'arms','per_arm','notes'}:
         raise ValueError('Training forecast requires explicit arms, per_arm cost estimates and notes.')
     arms=forecast['arms']
-    if not isinstance(arms,list) or any(type(k) is not int for k in arms) or arms not in [[0],[5],[0,5]]:
-        raise ValueError('This gate only selects k0/k5; k2 requires separate approval.')
+    if not isinstance(arms,list) or any(type(k) is not int for k in arms) or not arms or arms!=sorted(set(arms)) or any(k not in [0,2,5] for k in arms):
+        raise ValueError('Select a nonempty ordered subset of k0/k2/k5.')
     if set(forecast['per_arm'])!={str(k) for k in arms} or not isinstance(forecast['notes'],str) or not forecast['notes'].strip():
         raise ValueError('Describe the measured training budget and every selected arm.')
     from decimal import Decimal
@@ -305,7 +305,7 @@ def request(path,output_root,forecast_path):
         required_acknowledgments=sorted(flags),coverage_blocked=report['coverage']['blocked'],
         pending_readiness=['Ticket08 T15/T16 and exact training bundle','per-job paid approval and reservation'],
         training_seed=42,training_gpu='L4',training_authorized=False,
-        deferred_arms=[2],scope='explicit recipe/arm selection request; no training launch, automatic merge or equivalence')
+        deferred_arms=[k for k in [0,2,5] if k not in forecast['arms']],scope='explicit recipe/arm selection request; no training launch, automatic merge or equivalence')
     target=folder/'training-requests'/(_hash(value)+'.json');source.frozen(target,value)
     return dict(request_path=str(target.relative_to(root)),request_sha256=file_hash(target),**value)
 
@@ -314,7 +314,8 @@ def approve(path,output_root,approval_path):
     root,config,folder=load(path,output_root);report=verify(path,root)
     approval=json.loads(Path(approval_path).read_text())
     required={'request_path','request_sha256','report_sha256','budget_sha256','reviewer','notes','gate_approved','acknowledged_coverage_flags','review_80_percent'}
-    if not isinstance(approval,dict) or set(approval)!=required:raise ValueError('Approve the exact gate request/report/budget with reviewer and coverage acknowledgments.')
+    if not isinstance(approval,dict) or set(approval) not in (required,required|{'waive_budget_limits'}):raise ValueError('Approve the exact gate request/report/budget with reviewer and coverage acknowledgments.')
+    if 'waive_budget_limits' in approval and type(approval['waive_budget_limits']) is not bool:raise ValueError('Budget waiver must be boolean.')
     if (not isinstance(approval['acknowledged_coverage_flags'],list)
             or any(not isinstance(s,str) for s in approval['acknowledged_coverage_flags'])
             or type(approval['review_80_percent']) is not bool):raise ValueError('Coverage flags must be a list; budget review must be boolean.')
@@ -329,13 +330,14 @@ def approve(path,output_root,approval_path):
             or sorted(approval['acknowledged_coverage_flags'])!=value['required_acknowledgments']):
         raise ValueError('Gate/request/report/budget approval is stale or required coverage flags are not acknowledged.')
     fresh=training_forecast(value['selection']['forecast'],ledger)
-    if fresh!=value['selection'] or fresh['blocked'] or value['coverage_blocked'] or report['coverage']['blocked']:
+    if fresh!=value['selection'] or (fresh['blocked'] and approval.get('waive_budget_limits') is not True) or value['coverage_blocked'] or report['coverage']['blocked']:
         raise ValueError('Coverage or hard budget cap blocks the training selection.')
     if fresh['review_80_percent_required'] and approval['review_80_percent'] is not True:
         raise ValueError('Explicit80% budget review required before any subsequent paid job.')
     receipt=dict(request_path=str(target.relative_to(root)),request_sha256=file_hash(target),approval=approval,
         report_sha256=value['report_sha256'],arms=fresh['arms'],execution_kind=report['execution_kind'],
         selection_confirmed=True,training_authorized=False,pending_readiness=value['pending_readiness'],
+        budget_assessment='waived' if approval.get('waive_budget_limits') is True else 'within-cap',
         scope='post-gate selection recorded; Ticket08 readiness and Ticket09 paid execution remain separate')
     destination=folder/'training-selections'/(_hash(receipt)+'.json');source.frozen(destination,receipt)
     return dict(selection_path=str(destination.relative_to(root)),**receipt)

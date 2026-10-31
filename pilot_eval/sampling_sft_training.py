@@ -97,7 +97,7 @@ def selection(root,path,data_config):
 
 
 def prepare(data_path,selection_path,output_root,name,k,capture_recovery=True,resume_from=None,restart_of=None):
-    if k not in [0,5]:raise ValueError('Only approved k0/k5 endpoints; k2 needs separate scope approval.')
+    if k not in [0,2,5]:raise ValueError('Training arm must be k0, k2 or k5.')
     if resume_from and restart_of:raise ValueError('Choose resume-from or restart-of, not both.')
     root=Path(output_root).resolve();data_path=inside(root,data_path);data.verify(data_path,root)
     dc=json.loads(data_path.read_text());df=inside(root,dc['run_path'])
@@ -140,7 +140,7 @@ def prepare(data_path,selection_path,output_root,name,k,capture_recovery=True,re
 
 def load(path,output_root):
     root=Path(output_root).resolve();path=inside(root,path);config=json.loads(path.read_text());folder=inside(root,config['run_path'])
-    if (config.get('protocol')!='sampling-sft-training-v1' or config['k'] not in [0,5]
+    if (config.get('protocol')!='sampling-sft-training-v1' or config['k'] not in [0,2,5]
             or config['implementation']!=implementation()
             or json.loads((folder/'meta/run_manifest.json').read_text())!={'config_sha256':_hash(config),'config':config}):
         raise ValueError('Training plan/code/manifest changed.')

@@ -55,7 +55,7 @@ The experiment compares data recipes. Search amount k is a within-recipe contras
 35. As a researcher, I want whole-problem paired bootstrap intervals, so paired uncertainty does not treat tokens as independent samples.
 36. As a researcher, I want missing baseline-dependent quantities marked not measured, so deferred work cannot be mistaken for zero effects.
 37. As a researcher, I want no automatic equivalence or merging rule, so inconclusive evidence does not remove an arm.
-38. As a researcher, I want an explicit gate approval before training k0/k5, so dataset and budget decisions precede optimizer work.
+38. As a researcher, I want an explicit gate approval before training k0/k2/k5, so dataset and budget decisions precede optimizer work.
 39. As a researcher, I want exact gold checkpoint0 identity and training metadata, so seed equality is not substituted for equal initialization.
 40. As a researcher, I want adapters and gold-matching logs saved at the declared checkpoints, so later consumers have a complete handoff.
 41. As a researcher, I want optional optimizer capture distinguished from valid recovery, so an adapter-only checkpoint is never treated as a resumable optimizer state.
@@ -127,7 +127,7 @@ The experiment compares data recipes. Search amount k is a within-recipe contras
 - Leakage diagnostics are literal calculator-marker occurrence and the fraction of response word4-grams present in cleaned gold; under-four-word responses are undefined, not zero. Retain component counts and a predeclared deterministic word-normalization contract.
 - Do not generate/reuse a temperature1 baseline or calculate offset columns. Mark typical-NLL offset and relative sharpening not measured. Later Stage0 definitions must agree or document differences.
 - No automatic merging. A CI containing zero is inconclusive, not equivalence. Equivalence would require separately fixed margins and a whole interval inside them.
-- After gate review and budget approval, train k0/k5 only, one seed42. k2 training requires separate approval after later endpoint evidence; no automatic meaningful-difference trigger is introduced.
+- After gate review and readiness, train explicitly selected k0/k2/k5 arms, one seed42 each. The user selected all three on 2026-11-01; no automatic meaningful-difference trigger is introduced. Explicit budget waivers preserve actual accounting.
 
 ### Training, handoff and lifecycle
 
@@ -161,7 +161,7 @@ The experiment compares data recipes. Search amount k is a within-recipe contras
 
 - Gold-SFT retraining, GRPO training, held-out evaluation, internal activation/KL/geometry experiments or Stage0 research execution.
 - Temperature1 512×8 baseline, historical sample reuse, typical-NLL offset or a relative-sharpening claim.
-- Automatic k2 training, k10, k5+5 polish, self-correct SFT, random-correct/length-matched attribution controls and extra seeds.
+- k10, k5+5 polish, self-correct SFT, random-correct/length-matched attribution controls and extra seeds. k2 is explicitly selected for this run, subject to the same review and readiness gates.
 - Causal claims about on-policyness or mediation; exact MH claims or theoretical guarantees of the released greedy heuristic.
 - Automatic arm merging, unapproved equivalence margins, automatic cap/template/J changes, precision/GPU fallback, unlimited retries or duplicate/gold/incorrect slot filling.
 - Paid execution, publication/push, persistent-volume deletion or unexported termination by virtue of this spec alone.

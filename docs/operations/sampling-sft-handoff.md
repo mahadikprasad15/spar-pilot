@@ -37,7 +37,7 @@ those projections from its scientific inventory.
 | k0/k2/k5 generation | Approved L40S job | Raw IDs/text, attempts, steps, events,512 dispositions per arm | Sealed block boundaries |
 | Intended-answer eligibility review | CPU + human | Separate labels, frozen coverage, explicit missing slots | Restore saved revision |
 | Independent gate scoring | Approved model-work job | Aligned HF FP32 per-token scores | Sealed problem units |
-| Gate statistics and selection | CPU + explicit review | Plain NLL/length/format/leakage, paired intervals, k0/k5 selection | No baseline/offset or automatic merging |
+| Gate statistics and selection | CPU + explicit review | Plain NLL/length/format/leakage, paired intervals, k0/k2/k5 selection | No baseline/offset or automatic merging |
 | Training-data export and full T15/T16 | CPU in pinned trainer environment | Exact stored IDs/order/init, short-batch evidence | Kernel-only checks are insufficient |
 | Endpoint training | Approved L4 FP32 job |64-step logs, adapters0/8/16/32/64, optional full recovery | Verified checkpoint; otherwise new approved restart |
 | Handoff | CPU | Hashed inventory, status JSON and Markdown | Verify without importing model libraries |
@@ -76,8 +76,7 @@ paths or edit completion flags.
 ```
 
 Paths are relative to the artifact root or absolute within it. All supplied
-stages must belong to the same source/review/data chain. Only k0/k5 training is
-accepted. The recorded post-gate selection determines which arms are required;
+stages must belong to the same source/review/data chain. Only explicitly selected k0/k2/k5 training is accepted. The recorded post-gate selection determines which arms are required;
 without that selection the default is both endpoint arms.
 
 Every lifecycle plan in this experiment's `jobs/` tree is included automatically,
@@ -117,8 +116,7 @@ request alone is not external confirmation that a Pod stopped. Copy receipts are
 retained client hash confirmations, not authentication or a fresh check of live
 cloud state; source payload hashes are rechecked locally.
 
-Evaluation, internals, Stage0 research, the512x8 baseline/offset, k2 training,
-k10, k5+5 polish, self-correct SFT and extra seeds remain deferred/separately
+Evaluation, internals, Stage0 research, the512x8 baseline/offset, k10, k5+5 polish, self-correct SFT and extra seeds remain deferred/separately
 approved. Completed here never includes those follow-ups.
 
 ## Changes, copies and interruptions

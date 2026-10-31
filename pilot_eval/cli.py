@@ -91,6 +91,40 @@ def main(argv=None, *, dependencies=None):
         if operation=='stage':
             diag.add_argument('--volume-id',required=True);diag.add_argument('--rate',required=True);diag.add_argument('--reviewer',required=True)
             diag.add_argument('--estimated-hours',default='0.5');diag.add_argument('--run',action='store_true')
+    pipeline_select=commands.add_parser('sampling-sft-pipeline-select-gate',help='record all-arm gate selection only with no pending coverage flags')
+    pipeline_select.add_argument('--config',type=Path,required=True);pipeline_select.add_argument('--forecast',type=Path,required=True)
+    pipeline_select.add_argument('--reviewer',required=True);pipeline_select.add_argument('--name',required=True);pipeline_select.add_argument('--output-root',type=Path,required=True)
+    pipeline_gate_job=commands.add_parser('sampling-sft-pipeline-prepare-gate-job',help='prepare bounded independent scorer job')
+    pipeline_gate_job.add_argument('--config',type=Path,required=True);pipeline_gate_job.add_argument('--output-root',type=Path,required=True)
+    for field in ['name','volume-id','rate','reviewer','estimated-hours','setup-hours']:
+        pipeline_gate_job.add_argument('--'+field,required=True)
+    pipeline_gate_score=commands.add_parser('sampling-sft-pipeline-score-gate',help='run verified independent scoring job')
+    pipeline_gate_score.add_argument('--config',type=Path,required=True);pipeline_gate_score.add_argument('--job',type=Path,required=True)
+    pipeline_gate_score.add_argument('--reviewer',required=True);pipeline_gate_score.add_argument('--output-root',type=Path,required=True)
+    pipeline_gate_report=commands.add_parser('sampling-sft-pipeline-report-gate',help='verify independent scores and compute gate report')
+    pipeline_gate_report.add_argument('--config',type=Path,required=True);pipeline_gate_report.add_argument('--output-root',type=Path,required=True)
+    pipeline_gate=commands.add_parser('sampling-sft-pipeline-prepare-gate',help='prepare gate from verified human coverage')
+    pipeline_gate.add_argument('--review',type=Path,required=True);pipeline_gate.add_argument('--word-policy',type=Path,required=True)
+    pipeline_gate.add_argument('--name',required=True);pipeline_gate.add_argument('--output-root',type=Path,required=True)
+    pipeline_prepare=commands.add_parser('sampling-sft-pipeline-prepare-generation',help='prepare three separate bounded generation jobs')
+    pipeline_prepare.add_argument('--config',type=Path,required=True);pipeline_prepare.add_argument('--output-root',type=Path,required=True)
+    for field in ['volume-id','rate','reviewer','hours-k0','hours-k2','hours-k5','setup-hours']:
+        pipeline_prepare.add_argument('--'+field,required=True)
+    pipeline_data=commands.add_parser('sampling-sft-pipeline-data',help='export reviewed data and run full T15/T16')
+    pipeline_data.add_argument('--review',type=Path,required=True);pipeline_data.add_argument('--output-root',type=Path,required=True)
+    pipeline_data.add_argument('--name',required=True);pipeline_data.add_argument('--python',type=Path,required=True)
+    pipeline_train_prepare=commands.add_parser('sampling-sft-pipeline-prepare-training',help='prepare three distinct post-gate training jobs')
+    pipeline_train_prepare.add_argument('--data',type=Path,required=True);pipeline_train_prepare.add_argument('--selection',type=Path,required=True)
+    pipeline_train_prepare.add_argument('--name',required=True);pipeline_train_prepare.add_argument('--output-root',type=Path,required=True)
+    for field in ['volume-id','rate','reviewer','hours-k0','hours-k2','hours-k5','setup-hours']:
+        pipeline_train_prepare.add_argument('--'+field,required=True)
+    pipeline_train=commands.add_parser('sampling-sft-pipeline-training',help='run three ready post-gate L4 jobs sequentially')
+    pipeline_train.add_argument('--data',type=Path,required=True);pipeline_train.add_argument('--output-root',type=Path,required=True);pipeline_train.add_argument('--jobs',type=Path,required=True)
+    pipeline_review=commands.add_parser('sampling-sft-pipeline-review',help='prepare review and freeze only when human decisions complete')
+    pipeline_review.add_argument('--config',type=Path,required=True);pipeline_review.add_argument('--output-root',type=Path,required=True);pipeline_review.add_argument('--name',required=True)
+    pipeline=commands.add_parser('sampling-sft-pipeline-generation',help='run three preapproved jobs sequentially and inventory verified science')
+    pipeline.add_argument('--config',type=Path,required=True);pipeline.add_argument('--output-root',type=Path,required=True)
+    pipeline.add_argument('--jobs',type=Path,required=True)
     qualification=commands.add_parser('sampling-sft-qualification-stage',help='explicit bounded qualification handoff; no full generation')
     for field in ['config','settings','output-root']:
         qualification.add_argument('--'+field,type=Path,required=True)
@@ -923,6 +957,39 @@ def main(argv=None, *, dependencies=None):
             if operation in ['run','report']:
                 result={k:v for k,v in result.items() if k not in ['first','second','within_a','within_b','between_first','between_second','within_process']} | ({key:{k:v for k,v in result[key].items() if k!='differences'} for key in ['within_a','within_b','between_first','between_second','within_process'] if key in result})
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command=='sampling-sft-pipeline-select-gate':
+            from pilot_eval.sampling_sft_pipeline import gate_select
+            print(json.dumps(gate_select(args.config,args.output_root,args.forecast,args.reviewer,args.name),indent=2))
+        elif args.command=='sampling-sft-pipeline-prepare-gate-job':
+            from pilot_eval.sampling_sft_pipeline import prepare_gate_job
+            print(json.dumps(prepare_gate_job(args.config,args.output_root,args.name,args.volume_id,args.rate,args.reviewer,args.estimated_hours,args.setup_hours),indent=2))
+        elif args.command=='sampling-sft-pipeline-score-gate':
+            from pilot_eval.sampling_sft_pipeline import gate_score
+            print(json.dumps(gate_score(args.config,args.output_root,args.job,args.reviewer),indent=2))
+        elif args.command=='sampling-sft-pipeline-report-gate':
+            from pilot_eval.sampling_sft_pipeline import gate_report
+            print(json.dumps(gate_report(args.config,args.output_root),indent=2))
+        elif args.command=='sampling-sft-pipeline-prepare-gate':
+            from pilot_eval.sampling_sft_pipeline import gate_prepare
+            print(json.dumps(gate_prepare(args.review,args.output_root,args.word_policy,args.name),indent=2))
+        elif args.command=='sampling-sft-pipeline-prepare-generation':
+            from pilot_eval.sampling_sft_pipeline import prepare_generation_jobs
+            print(prepare_generation_jobs(args.config,args.output_root,args.volume_id,args.rate,args.reviewer,{'0':args.hours_k0,'2':args.hours_k2,'5':args.hours_k5},args.setup_hours))
+        elif args.command=='sampling-sft-pipeline-data':
+            from pilot_eval.sampling_sft_pipeline import data_stage
+            print(json.dumps(data_stage(args.review,args.output_root,args.name,args.python),indent=2))
+        elif args.command=='sampling-sft-pipeline-prepare-training':
+            from pilot_eval.sampling_sft_pipeline import prepare_training_jobs
+            print(prepare_training_jobs(args.data,args.selection,args.output_root,args.name,args.volume_id,args.rate,args.reviewer,{'0':args.hours_k0,'2':args.hours_k2,'5':args.hours_k5},args.setup_hours))
+        elif args.command=='sampling-sft-pipeline-training':
+            from pilot_eval.sampling_sft_pipeline import training as pipeline_training
+            print(json.dumps(pipeline_training(args.data,args.output_root,args.jobs),indent=2))
+        elif args.command=='sampling-sft-pipeline-review':
+            from pilot_eval.sampling_sft_pipeline import review_stage
+            print(json.dumps(review_stage(args.config,args.output_root,args.name),indent=2))
+        elif args.command=='sampling-sft-pipeline-generation':
+            from pilot_eval.sampling_sft_pipeline import generation as pipeline_generation
+            print(json.dumps(pipeline_generation(args.config,args.output_root,args.jobs),indent=2))
         elif args.command=='sampling-sft-qualification-stage':
             from pilot_eval.sampling_sft_qualification import stage
             result=stage(args.config,args.output_root,args.settings,args.name,args.stage,args.reviewer,

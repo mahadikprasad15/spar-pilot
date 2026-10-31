@@ -152,7 +152,7 @@ def test_copy_receipts_and_external_stop_proof_are_checked_without_provider_call
     with pytest.raises(ValueError,match='receipt'):job_evidence(job,tmp_path,override)
 
 
-@pytest.mark.parametrize('value',[{},dict(source_plan=None),dict(source_plan=4),dict(source_plan='p',training_plans={'2':'x'}),dict(source_plan='p',jobs=[{}])])
+@pytest.mark.parametrize('value',[{},dict(source_plan=None),dict(source_plan=4),dict(source_plan='p',training_plans={'3':'x'}),dict(source_plan='p',jobs=[{}])])
 def test_bad_selection_schema_is_rejected(tmp_path,value):
     from pilot_eval.sampling_sft_handoff import normalize
     with pytest.raises(ValueError):normalize(value,tmp_path)
@@ -190,3 +190,9 @@ def test_software_receipt_does_not_establish_gpu_qualification(tmp_path,source_f
     assert value['details']['software'][0]['ticket']=='synthetic-test-receipt'
     evidence.write_text('{}')
     assert cli(tmp_path,'verify','--config',plan)==1
+
+
+def test_handoff_accepts_explicit_k2_plan(tmp_path):
+    from pilot_eval.sampling_sft_handoff import normalize
+    result=normalize({'source_plan':'plans/source.json','training_plans':{'0':'plans/k0.json','2':'plans/k2.json','5':'plans/k5.json'}},tmp_path)
+    assert set(result['training_plans'])=={'0','2','5'}

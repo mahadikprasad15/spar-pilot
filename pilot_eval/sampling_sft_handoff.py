@@ -25,7 +25,7 @@ from pilot_eval.workflow import _hash
 from pilot_eval.run import _write_state
 
 DEFERRED=['held-out evaluation','internal activations / KL / geometry','Stage0 research',
-    'temperature-1 512x8 baseline and NLL offset','k2 training','k10 sampling',
+    'temperature-1 512x8 baseline and NLL offset','k10 sampling',
     'k5+5 polish','self-correct SFT','extra seeds']
 KEYS={'source_plan','generation_plan','review_plan','gate_plan','training_data_plan',
       'training_selection','training_plans','jobs','software_evidence'}
@@ -62,7 +62,7 @@ def normalize(value,root):
     for key in ['source_plan',*out]:
         if value.get(key) is not None:out[key]=relative(value[key])
     plans=value.get('training_plans',{})
-    if not isinstance(plans,dict) or set(plans)-{'0','5'}:raise ValueError('Handoff training plans can select k0/k5 only.')
+    if not isinstance(plans,dict) or set(plans)-{'0','2','5'}:raise ValueError('Handoff training plans can select k0/k2/k5 only.')
     out['training_plans']={k:relative(p) for k,p in plans.items()}
     for key in ['jobs','software_evidence']:
         rows=value.get(key,[])
@@ -243,7 +243,7 @@ def collect(root,config):
             report=gate.verify(root/selected['gate_plan'],root);stages['gate_complete']=True;stages['gate_real']=report['execution_kind']=='real-cuda'
             details['gate']={k:report[k] for k in ['own_cohort','common_cohort','common_problem_count','coverage','baseline','relative_sharpening']}
     print('Handoff: review and gate evidence checked or pending.',flush=True)
-    chosen=[0,5]
+    chosen=[0,2,5]
     if selected['training_selection']:
         if not stages['gate_complete']:raise ValueError('Training selection needs its completed gate report.')
         receipt,_=training.selection(root,root/selected['training_selection'],dict(review_plan=selected['review_plan']))

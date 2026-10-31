@@ -16,7 +16,7 @@ def test_weights_only_state_cannot_be_recovery(tmp_path):
         checkpoint(p,'plan','runtime',require_recovery=True)
 
 
-def test_public_training_prepare_rejects_k2_before_loading_sources(tmp_path):
+def test_public_training_prepare_rejects_missing_k2_evidence(tmp_path):
     from pilot_eval.cli import main
     assert main(['sampling-sft-train-prepare','--data','missing','--selection','missing',
         '--name','k2','--k','2','--output-root',str(tmp_path)])==1
@@ -191,3 +191,17 @@ def test_optional_training_cells_are_safe_cpu_clients():
         if c['cell_type']=='code' and 'sampling-sft-train-' in ''.join(c['source']))
     assert 'sampling-sft-train-prepare' in text and 'sampling-sft-train-job-request' in text
     assert 'sampling-sft-train-run' not in text
+
+
+def test_explicit_three_arm_selection_allows_k2_but_rejects_unselected_arm(tmp_path,monkeypatch):
+    from pilot_eval import sampling_sft_training as t
+    monkeypatch.setattr(t.data,'verify',lambda *a:None)
+    monkeypatch.setattr(t,'selection',lambda *a:({'arms':[0,2,5]},{}))
+    monkeypatch.setattr(t.source,'load',lambda *a:(tmp_path,{'run_path':'runs/sample'},None))
+    data=tmp_path/'data.json';data.write_text(json.dumps({'source_plan':'source.json','run_path':'data'}))
+    selected=tmp_path/'selection.json';selected.write_text('{}')
+    (tmp_path/'data').mkdir();(tmp_path/'data/export.complete.json').write_text('{}')
+    # Remaining plan fields are checked by the normal prepare path; k2 must pass
+    # the arm guard rather than fail before the saved evidence is read.
+    with pytest.raises((KeyError,FileNotFoundError)):
+        t.prepare(data,selected,tmp_path,'k2',2)

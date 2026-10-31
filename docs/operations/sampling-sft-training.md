@@ -1,9 +1,9 @@
 # Sampling SFT: endpoint training and recovery
 
-Ticket 09 adds the CLI workflow for selected k0/k5 arms. Preparation, status and
+Ticket 09 adds the CLI workflow for explicitly selected k0/k2/k5 arms. Preparation, status and
 verification are CPU operations. Training runs only as the child of an explicitly
 approved, freshly reserved RunPod job on the audited L4 FP32 configuration.
-Historical gold SFT is never rerun. There is no implicit k2 path.
+Historical gold SFT is never rerun. k2 requires an explicit post-gate selection.
 
 ## Prepare one attempt
 
@@ -17,7 +17,7 @@ python -m pilot_eval sampling-sft-train-prepare --data plans/sampling-training-d
 python -m pilot_eval sampling-sft-train-status --config plans/sampling-k0-attempt1/sampling-sft.training.json --output-root artifacts
 ```
 
-Repeat preparation separately for selected k5. The plan binds the reviewed
+Repeat preparation separately for selected k2 and k5. The plan binds the reviewed
 selection, exact training export, original base identity, code and source hashes.
 The original 64 step boundaries are retained. A missing slot reduces that step's
 problem count; it never pulls the next problem forward. Each step processes one
@@ -119,3 +119,25 @@ Pod stop and records the event. Shutdown confirmation and actual-cost settlement
 remain explicit controller operations. A missing export acknowledgment is an
 unresolved lifecycle state, not proof that the Pod stopped. No volume deletion or
 unexported-Pod termination is performed.
+
+## Sequential selected three-arm training
+
+After the independent data gate has selected exactly `[0,2,5]`, full T15/T16
+readiness passes, and a compatible L4 Pod is available, prepare the three
+training plans and their distinct lifecycle jobs. Each job's output inventory
+must include every file returned by `sampling-sft-train-job-request`. Supply an
+artifact-root JSON array with ordered entries containing `arm`, `config`, `job`
+and `reviewer`, then run:
+
+```sh
+python -m pilot_eval sampling-sft-pipeline-training --data plans/DATA/sampling-sft.training-data.json --jobs THREE_TRAINING_JOBS.json --output-root artifacts
+```
+
+The wrapper verifies the shared post-gate selection, readiness, plan and job
+inventories, then runs k0, k2 and k5 sequentially through the existing lifecycle.
+It binds each authorized budget waiver to the live ledger, refuses failed or
+uncertain prior launches, verifies each real 64-step result and saves a hash
+inventory of the complete training trees. It cannot provision or switch GPUs,
+complete human review, invent a forecast, perform an external backup, or train
+on the A40; use a verified compatible L4. A new job must have a forecast and
+per-job timeout supported by actual measurements and the selected gate request.

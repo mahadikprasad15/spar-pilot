@@ -124,9 +124,10 @@ After inspecting the report, supply a measured training forecast:
 
 ```json
 {
-  "arms": [0, 5],
+  "arms": [0, 2, 5],
   "per_arm": {
     "0": {"rate_usd_per_hour": "ACTUAL_QUOTE", "estimated_hours": "MEASURED_ESTIMATE", "setup_hours": "SETUP_ESTIMATE"},
+    "2": {"rate_usd_per_hour": "ACTUAL_QUOTE", "estimated_hours": "MEASURED_ESTIMATE", "setup_hours": "SETUP_ESTIMATE"},
     "5": {"rate_usd_per_hour": "ACTUAL_QUOTE", "estimated_hours": "MEASURED_ESTIMATE", "setup_hours": "SETUP_ESTIMATE"}
   },
   "notes": "Measured training basis and reason for selecting these arms."
@@ -138,13 +139,13 @@ python -m pilot_eval sampling-sft-gate-request --config plans/sampling-gate-v1/s
 ```
 
 The request binds report, reviewed coverage, HF score evidence, proposed arms
-and the current shared budget. The default scientific scope is k0/k5, one
-training seed42. Choosing only one requires the explicit recorded reason; k2 is
-not selected here and requires separate approval. No automatic meaningful-
+and the current shared budget. The user-selected scientific scope is k0/k2/k5, one
+training seed42. The selected arms must be explicit in the bound request. No automatic meaningful-
 difference rule, merge or causal attribution is applied.
 
 Cost uses exact microdollars: quoted rate × (estimated hours ×1.5 + setup time),
-summed across selected arms. It must fit the $6 training and $25 total ceilings.
+summed across selected arms. Ceiling overages remain visible; an explicit
+request- and ledger-bound waiver records the user-authorized exception.
 Current or projected80% commitments require explicit review. This request does
 not reserve funds or launch a job.
 

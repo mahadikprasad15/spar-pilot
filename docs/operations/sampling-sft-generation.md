@@ -194,3 +194,61 @@ automatic-only, human review is pending and `training_allowed` stays false.
 Ticket06 handles separate human eligibility decisions and reviewed coverage;
 Ticket07 computes the descriptive recipe comparisons. The temperature1 baseline,
 NLL offset, evaluation and internals remain deferred.
+
+## Sequential three-arm generation and full scientific inventory
+
+The user selected k0, k2 and k5 in ADR 0023. Prepare one distinct lifecycle job
+per arm with the reviewed generation config, provider volume/rate and a bounded
+`estimated_hours`/`setup_hours` forecast. Each job must declare its arm's
+`complete.json`, `results.json`, `attempts.jsonl` and `dispositions.jsonl` under
+the canonical generation directory. Those declarations are a minimum, not a
+complete raw-data export. The job lifecycle retains cost reservations until
+actual billing is reconciled.
+
+Prepare the three jobs without launching them, using explicit estimates in hours:
+
+```sh
+python -m pilot_eval sampling-sft-pipeline-prepare-generation --config plans/GENERATION/sampling-sft.generation.json --volume-id VOLUME_ID --rate ACTUAL_QUOTE --reviewer Prasad --hours-k0 ESTIMATE --hours-k2 ESTIMATE --hours-k5 ESTIMATE --setup-hours ESTIMATE --output-root artifacts
+```
+
+This saves a JSON array under the generation run tree with three prepared job paths:
+
+```json
+[
+  {"arm": 0, "job": "runs/sampling-sft/SOURCE/jobs/JOB0/job.plan.json", "reviewer": "Prasad"},
+  {"arm": 2, "job": "runs/sampling-sft/SOURCE/jobs/JOB2/job.plan.json", "reviewer": "Prasad"},
+  {"arm": 5, "job": "runs/sampling-sft/SOURCE/jobs/JOB5/job.plan.json", "reviewer": "Prasad"}
+]
+```
+
+```sh
+python -m pilot_eval sampling-sft-pipeline-generation --config plans/GENERATION/sampling-sft.generation.json --jobs PATH_TO_ARRAY.json --output-root artifacts
+```
+
+The command runs the jobs in order, never concurrently, and binds each user's
+budget waiver to the then-current ledger and request immediately before launch.
+A completed successful job is reused; a failed job or uncertain recorded launch
+stops for inspection and reconciliation. It never silently replaces a stale
+approval or fabricates a successful job. The estimate sets a hard child timeout
+at 1.5 times estimated hours, and must not be mistaken for an upper-bound
+measurement. Each job retains its child log and normal lifecycle receipts.
+
+After all three complete, the wrapper verifies the scientific arms and writes
+`results/full-scientific-inventory.json` with hashes of the complete dynamic arm
+trees, including block-level scientific records. This inventory is not itself an
+external copy. Independently copy and verify the full inventory, plans and budget
+ledger before any requested Pod stop. The ordinary job export covers only the
+explicitly declared files and does not replace the full-tree backup.
+
+After generation, prepare the eligibility packet with:
+
+```sh
+python -m pilot_eval sampling-sft-pipeline-review --config plans/GENERATION/sampling-sft.generation.json --name REVIEW --output-root artifacts
+```
+
+The review command freezes coverage only when actual required human labels are
+complete. Finish actual human review for any invalid extraction. If coverage is blocked,
+stop; for omissions or flagged cohort differences, record the required human
+acknowledgments. Then perform the independent score/data gate, full T15/T16
+readiness and selected k0/k2/k5 L4 training jobs in order, using the respective
+runbooks. It does not fabricate labels, select a GPU or claim training occurred.

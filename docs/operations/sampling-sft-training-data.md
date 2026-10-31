@@ -31,8 +31,7 @@ Every selected response must end with exactly one gold-matching supervised
 end-turn ID. An alternative sampler stop cannot be silently converted. A prompt
 mismatch, extra stop or unfinished response blocks export. No retokenization,
 truncation or text repair occurs. All 64 steps must remain nonempty; more than
-five uncovered problems blocks the handoff. Exporting k2 data does not select it
-for training.
+five uncovered problems blocks the handoff. Exporting k2 data does not by itself select it for training.
 
 T15 compares all 196 rank-one A/B pairs and the adapter payload byte for byte
 against gold checkpoint 0, with exact zero B. It certifies the exported payload;
@@ -73,6 +72,6 @@ Even a passing kernel receipt leaves `t16_passed=false` and
 ## Training boundary
 
 Readiness is separate from authorization. Full training still requires Ticket
-07's explicit k0/k5 selection, the budgeted-job approval and Ticket 09's real L4
+07's explicit selected-arm decision, the budgeted-job approval and Ticket 09's real L4
 FP32/runtime/config checks. A failed short-batch path stops for repair and never
 triggers duplication. Full optimizer resume state is not part of this export.
