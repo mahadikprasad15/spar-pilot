@@ -34,3 +34,46 @@ def test_precision_cli_rejects_missing_plan_before_job_launch(tmp_path, capsys):
                '--precision-plan',str(tmp_path/'missing-plan'),'--precision-sha256','x'])
     assert code==1
     assert 'precision plan' in capsys.readouterr().err.lower()
+
+
+def test_child_and_worker_evidence_bind_environment_and_sources(tmp_path, monkeypatch):
+    import json, os, sys, types
+    from pilot_eval import sampling_sft_ieee_diagnostic as ieee
+    from pilot_eval import sampling_sft_engine as engine
+    from pilot_eval.training import file_hash
+    for key in ['TRITON_F32_DEFAULT','TRITON_CACHE_DIR','VLLM_CACHE_ROOT',
+                'SAMPLING_SFT_IEEE_PLAN','SAMPLING_SFT_IEEE_HASH']:
+        monkeypatch.delenv(key,raising=False)
+    sources={'vllm_version':'0.11.1','triton_version':'3.5.0','files':{}}
+    monkeypatch.setattr(ieee,'installed_sources',lambda:sources)
+    monkeypatch.setattr(engine,'open_engine',engine.open_engine)
+    cache=tmp_path/'cache';cache.mkdir()
+    plan=tmp_path/'precision.json'
+    plan.write_text(json.dumps(dict(precision='ieee',triton_cache=str(cache),sources=sources,cache_initially_empty=True,
+        diagnostic_code_sha256=file_hash(ieee.__file__))))
+    monkeypatch.setattr(ieee.SamplingSFTWorkerExtension,'sampling_sft_worker_evidence',lambda self:{'gpu':'fake'})
+    monkeypatch.setitem(sys.modules,'triton',types.SimpleNamespace(knobs=types.SimpleNamespace(
+        language=types.SimpleNamespace(fp32_default='ieee'))))
+    # Child must configure before importing Triton.
+    sys.modules.pop('triton')
+    ieee.configure_child(plan,tmp_path,file_hash(plan))
+    assert os.environ['TRITON_F32_DEFAULT']=='ieee'
+    assert os.environ['TRITON_CACHE_DIR']==str(cache)
+    sys.modules['triton']=types.SimpleNamespace(knobs=types.SimpleNamespace(
+        language=types.SimpleNamespace(fp32_default='ieee')))
+    evidence=ieee.IEEEWorkerExtension().sampling_sft_worker_evidence()['triton_precision']
+    assert evidence['plan_sha256']==file_hash(plan)
+    assert evidence['effective_knob']=='ieee' and evidence['sources']==sources
+    assert evidence['vllm_cache']==str(tmp_path/'vllm-cache')
+    sys.modules['triton'].knobs.language.fp32_default='tf32'
+    with pytest.raises(ValueError,match='Worker precision'):
+        ieee.IEEEWorkerExtension().sampling_sft_worker_evidence()
+
+
+def test_execution_identity_separately_binds_precision_plan(tmp_path):
+    from pilot_eval.sampling_sft_ieee_diagnostic import execution_identity
+    plan=tmp_path/'precision.json';plan.write_text('{"precision":"ieee"}')
+    result=execution_identity('legacy-runtime',plan)
+    assert result['legacy_runtime_hash']=='legacy-runtime'
+    assert result['precision_plan_sha256'] != 'legacy-runtime'
+    assert result['production_qualified'] is False

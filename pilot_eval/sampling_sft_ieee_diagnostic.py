@@ -37,6 +37,11 @@ def installed_sources():
     return inspect_sources(v.locate_file('vllm'),t.locate_file('triton'),v.version,t.version)
 
 
+def execution_identity(runtime_hash, plan_path):
+    return dict(legacy_runtime_hash=runtime_hash,precision_plan_sha256=file_hash(plan_path),
+                production_qualified=False)
+
+
 def configure_child(plan_path, root, expected_hash=None):
     import json, os, sys
     path=Path(plan_path).resolve(); root=Path(root).resolve()
@@ -44,6 +49,7 @@ def configure_child(plan_path, root, expected_hash=None):
         raise ValueError('Invalid precision plan or hash.')
     plan=json.loads(path.read_text())
     if (plan.get('sources')!=installed_sources() or plan.get('precision')!='ieee'
+            or plan.get('cache_initially_empty') is not True
             or plan.get('diagnostic_code_sha256')!=file_hash(Path(__file__))):
         raise ValueError('Precision plan source fingerprint differs.')
     cache=Path(plan['triton_cache']).resolve()

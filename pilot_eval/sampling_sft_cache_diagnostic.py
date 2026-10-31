@@ -81,7 +81,7 @@ def run(root,name,volume,rate,reviewer,mode='cache'):
         if not precision_path.exists() and cache.exists():
             raise ValueError('A fresh isolated Triton cache is required; use a new name.')
         cache.mkdir(exist_ok=True)
-        source.frozen(precision_path,dict(precision='ieee',triton_cache=str(cache),
+        source.frozen(precision_path,dict(precision='ieee',triton_cache=str(cache),cache_initially_empty=True,
             sources=ieee.installed_sources(),diagnostic_code_sha256=file_hash(Path(ieee.__file__))))
     source.frozen(control/'inputs.json',dict(score_plan=str(old.relative_to(root)),
         score_plan_sha256=file_hash(old),oracle_plan=str(old_oracle.relative_to(root)),
@@ -151,6 +151,10 @@ def run(root,name,volume,rate,reviewer,mode='cache'):
     report=dict(state='completed',scope='diagnostic only; original T3 failure and production gate unchanged',
         fixture_sha256=file_hash(fixture_path),old_runtime_hash=old_plan['runtime_hash'],
         comparisons=comparisons,evidence=evidence,inputs=str((control/'inputs.json').relative_to(root)))
+    if precision_path:
+        report['execution_identity']=ieee.execution_identity(old_plan['runtime_hash'],precision_path)
+        report['precision_plan']=str(precision_path.relative_to(root))
+        report['interpretation_limit']='Installed kernel and worker knob do not establish which backend or compiled kernel executed.'
     source.frozen(control/'report.json',report)
     return report
 
