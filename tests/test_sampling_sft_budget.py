@@ -193,3 +193,22 @@ def test_interim_gpu_cost_observation_does_not_release_the_reservation(tmp_path)
     assert cli(tmp_path,'observe','--job-id','job','--observation',observation)==0
     assert ledger(tmp_path)['spent_usd']=='2.000000'
     assert ledger(tmp_path)['reserved_usd']=='1.600000'
+
+
+def test_explicit_request_bound_waiver_preserves_costs_and_allows_launch(tmp_path):
+    from pilot_eval.sampling_sft_budget import authorize_launch
+    plan = setup(tmp_path)
+    request = gpu('waived', hours='20')
+    assert reserve(tmp_path, plan, request) == 1
+    approval = dict(reviewer='Prasad', notes='User withdrew caps; preserve accounting.',
+                    waive_budget_limits=True, budget_sha256=ledger(tmp_path)['sha256'],
+                    request_sha256=_hash(request))
+    stale = dict(approval, request_sha256='wrong')
+    assert reserve(tmp_path, plan, request, stale) == 1
+    assert reserve(tmp_path, plan, request, approval) == 0
+    summary = authorize_launch(tmp_path, 'waived', request, pod_id='fixture-pod')
+    assert summary['cap_exceeded'] is True
+    assert summary['reserved_usd'] == '30.100000'
+    assert summary['jobs']['waived']['budget_limits_waived'] is True
+    assert summary['jobs']['waived']['launch_recorded'] is True
+    assert reserve(tmp_path, plan, gpu('ordinary')) == 1

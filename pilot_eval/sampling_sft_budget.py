@@ -148,7 +148,7 @@ def _summary(value):
         review_required=(spent+reserved)*5>=POLICY['total_microusd']*4 or any(sum(s.values())*5>=CAPS[k]*4 for k,s in stages.items()),
         stage_totals={name:dict(spent_usd=usd(s['spent']),reserved_usd=usd(s['reserved']),committed_usd=usd(sum(s.values())),cap_usd=usd(CAPS[name])) for name,s in stages.items()},
         unreconciled_gpu_jobs=[name for name,job in jobs.items() if job.get('launched') and job['state']=='reserved' and job['request']['kind']=='gpu'],
-        jobs={name:dict(launch_recorded=bool(job.get('launched')),state=job['state'],stage=job['stage'],kind=job['request']['kind'],request_sha256=job['request_sha256'],
+        jobs={name:dict(budget_limits_waived=bool((job.get('approval') or {}).get('waive_budget_limits') is True),launch_recorded=bool(job.get('launched')),state=job['state'],stage=job['stage'],kind=job['request']['kind'],request_sha256=job['request_sha256'],
                        reserved_usd=usd(job['reserved_microusd']),actual_usd=usd(job['actual_microusd']) if job['state']=='settled' or job['actual_microusd'] else None) for name,job in jobs.items()})
 
 
@@ -182,6 +182,13 @@ def estimate(request):
 
 
 def _check(value,stage,additional,request,approval):
+    if isinstance(approval, dict) and approval.get('waive_budget_limits') is True:
+        if (approval.get('budget_sha256') != value['sha256']
+                or approval.get('request_sha256') != _hash(request)
+                or not all(isinstance(approval.get(k), str) and approval[k].strip()
+                           for k in ['reviewer', 'notes'])):
+            raise ValueError('Budget waiver must name reviewer/reason and bind the current ledger and request.')
+        return
     current=_summary(value)
     committed=micros(current['committed_usd']);stage_committed=micros(current['stage_totals'][stage]['committed_usd'])
     if current['cap_exceeded'] or committed+additional>POLICY['total_microusd'] or stage_committed+additional>CAPS[stage]:
@@ -270,14 +277,15 @@ def authorize_launch(output_root,job_id,request,approval=None,*,pod_id=None):
             raise ValueError('Job needs its matching outstanding reservation before launch.')
         if job.get('launched'):
             raise ValueError('Launch already authorized; reconcile interrupted work rather than relaunch.')
-        if request['kind']=='gpu' and any(other.get('launched') and other['state']=='reserved'
+        waived=(job.get('approval') or {}).get('waive_budget_limits') is True
+        if not waived and request['kind']=='gpu' and any(other.get('launched') and other['state']=='reserved'
                 and other['request']['kind']=='gpu' and name!=job_id for name,other in _jobs(value).items()):
             raise ValueError('Another launched GPU job has unreconciled cost; close it before a new paid launch.')
         last=value['events'][-1]
         reviewed_own_reservation=(last['kind']=='reserve' and last['job_id']==job_id
                                  and bool(last.get('approval',{}))
                                  and last['approval'].get('review_80_percent') is True)
-        if not reviewed_own_reservation:
+        if not waived and not reviewed_own_reservation:
             _check(value,job['stage'],0,request,approval)
         return _write(output_root,value,dict(kind='launch',job_id=job_id,
             request_sha256=_hash(request),review=approval,pod_id=pod_id))

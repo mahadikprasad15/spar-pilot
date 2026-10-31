@@ -182,7 +182,7 @@ def authorize(root,path,job_path,*,expected_command='sampling-sft-instrument-run
         raise ValueError('Scientific child does not match the active approved job.')
     ledger=budget_status(root)
     current=ledger['jobs'].get(request['job_id'],{})
-    if (ledger['cap_exceeded'] or not current.get('launch_recorded') or current.get('state')!='reserved'
+    if ((ledger['cap_exceeded'] and not current.get('budget_limits_waived')) or not current.get('launch_recorded') or current.get('state')!='reserved'
             or current.get('request_sha256')!=job['request_sha256']):
         raise ValueError('Job has no active approved cost reservation.')
 

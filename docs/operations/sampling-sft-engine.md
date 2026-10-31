@@ -196,3 +196,21 @@ candidates must be diagnosed and the candidate set reviewed explicitly; the
 software does not silently change settings after a failure. This selection is
 Stage 0.5 evidence. Exact pilot restart/resume and alarm review still block
 full generation.
+
+### User-approved bounded-job budget waiver
+
+For the 2026-10-31 A40 smoke, the user withdrew the original cost cap as an
+execution blocker. A job approval can explicitly include:
+
+```json
+{"waive_budget_limits": true, "budget_sha256": "CURRENT_LEDGER_SHA256",
+ "request_sha256": "EXACT_REQUEST_SHA256", "reviewer": "Prasad",
+ "notes": "User withdrew original cap; historical accounting remains incomplete."}
+```
+
+These fields augment, rather than replace, paid execution and source-audit
+approval. The stored reservation retains estimates/costs; cap-exceeded summaries
+remain truthful. Missing historical records must be labelled incomplete, not
+silently treated as zero. No environment variable or automatic fallback waives a
+cap. A stale or unbound waiver is rejected. This supports the bounded instrument;
+production generation and training retain their separate gate reviews.
