@@ -81,6 +81,16 @@ def main(argv=None, *, dependencies=None):
             generation.add_argument('--job',type=Path);generation.add_argument('--stop-after-blocks',type=int)
         if operation=='recover-writer':
             generation.add_argument('--owner-token',required=True);generation.add_argument('--review-notes',required=True)
+    for operation in ['prepare','run','stage','report']:
+        diag=commands.add_parser('sampling-sft-deterministic-score-'+operation,help='bounded deterministic scheduling score diagnostic')
+        diag.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':diag.add_argument('--score-config',type=Path,required=True);diag.add_argument('--name',required=True)
+        else:diag.add_argument('--config',type=Path,required=True)
+        if operation in ['run','stage']:diag.add_argument('--lane',choices=['a','b'],required=True)
+        if operation=='run':diag.add_argument('--job',type=Path,required=True)
+        if operation=='stage':
+            diag.add_argument('--volume-id',required=True);diag.add_argument('--rate',required=True);diag.add_argument('--reviewer',required=True)
+            diag.add_argument('--estimated-hours',default='0.5');diag.add_argument('--run',action='store_true')
     qualification=commands.add_parser('sampling-sft-qualification-stage',help='explicit bounded qualification handoff; no full generation')
     for field in ['config','settings','output-root']:
         qualification.add_argument('--'+field,type=Path,required=True)
@@ -901,6 +911,16 @@ def main(argv=None, *, dependencies=None):
             elif operation=='verify':result=generation.verify(args.config,args.output_root,args.k)
             elif operation=='recover-writer':result=generation.recover_writer(args.config,args.output_root,args.k,args.owner_token,args.review_notes)
             else:result=generation.status(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-deterministic-score-'):
+            from pilot_eval import sampling_sft_deterministic_score as diag
+            operation=args.command.removeprefix('sampling-sft-deterministic-score-')
+            if operation=='prepare':result=diag.prepare(args.score_config,args.output_root,args.name)
+            elif operation=='run':result=diag.run(args.config,args.output_root,args.lane,args.job,dependencies=dependencies)
+            elif operation=='stage':result=diag.stage(args.config,args.output_root,args.lane,args.volume_id,args.rate,args.reviewer,execute=args.run,estimated_hours=args.estimated_hours)
+            else:result=diag.report(args.config,args.output_root)
+            if operation in ['run','report']:
+                result={k:v for k,v in result.items() if k not in ['first','second','within_a','within_b','between_first','between_second','within_process']} | ({key:{k:v for k,v in result[key].items() if k!='differences'} for key in ['within_a','within_b','between_first','between_second','within_process'] if key in result})
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command=='sampling-sft-qualification-stage':
             from pilot_eval.sampling_sft_qualification import stage

@@ -184,3 +184,47 @@ Stop on a failed stage and inspect its retained evidence. Score qualification
 and the exact replay gate are unchanged. Compare the new replay diagnostic's
 per-block results with the original; this experiment tests a runtime change and
 cannot by itself establish the mechanism of any numerical discrepancy.
+
+## Deterministic scheduler score diagnostic
+
+The separate `sampling-sft-deterministic-score-*` commands test the documented
+vLLM V1 deterministic scheduling option (`VLLM_ENABLE_V1_MULTIPROCESSING=0`).
+This differs from `VLLM_WORKER_MULTIPROC_METHOD=spawn`. The new diagnostic plan
+binds the environment option, its implementation, original no-cache score plan,
+IEEE runtime, and original fixture hash. It does not modify their identities.
+Each of two jobs starts a fresh process and scores the same ordered saved batch
+twice; exact score differences are reported within and across the processes.
+The result is a bounded 20-fixture check, not a pilot replay or production gate.
+
+On a healthy compatible Pod, with the original pinned release and environment,
+run each command only after the previous succeeds. The stage writes an explicit
+ledger-bound budget waiver for the user's authorized bounded diagnostic; it does
+not alter earlier approvals. Failed or interrupted lanes are preserved and are
+not automatically relaunched. Use a fresh diagnostic name after investigation.
+
+```bash
+python -m pilot_eval sampling-sft-deterministic-score-prepare \
+  --score-config /workspace/artifacts/plans/a40-q-ieee-nocache-v2-scores/sampling-sft.instrument.json \
+  --name a40-nocache-deterministic-score-v1 --output-root /workspace/artifacts
+
+python -m pilot_eval sampling-sft-deterministic-score-stage \
+  --config /workspace/artifacts/plans/a40-nocache-deterministic-score-v1/sampling-sft.deterministic-score.json \
+  --lane a --volume-id cmuptiucb000007l5dnohe861 --rate 0.60 --reviewer Prasad \
+  --output-root /workspace/artifacts --run
+
+python -m pilot_eval sampling-sft-deterministic-score-stage \
+  --config /workspace/artifacts/plans/a40-nocache-deterministic-score-v1/sampling-sft.deterministic-score.json \
+  --lane b --volume-id cmuptiucb000007l5dnohe861 --rate 0.60 --reviewer Prasad \
+  --output-root /workspace/artifacts --run
+
+python -m pilot_eval sampling-sft-deterministic-score-report \
+  --config /workspace/artifacts/plans/a40-nocache-deterministic-score-v1/sampling-sft.deterministic-score.json \
+  --output-root /workspace/artifacts
+```
+
+Check the Pod volume, actual hourly rate, Python environment and source checkout
+before execution. The child sets and verifies the V1 setting before importing
+vLLM and records the effective value. vLLM can change random state in the
+calling process in this mode. A successful result does not establish equality
+for pilot-sized or dynamically changing batches, and T3, reviewed pilot alarms
+and exact kill/restart replay remain required for generation.

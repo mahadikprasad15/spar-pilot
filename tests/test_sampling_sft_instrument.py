@@ -1,6 +1,7 @@
 """Public saved bounded workflow; injected dependencies cannot qualify a GPU."""
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -198,3 +199,43 @@ def test_new_runtime_requires_explicit_ieee_and_source_identity(tmp_path,source_
     data['runtime']['triton_precision']={'mode':'tf32','cache_policy':'isolated-per-engine','sources':{}}
     settings.write_text(json.dumps(data))
     assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','unsafe')==1
+
+
+def test_deterministic_score_real_saved_fixture_plan_and_paid_job_binding(tmp_path,source_template):
+    from pilot_eval import sampling_sft_deterministic_score as diag
+    from pilot_eval.training import file_hash
+    source,settings=setup(tmp_path,source_template)
+    data=json.loads(settings.read_text());data['runtime']['prefix_caching']=False
+    data.update(mode='scores',problem_ids=list(range(20)))
+    audit=json.loads((tmp_path/'runs/sampling-sft/sample/results/source-audit.json').read_text())
+    rows=json.loads((tmp_path/audit['training']['config']['training_items_path']).read_text())
+    log=tmp_path/'runs/sampling-sft/sample/instrument/fixture-source/requests.jsonl';log.parent.mkdir(parents=True)
+    fixtures=[];records=[]
+    for i in range(20):
+        ids=[3] if i<10 else [65]*1024
+        request=dict(problem_id=i,prefix_ids=[],max_tokens=1024)
+        records.append(dict(kind='generate',requests=[request],outputs=[generation(ids,'stop' if i<10 else 'length',3 if i<10 else None)]))
+        fixtures.append(dict(trace_id=str(i),problem_id=i,prompt_ids=rows[i]['input_ids'][:rows[i]['prompt_tokens']],
+            response_ids=ids,categories=['short','finished','empty-prefix'] if i<10 else ['long','capped'],
+            generation_request=request,generation_record=dict(path=str(log.relative_to(tmp_path)),line=i,output_index=0)))
+    log.write_text(''.join(json.dumps(r)+'\n' for r in records))
+    (log.parent/'complete.json').write_text(json.dumps(dict(files={'requests.jsonl':file_hash(log)})))
+    fp=tmp_path/'score-fixtures.json';fp.write_text(json.dumps(fixtures));data['fixtures']=str(fp)
+    settings.write_text(json.dumps(data))
+    assert cli(tmp_path,'prepare','--config',source,'--settings',settings,'--name','scores')==0
+    parent=tmp_path/'plans/scores/sampling-sft.instrument.json'
+    assert cli(tmp_path,'run','--config',parent,deps=Dependencies())==0
+    config=diag.prepare(parent,tmp_path,'repeat')
+    plan=json.loads(config.read_text())
+    assert plan['fixture_sha256']==file_hash(fp)
+    assert plan['runtime']['environment']=={'VLLM_ENABLE_V1_MULTIPROCESSING':'0'}
+    with pytest.raises(ValueError,match='already exists'):diag.prepare(parent,tmp_path,'repeat')
+    stage=diag.stage(config,tmp_path,'a','volume','0.6','operator')
+    approval=json.loads(Path(stage['approval']).read_text())
+    assert approval['waive_budget_limits'] and approval['budget_sha256']
+    job=json.loads(Path(stage['job']).read_text())
+    assert job['request']['command'][3]=='sampling-sft-deterministic-score-run'
+    with pytest.raises((ValueError,FileNotFoundError)):diag.run(config,tmp_path,'a',stage['job'])
+    assert diag.run(config,tmp_path,'a',None,dependencies=Dependencies())['within_process']['different_values']==0
+    assert diag.run(config,tmp_path,'b',None,dependencies=Dependencies())['within_process']['different_values']==0
+    assert diag.report(config,tmp_path)['between_first']['different_values']==0
