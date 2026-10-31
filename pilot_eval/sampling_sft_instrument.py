@@ -32,10 +32,10 @@ def implementation():
 def validate_runtime(value):
     if not isinstance(value,dict) or set(value)!=RUNTIME_FIELDS:
         raise ValueError('Resolve every engine control explicitly; no implicit runtime defaults.')
-    if (value['vllm_version']!='0.11.1' or 'L40S' not in value['gpu']
+    if (value['vllm_version']!='0.11.1' or not isinstance(value['gpu'], str) or not value['gpu'].strip()
             or value['dtype']!='float32' or value['tf32'] is not False
             or value['worker_numeric_flags']!=dict(matmul_tf32=False,cudnn_tf32=False,matmul_precision='highest')):
-        raise ValueError('Supported adapter: vLLM0.11.1, L40S, FP32, worker TF32off.')
+        raise ValueError('Supported adapter: vLLM0.11.1, explicit GPU identity, FP32, worker TF32off.')
     for name in ['torch_version','cuda','driver']:
         if not isinstance(value[name],str) or not value[name].strip():
             raise ValueError('Record exact software/driver versions.')

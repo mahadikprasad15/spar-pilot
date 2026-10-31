@@ -133,3 +133,16 @@ def test_public_score_gate_retains_errors_and_never_qualifies_cpu(tmp_path,sourc
     receipt=json.loads((tmp_path/'runs/sampling-sft/sample/instrument/scores/score-receipt.json').read_text())
     assert receipt['passed'] and receipt['gpu_qualified'] is False
     assert len(receipt['traces'])==20
+
+
+def test_a40_bounded_plan_records_actual_gpu_without_qualifying_fixture(tmp_path, source_template):
+    source, settings = setup(tmp_path, source_template)
+    data = json.loads(settings.read_text())
+    data['runtime']['gpu'] = 'NVIDIA A40'
+    settings.write_text(json.dumps(data))
+    assert cli(tmp_path, 'prepare', '--config', source, '--settings', settings, '--name', 'a40') == 0
+    plan = tmp_path / 'plans/a40/sampling-sft.instrument.json'
+    assert json.loads(plan.read_text())['settings']['runtime']['gpu'] == 'NVIDIA A40'
+    assert cli(tmp_path, 'run', '--config', plan, deps=Dependencies()) == 0
+    result = json.loads((tmp_path / 'runs/sampling-sft/sample/instrument/a40/results.json').read_text())
+    assert not result['gpu_qualified']

@@ -216,3 +216,10 @@ validates that receipt using the existing network/download/own-Pod-stop contract
 HF upload alone does not authorize shutdown. Keep credentials outside artifacts;
 no deletion, paid job or cap increase is implied. See ADR 0017 and
 `docs/operations/sampling-sft-hf.md` for commands and evidence limits.
+
+## 2026-10-31 hardware amendment
+
+User-approved sampling hardware may include A40; L40S is no longer an exclusive
+requirement. Every selected GPU needs its own recorded runtime identity and real
+qualification. FP32, TF32-off, score/replay gates and L4 training stay unchanged.
+See docs/adr/0018-sampling-sft-explicit-gpu-selection.md.
