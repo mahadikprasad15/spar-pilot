@@ -147,3 +147,22 @@ def test_forced_cap_is_explicit_and_default_stop_policy_stays_unchanged(monkeypa
     with pytest.raises(ProtocolError):
         value.generate([dict(prompt_ids=[1,2],prefix_ids=[],max_tokens=64,seed=0,
                              qualification_min_tokens=64)])
+
+
+def test_precision_setup_requires_frozen_sources_and_isolates_caches(tmp_path, monkeypatch):
+    import os
+    from pilot_eval import sampling_sft_engine as module
+    sources={'vllm_version':'0.11.1','triton_version':'test','files':{}}
+    monkeypatch.setattr(module,'precision_sources',lambda:sources)
+    for key in ['TRITON_F32_DEFAULT','TRITON_CACHE_DIR','VLLM_CACHE_ROOT']:
+        monkeypatch.delenv(key,raising=False)
+    precision=dict(mode='ieee',cache_policy='isolated-per-engine',sources=sources)
+    first=module.configure_precision(precision,tmp_path)
+    assert os.environ['TRITON_F32_DEFAULT']=='ieee'
+    assert os.environ['TRITON_CACHE_DIR']==first['triton_cache']
+    assert first['sources']==sources
+    assert list(__import__('pathlib').Path(first['triton_cache']).iterdir())==[]
+    second=module.configure_precision(precision,tmp_path)
+    assert first['triton_cache']!=second['triton_cache']
+    with pytest.raises(ValueError,match='source'):
+        module.configure_precision({**precision,'sources':{}},tmp_path)

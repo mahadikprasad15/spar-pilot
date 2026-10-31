@@ -7,9 +7,35 @@ import importlib.metadata
 import json
 import os
 import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 from pilot_eval.sampling_sft_sampler import ProtocolError, proposer
 from pilot_eval.workflow import _hash
+
+
+def precision_sources():
+    from pilot_eval.sampling_sft_ieee_diagnostic import installed_sources
+    return installed_sources()
+
+
+def configure_precision(precision,cache_parent):
+    if (precision.get('mode')!='ieee' or precision.get('cache_policy')!='isolated-per-engine'):
+        raise ValueError('Explicit IEEE precision and isolated cache required.')
+    if any(x=='triton' or x.startswith('triton.') or x=='vllm' or x.startswith('vllm.') for x in sys.modules):
+        raise ValueError('Configure IEEE before importing Triton or vLLM.')
+    if precision_sources()!=precision.get('sources'):
+        raise ValueError('Installed precision source fingerprints differ from runtime.')
+    cache_parent=Path(cache_parent);cache_parent.mkdir(parents=True,exist_ok=True)
+    directory=Path(tempfile.mkdtemp(prefix='ieee-',dir=cache_parent)).resolve()
+    triton_cache=directory/'triton';triton_cache.mkdir()
+    vllm_cache=directory/'vllm';vllm_cache.mkdir()
+    os.environ['TRITON_F32_DEFAULT']='ieee'
+    os.environ['TRITON_CACHE_DIR']=str(triton_cache)
+    os.environ['VLLM_CACHE_ROOT']=str(vllm_cache)
+    return dict(mode='ieee',sources=precision['sources'],triton_cache=str(triton_cache),
+                vllm_cache=str(vllm_cache),cache_initially_empty=True)
 
 
 def numeric_flags():
