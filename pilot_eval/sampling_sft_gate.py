@@ -28,13 +28,14 @@ from pilot_eval.workflow import _hash
 METHODS=['gold','k0','k2','k5']
 
 
-def implementation():
-    return {name:file_hash(Path(__file__).with_name(name)) for name in
-        ['sampling_sft_gate.py','sampling_sft_gate_math.py','sampling_sft_gate_report.py','sampling_sft_engine.py',
-         'sampling_sft_ieee_diagnostic.py']}
+def implementation(l4=False):
+    names=['sampling_sft_gate.py','sampling_sft_gate_math.py','sampling_sft_gate_report.py','sampling_sft_engine.py',
+         'sampling_sft_ieee_diagnostic.py']
+    if l4:names.append('sampling_sft_l4_oracle.py')
+    return {name:file_hash(Path(__file__).with_name(name)) for name in names}
 
 
-def prepare(review_path,output_root,word_policy_path,name):
+def prepare(review_path,output_root,word_policy_path,name,oracle_runtime_path=None):
     root,parent,review_folder=review.load(review_path,output_root);coverage=review.verify(review_path,root)
     _,gen,directory=generation.load(root/parent['generation_plan'],root);safe_name(name)
     word_policy=json.loads(Path(word_policy_path).read_text())
@@ -76,6 +77,14 @@ def prepare(review_path,output_root,word_policy_path,name):
         score_contract='HF-FP32-full-vocabulary-raw-logprobs; scorer prompt; actual stop included',
         bootstrap=dict(resamples=10000,seed=42,unit='whole-problem',interval='percentile95-linear'),
         parents=parents,implementation=implementation(),run_path=str(folder.relative_to(root)),training_authorized=False)
+    if oracle_runtime_path is not None:
+        from pilot_eval.sampling_sft_l4_oracle import gate_runtime
+        runtime_path=inside(root,oracle_runtime_path);runtime=json.loads(runtime_path.read_text())
+        identity=gate_runtime(gen['settings']['runtime'],runtime)
+        config.update(protocol='sampling-sft-gate-l4-v1',oracle_runtime=runtime,
+            sampling_runtime_sha256=identity['sampling_runtime_sha256'],runtime_hash=identity['runtime_hash'],
+            implementation=implementation(l4=True))
+        config['parents'][str(runtime_path.relative_to(root))]=file_hash(runtime_path)
     path=root/'plans'/name/'sampling-sft.gate.json'
     source.frozen(path,config);source.frozen(folder/'meta/run_manifest.json',dict(config_sha256=_hash(config)))
     return path
@@ -84,8 +93,13 @@ def prepare(review_path,output_root,word_policy_path,name):
 def load(path,output_root):
     root=Path(output_root).resolve();path=inside(root,path);config=json.loads(path.read_text());folder=inside(root,config['run_path'])
     review.verify(root/config['review_plan'],root)
-    if (config.get('protocol')!='sampling-sft-gate-v1' or config['implementation']!=implementation()
-            or config['runtime_hash']!=_hash(config['settings']['runtime']) or len(config['units'])!=512
+    l4=config.get('protocol')=='sampling-sft-gate-l4-v1'
+    if l4:
+        from pilot_eval.sampling_sft_l4_oracle import gate_runtime
+        identity=gate_runtime(config['settings']['runtime'],config['oracle_runtime'])
+        if any(config.get(k)!=v for k,v in identity.items()):raise ValueError('Scoring or sampling runtime changed.')
+    if (config.get('protocol') not in ('sampling-sft-gate-v1','sampling-sft-gate-l4-v1') or config['implementation']!=implementation(l4=l4)
+            or (not l4 and config['runtime_hash']!=_hash(config['settings']['runtime'])) or len(config['units'])!=512
             or json.loads((folder/'meta/run_manifest.json').read_text())!={'config_sha256':_hash(config)}):
         raise ValueError('Gate plan/source/runtime/code changed; preserve this attempt.')
     verify_parents(root,config['parents'])
@@ -116,9 +130,9 @@ def score(path,output_root,job_path=None,*,max_new_units=None,dependencies=None)
     if max_new_units is not None and (type(max_new_units) is not int or max_new_units<=0):raise ValueError('Bounded unit count must be positive.')
     if dependencies is None:
         _,gen,gen_folder=generation.load(root/config['generation_plan'],root)
-        generation.qualification(root,gen)
         receipt=json.loads((gen_folder/'generation.review.json').read_text())
         generation.plan_approval(gen,receipt['review'],file_hash(root/gen['pilot_report']))
+        generation.qualification(root,gen,receipt['review'])
         if generation.verify(root/config['generation_plan'],root)['execution_kind']!='real-cuda':
             raise ValueError('Real gate scoring requires real collected arms, not synthetic fixtures.')
         instrument.authorize(root,path,job_path,expected_command='sampling-sft-gate-score')
@@ -133,8 +147,12 @@ def score(path,output_root,job_path=None,*,max_new_units=None,dependencies=None)
         _write_state(directory,'loading-HF-oracle',512-len(remaining),512)
         try:
             if dependencies is None:
-                from pilot_eval.sampling_sft_engine import open_engine
-                engine,_,runtime=open_engine(config,root)
+                if config['protocol']=='sampling-sft-gate-l4-v1':
+                    from pilot_eval.sampling_sft_l4_oracle import open_oracle
+                    engine,_,runtime=open_oracle(config,root)
+                else:
+                    from pilot_eval.sampling_sft_engine import open_engine
+                    engine,_,runtime=open_engine(config,root)
             else:
                 engine,_,runtime=dependencies.open(config,root);runtime={**runtime,'execution_kind':'cpu-fixture'}
             env=directory/f'env.{run_id}.json';source.save(env,runtime)

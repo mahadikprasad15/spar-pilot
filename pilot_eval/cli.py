@@ -53,6 +53,7 @@ def main(argv=None, *, dependencies=None):
         gate.add_argument('--output-root',type=Path,required=True)
         if operation=='prepare':
             gate.add_argument('--review',type=Path,required=True);gate.add_argument('--word-policy',type=Path,required=True);gate.add_argument('--name',required=True)
+            gate.add_argument('--oracle-runtime',type=Path)
         else:gate.add_argument('--config',type=Path,required=True)
         if operation=='score':gate.add_argument('--job',type=Path);gate.add_argument('--max-new-units',type=int)
         if operation=='request':gate.add_argument('--forecast',type=Path,required=True)
@@ -106,6 +107,7 @@ def main(argv=None, *, dependencies=None):
     pipeline_gate=commands.add_parser('sampling-sft-pipeline-prepare-gate',help='prepare gate from verified human coverage')
     pipeline_gate.add_argument('--review',type=Path,required=True);pipeline_gate.add_argument('--word-policy',type=Path,required=True)
     pipeline_gate.add_argument('--name',required=True);pipeline_gate.add_argument('--output-root',type=Path,required=True)
+    pipeline_gate.add_argument('--oracle-runtime',type=Path)
     pipeline_array=commands.add_parser('sampling-sft-pipeline-replace-entry',help='write a new reconciled job array')
     for field in ['output-root','entries','new-job','evidence','target']:
         pipeline_array.add_argument('--'+field,type=Path,required=True)
@@ -933,7 +935,7 @@ def main(argv=None, *, dependencies=None):
         elif args.command.startswith('sampling-sft-gate-'):
             from pilot_eval import sampling_sft_gate as gate
             operation=args.command.removeprefix('sampling-sft-gate-')
-            if operation=='prepare':result=gate.prepare(args.review,args.output_root,args.word_policy,args.name)
+            if operation=='prepare':result=gate.prepare(args.review,args.output_root,args.word_policy,args.name,oracle_runtime_path=args.oracle_runtime)
             elif operation=='score':result=gate.score(args.config,args.output_root,args.job,max_new_units=args.max_new_units,dependencies=dependencies)
             elif operation=='request':result=gate.request(args.config,args.output_root,args.forecast)
             elif operation=='approve':result=gate.approve(args.config,args.output_root,args.approval)
@@ -983,7 +985,7 @@ def main(argv=None, *, dependencies=None):
             print(json.dumps(gate_report(args.config,args.output_root),indent=2))
         elif args.command=='sampling-sft-pipeline-prepare-gate':
             from pilot_eval.sampling_sft_pipeline import gate_prepare
-            print(json.dumps(gate_prepare(args.review,args.output_root,args.word_policy,args.name),indent=2))
+            print(json.dumps(gate_prepare(args.review,args.output_root,args.word_policy,args.name,oracle_runtime=args.oracle_runtime),indent=2))
         elif args.command=='sampling-sft-pipeline-replace-entry':
             from pilot_eval.sampling_sft_pipeline import replace_job_entry
             print(replace_job_entry(args.output_root,args.entries,args.arm,args.new_job,args.evidence,args.target))

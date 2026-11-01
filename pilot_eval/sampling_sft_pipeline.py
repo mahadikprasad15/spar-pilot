@@ -304,12 +304,12 @@ def prepare_generation_jobs(config,output_root,volume_id,rate,reviewer,estimated
     return target
 
 
-def gate_prepare(review_config,root,word_policy,name):
+def gate_prepare(review_config,root,word_policy,name,oracle_runtime=None):
     """Prepare independent scoring only after verified coverage; do not label."""
     from pilot_eval import sampling_sft_review as review, sampling_sft_gate as gate
     coverage=review.verify(review_config,root)
     if coverage['coverage_blocked']:raise ValueError('Coverage exceeds the bound review policy or contains an empty batch.')
-    path=gate.prepare(review_config,root,word_policy,name)
+    path=gate.prepare(review_config,root,word_policy,name,oracle_runtime_path=oracle_runtime) if oracle_runtime else gate.prepare(review_config,root,word_policy,name)
     return dict(state='gate-prepared',config=str(path),training_authorized=False)
 
 

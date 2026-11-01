@@ -50,6 +50,24 @@ class Dependencies:
         if self.fail and index==0:raise RuntimeError('fixture interruption after one sealed problem')
 
 
+def test_l4_gate_plan_uses_separate_runtime_and_rejects_tampering(tmp_path,reviewed):
+    shutil.copytree(reviewed,tmp_path,dirs_exist_ok=True)
+    runtime=tmp_path/'l4-runtime.json'
+    runtime.write_text(json.dumps({'protocol':'sampling-sft-hf-oracle-l4-v1','gpu':'NVIDIA L4','driver':'550',
+        'cuda':'12.8','torch_version':'2.9.0','transformers_version':'4.57.6',
+        'worker_numeric_flags':{'matmul_tf32':False,'cudnn_tf32':False,'matmul_precision':'highest'}}))
+    policy=tmp_path/'word.json';policy.write_text(json.dumps(dict(version='unicode-words-v1',approved=True,reviewer='fixture',notes='Fixture')))
+    assert cli(tmp_path,'prepare','--review',tmp_path/'plans/review/sampling-sft.review.json',
+               '--word-policy',policy,'--name','l4-gate','--oracle-runtime',runtime)==0
+    from pilot_eval import sampling_sft_gate as gate
+    path=tmp_path/'plans/l4-gate/sampling-sft.gate.json';_,config,_=gate.load(path,tmp_path)
+    assert config['protocol']=='sampling-sft-gate-l4-v1'
+    assert config['settings']['runtime']['gpu']!='NVIDIA L4'
+    assert cli(tmp_path,'score','--config',path,'--max-new-units','1',deps=Dependencies())==0
+    runtime.write_text('{}')
+    with pytest.raises(ValueError):gate.load(path,tmp_path)
+
+
 def test_score_restore_and_cpu_report_preserve_gold_and_common_cohorts(tmp_path,reviewed):
     plan=prepare(tmp_path,reviewed);folder=directory(tmp_path)
     assert cli(tmp_path,'report','--config',plan)==1
