@@ -48,3 +48,19 @@ def test_v2_block_matches_v1_and_resume_preserves_seal(tmp_path, source_template
     v2.run(new, tmp_path, 0, dependencies=Dependencies(), stop_after_blocks=1)
     assert new_block.read_bytes() == original
     assert (new_block.parent.parent/'001/complete.json').exists()
+
+
+def test_all_k5_fixture_records_and_retry_dispositions_match_v1(tmp_path, source_template):
+    pilot = pilot_plan(tmp_path,source_template)
+    old=v1.prepare(pilot,tmp_path,'old-k5')
+    new=v2.prepare(pilot,tmp_path,'new-k5')
+    v1.run(old,tmp_path,5,dependencies=Dependencies())
+    v2.run(new,tmp_path,5,dependencies=Dependencies())
+    base=tmp_path/'runs/sampling-sft/sample/generation'
+    left=base/'old-k5/k5';right=base/'new-k5/k5'
+    paths=sorted(p.relative_to(left) for p in (left/'rounds').glob('*/blocks/*/scientific.jsonl'))
+    assert paths and paths==sorted(p.relative_to(right) for p in (right/'rounds').glob('*/blocks/*/scientific.jsonl'))
+    assert all((left/p).read_bytes()==(right/p).read_bytes() for p in paths)
+    for name in ('attempts.jsonl','dispositions.jsonl'):
+        assert (left/name).read_bytes()==(right/name).read_bytes()
+    assert len({json.loads(row)['problem_id'] for row in (right/'dispositions.jsonl').read_text().splitlines()})==512
