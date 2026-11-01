@@ -11,6 +11,16 @@ import math
 import pytest
 
 
+def test_runner_start_event_creates_training_log_directory(tmp_path):
+    from pilot_eval.sampling_sft_training import event
+    from pilot_eval.sampling_sft_generation import jsonl
+    folder=tmp_path/'run'
+    event(folder,'started',k=0)
+    jsonl(folder/'logs/steps.jsonl',[])
+    assert (folder/'logs/events.jsonl').is_file()
+    assert (folder/'logs/steps.jsonl').read_text()==''
+
+
 def test_production_loop_matches_independent_loss_with_real_peft(tmp_path):
     torch=pytest.importorskip('torch');pytest.importorskip('peft');pytest.importorskip('transformers')
     from transformers import Qwen2Config,Qwen2ForCausalLM
@@ -33,6 +43,9 @@ def test_production_loop_matches_independent_loss_with_real_peft(tmp_path):
     initial=tmp_path/'checkpoint-0';engine.model.save_pretrained(str(initial),safe_serialization=True)
     first=by_step['s1'];expected,_=oracle_loss(engine.model,first)
     folder=tmp_path/'run';(folder/'results').mkdir(parents=True)
+    # The production runner records its start event before calling train(),
+    # which creates this directory; this test calls train() directly.
+    (folder/'logs').mkdir()
     config=dict(k=0,continuation=None,checkpoint_steps=[0,8,16,32,64],capture_recovery=True,
         expected_base_sha256=frozen_weight_hash(engine.model))
     runtime=dict(execution_kind='cpu-fixture',model_context_limit=32)
