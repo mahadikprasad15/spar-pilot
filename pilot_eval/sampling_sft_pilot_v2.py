@@ -291,6 +291,24 @@ def compare(path,output_root):
     return result
 
 
+def compare_legacy(legacy_path,buffered_path,output_root):
+    """Compare actual complete same-cohort pilot science across writer versions."""
+    from pilot_eval import sampling_sft_pilot as legacy
+    root,old,old_dir=legacy.load(legacy_path,output_root)
+    _,new,new_dir=load(buffered_path,root)
+    if any(old[k]!=new[k] for k in ('runtime_hash','instrument_plan','source_plan','settings','problems')):
+        raise ValueError('Cross-writer pilot scientific contract differs.')
+    a=legacy.verify_lane(old_dir/'uninterrupted',old)
+    b=verify_lane(new_dir/'uninterrupted',new)
+    if a['execution_kind']!='real-cuda' or b['execution_kind']!='real-cuda':
+        raise ValueError('Cross-writer evidence requires real CUDA.')
+    left=dict(scientific=legacy.scientific(old_dir/'uninterrupted',old),traces=a['traces'])
+    right=dict(scientific=scientific(new_dir/'uninterrupted',new),traces=b['traces'])
+    difference=first_difference(left,right)
+    return dict(scientific_equal=difference is None,first_difference=difference,
+                scope='exact old vs buffered uninterrupted pilot records and traces')
+
+
 def first_difference(left,right,path=''):
     if type(left) is not type(right):return dict(path=path,left_type=type(left).__name__,right_type=type(right).__name__)
     if isinstance(left,dict):

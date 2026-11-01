@@ -29,3 +29,18 @@ def test_buffered_pilot_cli_prepares(tmp_path, source_template):
     instrument = tmp_path/json.loads(old.read_text())['instrument_plan']
     assert main(['sampling-sft-buffered-pilot-prepare', '--instrument', str(instrument),
                  '--output-root', str(tmp_path), '--name', 'cli-buffered-pilot']) == 0
+
+
+def test_cross_writer_comparison_detects_different_scientific_records(tmp_path,monkeypatch):
+    from pilot_eval import sampling_sft_pilot as old
+    plan={'runtime_hash':'same','instrument_plan':'inst','source_plan':'src',
+          'settings':{'k':5},'problems':[{'problem_id':1}]}
+    monkeypatch.setattr(old,'load',lambda *a:(tmp_path,plan,tmp_path/'old'))
+    monkeypatch.setattr(pilot,'load',lambda *a:(tmp_path,plan,tmp_path/'new'))
+    monkeypatch.setattr(old,'verify_lane',lambda *a:{'traces':[{'id':1}],'execution_kind':'real-cuda'})
+    monkeypatch.setattr(pilot,'verify_lane',lambda *a:{'traces':[{'id':1}],'execution_kind':'real-cuda'})
+    monkeypatch.setattr(old,'scientific',lambda *a:[{'score':-1.0}])
+    monkeypatch.setattr(pilot,'scientific',lambda *a:[{'score':-1.0}])
+    assert pilot.compare_legacy(tmp_path/'old.json',tmp_path/'new.json',tmp_path)['scientific_equal']
+    monkeypatch.setattr(pilot,'scientific',lambda *a:[{'score':-1.1}])
+    assert not pilot.compare_legacy(tmp_path/'old.json',tmp_path/'new.json',tmp_path)['scientific_equal']

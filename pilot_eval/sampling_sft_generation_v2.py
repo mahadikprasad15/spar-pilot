@@ -275,6 +275,8 @@ def check_writer_replay(root, plan):
         raise ValueError('v2 real-CUDA replay qualification is required.')
     if not buffered_pilot.compare(root/plan['writer_pilot'], root)['gpu_qualified']:
         raise ValueError('v2 real-CUDA replay qualification is required.')
+    if not buffered_pilot.compare_legacy(root/plan['pilot_plan'],root/plan['writer_pilot'],root)['scientific_equal']:
+        raise ValueError('Exact legacy-versus-buffered pilot comparison failed.')
 
 
 def authorize(root,plan,path,folder,k,job_path):
