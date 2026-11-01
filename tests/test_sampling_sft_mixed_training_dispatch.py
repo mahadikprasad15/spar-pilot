@@ -29,6 +29,15 @@ def test_mixed_lifecycle_rejects_sealed_legacy_job(tmp_path):
         jobs._load(path,tmp_path)
 
 
+def test_mixed_export_cannot_close_without_independent_receipts(tmp_path,monkeypatch):
+    folder=tmp_path/'job';folder.mkdir();path=folder/'job.plan.json';path.write_text('{}')
+    monkeypatch.setattr(jobs,'_load',lambda *a:(tmp_path,{'request':{'mode':'runpod'}},folder))
+    monkeypatch.setattr(jobs,'_work',lambda *a:{'files':{'result':'hash'}})
+    monkeypatch.setattr(jobs.copies,'check_receipts',lambda *a:(_ for _ in ()).throw(ValueError('missing independent receipts')))
+    with pytest.raises(ValueError,match='independent receipts'):
+        jobs.close(path,tmp_path,tmp_path/'network',tmp_path/'download')
+
+
 @pytest.mark.parametrize('command',['sampling-sft-mixed-training-run','sampling-sft-mixed-job-prepare',
     'sampling-sft-mixed-generation-prepare','sampling-sft-mixed-review-prepare',
     'sampling-sft-mixed-gate-prepare','sampling-sft-mixed-data-prepare'])

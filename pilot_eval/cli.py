@@ -25,6 +25,11 @@ def main(argv=None, *, dependencies=None):
                 handoff.add_argument('--name',required=True)
                 handoff.add_argument('--release-commit')
             else:handoff.add_argument('--config',type=Path,required=True)
+    mixed_handoff=commands.add_parser('sampling-sft-mixed-handoff-build',help='save conservative mixed evidence assessment')
+    mixed_handoff.add_argument('--selection',type=Path,required=True);mixed_handoff.add_argument('--output-root',type=Path,required=True)
+    mixed_handoff.add_argument('--name',required=True)
+    mixed_handoff_verify=commands.add_parser('sampling-sft-mixed-handoff-verify',help='verify mixed evidence assessment')
+    mixed_handoff_verify.add_argument('--report',type=Path,required=True);mixed_handoff_verify.add_argument('--output-root',type=Path,required=True)
     mixed_gen=commands.add_parser('sampling-sft-mixed-generation-prepare',help='bind independently verified mixed arms')
     mixed_gen.add_argument('--legacy',type=Path,required=True);mixed_gen.add_argument('--buffered',type=Path,required=True)
     mixed_gen.add_argument('--output-root',type=Path,required=True);mixed_gen.add_argument('--name',required=True)
@@ -276,13 +281,18 @@ def main(argv=None, *, dependencies=None):
             job.add_argument('--network-root', type=Path, required=True)
             job.add_argument('--max-wait-seconds', type=float, default=0)
             job.add_argument('--hf-repo', help='Private HF dataset repository for sealed export and external acknowledgement')
-    for operation in ['prepare','run','status']:
+    for operation in ['prepare','run','status','export','close']:
         mixed_job=commands.add_parser('sampling-sft-mixed-job-'+operation,help='versioned mixed-training job lifecycle')
         mixed_job.add_argument('--output-root',type=Path,required=True)
         if operation=='prepare':
             mixed_job.add_argument('--config',type=Path,required=True);mixed_job.add_argument('--request',type=Path,required=True)
         else:mixed_job.add_argument('--job',type=Path,required=True)
         if operation=='run':mixed_job.add_argument('--approval',type=Path)
+        if operation=='export':
+            mixed_job.add_argument('--copy-root',type=Path,required=True);mixed_job.add_argument('--role',choices=['network','downloaded'],required=True)
+            mixed_job.add_argument('--receipt',type=Path,required=True)
+        if operation=='close':
+            mixed_job.add_argument('--network-receipt',type=Path,required=True);mixed_job.add_argument('--download-receipt',type=Path,required=True)
     for operation in ['init', 'status', 'reserve', 'settle', 'extend', 'observe']:
         budget = commands.add_parser('sampling-sft-budget-' + operation, help='shared USD ledger; reservations do not launch paid work')
         budget.add_argument('--output-root', type=Path, required=True)
@@ -985,6 +995,8 @@ def main(argv=None, *, dependencies=None):
             operation=args.command.removeprefix('sampling-sft-mixed-job-')
             if operation=='prepare':result=jobs.prepare(args.config,args.output_root,args.request)
             elif operation=='run':result=jobs.run(args.job,args.output_root,args.approval,provider=dependencies)
+            elif operation=='export':result=jobs.export(args.job,args.output_root,args.copy_root,args.role,args.receipt,provider=dependencies)
+            elif operation=='close':result=jobs.close(args.job,args.output_root,args.network_receipt,args.download_receipt)
             else:result=jobs.status(args.job,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-job-'):
@@ -1008,6 +1020,10 @@ def main(argv=None, *, dependencies=None):
             elif operation=='prepare':result=handoff.prepare(args.selection,args.output_root,args.name,args.release_commit)
             else:result=getattr(handoff,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(handoff.console(result) if operation!='release' else result,indent=2))
+        elif args.command.startswith('sampling-sft-mixed-handoff-'):
+            from pilot_eval import sampling_sft_mixed_handoff as handoff
+            result=handoff.build(args.selection,args.output_root,args.name) if args.command.endswith('-build') else handoff.verify(args.report,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command=='sampling-sft-mixed-generation-prepare':
             from pilot_eval import sampling_sft_mixed_generation as mixed_generation
             print(mixed_generation.prepare(args.legacy,args.buffered,args.output_root,args.name))

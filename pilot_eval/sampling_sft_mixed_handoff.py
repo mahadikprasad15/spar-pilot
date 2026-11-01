@@ -71,3 +71,17 @@ def build(selection_path,output_root,name):
     source.frozen(folder/'report.json',value)
     source.frozen(folder/'complete.json',dict(report_sha256=file_hash(folder/'report.json'),content_sha256=_hash(value)))
     return folder/'report.json'
+
+
+def verify(report_path,output_root):
+    root=Path(output_root).resolve();path=inside(root,report_path)
+    value=json.loads(path.read_text());seal=json.loads((path.parent/'complete.json').read_text())
+    if (value.get('protocol')!='sampling-sft-mixed-handoff-v1'
+        or value.get('implementation')!={Path(__file__).name:file_hash(Path(__file__))}
+        or seal!={'report_sha256':file_hash(path),'content_sha256':_hash(value)}):
+        raise ValueError('Mixed handoff seal or implementation changed.')
+    for name,digest in value['parents'].items():
+        if file_hash(inside(root,name))!=digest:raise ValueError('Mixed handoff parent changed.')
+    if assess(root,value['selection'])!=value['assessment']:
+        raise ValueError('Mixed handoff source evidence changed.')
+    return value['assessment']

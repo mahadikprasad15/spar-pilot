@@ -147,3 +147,33 @@ def status(path,output_root):
         job_sha256=_hash(job),request_sha256=job['request_sha256'],
         budget=budget.status(root) if (budget.folder(root)/'budget.json').exists() else None)
 
+
+def export(path,output_root,copy_root,role,receipt_path,*,provider=None):
+    root,job,directory=_load(path,output_root)
+    with run_lock(directory):
+        manifest=_work(directory,root,job)
+        if not manifest:raise ValueError('Job has no sealed work to export.')
+        for other in (directory/'receipts').glob('*.json') if (directory/'receipts').exists() else []:
+            existing=json.loads(other.read_text())
+            if existing['role']!=role and (existing['host'],existing['copy_root'])==(copies.host(provider),str(Path(copy_root).resolve())):
+                raise ValueError('Two export roles cannot designate the same copy.')
+        result=copies.export(directory/'export-manifest.json',root,copy_root,role,receipt_path,provider=provider)
+        sources.frozen(directory/'receipts'/f'{role}.json',result)
+        _event(directory,job,'export-verified',role=role,receipt_sha256=result['sha256'])
+        return result
+
+
+def close(path,output_root,network_receipt,download_receipt):
+    """Record verified copies only; never stop or delete a Pod."""
+    root,job,directory=_load(path,output_root)
+    with run_lock(directory):
+        manifest=_work(directory,root,job)
+        if not manifest:raise ValueError('No sealed job work to close.')
+        copies.check_receipts(manifest,network_receipt,download_receipt,root)
+        proof=dict(job_sha256=_hash(job),manifest_sha256=manifest['sha256'],
+            network_receipt_sha256=file_hash(Path(network_receipt)),
+            download_receipt_sha256=file_hash(Path(download_receipt)),
+            scope='independent copies verified; no Pod stop or cost settlement')
+        sources.frozen(directory/'copies-verified.json',proof)
+        return dict(state='copies-verified',pod_stopped=False,budget_settled=False)
+

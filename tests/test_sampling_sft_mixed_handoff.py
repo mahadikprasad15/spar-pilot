@@ -1,5 +1,7 @@
 from pilot_eval import sampling_sft_mixed_handoff as handoff
 from pilot_eval import sampling_sft_handoff as original
+import json
+import pytest
 
 
 def test_handoff_reuses_completion_rule_and_never_claims_missing_external_evidence(tmp_path,monkeypatch):
@@ -28,3 +30,18 @@ def test_handoff_reuses_completion_rule_and_never_claims_missing_external_eviden
     assert result['state']=='partial'
     assert not result['stages']['lifecycle_complete'] and not result['stages']['budget_settled']
     assert result['training_authorized'] is False
+
+
+def test_saved_handoff_detects_changed_parent(tmp_path,monkeypatch):
+    selected={'source_plan':'source','generation_plan':'generation','review_plan':'review',
+        'gate_plan':'gate','training_data_plan':'data','training_selection':'selection',
+        'training_plans':{'0':'k0','2':'k2','5':'k5'}}
+    for path in ['source','generation','review','gate','data','selection','k0','k2','k5']:
+        (tmp_path/path).write_text('{}')
+    selection=tmp_path/'selection-input.json';selection.write_text(json.dumps(selected))
+    monkeypatch.setattr(handoff,'assess',lambda *a:{'state':'partial','training_authorized':False})
+    report=handoff.build(selection,tmp_path,'fixture')
+    assert handoff.verify(report,tmp_path)['state']=='partial'
+    (tmp_path/'k5').write_text('{"changed":true}')
+    with pytest.raises(ValueError,match='parent'):
+        handoff.verify(report,tmp_path)
