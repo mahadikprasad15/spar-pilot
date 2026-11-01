@@ -2,6 +2,14 @@ import json
 from pilot_eval import sampling_sft_mixed_gate as gate
 
 
+def test_mixed_gate_reuses_original_statistical_report_operations():
+    from pilot_eval import sampling_sft_mixed_gate_report as mixed
+    from pilot_eval import sampling_sft_gate_report as original
+    for name in ('words','leakage','rate','cohort','render'):
+        assert getattr(mixed,name) is getattr(original,name)
+    assert 'sampling_sft_gate_report.py' in gate.implementation()
+
+
 def test_gate_prepares_original_gold_and_mixed_review_requests(tmp_path, monkeypatch):
     root=tmp_path; review_file=root/'review.json';review_file.write_text('{}')
     review_dir=root/'review';(review_dir/'results').mkdir(parents=True)

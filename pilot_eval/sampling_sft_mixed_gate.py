@@ -30,7 +30,7 @@ METHODS=['gold','k0','k2','k5']
 
 def implementation():
     return {name:file_hash(Path(__file__).with_name(name)) for name in
-        ['sampling_sft_mixed_gate.py','sampling_sft_gate_math.py','sampling_sft_mixed_gate_report.py','sampling_sft_mixed_generation.py','sampling_sft_engine.py',
+        ['sampling_sft_mixed_gate.py','sampling_sft_gate_math.py','sampling_sft_mixed_gate_report.py','sampling_sft_gate_report.py','sampling_sft_mixed_generation.py','sampling_sft_engine.py',
          'sampling_sft_ieee_diagnostic.py']}
 
 
