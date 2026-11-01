@@ -24,12 +24,16 @@ class BufferedJournal:
 
     def append(self, value):
         self._check()
-        encoded = (json.dumps(value, allow_nan=False) + '\n').encode('utf-8')
-        if len(self.buffer) + len(encoded) > self.max_bytes:
-            self._write()
-        self.buffer.extend(encoded)
-        if len(self.buffer) >= self.max_bytes:
-            self._write()
+        try:
+            encoded = (json.dumps(value, allow_nan=False) + '\n').encode('utf-8')
+            if len(self.buffer) + len(encoded) > self.max_bytes:
+                self._write()
+            self.buffer.extend(encoded)
+            if len(self.buffer) >= self.max_bytes:
+                self._write()
+        except BaseException:
+            self.failed = True
+            raise
 
     def _write(self):
         try:
