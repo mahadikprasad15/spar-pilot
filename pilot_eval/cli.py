@@ -94,6 +94,15 @@ def main(argv=None, *, dependencies=None):
             generation.add_argument('--job',type=Path);generation.add_argument('--stop-after-blocks',type=int)
         if operation=='recover-writer':
             generation.add_argument('--owner-token',required=True);generation.add_argument('--review-notes',required=True)
+    for operation in ['prepare','run']:
+        buffered=commands.add_parser('sampling-sft-buffered-job-'+operation,help='prepare or run one v2 lifecycle job')
+        buffered.add_argument('--config',type=Path,required=True);buffered.add_argument('--output-root',type=Path,required=True)
+        buffered.add_argument('--operation',choices=['pilot-reference','pilot-kill','pilot-resume','generation-k5'],required=True)
+        if operation=='prepare':
+            for field in ['name','volume-id','rate','hours']:buffered.add_argument('--'+field,required=True)
+        else:
+            buffered.add_argument('--job',type=Path,required=True);buffered.add_argument('--reviewer',required=True)
+            buffered.add_argument('--kill-job',type=Path)
     for operation in ['prepare','run','stage','report']:
         diag=commands.add_parser('sampling-sft-deterministic-score-'+operation,help='bounded deterministic scheduling score diagnostic')
         diag.add_argument('--output-root',type=Path,required=True)
@@ -997,6 +1006,13 @@ def main(argv=None, *, dependencies=None):
             elif operation=='recover-writer':result=generation.recover_writer(args.config,args.output_root,args.k,args.owner_token,args.review_notes)
             else:result=generation.status(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-buffered-job-'):
+            from pilot_eval import sampling_sft_buffered_lifecycle as lifecycle
+            if args.command.endswith('-prepare'):
+                result=lifecycle.prepare(args.config,args.output_root,args.operation,args.name,args.volume_id,args.rate,args.hours)
+            else:
+                result=lifecycle.execute(args.config,args.output_root,args.operation,args.job,args.reviewer,kill_job=args.kill_job)
+            print(json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-deterministic-score-'):
             from pilot_eval import sampling_sft_deterministic_score as diag
             operation=args.command.removeprefix('sampling-sft-deterministic-score-')
