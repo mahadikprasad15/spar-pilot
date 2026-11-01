@@ -264,13 +264,15 @@ def check_writer_replay(root, plan):
     from pilot_eval import sampling_sft_pilot_v2 as buffered_pilot
     if not plan.get('writer_pilot'):
         raise ValueError('v2 real-CUDA replay qualification is required.')
-    _, qualified, _ = buffered_pilot.load(root/plan['writer_pilot'], root)
+    _, qualified, qualified_dir = buffered_pilot.load(root/plan['writer_pilot'], root)
     _, old, _ = pilot.load(root/plan['pilot_plan'], root)
     if (qualified['runtime_hash'] != plan['runtime_hash'] or
         qualified['instrument_plan'] != old['instrument_plan'] or
         qualified['source_plan'] != old['source_plan'] or
         qualified['writer'] != plan.get('writer', qualified['writer'])):
         raise ValueError('v2 replay source, writer or runtime identity differs.')
+    if not (qualified_dir/'replay.json').exists():
+        raise ValueError('v2 real-CUDA replay qualification is required.')
     if not buffered_pilot.compare(root/plan['writer_pilot'], root)['gpu_qualified']:
         raise ValueError('v2 real-CUDA replay qualification is required.')
 
