@@ -72,6 +72,13 @@ def execute(config, output_root, operation, job_path, reviewer, *, kill_job=None
         or (operation=='pilot-kill' and argument('--interrupt-after-block')!='2')
         or (operation!='pilot-kill' and '--interrupt-after-block' in argv)):
         raise ValueError('Job does not match buffered stage.')
+    base=plan['run_path']+('/k5' if operation=='generation-k5' else '/'+lane)
+    names=(['complete.json','results.json','attempts.jsonl','dispositions.jsonl']
+           if operation=='generation-k5' else
+           ['blocks/001/complete.json','writer.json'] if operation=='pilot-kill' else
+           ['complete.json','results.json','responses.jsonl'])
+    if request.get('outputs') != [base+'/'+name for name in names]:
+        raise ValueError('Buffered job output inventory does not match stage.')
     if (job_dir/'launch.json').exists():raise ValueError('Prior launch requires inspection and reconciliation.')
     if operation in ('pilot-kill','pilot-resume'):
         reference=pilot.verify_lane(folder/'uninterrupted',plan)
@@ -97,4 +104,18 @@ def execute(config, output_root, operation, job_path, reviewer, *, kill_job=None
                 'Controlled external SIGKILL verified; releasing only a dead writer for this replay.')
     if operation=='generation-k5':generation.check_writer_replay(root,plan)
     approval=create_job_approval(root,job_path,reviewer)
-    return jobs.run(job_path,root,approval)
+    result=jobs.run(job_path,root,approval)
+    if not result.get('work_complete'):
+        raise ValueError('Buffered workload failed to seal lifecycle work.')
+    if operation=='pilot-kill':
+        if (json.loads((job_dir/'execution.json').read_text()).get('returncode')!=-signal.SIGKILL
+            or len(pilot.blocks(folder/'resumed',plan))!=2):
+            raise ValueError('Controlled SIGKILL and two sealed blocks are required.')
+        return {'state':'controlled-kill-recorded','job':str(job_path)}
+    if not result.get('workload_success'):
+        raise ValueError('Buffered workload failed; inspect its execution receipt and log.')
+    if operation=='generation-k5':generation.verify(config,root,k=5)
+    else:
+        receipt=pilot.verify_lane(folder/lane,plan)
+        if receipt.get('execution_kind')!='real-cuda':raise ValueError('Pilot must complete on real CUDA.')
+    return {'state':'completed','job':str(job_path)}
