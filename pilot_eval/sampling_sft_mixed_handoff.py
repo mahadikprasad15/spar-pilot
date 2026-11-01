@@ -52,6 +52,9 @@ def create_full_manifest(root,folders,target,worker_host):
     root=Path(root).resolve();target=inside(root,target)
     if not worker_host:raise ValueError('Source host identity is required.')
     folders=[inside(root,p) for p in folders]
+    if any(p==root or p==root/'runs' or p==root/'runs/sampling-sft' or
+           (p.parent==root/'runs/sampling-sft') for p in folders):
+        raise ValueError('Use specific selected trees, not the active experiment root.')
     if any(target.is_relative_to(folder) for folder in folders):
         raise ValueError('Manifest must be outside inventoried trees.')
     files=dynamic_inventory(root,folders)

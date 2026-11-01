@@ -97,3 +97,9 @@ def test_dynamic_inventory_manifest_seals_all_nested_files(tmp_path):
     (source/'block.jsonl').write_text('changed\n')
     with pytest.raises(ValueError,match='changed'):
         handoff.verify_full_manifest(path,tmp_path)
+
+
+def test_dynamic_inventory_manifest_refuses_active_experiment_root(tmp_path):
+    root=tmp_path/'runs/sampling-sft/sample';root.mkdir(parents=True)
+    with pytest.raises(ValueError,match='specific selected trees'):
+        handoff.create_full_manifest(tmp_path,[root],tmp_path/'manifest.json','worker')
