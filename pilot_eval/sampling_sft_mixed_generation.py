@@ -63,3 +63,17 @@ def verify(path,output_root):
     _,plan,_=load(path,output_root)
     return {'state':'completed','execution_kind':'real-cuda',
             'runtime_hash':plan['runtime_hash'],'training_allowed':False}
+
+
+def validate_for_scoring(root,plan):
+    """Verify both original generation approvals and the v2 replay before scoring."""
+    for module,key in ((old,'legacy_plan'),(new,'buffered_plan')):
+        _,original,folder=module.load(root/plan[key],root)
+        receipt=json.loads((folder/'generation.review.json').read_text())
+        module.plan_approval(original,receipt['review'],file_hash(root/original['pilot_report']))
+        _,assessment=module.qualification(root,original,receipt['review'])
+        if (receipt.get('config_sha256')!=_hash(original)
+            or receipt.get('alarm_assessment')!=assessment
+            or receipt.get('pilot_report_sha256')!=file_hash(root/original['pilot_report'])):
+            raise ValueError('Original generation approval changed.')
+        if module is new:new.check_writer_replay(root,original)

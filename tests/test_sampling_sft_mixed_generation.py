@@ -22,3 +22,11 @@ def test_mixed_plan_binds_each_original_arm_without_resealing(tmp_path, monkeypa
     assert mixed.verify(config,root)['training_allowed'] is False
     provenance['arms']['5']['arm_complete_sha256']='changed'
     with pytest.raises(ValueError,match='provenance'):mixed.load(config,root)
+
+
+def test_gate_preflight_refuses_missing_original_review(tmp_path, monkeypatch):
+    plan={'legacy_plan':'old.json','buffered_plan':'new.json'}
+    item={'pilot_report':'report.json'}
+    monkeypatch.setattr(mixed.old,'load',lambda *a:(tmp_path,item,tmp_path/'missing'))
+    with pytest.raises((ValueError,FileNotFoundError)):
+        mixed.validate_for_scoring(tmp_path,plan)
