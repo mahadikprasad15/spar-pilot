@@ -42,6 +42,23 @@ def main(argv=None, *, dependencies=None):
         if operation=='recover-writer':
             train.add_argument('--owner-token',required=True)
             train.add_argument('--review-notes',required=True)
+    for operation in ['prepare','run','verify','status','job-request','recover-writer']:
+        train=commands.add_parser('sampling-sft-mixed-training-'+operation,help='post-gate gold-matched endpoint training and recovery')
+        train.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            train.add_argument('--data',type=Path,required=True)
+            train.add_argument('--selection',type=Path,required=True)
+            train.add_argument('--name',required=True)
+            train.add_argument('--k',type=int,required=True)
+            train.add_argument('--no-recovery',action='store_true')
+            train.add_argument('--resume-from',type=Path)
+            train.add_argument('--restart-of',type=Path)
+        else:train.add_argument('--config',type=Path,required=True)
+        if operation=='run':train.add_argument('--job',type=Path)
+        if operation=='job-request':train.add_argument('--template',type=Path,required=True)
+        if operation=='recover-writer':
+            train.add_argument('--owner-token',required=True)
+            train.add_argument('--review-notes',required=True)
     for operation in ['prepare','export','verify','check','status']:
         data=commands.add_parser('sampling-sft-training-data-'+operation,help='stored-ID training export and independent T15/T16 readiness')
         data.add_argument('--output-root',type=Path,required=True)
@@ -230,6 +247,13 @@ def main(argv=None, *, dependencies=None):
             job.add_argument('--network-root', type=Path, required=True)
             job.add_argument('--max-wait-seconds', type=float, default=0)
             job.add_argument('--hf-repo', help='Private HF dataset repository for sealed export and external acknowledgement')
+    for operation in ['prepare','run','status']:
+        mixed_job=commands.add_parser('sampling-sft-mixed-job-'+operation,help='versioned mixed-training job lifecycle')
+        mixed_job.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            mixed_job.add_argument('--config',type=Path,required=True);mixed_job.add_argument('--request',type=Path,required=True)
+        else:mixed_job.add_argument('--job',type=Path,required=True)
+        if operation=='run':mixed_job.add_argument('--approval',type=Path)
     for operation in ['init', 'status', 'reserve', 'settle', 'extend', 'observe']:
         budget = commands.add_parser('sampling-sft-budget-' + operation, help='shared USD ledger; reservations do not launch paid work')
         budget.add_argument('--output-root', type=Path, required=True)
@@ -927,6 +951,13 @@ def main(argv=None, *, dependencies=None):
                 result={k:v for k,v in result.items() if k!='contrasts'}
                 result['detail']='All contrast tables, raw pairs and plots are saved in the findings directory.'
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-mixed-job-'):
+            from pilot_eval import sampling_sft_mixed_jobs as jobs
+            operation=args.command.removeprefix('sampling-sft-mixed-job-')
+            if operation=='prepare':result=jobs.prepare(args.config,args.output_root,args.request)
+            elif operation=='run':result=jobs.run(args.job,args.output_root,args.approval,provider=dependencies)
+            else:result=jobs.status(args.job,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-job-'):
             from pilot_eval import sampling_sft_jobs as jobs
             operation = args.command.removeprefix('sampling-sft-job-')
@@ -948,6 +979,16 @@ def main(argv=None, *, dependencies=None):
             elif operation=='prepare':result=handoff.prepare(args.selection,args.output_root,args.name,args.release_commit)
             else:result=getattr(handoff,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(handoff.console(result) if operation!='release' else result,indent=2))
+        elif args.command.startswith('sampling-sft-mixed-training-'):
+            from pilot_eval import sampling_sft_mixed_training as train
+            operation=args.command.removeprefix('sampling-sft-mixed-training-')
+            if operation=='prepare':result=train.prepare(args.data,args.selection,args.output_root,args.name,args.k,
+                not args.no_recovery,args.resume_from,args.restart_of)
+            elif operation=='run':result=train.run(args.config,args.output_root,args.job,dependencies=dependencies)
+            elif operation=='job-request':result=train.job_request(args.config,args.output_root,args.template)
+            elif operation=='recover-writer':result=train.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:result=getattr(train,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-train-'):
             from pilot_eval import sampling_sft_training as train
             operation=args.command.removeprefix('sampling-sft-train-')
