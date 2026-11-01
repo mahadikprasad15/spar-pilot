@@ -79,3 +79,10 @@ def test_lifecycle_requires_every_launched_job_with_matching_copies(tmp_path,mon
     assert handoff.lifecycle_complete(ledger,evidence)
     evidence[1]['copies_verified']=False
     assert not handoff.lifecycle_complete(ledger,evidence)
+
+
+def test_full_inventory_rejects_old_fixed_job_manifest_as_backup(tmp_path):
+    full={'run/science/000':{'sha256':'a','bytes':1},'run/science/001':{'sha256':'b','bytes':1}}
+    partial={'files':{'run/science/000':{'sha256':'a','bytes':1}}}
+    with pytest.raises(ValueError,match='full dynamic inventory'):
+        handoff.validate_full_copy_inventory(full,partial)

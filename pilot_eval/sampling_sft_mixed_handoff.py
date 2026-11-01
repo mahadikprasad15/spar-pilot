@@ -42,6 +42,12 @@ def lifecycle_complete(ledger,evidence):
         v['launched'] and v['work_complete'] and v['copies_verified'] for v in evidence)
 
 
+def validate_full_copy_inventory(required,manifest):
+    files=manifest.get('files',{})
+    if not required or any(files.get(name)!=entry for name,entry in required.items()):
+        raise ValueError('Backup manifest does not cover the full dynamic inventory.')
+
+
 def assess(output_root,selected):
     root=Path(output_root).resolve()
     required={'source_plan','generation_plan','review_plan','gate_plan','training_data_plan','training_selection','training_plans'}
