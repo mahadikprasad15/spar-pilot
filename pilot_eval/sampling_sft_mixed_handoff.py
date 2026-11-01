@@ -48,6 +48,33 @@ def validate_full_copy_inventory(required,manifest):
         raise ValueError('Backup manifest does not cover the full dynamic inventory.')
 
 
+def create_full_manifest(root,folders,target,worker_host):
+    root=Path(root).resolve();target=inside(root,target)
+    if not worker_host:raise ValueError('Source host identity is required.')
+    folders=[inside(root,p) for p in folders]
+    if any(target.is_relative_to(folder) for folder in folders):
+        raise ValueError('Manifest must be outside inventoried trees.')
+    files=dynamic_inventory(root,folders)
+    value=dict(schema_version=1,protocol='sampling-sft-mixed-full-inventory-v1',
+        job_sha256=_hash(files),worker_host=worker_host,simulation=False,files=files,
+        directories=[str(p.relative_to(root)) for p in folders],
+        scope='dynamic snapshot; not a stop or training authorization')
+    value['sha256']=_hash(value)
+    source.frozen(target,value)
+    return target
+
+
+def verify_full_manifest(path,root):
+    root=Path(root).resolve();value=json.loads(inside(root,path).read_text())
+    if (value.get('protocol')!='sampling-sft-mixed-full-inventory-v1'
+        or value.get('sha256')!=_hash({k:v for k,v in value.items() if k!='sha256'})
+        or value.get('job_sha256')!=_hash(value.get('files'))):
+        raise ValueError('Full inventory manifest identity changed.')
+    if dynamic_inventory(root,[root/p for p in value['directories']])!=value['files']:
+        raise ValueError('Full dynamic inventory changed.')
+    return value
+
+
 def assess(output_root,selected):
     root=Path(output_root).resolve()
     required={'source_plan','generation_plan','review_plan','gate_plan','training_data_plan','training_selection','training_plans'}

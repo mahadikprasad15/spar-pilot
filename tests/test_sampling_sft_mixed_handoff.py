@@ -86,3 +86,14 @@ def test_full_inventory_rejects_old_fixed_job_manifest_as_backup(tmp_path):
     partial={'files':{'run/science/000':{'sha256':'a','bytes':1}}}
     with pytest.raises(ValueError,match='full dynamic inventory'):
         handoff.validate_full_copy_inventory(full,partial)
+
+
+def test_dynamic_inventory_manifest_seals_all_nested_files(tmp_path):
+    source=tmp_path/'source';source.mkdir();(source/'block.jsonl').write_text('science\n')
+    path=handoff.create_full_manifest(tmp_path,[source],tmp_path/'manifest.json','worker')
+    value=json.loads(path.read_text())
+    assert value['files']==handoff.dynamic_inventory(tmp_path,[source])
+    assert value['sha256']==handoff._hash({k:v for k,v in value.items() if k!='sha256'})
+    (source/'block.jsonl').write_text('changed\n')
+    with pytest.raises(ValueError,match='changed'):
+        handoff.verify_full_manifest(path,tmp_path)
