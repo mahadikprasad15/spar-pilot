@@ -75,7 +75,8 @@ def test_public_training_refuses_unready_real_job_before_import_and_exports_inve
     job_path=jobs.prepare(root/'plans/sample/sampling-sft.plan.json',root,req)
     _,job,_=jobs._load(job_path,root)
     with pytest.raises(ValueError,match='T15/T16'):train.authorize_job(root,job)
-    assert request['command'][3]=='sampling-sft-train-run'
+    import sys
+    assert request['command'][0]==sys.executable and request['command'][3]=='sampling-sft-train-run'
     assert any(n.endswith('checkpoint-64/optimizer.pt') for n in request['outputs'])
     assert any(n.endswith('checkpoint-0/adapter_model.safetensors') for n in request['outputs'])
     # A source-bound selection never implies paid execution or a CPU fixture grant.
@@ -205,3 +206,19 @@ def test_explicit_three_arm_selection_allows_k2_but_rejects_unselected_arm(tmp_p
     # the arm guard rather than fail before the saved evidence is read.
     with pytest.raises((KeyError,FileNotFoundError)):
         t.prepare(data,selected,tmp_path,'k2',2)
+
+
+@pytest.mark.parametrize('waived,expected',[(True,None),(False,'no active approved reservation')])
+def test_training_child_honours_recorded_budget_waiver(tmp_path,monkeypatch,waived,expected):
+    from pilot_eval import sampling_sft_training as train, sampling_sft_jobs as jobs
+    folder=tmp_path/'job';folder.mkdir();(folder/'launch.json').write_text(json.dumps({'pod_id':'pod'}))
+    job={'request_sha256':'req','request':{'mode':'runpod','stage':'training','job_id':'k0',
+        'command':['python','-m','pilot_eval','sampling-sft-train-run','--config','plan.json','--job','job.json']}}
+    monkeypatch.setenv('RUNPOD_POD_ID','pod')
+    monkeypatch.setattr(jobs,'_load',lambda *a:(tmp_path,job,folder));monkeypatch.setattr(jobs,'_state',lambda *a:None)
+    monkeypatch.setattr(train,'authorize_job',lambda *a:None)
+    monkeypatch.setattr(train.budget,'status',lambda root:{'cap_exceeded':True,'jobs':{'k0':dict(
+        budget_limits_waived=waived,launch_recorded=True,state='reserved',request_sha256='req')}})
+    if expected:
+        with pytest.raises(ValueError,match=expected):train.authorize_active_job(tmp_path,tmp_path/'plan.json',tmp_path/'job.json')
+    else:train.authorize_active_job(tmp_path,tmp_path/'plan.json',tmp_path/'job.json')

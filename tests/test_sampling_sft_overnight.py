@@ -18,6 +18,7 @@ def test_exact_accepted_coverage_and_flags():
 def test_orchestration_stops_and_resumes_without_duplicate_score(tmp_path):
     from pilot_eval.sampling_sft_overnight import orchestrate
     class Ops:
+        stop_requested=False
         def __init__(self):self.calls=[];self.fail=True
         def preflight(self):self.calls.append('preflight')
         def score(self):self.calls.append('score')
@@ -26,10 +27,98 @@ def test_orchestration_stops_and_resumes_without_duplicate_score(tmp_path):
             if self.fail:raise ValueError('stop')
             return 'selection.json'
         def training(self,selection):self.calls.append('training');return 'inventory.json'
+        def export(self,inventory):
+            self.calls.append('export');return dict(repo='r',revision='0'*40,manifest_sha256='m')
     ops=Ops()
     with pytest.raises(ValueError):orchestrate(tmp_path,ops)
     ops.fail=False;orchestrate(tmp_path,ops)
-    assert ops.calls==['preflight','score','selection','preflight','selection','training']
+    assert ops.calls==['preflight','score','selection','preflight','selection','training','export']
+    orchestrate(tmp_path,ops)
+    assert ops.calls[-1]=='preflight' # Completed stages are never repeated on a rerun.
+
+
+def test_pod_stop_only_after_verified_export(tmp_path):
+    import json
+    from pilot_eval.sampling_sft_overnight import orchestrate
+    class Ops:
+        stop_requested=True
+        def __init__(self):self.calls=[];self.fail=True
+        def preflight(self):pass
+        def score(self):pass
+        def report_selection(self):return 'selection.json'
+        def training(self,selection):return 'inventory.json'
+        def export(self,inventory):
+            if self.fail:raise ValueError('HF unavailable')
+            return dict(repo='r',revision='0'*40,manifest_sha256='m')
+        def stop(self):
+            assert (tmp_path/'complete.json').exists();self.calls.append('stop')
+    ops=Ops()
+    with pytest.raises(ValueError,match='HF'):orchestrate(tmp_path,ops)
+    assert ops.calls==[] and not (tmp_path/'complete.json').exists()
+    assert (tmp_path/'training.complete.json').exists() # Training is preserved, not repeated.
+    ops.fail=False;orchestrate(tmp_path,ops)
+    assert ops.calls==['stop']
+    assert json.loads((tmp_path/'complete.json').read_text())['external_copy_verified'] is True
+    states=[json.loads(l)['state'] for l in (tmp_path/'events.jsonl').read_text().splitlines()]
+    assert states[-3:]==['exported-verified','pod-stop-requested','pod-stop-command-returned']
+
+
+def _main_args(tmp_path):
+    for n in ['gate.json','job.json','data.json']:(tmp_path/n).write_text('{}')
+    return ['--root',str(tmp_path),'--gate','gate.json','--score-job','job.json','--data','data.json','--name','night',
+        '--volume-id','v','--rate','1','--reviewer','r','--hours-k0','1','--hours-k2','1','--hours-k5','1','--setup-hours','0']
+
+
+def test_second_wrapper_never_overwrites_live_status(tmp_path):
+    import json
+    from pilot_eval import sampling_sft_overnight as overnight
+    from pilot_eval.training import run_lock
+    args=_main_args(tmp_path);folder=tmp_path/'runs/sampling-sft/overnight/night'
+    with run_lock(folder):
+        (folder/'status.json').write_text(json.dumps({'state':'training'}))
+        assert overnight.main(args)==2
+        assert json.loads((folder/'status.json').read_text())=={'state':'training'}
+
+
+def test_unexpected_crash_records_failed_stage_and_traceback(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import sampling_sft_overnight as overnight
+    def crash(folder,ops):
+        overnight.record(folder,'training');raise TypeError('bug in an unexpected place')
+    monkeypatch.setattr(overnight,'orchestrate',crash)
+    assert overnight.main(_main_args(tmp_path))==1
+    folder=tmp_path/'runs/sampling-sft/overnight/night'
+    value=json.loads((folder/'status.json').read_text())
+    assert value['state']=='stopped' and value['failed_stage']=='training' and value['error_type']=='TypeError'
+    assert 'bug in an unexpected place' in (folder/'failure-traceback.txt').read_text()
+
+
+def test_fresh_download_verification_checks_every_file(tmp_path,monkeypatch):
+    import io,tarfile,json
+    from pilot_eval import sampling_sft_overnight as overnight
+    from pilot_eval.training import file_hash
+    root=tmp_path/'root';(root/'a').mkdir(parents=True);(root/'a/x.bin').write_bytes(b'adapter')
+    manifest_path=root/'m.json';manifest_path.write_text('{}')
+    manifest={'files':{'a/x.bin':{'sha256':file_hash(root/'a/x.bin'),'bytes':7}}}
+    def build(payload):
+        archive=tmp_path/'bundle.tar.gz'
+        with tarfile.open(archive,'w:gz') as t:
+            for name,data in [('a/x.bin',payload),('m.json',b'{}')]:
+                info=tarfile.TarInfo(name);info.size=len(data);t.addfile(info,io.BytesIO(data))
+        return archive
+    def fetch(repo,name,**kwargs):
+        assert kwargs['force_download'] is True and kwargs['revision']=='0'*40;return str(state['archive'])
+    monkeypatch.setattr('huggingface_hub.hf_hub_download',fetch)
+    state={'archive':build(b'adapter')}
+    rec=dict(repo='r',archive='exports/m/bundle.tar.gz',revision='0'*40,archive_sha256=file_hash(state['archive']),archive_bytes=100)
+    assert overnight.verify_download(rec,manifest,manifest_path,root)['verified_files']==2
+    state['archive']=build(b'corrupt');rec['archive_sha256']=file_hash(state['archive'])
+    with pytest.raises(ValueError,match='differs from the sealed manifest'):overnight.verify_download(rec,manifest,manifest_path,root)
+
+
+def test_approval_notes_do_not_claim_human_metric_review():
+    from pilot_eval.sampling_sft_overnight import APPROVAL_NOTES
+    assert 'has not reviewed these gate metrics' in APPROVAL_NOTES and 'not human-confirmed' in APPROVAL_NOTES
 
 
 def test_preflight_failure_prevents_all_jobs(tmp_path):

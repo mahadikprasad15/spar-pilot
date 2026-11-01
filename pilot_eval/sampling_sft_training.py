@@ -7,6 +7,7 @@ import json
 import math
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -182,7 +183,8 @@ def job_request(path,output_root,template_path):
         raise ValueError('Use an explicit RunPod training estimate and volume identity.')
     _,sp,_=source.load(root/config['source_plan'],root)
     job=root/sp['run_path']/'jobs'/request['job_id']/'job.plan.json'
-    request.update(command=['python','-m','pilot_eval','sampling-sft-train-run','--config',str(inside(root,path).relative_to(root)),
+    # The exact pinned interpreter, not whichever `python` a non-activated shell finds.
+    request.update(command=[sys.executable,'-m','pilot_eval','sampling-sft-train-run','--config',str(inside(root,path).relative_to(root)),
         '--job',str(job.relative_to(root)),'--output-root',str(root)],outputs=required_outputs(config))
     budget.estimate(request)
     target=folder/'job-requests'/(request['job_id']+'.json');source.frozen(target,request)
@@ -236,7 +238,9 @@ def authorize_active_job(root,path,job_path):
             or (folder/'execution.json').exists()):
         raise ValueError('Training child does not match the active approved job.')
     ledger=budget.status(root);current=ledger['jobs'].get(request['job_id'],{})
-    if (ledger['cap_exceeded'] or not current.get('launch_recorded') or current.get('state')!='reserved'
+    # Same waiver semantics as the sampling child: a recorded, request-bound waiver
+    # permits an over-cap ledger, never a missing or mismatched reservation.
+    if ((ledger['cap_exceeded'] and not current.get('budget_limits_waived')) or not current.get('launch_recorded') or current.get('state')!='reserved'
             or current.get('request_sha256')!=job['request_sha256']):
         raise ValueError('Training job has no active approved reservation.')
 
