@@ -57,7 +57,23 @@ that retains original seals, verifies all source inventories and full runtime,
 algorithm, cohort, retry, and code identity, and explicitly represents each
 arm's provenance to the gate and handoff. A writer-only change still needs
 real-CUDA exact equivalence and interruption/replay qualification. No such
-bridge or new GPU-ready generation plan is supplied by this fixture.
+bridge into the gate is supplied by this fixture.
+
+The separate `sampling-sft-buffered-pilot-*` and
+`sampling-sft-buffered-generation-*` CLI families are development v2 paths.
+The pilot reuses the existing selected runtime and T3 evidence and exercises
+the buffered writer with the original sampler. A v2 generation plan may bind
+that pilot with `--writer-pilot`; real generation fails closed unless the
+pilot's unchanged exact comparison verifies real CUDA, an external SIGKILL,
+and restart at the required boundary. The old plans and source files stay
+intact. CPU fixture tests do not qualify a GPU run. Creating lifecycle jobs and
+operational runbooks for the new paths is still required before deployment.
+
+`sampling_sft_generation_bridge.verify` independently verifies a completed
+legacy k0/k2 and v2 k5, their exact scientific contract and v2 GPU replay, and
+returns their original plan and seal hashes. It changes no existing evidence and
+does not approve training. Coverage review, gate and handoff do not yet accept
+the mixed-arm receipt; those versioned integrations remain necessary.
 
 For a future decision, compare remaining current-run wall time `R` with
 `Q + N + B`, where `Q` is qualification and migration/setup time, `N` is the
