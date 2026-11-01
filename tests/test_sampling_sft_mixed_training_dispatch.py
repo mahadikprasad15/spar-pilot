@@ -29,7 +29,9 @@ def test_mixed_lifecycle_rejects_sealed_legacy_job(tmp_path):
         jobs._load(path,tmp_path)
 
 
-@pytest.mark.parametrize('command',['sampling-sft-mixed-training-run','sampling-sft-mixed-job-prepare'])
+@pytest.mark.parametrize('command',['sampling-sft-mixed-training-run','sampling-sft-mixed-job-prepare',
+    'sampling-sft-mixed-generation-prepare','sampling-sft-mixed-review-prepare',
+    'sampling-sft-mixed-gate-prepare','sampling-sft-mixed-data-prepare'])
 def test_mixed_commands_are_registered(command):
     with pytest.raises(SystemExit) as result:main([command,'--help'])
     assert result.value.code==0

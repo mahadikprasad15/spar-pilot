@@ -25,6 +25,9 @@ def main(argv=None, *, dependencies=None):
                 handoff.add_argument('--name',required=True)
                 handoff.add_argument('--release-commit')
             else:handoff.add_argument('--config',type=Path,required=True)
+    mixed_gen=commands.add_parser('sampling-sft-mixed-generation-prepare',help='bind independently verified mixed arms')
+    mixed_gen.add_argument('--legacy',type=Path,required=True);mixed_gen.add_argument('--buffered',type=Path,required=True)
+    mixed_gen.add_argument('--output-root',type=Path,required=True);mixed_gen.add_argument('--name',required=True)
     for operation in ['prepare','run','verify','status','job-request','recover-writer']:
         train=commands.add_parser('sampling-sft-train-'+operation,help='post-gate gold-matched endpoint training and recovery')
         train.add_argument('--output-root',type=Path,required=True)
@@ -60,11 +63,27 @@ def main(argv=None, *, dependencies=None):
             train.add_argument('--owner-token',required=True)
             train.add_argument('--review-notes',required=True)
     for operation in ['prepare','export','verify','check','status']:
+        data=commands.add_parser('sampling-sft-mixed-data-'+operation,help='stored-ID training export and independent T15/T16 readiness')
+        data.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':data.add_argument('--review',type=Path,required=True);data.add_argument('--name',required=True)
+        else:data.add_argument('--config',type=Path,required=True)
+        if operation=='check':data.add_argument('--python',type=Path);data.add_argument('--mode',choices=['full','kernel'],default='full')
+    for operation in ['prepare','export','verify','check','status']:
         data=commands.add_parser('sampling-sft-training-data-'+operation,help='stored-ID training export and independent T15/T16 readiness')
         data.add_argument('--output-root',type=Path,required=True)
         if operation=='prepare':data.add_argument('--review',type=Path,required=True);data.add_argument('--name',required=True)
         else:data.add_argument('--config',type=Path,required=True)
         if operation=='check':data.add_argument('--python',type=Path);data.add_argument('--mode',choices=['full','kernel'],default='full')
+    for operation in ['prepare','score','report','verify','status','request','approve','recover-writer']:
+        gate=commands.add_parser('sampling-sft-mixed-gate-'+operation,help='HF gate scores, CPU descriptive report and explicit training selection')
+        gate.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            gate.add_argument('--review',type=Path,required=True);gate.add_argument('--word-policy',type=Path,required=True);gate.add_argument('--name',required=True)
+        else:gate.add_argument('--config',type=Path,required=True)
+        if operation=='score':gate.add_argument('--job',type=Path);gate.add_argument('--max-new-units',type=int)
+        if operation=='request':gate.add_argument('--forecast',type=Path,required=True)
+        if operation=='approve':gate.add_argument('--approval',type=Path,required=True)
+        if operation=='recover-writer':gate.add_argument('--owner-token',required=True);gate.add_argument('--review-notes',required=True)
     for operation in ['prepare','score','report','verify','status','request','approve','recover-writer']:
         gate=commands.add_parser('sampling-sft-gate-'+operation,help='HF gate scores, CPU descriptive report and explicit training selection')
         gate.add_argument('--output-root',type=Path,required=True)
@@ -75,6 +94,16 @@ def main(argv=None, *, dependencies=None):
         if operation=='request':gate.add_argument('--forecast',type=Path,required=True)
         if operation=='approve':gate.add_argument('--approval',type=Path,required=True)
         if operation=='recover-writer':gate.add_argument('--owner-token',required=True);gate.add_argument('--review-notes',required=True)
+    for operation in ['prepare','export','import','status','freeze','verify']:
+        review=commands.add_parser('sampling-sft-mixed-review-'+operation,help='separate human eligibility and reviewed coverage; CPU only')
+        review.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            review.add_argument('--generation',type=Path,required=True);review.add_argument('--name',required=True)
+        else:review.add_argument('--config',type=Path,required=True)
+        if operation=='export':review.add_argument('--destination',type=Path,required=True)
+        if operation in ['export','import']:review.add_argument('--origin',choices=['human','agent'],default='human')
+        if operation=='import':
+            review.add_argument('--labels',type=Path,required=True);review.add_argument('--confirm-human',action='store_true')
     for operation in ['prepare','export','import','status','freeze','verify']:
         review=commands.add_parser('sampling-sft-review-'+operation,help='separate human eligibility and reviewed coverage; CPU only')
         review.add_argument('--output-root',type=Path,required=True)
@@ -979,6 +1008,9 @@ def main(argv=None, *, dependencies=None):
             elif operation=='prepare':result=handoff.prepare(args.selection,args.output_root,args.name,args.release_commit)
             else:result=getattr(handoff,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(handoff.console(result) if operation!='release' else result,indent=2))
+        elif args.command=='sampling-sft-mixed-generation-prepare':
+            from pilot_eval import sampling_sft_mixed_generation as mixed_generation
+            print(mixed_generation.prepare(args.legacy,args.buffered,args.output_root,args.name))
         elif args.command.startswith('sampling-sft-mixed-training-'):
             from pilot_eval import sampling_sft_mixed_training as train
             operation=args.command.removeprefix('sampling-sft-mixed-training-')
@@ -999,6 +1031,14 @@ def main(argv=None, *, dependencies=None):
             elif operation=='recover-writer':result=train.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
             else:result=getattr(train,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-mixed-data-'):
+            from pilot_eval import sampling_sft_mixed_training_data as data
+            operation=args.command.removeprefix('sampling-sft-mixed-data-')
+            if operation=='prepare':result=data.prepare(args.review,args.output_root,args.name)
+            elif operation=='check':result=data.check(args.config,args.output_root,args.python,args.mode)
+            else:result=getattr(data,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(data.console(result),indent=2))
+            if operation=='check' and not (result['t16_passed'] or result['kernel_passed']):return 1
         elif args.command.startswith('sampling-sft-training-data-'):
             from pilot_eval import sampling_sft_training_data as data
             operation=args.command.removeprefix('sampling-sft-training-data-')
@@ -1007,6 +1047,16 @@ def main(argv=None, *, dependencies=None):
             else:result=getattr(data,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(data.console(result),indent=2))
             if operation=='check' and not (result['t16_passed'] or result['kernel_passed']):return 1
+        elif args.command.startswith('sampling-sft-mixed-gate-'):
+            from pilot_eval import sampling_sft_mixed_gate as gate
+            operation=args.command.removeprefix('sampling-sft-mixed-gate-')
+            if operation=='prepare':result=gate.prepare(args.review,args.output_root,args.word_policy,args.name)
+            elif operation=='score':result=gate.score(args.config,args.output_root,args.job,max_new_units=args.max_new_units,dependencies=dependencies)
+            elif operation=='request':result=gate.request(args.config,args.output_root,args.forecast)
+            elif operation=='approve':result=gate.approve(args.config,args.output_root,args.approval)
+            elif operation=='recover-writer':result=gate.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:result=getattr(gate,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(gate.console(result),indent=2))
         elif args.command.startswith('sampling-sft-gate-'):
             from pilot_eval import sampling_sft_gate as gate
             operation=args.command.removeprefix('sampling-sft-gate-')
@@ -1017,6 +1067,14 @@ def main(argv=None, *, dependencies=None):
             elif operation=='recover-writer':result=gate.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
             else:result=getattr(gate,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(gate.console(result),indent=2))
+        elif args.command.startswith('sampling-sft-mixed-review-'):
+            from pilot_eval import sampling_sft_mixed_review as review
+            operation=args.command.removeprefix('sampling-sft-mixed-review-')
+            if operation=='prepare':result=review.prepare(args.generation,args.output_root,args.name)
+            elif operation=='export':result=review.export(args.config,args.output_root,args.destination,args.origin)
+            elif operation=='import':result=review.import_labels(args.config,args.output_root,args.labels,args.origin,args.confirm_human)
+            else:result=getattr(review,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(review.console(result),indent=2))
         elif args.command.startswith('sampling-sft-review-'):
             from pilot_eval import sampling_sft_review as review
             operation=args.command.removeprefix('sampling-sft-review-')
