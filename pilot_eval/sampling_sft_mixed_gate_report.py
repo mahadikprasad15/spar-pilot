@@ -45,7 +45,7 @@ def collection_views(root,config,coverage):
         attempts=coverage['arms'][str(k)]['attempts'];initial=[a for a in attempts if a['retry_index']==0]
         final=coverage['arms'][str(k)]
         decisions=[]
-        for path in sorted((folder/f'k{k}/rounds').glob('*/blocks/*/scientific.jsonl')):
+        for path in sorted((generation.arm_directory(root,gen,k)/'rounds').glob('*/blocks/*/scientific.jsonl')):
             for record in generation.read_lines(path):
                 if 'decision' in record:decisions.append(record['decision'])
         output['k'+str(k)]=dict(initial_auto_correct=rate(sum(a['eligible'] for a in initial),len(initial)),
