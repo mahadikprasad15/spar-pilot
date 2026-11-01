@@ -12,6 +12,12 @@ import shutil
 from pathlib import Path
 
 
+def copy_payload(src,dst):
+    from pilot_eval.training import file_hash
+    shutil.copyfile(src,dst)
+    if file_hash(src)!=file_hash(dst):raise ValueError('Copied checkpoint payload hash mismatch.')
+
+
 def open_engine(gold,sequence_length):
     import torch
     import subprocess
@@ -133,7 +139,7 @@ def train(engine,rows,batches,gold,config,folder,root,initial,runtime,after_step
             if step>start:continue
             src=oldfolder/'checkpoints'/f'checkpoint-{step}';target=folder/'checkpoints'/src.name
             checkpoint(src,_hash(old),_hash(old_runtime));target.mkdir(parents=True)
-            for name in json.loads((src/'complete.json').read_text())['files']:shutil.copy2(src/name,target/name)
+            for name in json.loads((src/'complete.json').read_text())['files']:copy_payload(src/name,target/name)
             value=json.loads((src/'complete.json').read_text())
             seal(target,step,value['recoverable'],plan_sha,runtime_sha)
         event(folder,'optimizer-recovered',step=start,source=continuation['checkpoint'])
@@ -145,7 +151,7 @@ def train(engine,rows,batches,gold,config,folder,root,initial,runtime,after_step
         if step not in config['checkpoint_steps']:return
         target=folder/'checkpoints'/f'checkpoint-{step}';target.mkdir(parents=True)
         if step==0:
-            for n in ['adapter_config.json','adapter_model.safetensors']:shutil.copy2(initial/n,target/n)
+            for n in ['adapter_config.json','adapter_model.safetensors']:copy_payload(initial/n,target/n)
         else:save_adapter(engine,target)
         if config['capture_recovery']:
             torch.save(optimizer.state_dict(),target/'optimizer.pt')
