@@ -93,6 +93,47 @@ def test_unexpected_crash_records_failed_stage_and_traceback(tmp_path,monkeypatc
     assert 'bug in an unexpected place' in (folder/'failure-traceback.txt').read_text()
 
 
+def test_provider_failure_after_export_is_not_shutdown_success(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import sampling_sft_overnight as overnight
+    def crash(folder,ops):
+        (folder/'complete.json').write_text('{"external_copy_verified": true}')
+        overnight.record(folder,'pod-stop-requested',external_copy_verified=True)
+        raise PermissionError('provider authentication failed')
+    monkeypatch.setattr(overnight,'orchestrate',crash)
+    assert overnight.main(_main_args(tmp_path))==1
+    folder=tmp_path/'runs/sampling-sft/overnight/night'
+    result=json.loads((folder/'status.json').read_text())
+    assert result['state']=='pod-stop-failed' and result['external_copy_verified'] is True
+    assert result['error_type']=='PermissionError'
+
+
+@pytest.mark.parametrize('error,expected',[(SystemExit(143),0),(SystemExit(1),1),(ConnectionError('network'),1)])
+def test_only_expected_shutdown_signal_is_suppressed(tmp_path,monkeypatch,error,expected):
+    from pilot_eval import sampling_sft_overnight as overnight
+    def crash(folder,ops):
+        (folder/'complete.json').write_text('{"external_copy_verified": true}')
+        overnight.record(folder,'pod-stop-requested',external_copy_verified=True)
+        raise error
+    monkeypatch.setattr(overnight,'orchestrate',crash)
+    assert overnight.main(_main_args(tmp_path))==expected
+
+
+def test_hf_probe_verifies_fresh_pinned_read(tmp_path,monkeypatch):
+    from pilot_eval.sampling_sft_overnight import probe_hf_write_read
+    class API:
+        def upload_file(self,**kwargs):
+            self.payload=kwargs['path_or_fileobj'];self.name=kwargs['path_in_repo']
+            return type('Commit',(),{'oid':'a'*40})()
+    api=API()
+    def fetch(repo,name,**kwargs):
+        assert name==api.name and kwargs['revision']=='a'*40 and kwargs['force_download'] is True
+        path=tmp_path/'download';path.write_bytes(api.payload);return str(path)
+    monkeypatch.setattr('huggingface_hub.hf_hub_download',fetch)
+    receipt=probe_hf_write_read(api,'private/repo',tmp_path/'state')
+    assert receipt['revision']=='a'*40 and receipt['sha256']
+
+
 def test_fresh_download_verification_checks_every_file(tmp_path,monkeypatch):
     import io,tarfile,json
     from pilot_eval import sampling_sft_overnight as overnight

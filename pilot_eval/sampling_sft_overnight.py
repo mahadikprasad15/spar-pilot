@@ -14,6 +14,7 @@ import sys
 import tarfile
 import tempfile
 import traceback
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -133,6 +134,25 @@ def verify_download(record_value,manifest,manifest_path,root):
         scope='fresh download from HF into an empty cache on the worker Pod; per-file SHA256 matches; not an external host')
 
 
+def probe_hf_write_read(api,repo,state):
+    """Persist a tiny unique private-repo object and verify a fresh revision-pinned read."""
+    from huggingface_hub import hf_hub_download
+    token=uuid.uuid4().hex;payload=('sampling-sft-preflight:'+token+'\n').encode()
+    target=Path(state)/('hf-preflight-'+token+'.json')
+    name='preflight/sampling-sft-'+token+'.txt'
+    commit=api.upload_file(repo_id=repo,repo_type='dataset',path_in_repo=name,path_or_fileobj=payload,
+        commit_message='Verify Sampling SFT export permissions')
+    revision=commit.oid
+    if not isinstance(revision,str) or len(revision)!=40 or any(c not in '0123456789abcdef' for c in revision):
+        raise ValueError('HF preflight upload returned no immutable commit.')
+    with tempfile.TemporaryDirectory(prefix='hf-preflight-') as temp:
+        path=hf_hub_download(repo,name,repo_type='dataset',revision=revision,cache_dir=temp,force_download=True)
+        if Path(path).read_bytes()!=payload:raise ValueError('HF preflight fresh download differs from upload.')
+    result=dict(repo=repo,path=name,revision=revision,sha256=hashlib.sha256(payload).hexdigest(),verified_at=now())
+    source.frozen(target,result)
+    return result
+
+
 class Operations:
     def __init__(self,config):
         self.cfg=config;self.root=Path(config['root']).resolve();self.gate=inside(self.root,config['gate']);self.job=inside(self.root,config['score_job']);self.data=inside(self.root,config['data'])
@@ -185,6 +205,12 @@ class Operations:
         # Fail before any GPU work if the final export destination is unusable.
         from pilot_eval import sampling_sft_hf as hf
         client=hf.Hub();hf.private(client,self.cfg['hf_repo']);client.api.whoami()
+        # Known current data size is a lower bound only, not a forecast of final score/checkpoint size.
+        data_folder=inside(self.root,data['run_path'])
+        known_bytes=sum(p.stat().st_size for p in data_folder.rglob('*') if p.is_file() and not p.is_symlink())
+        hf.require_space(self.root,known_bytes)
+        hf.require_space(tempfile.gettempdir(),2*known_bytes)
+        probe_hf_write_read(client.api,self.cfg['hf_repo'],inside(self.root,self.cfg['state_dir']))
 
     def score(self):
         print('Starting or verifying independent L4 gate scoring; child log: '+str(self.job.parent/'logs/child.console.log'),flush=True)
@@ -321,9 +347,12 @@ def main(argv=None):
             result=orchestrate(folder,Operations(cfg))
         except BaseException as exc:
             stage=json.loads((folder/'status.json').read_text()).get('state') if (folder/'status.json').exists() else stage
-            if (folder/'complete.json').exists() and str(stage).startswith('pod-stop'):return 0 # Our own requested shutdown.
+            if ((folder/'complete.json').exists() and stage=='pod-stop-requested'
+                    and isinstance(exc,SystemExit) and exc.code==143):return 0 # SIGTERM during our own requested shutdown.
             (folder/'failure-traceback.txt').write_text(traceback.format_exc())
-            record(folder,'stopped',failed_stage=stage,error_type=type(exc).__name__,error=str(exc),
+            stop_failed=(folder/'complete.json').exists() and stage=='pod-stop-requested'
+            record(folder,'pod-stop-failed' if stop_failed else 'stopped',failed_stage=stage,error_type=type(exc).__name__,error=str(exc),
+                external_copy_verified=bool(stop_failed),
                 traceback=str(folder/'failure-traceback.txt'),note='Completed work is preserved; no relaunch or Pod stop attempted.')
             print('Overnight workflow stopped:',type(exc).__name__,exc,file=sys.stderr)
             return 130 if isinstance(exc,KeyboardInterrupt) else 1
