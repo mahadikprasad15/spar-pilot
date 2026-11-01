@@ -45,3 +45,20 @@ def test_saved_handoff_detects_changed_parent(tmp_path,monkeypatch):
     (tmp_path/'k5').write_text('{"changed":true}')
     with pytest.raises(ValueError,match='parent'):
         handoff.verify(report,tmp_path)
+
+
+def test_dynamic_inventory_detects_nested_artifacts_and_live_writer(tmp_path):
+    run=tmp_path/'run';(run/'rounds/0/blocks/000').mkdir(parents=True)
+    (run/'rounds/0/blocks/000/scientific.jsonl').write_text('record\n')
+    inv=handoff.dynamic_inventory(tmp_path,[run])
+    assert 'run/rounds/0/blocks/000/scientific.jsonl' in inv
+    (run/'writer.json').write_text('{}')
+    with pytest.raises(ValueError,match='writer'):
+        handoff.dynamic_inventory(tmp_path,[run])
+
+
+def test_budget_waiver_does_not_fake_settlement():
+    assert not handoff.budget_settled({'unreconciled_gpu_jobs':['x'],
+        'jobs':{'x':{'kind':'gpu','launch_recorded':True,'state':'reserved','budget_limits_waived':True}}})
+    assert handoff.budget_settled({'unreconciled_gpu_jobs':[],
+        'jobs':{'x':{'kind':'gpu','launch_recorded':True,'state':'settled','budget_limits_waived':True}}})

@@ -13,6 +13,26 @@ from pilot_eval.sampling_sft_sources import inside
 from pilot_eval.sft import safe_name
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash
+from pilot_eval.sampling_sft_exports import inventory
+
+
+def dynamic_inventory(root,folders):
+    """Hash every file in selected trees; refuse active writers and symlinks."""
+    root=Path(root).resolve();names=set()
+    for folder in folders:
+        folder=inside(root,folder)
+        if not folder.is_dir():raise ValueError('Selected evidence tree is missing.')
+        for path in folder.rglob('*'):
+            if path.is_symlink():raise ValueError('Evidence inventory refuses symlinks.')
+            if path.name=='writer.json':raise ValueError('Selected evidence writer is active or unrecovered.')
+            if path.is_file() and path.name!='.lock':names.add(str(path.relative_to(root)))
+    if not names:raise ValueError('Selected evidence inventory is empty.')
+    return inventory(root,sorted(names))
+
+
+def budget_settled(ledger):
+    launched=[v for v in ledger['jobs'].values() if v['kind']=='gpu' and v['launch_recorded']]
+    return bool(launched) and not ledger['unreconciled_gpu_jobs'] and all(v['state']=='settled' for v in launched)
 
 
 def assess(output_root,selected):
