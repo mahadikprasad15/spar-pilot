@@ -16,7 +16,7 @@ from pilot_eval import sampling_sft_pilot as pilot
 from pilot_eval.protocol import gsm8k_messages
 from pilot_eval.run import _write_state
 from pilot_eval.sampling_sft_sampler import sample
-from pilot_eval.sampling_sft_buffered_journal import BufferedJournal
+from pilot_eval.sampling_sft_buffered_journal import BlockWriter
 from pilot_eval.sampling_sft_sources import inside, observe, verify_parents
 from pilot_eval.scoring import score_gsm8k, score_gsm8k_flexible_v3
 from pilot_eval.sft import load_sft, safe_name
@@ -347,27 +347,21 @@ def run(path,output_root,k,job_path=None,*,stop_after_blocks=None,dependencies=N
                     env=current/f'env.{run_id}.json';source.save(env,runtime)
                     engine.clear_cache()
                     partial=current/'partial'
-                    journal=None
+                    block_writer=BlockWriter(partial,max_bytes=plan['writer']['max_bytes'],
+                        metadata=dict(k=k,retry_index=index,data_seed=retry_seed(index)))
 
                     def record(value):
-                        nonlocal journal
                         if 'engine_error' in value:
                             pilot.event(folder,'engine-replay',k=k,retry_index=index,details=value['engine_error']);return
-                        partial.mkdir(exist_ok=True)
-                        value=json.loads(json.dumps(value));value.pop('replay',None)
-                        for out in value.get('outputs',[]):out.pop('num_cached_tokens',None)
-                        value.update(k=k,retry_index=index,data_seed=retry_seed(index))
-                        if journal is None:journal=BufferedJournal(partial/'scientific.jsonl',max_bytes=plan['writer']['max_bytes'])
-                        journal.append(value)
+                        value=block_writer.record(value)
                         if dependencies is not None and hasattr(dependencies,'after_record'):dependencies.after_record(value)
 
                     def timing(value):
                         partial.mkdir(exist_ok=True);instrument.append(partial/'timings.jsonl',value)
 
                     def checkpoint(block,states,rng):
-                        nonlocal new_blocks,journal
-                        if journal is None:raise ValueError('Missing scientific journal.')
-                        journal.sync();journal.close();journal=None
+                        nonlocal new_blocks
+                        block_writer.sync_block()
                         partial.mkdir(exist_ok=True)
                         saved={pid:{**s,**(dict(text=tokenizer.decode(s['response_ids'],skip_special_tokens=True))
                             if s['end_state'] is not None else {})} for pid,s in states.items()}
@@ -397,7 +391,7 @@ def run(path,output_root,k,job_path=None,*,stop_after_blocks=None,dependencies=N
                             data_seed=retry_seed(index),resume=resume,on_record=record,on_timing=timing,on_block=checkpoint,
                             stop_after_blocks=remaining)
                     finally:
-                        if journal is not None:journal.close()
+                        block_writer.close()
                     if result['state']=='engine-error':
                         by_pid={p['problem_id']:p for p in problems}
                         failed=[attempt(k,index,s,by_pid[s['problem_id']]) for s in result['traces']]

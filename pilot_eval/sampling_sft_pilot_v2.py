@@ -19,7 +19,7 @@ from pathlib import Path
 from pilot_eval import sampling_sft as source
 from pilot_eval import sampling_sft_instrument as instrument
 from pilot_eval.run import _write_state
-from pilot_eval.sampling_sft_buffered_journal import BufferedJournal
+from pilot_eval.sampling_sft_buffered_journal import BlockWriter
 from pilot_eval.sampling_sft_sampler import sample, diagnostic
 from pilot_eval.sampling_sft_sources import inside, observe, verify_parents
 from pilot_eval.scoring import score_gsm8k, score_gsm8k_flexible_v3
@@ -164,28 +164,19 @@ def run(path,output_root,lane,job_path=None,*,stop_after_blocks=None,interrupt_a
             engine.clear_cache() # identical cold-cache start for uninterrupted and resumed work
             if hasattr(engine,'measurement_start'):engine.measurement_start()
             partial=folder/'partial'
-            journal=None
+            block_writer=BlockWriter(partial,max_bytes=plan['writer']['max_bytes'])
 
             def record(value):
-                nonlocal journal
                 if 'engine_error' in value:
                     event(folder,'engine-replay',attempt=attempt,details=value['engine_error']);return
-                partial.mkdir(exist_ok=True)
-                # Cache counters are operational and may differ across engine launches.
-                value=json.loads(json.dumps(value))
-                value.pop('replay',None)
-                for output in value.get('outputs',[]):output.pop('num_cached_tokens',None)
-                if journal is None:journal=BufferedJournal(partial/'scientific.jsonl',max_bytes=plan['writer']['max_bytes'])
-                journal.append(value)
+                value=block_writer.record(value)
                 if dependencies is not None and hasattr(dependencies,'after_record'):dependencies.after_record(value)
 
             def timing(value):
                 partial.mkdir(exist_ok=True);instrument.append(partial/'timings.jsonl',value)
 
             def checkpoint(block,states,rng):
-                nonlocal journal
-                if journal is None:raise ValueError('Missing scientific journal.')
-                journal.sync();journal.close();journal=None
+                block_writer.sync_block()
                 partial.mkdir(exist_ok=True)
                 saved={pid:{**row,**(dict(text=tokenizer.decode(row['response_ids'],skip_special_tokens=True))
                         if row['end_state'] is not None else {})} for pid,row in states.items()}
@@ -214,7 +205,7 @@ def run(path,output_root,lane,job_path=None,*,stop_after_blocks=None,interrupt_a
                 result=sample(plan['problems'],5,engine,tokenizer,plan['settings']['runtime']['actual_stop_ids'],
                     resume=resume,stop_after_blocks=stop_after_blocks,on_record=record,on_timing=timing,on_block=checkpoint)
             finally:
-                if journal is not None:journal.close()
+                block_writer.close()
             elapsed=time.monotonic()-started
             memory=engine.measurement_end() if hasattr(engine,'measurement_end') else None
             event(folder,'attempt-ended',attempt=attempt,state=result['state'],seconds=elapsed,memory=memory)

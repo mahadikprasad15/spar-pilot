@@ -68,3 +68,35 @@ class BufferedJournal:
 
     def __exit__(self, *exc):
         self.close()
+
+
+class BlockWriter:
+    """Shared scientific-record callback for the v2 pilot and generation."""
+    def __init__(self, partial, *, max_bytes, metadata=None):
+        self.partial = partial
+        self.max_bytes = max_bytes
+        self.metadata = dict(metadata or {})
+        self.journal = None
+
+    def record(self, value):
+        self.partial.mkdir(exist_ok=True)
+        value = json.loads(json.dumps(value))
+        value.pop('replay', None)
+        for output in value.get('outputs', []):
+            output.pop('num_cached_tokens', None)
+        value.update(self.metadata)
+        if self.journal is None:
+            self.journal = BufferedJournal(self.partial/'scientific.jsonl', max_bytes=self.max_bytes)
+        self.journal.append(value)
+        return value
+
+    def sync_block(self):
+        if self.journal is None:raise ValueError('Missing scientific journal.')
+        self.journal.sync()
+        self.journal.close()
+        self.journal = None
+
+    def close(self):
+        if self.journal is not None:
+            self.journal.close()
+            self.journal = None
