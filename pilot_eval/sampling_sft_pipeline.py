@@ -188,13 +188,13 @@ def training_decision_action(request,report):
     return 'approve_three'
 
 
-def review_stage(config,output_root,name):
+def review_stage(config,output_root,name,automatic_verdicts=False):
     """Create/reuse review and stop rather than invent intended-answer labels."""
     from pilot_eval import sampling_sft_review as review
-    path=review.prepare(config,output_root,name)
+    path=review.prepare(config,output_root,name,automatic_verdicts=True) if automatic_verdicts else review.prepare(config,output_root,name)
     current=review.status(path,output_root)
     remaining=current['required']-current['human_reviewed']
-    if remaining:
+    if remaining and not automatic_verdicts:
         return dict(state='human-labels-required',remaining=remaining,page=current['page'],review_plan=str(path))
     coverage=review.freeze(path,output_root)
     counts={k:coverage['arms'][k]['uncovered_count'] for k in ARMS}
@@ -308,7 +308,7 @@ def gate_prepare(review_config,root,word_policy,name):
     """Prepare independent scoring only after verified coverage; do not label."""
     from pilot_eval import sampling_sft_review as review, sampling_sft_gate as gate
     coverage=review.verify(review_config,root)
-    if coverage['coverage_blocked']:raise ValueError('Coverage exceeds the unchanged omission gate.')
+    if coverage['coverage_blocked']:raise ValueError('Coverage exceeds the bound review policy or contains an empty batch.')
     path=gate.prepare(review_config,root,word_policy,name)
     return dict(state='gate-prepared',config=str(path),training_authorized=False)
 

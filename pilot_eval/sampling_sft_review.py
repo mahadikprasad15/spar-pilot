@@ -19,6 +19,9 @@ from pilot_eval.workflow import _hash
 
 
 STATUSES=['pending','numeric','absent','ambiguous']
+AUTO_POLICY=dict(version='automatic-verdicts-accepted-v1', limits={'0':34,'2':35,'5':40},
+    generation_sha256='09fd6caf08fb6554fbfcdaebbfe79a87b49db8ee343b455858fb7d24680fdaac',
+    approval='User accepted observed uncovered counts for this run on 2026-11-01; automatic verdicts retained without overrides')
 
 
 def implementation():
@@ -30,7 +33,7 @@ def selected(row):
     return row['end_state']=='finished' and row['automatic_flexible_v3']['status']=='invalid'
 
 
-def prepare(generation_path,output_root,name):
+def prepare(generation_path,output_root,name,automatic_verdicts=False):
     root,parent,directory=generation.load(generation_path,output_root)
     generation.verify(generation_path,root);safe_name(name)
     parents={str(inside(root,generation_path).relative_to(root)):file_hash(inside(root,generation_path))}
@@ -49,6 +52,10 @@ def prepare(generation_path,output_root,name):
         source_plan=parent['source_plan'],parents=parents,packet_sha256=_hash(packet),implementation=implementation(),
         run_path=str(folder.relative_to(root)),selection_rule='every finished attempt with flexible-v3 status invalid',
         training_allowed=False)
+    if automatic_verdicts:
+        if file_hash(inside(root,generation_path))!=AUTO_POLICY['generation_sha256']:
+            raise ValueError('Automatic-verdict coverage approval applies only to the specified generation plan.')
+        config['coverage_policy']=AUTO_POLICY
     path=root/'plans'/name/'sampling-sft.review.json'
     with run_lock(folder):
         source.frozen(path,config)
@@ -72,6 +79,9 @@ def load(path,output_root):
             or _hash(json.loads((folder/'reviewer/packet.json').read_text()))!=config['packet_sha256']
             or json.loads((folder/'reviewer/page-seal.json').read_text())!={'sha256':file_hash(folder/'reviewer/review.html')}):
         raise ValueError('Review plan/page/packet/code identity changed.')
+    if config.get('coverage_policy') is not None and (config['coverage_policy']!=AUTO_POLICY
+            or file_hash(root/config['generation_plan'])!=AUTO_POLICY['generation_sha256']):
+        raise ValueError('Automatic coverage policy is not bound to the approved generation plan.')
     verify_parents(root,config['parents'])
     return root,config,folder
 
@@ -211,11 +221,22 @@ def coverage_arm(k,problems,batches,attempts,overrides):
         dispositions=dispositions,batches=marked,attempts=attempts,training_allowed=False)
 
 
+def coverage_policy_summary(arms,policy):
+    if policy is None:
+        return any(a['uncovered_count']>5 for a in arms.values()), True
+    if policy.get('version')!='automatic-verdicts-accepted-v1' or policy.get('limits')!={'0':34,'2':35,'5':40}:
+        raise ValueError('Unknown coverage policy.')
+    return any(a['uncovered_count']>policy['limits'][k] or any(not b['nonmissing_count'] for b in a['batches'])
+               for k,a in arms.items()), False
+
+
 def build_coverage(root,config,folder,human,previous):
     packet=json.loads((folder/'reviewer/packet.json').read_text())
     _,plan,directory=generation.load(root/config['generation_plan'],root)
     audit=source.verify(root/plan['source_plan'],root)['audit']
-    labels={r['response_id']:r for r in human['labels']};problems={p['problem_id']:p for p in plan['problems']}
+    policy=config.get('coverage_policy')
+    if policy is not None and policy!=AUTO_POLICY:raise ValueError('Unrecognized automatic coverage policy.')
+    labels={} if policy else {r['response_id']:r for r in human['labels']};problems={p['problem_id']:p for p in plan['problems']}
     arms={};decisions=[]
     for k in generation.ARMS:
         attempts=generation.read_lines(directory/f'k{k}/attempts.jsonl');overrides={}
@@ -229,11 +250,18 @@ def build_coverage(root,config,folder,human,previous):
                     origin='confirmed-human',reviewer=human['reviewer'],revision=human['base_revision'],
                     original_automatic=attempt['automatic_flexible_v3']))
         arms[str(k)]=coverage_arm(k,plan['problems'],audit['training']['batches'],attempts,overrides)
-    result=dict(protocol='sampling-sft-reviewed-coverage-v1',human_review_complete=True,
+        if policy:
+            arms[str(k)]['coverage_decision']='conditional-on-T16-and-training-approval' if arms[str(k)]['uncovered_count']<=policy['limits'][str(k)] else 'blocked-policy-limit'
+            arms[str(k)]['t16_required']=bool(arms[str(k)]['uncovered_count'])
+            arms[str(k)]['required_short_batch_sizes']=[3,4,5,6,7] if arms[str(k)]['uncovered_count'] else []
+    blocked,human_complete=coverage_policy_summary(arms,policy)
+    result=dict(protocol='sampling-sft-reviewed-coverage-v1',human_review_complete=human_complete,
         human_revision=human['base_revision'],human_revision_sha256=previous,
-        reviewer=human['reviewer'],required_reviews=len(packet),decisions=decisions,arms=arms,
-        **cohort_summary(arms),coverage_blocked=any(a['uncovered_count']>5 for a in arms.values()),
+        reviewer=human['reviewer'],required_reviews=0 if policy else len(packet),decisions=decisions,arms=arms,
+        **cohort_summary(arms),coverage_blocked=blocked,
         training_allowed=False,scope='reviewed coverage only; T16, data gate, budget and explicit training approval remain separate')
+    if policy:
+        result.update(coverage_policy=policy,flagged_extraction_count=len(packet),scope='automatic verdicts only; extraction failures not human reviewed; no overrides; T16, data gate and training approval remain separate')
     return result
 
 
@@ -243,7 +271,7 @@ def freeze(path,output_root):
         if (folder/'complete.json').exists():return verify(path,root)
         human,previous=current(config,folder,'human')
         packet=json.loads((folder/'reviewer/packet.json').read_text())
-        if any(r['status']=='pending' for r in human['labels']):raise ValueError('Finish every required human review before freezing coverage.')
+        if not config.get('coverage_policy') and any(r['status']=='pending' for r in human['labels']):raise ValueError('Finish every required human review before freezing coverage.')
         result=build_coverage(root,config,folder,human,previous)
         source.frozen(folder/'results/coverage.json',result)
         files={'results/coverage.json':file_hash(folder/'results/coverage.json')}
@@ -252,7 +280,8 @@ def freeze(path,output_root):
             source.frozen(folder/f'results/k{k}/dispositions.json',arm['dispositions'])
             for name in ['batches.json','dispositions.json']:
                 files[f'results/k{k}/{name}']=file_hash(folder/f'results/k{k}/{name}')
-        _write_state(folder,'coverage-frozen',len(packet),len(packet))
+        _write_state(folder,'automatic-coverage-frozen' if config.get('coverage_policy') else 'coverage-frozen',
+            sum(r['status']!='pending' for r in human['labels']),len(packet))
         source.frozen(folder/'complete.json',dict(config_sha256=_hash(config),human_revision_sha256=previous,
             files=files))
     return result
@@ -265,7 +294,7 @@ def verify(path,output_root):
     expected_files=['results/coverage.json']+[f'results/k{k}/{name}' for k in generation.ARMS for name in ['batches.json','dispositions.json']]
     if (seal!={'config_sha256':_hash(config),'human_revision_sha256':previous,
                'files':{name:file_hash(folder/name) for name in expected_files}}
-            or any(r['status']=='pending' for r in human['labels'])):
+            or (not config.get('coverage_policy') and any(r['status']=='pending' for r in human['labels']))):
         raise ValueError('Reviewed coverage/labels changed or required review is incomplete.')
     result=json.loads((folder/'results/coverage.json').read_text())
     if result!=build_coverage(root,config,folder,human,previous):

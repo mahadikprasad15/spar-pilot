@@ -145,6 +145,33 @@ def test_coverage_limits_and_original_slots(missing,decision):
     assert len(result['batches'])==64 and len(result['dispositions'])==512
 
 
+def test_automatic_policy_is_bounded_and_never_claims_human_review():
+    from pilot_eval.sampling_sft_review import coverage_policy_summary
+    arms={str(k):{'uncovered_count':n, 'batches':[{'nonmissing_count':6}]} for k,n in [(0,34),(2,35),(5,40)]}
+    policy={'version':'automatic-verdicts-accepted-v1','limits':{'0':34,'2':35,'5':40}}
+    assert coverage_policy_summary(arms,policy) == (False, False)
+    arms['5']['uncovered_count']=41
+    assert coverage_policy_summary(arms,policy) == (True, False)
+    arms['5']['uncovered_count']=40
+    arms['2']['batches'][0]['nonmissing_count']=0
+    assert coverage_policy_summary(arms,policy) == (True, False)
+
+
+def test_automatic_policy_freezes_without_fabricated_labels(tmp_path,collected,monkeypatch):
+    from pilot_eval import sampling_sft_review as review
+    from pilot_eval.training import file_hash
+    shutil.copytree(collected,tmp_path,dirs_exist_ok=True)
+    gen=tmp_path/'plans/generation/sampling-sft.generation.json'
+    monkeypatch.setattr(review,'AUTO_POLICY',{**review.AUTO_POLICY,'generation_sha256':file_hash(gen)})
+    assert cli(tmp_path,'prepare','--generation',gen,'--name','review','--automatic-verdicts')==0
+    plan=tmp_path/'plans/review/sampling-sft.review.json'
+    assert cli(tmp_path,'freeze','--config',plan)==0
+    result=review.verify(plan,tmp_path)
+    assert result['human_review_complete'] is False and result['decisions']==[]
+    assert result['required_reviews']==0 and result['flagged_extraction_count']==3
+    assert result['coverage_policy']['version']=='automatic-verdicts-accepted-v1'
+
+
 def test_unsafe_overrides_never_make_unfinished_or_valid_wrong_answers_eligible():
     from pilot_eval.sampling_sft_review import eligibility_override
     problem=dict(gold='work\n#### 12')
