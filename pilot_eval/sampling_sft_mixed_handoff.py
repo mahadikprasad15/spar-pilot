@@ -35,6 +35,13 @@ def budget_settled(ledger):
     return bool(launched) and not ledger['unreconciled_gpu_jobs'] and all(v['state']=='settled' for v in launched)
 
 
+def lifecycle_complete(ledger,evidence):
+    launched={name for name,v in ledger['jobs'].items() if v['kind']=='gpu' and v['launch_recorded']}
+    by_id={v['job_id']:v for v in evidence}
+    return bool(launched) and len(by_id)==len(evidence) and launched==set(by_id) and all(
+        v['launched'] and v['work_complete'] and v['copies_verified'] for v in evidence)
+
+
 def assess(output_root,selected):
     root=Path(output_root).resolve()
     required={'source_plan','generation_plan','review_plan','gate_plan','training_data_plan','training_selection','training_plans'}

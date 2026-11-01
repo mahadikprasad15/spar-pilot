@@ -68,3 +68,14 @@ def test_dynamic_inventory_rejects_symlink_escape(tmp_path):
     folder=tmp_path/'run';folder.mkdir();(folder/'link').symlink_to(tmp_path/'outside')
     with pytest.raises(ValueError,match='symlink'):
         handoff.dynamic_inventory(tmp_path,[folder])
+
+
+def test_lifecycle_requires_every_launched_job_with_matching_copies(tmp_path,monkeypatch):
+    ledger={'jobs':{'a':{'kind':'gpu','launch_recorded':True,'state':'settled'},
+                    'b':{'kind':'gpu','launch_recorded':True,'state':'settled'}},'unreconciled_gpu_jobs':[]}
+    evidence=[{'job_id':'a','launched':True,'work_complete':True,'copies_verified':True}]
+    assert not handoff.lifecycle_complete(ledger,evidence)
+    evidence.append({'job_id':'b','launched':True,'work_complete':True,'copies_verified':True})
+    assert handoff.lifecycle_complete(ledger,evidence)
+    evidence[1]['copies_verified']=False
+    assert not handoff.lifecycle_complete(ledger,evidence)
