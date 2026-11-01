@@ -20,7 +20,23 @@ Proceed only if:
 - the commit is the reviewed one
 - the score job has no `launch.json` or `execution.json`
 - `command[0]` is the training venv's Python
-- the CPU tests pass. `test_sampling_sft_training_production_path.py` must **pass**, not skip.
+- the precheck exits successfully: the production-path test must pass without a skip, and the other focused CPU tests must pass.
+
+On this existing Pod, check the provider CLI, persistent volume, model cache and HF access
+before launch. The wrapper also checks these before starting GPU work; a missing cache,
+different pinned L4 runtime, wrong volume, inaccessible private HF repository or an
+incompatible `runpodctl` is a stop, not a reason to guess or recreate a job.
+
+```bash
+runpodctl --version
+nvidia-smi
+df -h /workspace /tmp
+/root/training-venv/bin/python -c 'from huggingface_hub import HfApi; a=HfApi(); print("authenticated:", bool(a.whoami())); print("private repo:", a.repo_info("Prasadmahadik/spar-sampling-sft-artifacts", repo_type="dataset").private)'
+```
+
+Confirm the installed `runpodctl` supports the Pod inspect/stop commands used by this
+checkout; do not assume its major version. HF authentication and privacy checks alone do
+not establish write permission. Confirm the token can write to the private repository.
 
 Then set `--hours-k*` so that 1.5× the value is comfortably above the expected arm time;
 the child is killed at that bound.
@@ -28,7 +44,7 @@ the child is killed at that bound.
 ## Launch (detached; survives SSH drops)
 
 ```bash
-tmux new -d -s overnight 'cd /root/spar-pilot-training && /root/training-venv/bin/python -m pilot_eval.sampling_sft_overnight --root /workspace/artifacts --gate plans/l4-gate-v2/sampling-sft.gate.json --score-job runs/sampling-sft/sampling-sft-v1/jobs/l4-score-v2/job.plan.json --data plans/l4-training-data-v1/sampling-sft.training-data.json --name l4-night-v1 --volume-id cmuptiucb000007l5dnohe861 --rate RATE --reviewer "Prasad Mahadik" --hours-k0 2 --hours-k2 2 --hours-k5 2 --setup-hours 0.5 --stop-pod 2>&1 | tee -a /workspace/artifacts/runs/sampling-sft/overnight-l4-night-v1.console.log'
+tmux new -d -s overnight 'cd /root/spar-pilot-training && /root/training-venv/bin/python -m pilot_eval.sampling_sft_overnight --root /workspace/artifacts --gate plans/l4-gate-v2/sampling-sft.gate.json --score-job runs/sampling-sft/sampling-sft-v1/jobs/l4-score-v2/job.plan.json --data plans/l4-training-data-v1/sampling-sft.training-data.json --name l4-night-v1 --volume-id cmuptiucb000007l5dnohe861 --rate 0.60 --reviewer "Prasad Mahadik" --hours-k0 2 --hours-k2 2 --hours-k5 2 --setup-hours 0.5 --stop-pod 2>&1 | tee -a /workspace/artifacts/runs/sampling-sft/overnight-l4-night-v1.console.log'
 ```
 
 ## Status (any time; takes no lock, writes nothing)
