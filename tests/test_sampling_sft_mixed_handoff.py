@@ -62,3 +62,9 @@ def test_budget_waiver_does_not_fake_settlement():
         'jobs':{'x':{'kind':'gpu','launch_recorded':True,'state':'reserved','budget_limits_waived':True}}})
     assert handoff.budget_settled({'unreconciled_gpu_jobs':[],
         'jobs':{'x':{'kind':'gpu','launch_recorded':True,'state':'settled','budget_limits_waived':True}}})
+
+
+def test_dynamic_inventory_rejects_symlink_escape(tmp_path):
+    folder=tmp_path/'run';folder.mkdir();(folder/'link').symlink_to(tmp_path/'outside')
+    with pytest.raises(ValueError,match='symlink'):
+        handoff.dynamic_inventory(tmp_path,[folder])
