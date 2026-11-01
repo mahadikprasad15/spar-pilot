@@ -1,5 +1,12 @@
 import json
 from pilot_eval import sampling_sft_mixed_review as review
+from pilot_eval import sampling_sft_review as original
+
+
+def test_mixed_review_reuses_original_eligibility_and_coverage_rules():
+    for name in ('selected','validate_labels','human_answer_correct','eligibility_override','coverage_arm','cohort_summary'):
+        assert getattr(review,name) is getattr(original,name)
+    assert 'sampling_sft_review.py' in review.implementation()
 
 
 def test_review_reads_each_original_arm_and_preserves_human_requirement(tmp_path, monkeypatch):

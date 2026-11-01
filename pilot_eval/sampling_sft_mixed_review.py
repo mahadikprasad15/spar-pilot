@@ -10,6 +10,8 @@ from pathlib import Path
 
 from pilot_eval import sampling_sft as source
 from pilot_eval import sampling_sft_mixed_generation as generation
+from pilot_eval.sampling_sft_review import (selected,validate_labels,human_answer_correct,
+    eligibility_override,coverage_arm,cohort_summary)
 from pilot_eval.run import _write_state
 from pilot_eval.sampling_sft_sources import inside,verify_parents
 from pilot_eval.scoring import _NUMBER,_numeric_value
@@ -23,11 +25,9 @@ STATUSES=['pending','numeric','absent','ambiguous']
 
 def implementation():
     return {name:file_hash(Path(__file__).with_name(name)) for name in
-            ['sampling_sft_mixed_review.py','sampling_sft_mixed_generation.py','sampling_sft_review_ui.py','scoring.py']}
+            ['sampling_sft_mixed_review.py','sampling_sft_mixed_generation.py','sampling_sft_review.py','sampling_sft_review_ui.py','scoring.py']}
 
 
-def selected(row):
-    return row['end_state']=='finished' and row['automatic_flexible_v3']['status']=='invalid'
 
 
 def prepare(generation_path,output_root,name):
@@ -76,32 +76,6 @@ def load(path,output_root):
     return root,config,folder
 
 
-def validate_labels(labels,packet):
-    ids={p['response_id']:p for p in packet}
-    if not isinstance(labels,list):raise ValueError('Labels must be a list.')
-    result=[];seen=set()
-    for row in labels:
-        if not isinstance(row,dict) or set(row)!={'response_id','status','answer','evidence','note'}:
-            raise ValueError('Unexpected label schema; response text and tokens cannot be edited.')
-        identity=row['response_id'];status=row['status']
-        if identity not in ids or identity in seen or status not in STATUSES:raise ValueError('Unknown/duplicate response or invalid label status.')
-        seen.add(identity)
-        if not all(isinstance(row[k],str) for k in ['evidence','note']):raise ValueError('Evidence and notes must be text.')
-        answer=row['answer']
-        if status=='numeric':
-            if not isinstance(answer,str) or re.fullmatch(_NUMBER,answer.strip()) is None:
-                raise ValueError('Transcribe one supported number; correctness is computed separately.')
-            try:_numeric_value(answer.strip())
-            except (ValueError,ZeroDivisionError):raise ValueError('Numeric transcription is undefined.')
-            if not row['evidence'].strip() or row['evidence'] not in ids[identity]['response']:
-                raise ValueError('Numeric labels need an exact supporting excerpt from this response.')
-            answer=answer.strip()
-        elif answer not in [None,'']:raise ValueError('Only numeric labels can carry an answer.')
-        else:answer=None
-        result.append(dict(response_id=identity,status=status,answer=answer,evidence=row['evidence'],note=row['note']))
-    if seen!=set(ids):raise ValueError('Draft must contain every packet row, including pending entries.')
-    by_id={r['response_id']:r for r in result}
-    return [by_id[p['response_id']] for p in packet]
 
 
 def current(config,folder,origin):
@@ -163,52 +137,10 @@ def import_labels(path,output_root,labels_path,origin,confirm_human=False):
     return dict(origin=origin,saved_revision=revision,human_reviewed=count,required=len(packet),training_allowed=False)
 
 
-def human_answer_correct(attempt,label,problem):
-    if not selected(attempt):raise ValueError('Overrides apply only to finished extraction failures, never valid wrong or unfinished text.')
-    if label['status']=='pending':raise ValueError('Required human review is unfinished.')
-    if label['status'] not in ['numeric','absent','ambiguous']:raise ValueError('Unknown human decision.')
-    if label['status']!='numeric':return False
-    if not label['evidence'].strip() or label['evidence'] not in attempt['text']:
-        raise ValueError('Human transcription needs response evidence; gold cannot supply missing text.')
-    return _numeric_value(label['answer'])==_numeric_value(problem['gold'].rsplit('####',1)[-1].strip())
 
 
-def eligibility_override(attempt,label,problem):
-    correct=human_answer_correct(attempt,label,problem)
-    ids=attempt['response_ids'];eos=problem['gold_end_token_id']
-    return correct and bool(ids) and ids[-1]==eos and ids.count(eos)==1
 
 
-def coverage_arm(k,problems,batches,attempts,overrides):
-    by_pid={p['problem_id']:[] for p in problems};source_ids={p['source_id'] for p in problems}
-    order=[i for batch in batches for i in batch]
-    if (len(problems)!=512 or len(by_pid)!=512 or len(source_ids)!=512 or len(batches)!=64 or any(len(b)!=8 for b in batches)
-            or len(order)!=512 or set(order)!=source_ids):
-        raise ValueError('Coverage must preserve the512 gold problem identities and64 eight-slot batches.')
-    for row in attempts:
-        if row['problem_id'] not in by_pid:raise ValueError('Unknown attempt problem.')
-        by_pid[row['problem_id']].append(row)
-    dispositions=[]
-    for problem in problems:
-        rows=by_pid[problem['problem_id']]
-        if not rows:raise ValueError('Missing problem attempts.')
-        chosen=next((row for row in rows if row['eligible'] or overrides.get(row['attempt_id'],False)),None)
-        dispositions.append(dict(problem_id=problem['problem_id'],source_id=problem['source_id'],
-            disposition='covered' if chosen else 'uncovered',selected_attempt=chosen['attempt_id'] if chosen else None,
-            eligibility_origin=('automatic' if chosen['eligible'] else 'confirmed-human') if chosen else None,
-            reason=None if chosen else 'no-eligible-finished-attempt-after-review'))
-    lookup={d['source_id']:d for d in dispositions}
-    marked=[]
-    for index,batch in enumerate(batches):
-        slots=[dict(source_id=i,problem_id=lookup[i]['problem_id'],selected_attempt=lookup[i]['selected_attempt'],
-            missing=lookup[i]['selected_attempt'] is None,reason=lookup[i]['reason']) for i in batch]
-        marked.append(dict(step=index+1,slots=slots,nonmissing_count=sum(not s['missing'] for s in slots)))
-    uncovered=[d['source_id'] for d in dispositions if d['selected_attempt'] is None]
-    n=len(uncovered)
-    return dict(k=k,covered_count=512-n,uncovered_count=n,uncovered_ids=uncovered,
-        coverage_decision='passes-coverage-only' if n==0 else 'conditional-on-T16-and-training-approval' if n<=5 else 'blocked-more-than-five-uncovered',
-        t16_required=0<n<=5,required_short_batch_sizes=[3,4,5,6,7] if 0<n<=5 else [],
-        dispositions=dispositions,batches=marked,attempts=attempts,training_allowed=False)
 
 
 def build_coverage(root,config,folder,human,previous):
@@ -297,11 +229,3 @@ def console(value):
     return result
 
 
-def cohort_summary(arms):
-    covered={k:{d['source_id'] for d in a['dispositions'] if d['disposition']=='covered'} for k,a in arms.items()}
-    missing={k:set(a['uncovered_ids']) for k,a in arms.items()}
-    pairs={a+'-'+b:dict(symmetric_difference_ids=sorted(missing[a]^missing[b]),
-        count=len(missing[a]^missing[b]),flagged=len(missing[a]^missing[b])>5) for a,b in [('0','2'),('0','5'),('2','5')]}
-    return dict(common_covered_ids=sorted(set.intersection(*covered.values())),union_covered_ids=sorted(set.union(*covered.values())),
-        union_uncovered_ids=sorted(set.union(*missing.values())),intersection_uncovered_ids=sorted(set.intersection(*missing.values())),
-        pairwise_uncovered_differences=pairs)
