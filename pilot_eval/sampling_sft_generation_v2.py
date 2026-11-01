@@ -45,7 +45,7 @@ def snapshot(root):
     return {k:value[k] for k in ['sha256','spent_usd','reserved_usd','committed_usd','review_required','cap_exceeded']}
 
 
-def prepare(pilot_path,output_root,name):
+def prepare(pilot_path,output_root,name,writer_pilot=None):
     root,parent,directory=pilot.load(pilot_path,output_root);safe_name(name)
     audit=source.verify(root/parent['source_plan'],root)['audit']
     if not audit['source_ready']:raise ValueError('Verified source preflight required.')
@@ -56,6 +56,10 @@ def prepare(pilot_path,output_root,name):
         gold_end_token_id=audit['training']['prompt_mask_contract']['eos_token_id']) for i,row in enumerate(rows)]
     parents={str(inside(root,pilot_path).relative_to(root)):file_hash(inside(root,pilot_path))}
     report=observe(root,directory/'report.json',parents)
+    if writer_pilot is not None:
+        writer_pilot=inside(root,writer_pilot)
+        parents[str(writer_pilot.relative_to(root))]=file_hash(writer_pilot)
+        writer_pilot=str(writer_pilot.relative_to(root))
     settings={**parent['settings'],'mode':'generation','problem_ids':list(range(512))}
     folder=root/json.loads((root/parent['source_plan']).read_text())['run_path']/'generation'/name
     plan=dict(protocol='sampling-sft-generation-buffered-v2',writer={'mode':'buffered-before-seal-v1','max_bytes':1048576},name=name,source_plan=parent['source_plan'],
@@ -63,7 +67,7 @@ def prepare(pilot_path,output_root,name):
         settings=settings,problems=problems,arms=list(ARMS),data_seed=0,
         retry_indices=[0,1,2,3],retry_data_seeds=[retry_seed(i) for i in range(4)],
         algorithm_hash=_hash(source.recipe()),runtime_hash=parent['runtime_hash'],
-        implementation=implementation(),parents=parents,run_path=str(folder.relative_to(root)),
+        implementation=implementation(),parents=parents,writer_pilot=writer_pilot,run_path=str(folder.relative_to(root)),
         baseline='deferred',eligibility='finished, gold ending, and automatic flexible-v3 correct; human review cannot override ending',training_allowed=False)
     path=root/'plans'/name/'sampling-sft.generation.json'
     source.frozen(path,plan);source.frozen(folder/'meta/run_manifest.json',dict(config_sha256=_hash(plan)))
@@ -256,9 +260,37 @@ def collect_rounds(plan,k,folder):
     return attempts,problems,completed
 
 
+def check_writer_replay(root, plan):
+    from pilot_eval import sampling_sft_pilot_v2 as buffered_pilot
+    if not plan.get('writer_pilot'):
+        raise ValueError('v2 real-CUDA replay qualification is required.')
+    _, qualified, _ = buffered_pilot.load(root/plan['writer_pilot'], root)
+    _, old, _ = pilot.load(root/plan['pilot_plan'], root)
+    if (qualified['runtime_hash'] != plan['runtime_hash'] or
+        qualified['instrument_plan'] != old['instrument_plan'] or
+        qualified['source_plan'] != old['source_plan'] or
+        qualified['writer'] != plan.get('writer', qualified['writer'])):
+        raise ValueError('v2 replay source, writer or runtime identity differs.')
+    if not buffered_pilot.compare(root/plan['writer_pilot'], root)['gpu_qualified']:
+        raise ValueError('v2 real-CUDA replay qualification is required.')
+
+
 def authorize(root,plan,path,folder,k,job_path):
-    # Legacy pilot evidence does not qualify a changed writer.
-    raise ValueError('v2 real-CUDA replay qualification is not implemented; execution blocked.')
+    check_writer_replay(root,plan)
+    receipt=json.loads((folder/'generation.review.json').read_text())
+    plan_approval(plan,receipt['review'],file_hash(root/plan['pilot_report']))
+    _,assessment=qualification(root,plan,receipt['review'])
+    if receipt.get('alarm_assessment')!=assessment:
+        raise ValueError('Recorded pilot alarm policy assessment differs.')
+    if (receipt['config_sha256']!=_hash(plan)
+            or receipt['pilot_report_sha256']!=file_hash(root/plan['pilot_report'])):
+        raise ValueError('Missing exact Stage2 generation approval.')
+    instrument.authorize(root,path,job_path,expected_command='sampling-sft-buffered-generation-run')
+    from pilot_eval.sampling_sft_jobs import _load
+    _,job,_=_load(job_path,root)
+    argv=job['request']['command']
+    if (job['source_plan']!=plan['source_plan'] or '--k' not in argv or argv[argv.index('--k')+1]!=str(k)):
+        raise ValueError('Source/arm differs from approved job argv.')
 
 
 def provisional(plan,k,index,prior,states):
