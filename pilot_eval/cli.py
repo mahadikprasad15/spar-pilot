@@ -113,7 +113,7 @@ def main(argv=None, *, dependencies=None):
         review=commands.add_parser('sampling-sft-review-'+operation,help='separate human eligibility and reviewed coverage; CPU only')
         review.add_argument('--output-root',type=Path,required=True)
         if operation=='prepare':
-            review.add_argument('--generation',type=Path,required=True);review.add_argument('--name',required=True)
+            review.add_argument('--generation',type=Path,required=True);review.add_argument('--name',required=True);review.add_argument('--automatic-verdicts',action='store_true')
         else:review.add_argument('--config',type=Path,required=True)
         if operation=='export':review.add_argument('--destination',type=Path,required=True)
         if operation in ['export','import']:review.add_argument('--origin',choices=['human','agent'],default='human')
@@ -206,6 +206,7 @@ def main(argv=None, *, dependencies=None):
     pipeline_train.add_argument('--data',type=Path,required=True);pipeline_train.add_argument('--output-root',type=Path,required=True);pipeline_train.add_argument('--jobs',type=Path,required=True)
     pipeline_review=commands.add_parser('sampling-sft-pipeline-review',help='prepare review and freeze only when human decisions complete')
     pipeline_review.add_argument('--config',type=Path,required=True);pipeline_review.add_argument('--output-root',type=Path,required=True);pipeline_review.add_argument('--name',required=True)
+    pipeline_review.add_argument('--automatic-verdicts',action='store_true')
     pipeline=commands.add_parser('sampling-sft-pipeline-generation',help='run three preapproved jobs sequentially and inventory verified science')
     pipeline.add_argument('--config',type=Path,required=True);pipeline.add_argument('--output-root',type=Path,required=True)
     pipeline.add_argument('--jobs',type=Path,required=True)
@@ -1094,7 +1095,7 @@ def main(argv=None, *, dependencies=None):
         elif args.command.startswith('sampling-sft-review-'):
             from pilot_eval import sampling_sft_review as review
             operation=args.command.removeprefix('sampling-sft-review-')
-            if operation=='prepare':result=review.prepare(args.generation,args.output_root,args.name)
+            if operation=='prepare':result=review.prepare(args.generation,args.output_root,args.name,automatic_verdicts=args.automatic_verdicts)
             elif operation=='export':result=review.export(args.config,args.output_root,args.destination,args.origin)
             elif operation=='import':result=review.import_labels(args.config,args.output_root,args.labels,args.origin,args.confirm_human)
             else:result=getattr(review,operation)(args.config,args.output_root)
@@ -1176,7 +1177,7 @@ def main(argv=None, *, dependencies=None):
             print(json.dumps(pipeline_training(args.data,args.output_root,args.jobs),indent=2))
         elif args.command=='sampling-sft-pipeline-review':
             from pilot_eval.sampling_sft_pipeline import review_stage
-            print(json.dumps(review_stage(args.config,args.output_root,args.name),indent=2))
+            print(json.dumps(review_stage(args.config,args.output_root,args.name,automatic_verdicts=args.automatic_verdicts),indent=2))
         elif args.command=='sampling-sft-pipeline-generation':
             from pilot_eval.sampling_sft_pipeline import generation as pipeline_generation
             print(json.dumps(pipeline_generation(args.config,args.output_root,args.jobs),indent=2))

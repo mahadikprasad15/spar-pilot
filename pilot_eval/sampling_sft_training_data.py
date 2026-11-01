@@ -75,7 +75,7 @@ def supervised_row(problem,attempt,eos):
 
 def expected(root,config):
     coverage=review.verify(root/config['review_plan'],root)
-    if coverage['coverage_blocked']:raise ValueError('More than5 uncovered problems blocks this training handoff.')
+    if coverage['coverage_blocked']:raise ValueError('Coverage exceeds the bound review policy or contains an empty batch.')
     _,gen,_=generation.load(root/config['generation_plan'],root)
     gold,gold_rows,_=load_sft(root/config['gold_config'],root)
     eos=gold['source_config']['decoding']['eos_token_id']
