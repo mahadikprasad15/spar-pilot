@@ -81,6 +81,19 @@ def main(argv=None, *, dependencies=None):
             generation.add_argument('--job',type=Path);generation.add_argument('--stop-after-blocks',type=int)
         if operation=='recover-writer':
             generation.add_argument('--owner-token',required=True);generation.add_argument('--review-notes',required=True)
+    for operation in ['prepare','freeze','run','status','verify','recover-writer']:
+        generation=commands.add_parser('sampling-sft-buffered-generation-'+operation,help='three full512 arms with sealed attempts and bounded retries')
+        generation.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            generation.add_argument('--pilot',type=Path,required=True);generation.add_argument('--name',required=True)
+        else:generation.add_argument('--config',type=Path,required=True)
+        if operation in ['run','recover-writer','verify']:
+            generation.add_argument('--k',type=int,choices=[0,2,5],required=operation!='verify')
+        if operation=='freeze':generation.add_argument('--review',type=Path,required=True)
+        if operation=='run':
+            generation.add_argument('--job',type=Path);generation.add_argument('--stop-after-blocks',type=int)
+        if operation=='recover-writer':
+            generation.add_argument('--owner-token',required=True);generation.add_argument('--review-notes',required=True)
     for operation in ['prepare','run','stage','report']:
         diag=commands.add_parser('sampling-sft-deterministic-score-'+operation,help='bounded deterministic scheduling score diagnostic')
         diag.add_argument('--output-root',type=Path,required=True)
@@ -947,6 +960,17 @@ def main(argv=None, *, dependencies=None):
             elif operation=='import':result=review.import_labels(args.config,args.output_root,args.labels,args.origin,args.confirm_human)
             else:result=getattr(review,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(review.console(result),indent=2))
+        elif args.command.startswith('sampling-sft-buffered-generation-'):
+            from pilot_eval import sampling_sft_generation_v2 as generation
+            operation=args.command.removeprefix('sampling-sft-buffered-generation-')
+            if operation=='prepare':result=generation.prepare(args.pilot,args.output_root,args.name)
+            elif operation=='freeze':result=generation.freeze(args.config,args.output_root,args.review)
+            elif operation=='run':result=generation.run(args.config,args.output_root,args.k,args.job,
+                stop_after_blocks=args.stop_after_blocks,dependencies=dependencies)
+            elif operation=='verify':result=generation.verify(args.config,args.output_root,args.k)
+            elif operation=='recover-writer':result=generation.recover_writer(args.config,args.output_root,args.k,args.owner_token,args.review_notes)
+            else:result=generation.status(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-generation-'):
             from pilot_eval import sampling_sft_generation as generation
             operation=args.command.removeprefix('sampling-sft-generation-')
