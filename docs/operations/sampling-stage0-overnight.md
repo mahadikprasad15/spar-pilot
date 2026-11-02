@@ -26,6 +26,12 @@ is trusted. A Pod restart does not block resuming; a different GPU, driver or pa
 With `--stop-pod`, preflight finds the artifact root's real mount in `/proc/mounts` and
 stops unless it is a persistent (non-container) mount matching the provider's volume.
 
+All GPU stages of one run must share one frozen GPU/driver/package environment
+(`environment.json`); a changed environment stops the run instead of mixing measurements.
+Geometry runs on CPU after the GPU stages. If it fails, the verified GPU results are still
+exported (`partial-export.json`, state `exported-partial`), the Pod is **not** stopped, and
+rerunning the command finishes geometry and makes the full export.
+
 `complete.json` lists the stages it covers and what it does not: the historical
 Base/Gold/GRPO behaviour join, held-out gold NLL/entropy, training-data entropy/rank,
 initial pushes, activation energy and interventions are separate follow-ups.

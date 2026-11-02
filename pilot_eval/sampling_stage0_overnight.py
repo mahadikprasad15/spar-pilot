@@ -32,6 +32,7 @@ MODULES = {s:f'pilot_eval.sampling_stage0_{m}' for s,m in
 CODE = ['sampling_stage0_overnight.py','sampling_stage0_agreement.py','sampling_stage0_evaluation.py',
         'sampling_stage0_drift.py','sampling_stage0_geometry.py','sampling_stage0_direct_backend.py',
         'stage0_evaluation_backend.py','stage0_batching_backend.py','stage0_drift_backend.py']
+OPTIONAL=('geometry',) # CPU-only; its failure must not strand the GPU results on the Pod.
 SCOPE=dict(stages=list(STAGES),
     not_included=['historical Base/Gold/GRPO behaviour join','held-out gold NLL/entropy','training-data entropy/rank',
                   'initial pushes','activation energy','interventions/edited adapters'],
@@ -50,7 +51,20 @@ def persistent_mount(root,mounts,provider_path):
         raise ValueError(f'Artifact root {root} is on the container disk, which a Pod stop discards; use the persistent volume.')
     if provider_path and best[0]!=Path(provider_path):
         raise ValueError(f'Artifact root mount {best[0]} differs from the provider volume mount {provider_path}.')
+    if not provider_path and (best[0]!=Path('/workspace') or not best[1].startswith(('fuse','nfs','ceph'))):
+        raise ValueError(f'Provider did not report a mount path and {best[0]} ({best[1]}) is not the RunPod network volume '
+                         'at /workspace; refusing a Pod stop that could discard outputs.')
     return dict(mount=str(best[0]),fstype=best[1])
+
+
+def same_environment(state,runtime):
+    """Every GPU stage of one run measures in one frozen hardware/software environment."""
+    from pilot_eval.sampling_stage0_evaluation import environment
+    path=Path(state)/'environment.json';value=environment(runtime)
+    if path.exists() and json.loads(path.read_text())!=value:
+        raise ValueError('GPU/driver/package environment changed since earlier stages of this run; '
+                         'start a new run name rather than mixing environments.')
+    if not path.exists():source.save(path,value)
 
 
 def orchestrate(folder,ops):
@@ -60,12 +74,24 @@ def orchestrate(folder,ops):
     plans=folder/'plans.complete.json'
     if not plans.exists():
         record(folder,'plans');source.frozen(plans,ops.plans())
+    missing=[]
     for stage in STAGES:
         marker=folder/f'{stage}.complete.json'
         # A marker proves one earlier verification; re-check the sealed product before trusting it.
         if marker.exists():ops.reverify(stage,json.loads(marker.read_text()))
         else:
-            record(folder,stage);source.frozen(marker,ops.stage(stage))
+            record(folder,stage)
+            try:source.frozen(marker,ops.stage(stage))
+            except Exception as exc:
+                if stage not in OPTIONAL:raise
+                missing.append(stage);failure=exc
+    if missing:
+        # Get the verified GPU products off the Pod anyway; never stop the Pod on a partial run.
+        record(folder,'hf-export-partial',missing_stages=missing)
+        receipt=ops.export(partial=True)
+        source.save(folder/'partial-export.json',dict(state='exported-partial',missing_stages=missing,receipt=receipt))
+        record(folder,'exported-partial',external_copy_verified=True,missing_stages=missing,hf_revision=receipt['revision'])
+        raise failure
     exported=folder/'export.complete.json'
     if exported.exists():ops.reverify_export(json.loads(exported.read_text()))
     else:
@@ -130,6 +156,7 @@ class Operations:
         from pilot_eval.stage0_qualification_backend import QualificationDependencies
         runtime=QualificationDependencies().runtime() # pinned packages, one CUDA GPU, driver, FP32 settings
         if self.cfg['gpu'] not in runtime['device']:raise ValueError(f"Expected {self.cfg['gpu']}, found {runtime['device']}.")
+        same_environment(self.state,runtime)
         if self.cfg.get('volume_id'):
             from pilot_eval.sampling_sft_provider import RunPodProvider
             subprocess.run(['runpodctl','--version'],check=True,capture_output=True,timeout=30)
@@ -169,13 +196,17 @@ class Operations:
         brief={k:result[k] for k in ['batch_sizes','arms','variants','controls','trajectory','endpoint_overlap','cross_arm'] if k in result}
         return dict(plan=str(plan.relative_to(self.root)),plan_sha256=file_hash(plan),summary=brief)
 
-    def export(self):
-        """One sealed bundle: the four Stage 0 plans and run trees plus this wrapper's decisions."""
+    def export(self,partial=False):
+        """One sealed bundle: the Stage 0 plans and run trees plus this wrapper's decisions. A partial
+        export gets its own folder so the final full export is always built fresh."""
+        import uuid
         from pilot_eval import sampling_sft_exports as exports, sampling_sft_hf as hf
-        root=self.root;folder=self.state/'export';manifest_path=folder/'export-manifest.json'
+        root=self.root;folder=self.state/('export-partial-'+uuid.uuid4().hex[:8] if partial else 'export')
+        manifest_path=folder/'export-manifest.json'
         if not (folder/'hf-upload.json').exists():
             names=set(tree(root,root/'plans'/self.cfg['name']))|set(tree(root,root/'runs/stage0'/self.cfg['name']))
-            names|=set(tree(root,self.state,exclude=(folder,self.state/'status.json',self.state/'events.jsonl')))
+            internal=[p for p in self.state.iterdir() if p.name.startswith('export')]+[self.state/'status.json',self.state/'events.jsonl']
+            names|=set(tree(root,self.state,exclude=internal))
             manifest=dict(schema_version=1,job_sha256=_hash(self.cfg),files=exports.inventory(root,sorted(names)),
                 simulation=False,worker_host=platform.node(),pod_id=os.environ.get('RUNPOD_POD_ID'),workload_success=True,
                 missing_expected_outputs=[],scope='sampling Stage 0 behaviour, agreement, fixed-context and geometry; sealed after CPU verification')
@@ -200,8 +231,10 @@ class Operations:
         from pilot_eval import sampling_sft_exports as exports
         folder=self.state/'export';manifest=exports.verify_manifest(folder/'export-manifest.json',self.root)
         upload=json.loads((folder/'hf-upload.json').read_text())
+        check=json.loads((folder/'hf-download-verification.json').read_text())
         if (manifest['sha256']!=receipt['manifest_sha256'] or upload['revision']!=receipt['revision']
-                or not (folder/'hf-download-verification.json').exists()):
+                or check.get('archive_sha256')!=upload['archive_sha256']
+                or check.get('verified_files')!=len(manifest['files'])+1):
             raise ValueError('Export evidence changed after verification.')
 
     def stop(self):

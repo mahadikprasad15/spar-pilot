@@ -16,7 +16,7 @@ class Ops:
         self.calls.append(stage)
         if stage == self.fail_at: raise RuntimeError(stage+' child failed')
         return {'plan': stage}
-    def export(self):
+    def export(self, partial=False):
         self.calls.append('export'); return {'repo': 'r', 'revision': '0'*40, 'manifest_sha256': 'm'}
     def stop(self):
         self.calls.append('stop')
@@ -212,3 +212,49 @@ def test_reverify_detects_changed_plan_or_result(tmp_path, monkeypatch):
     plan.write_text('{"edited": true}')
     with pytest.raises(ValueError, match='plan changed'):
         ops.reverify('drift', value)
+
+
+def test_geometry_failure_still_exports_gpu_results_but_never_stops_the_pod(tmp_path):
+    ops = Ops(fail_at='geometry'); ops.stop_requested = True
+    with pytest.raises(RuntimeError, match='geometry'):
+        overnight.orchestrate(tmp_path, ops)
+    assert 'export' in ops.calls and 'stop' not in ops.calls
+    partial = json.loads((tmp_path/'partial-export.json').read_text())
+    assert partial['state'] == 'exported-partial' and partial['missing_stages'] == ['geometry']
+    assert not (tmp_path/'complete.json').exists() and not (tmp_path/'export.complete.json').exists()
+    ops.fail_at = None; ops.calls = []
+    overnight.orchestrate(tmp_path, ops) # rerun finishes geometry and makes the full export
+    assert ops.calls[-2:] == ['export', 'stop'] and json.loads((tmp_path/'complete.json').read_text())['state'] == 'exported-verified'
+
+
+def test_gpu_environment_is_frozen_across_stages(tmp_path):
+    state = tmp_path/'state'
+    env = {'device': 'NVIDIA L4', 'driver': '580', 'session_id': 'boot-1', 'git_commit': 'a'}
+    overnight.same_environment(state, env)
+    overnight.same_environment(state, {**env, 'session_id': 'boot-2', 'git_commit': 'b'}) # restart or code commit
+    with pytest.raises(ValueError, match='environment'):
+        overnight.same_environment(state, {**env, 'driver': '570'})
+
+
+def test_unreported_mount_must_be_the_runpod_network_volume():
+    with pytest.raises(ValueError, match='network volume'):
+        overnight.persistent_mount('/data/artifacts', '/dev/sdb1 /data ext4 rw 0 0\n', None)
+    with pytest.raises(ValueError, match='network volume'):
+        overnight.persistent_mount('/workspace/artifacts', '/dev/sdb1 /workspace ext4 rw 0 0\n', None)
+
+
+def test_export_resume_checks_the_saved_download_verification(tmp_path, monkeypatch):
+    from pilot_eval import sampling_sft_exports as exports
+    folder = tmp_path/'s/export'; folder.mkdir(parents=True)
+    monkeypatch.setattr(exports, 'verify_manifest', lambda path, root: {'sha256': 'm', 'files': {'a': {}, 'b': {}}})
+    (folder/'hf-upload.json').write_text(json.dumps({'revision': '0'*40, 'archive_sha256': 'x'}))
+    receipt = {'manifest_sha256': 'm', 'revision': '0'*40}
+    ops = overnight.Operations({'root': str(tmp_path), 'state_dir': 's', 'name': 'night'})
+    (folder/'hf-download-verification.json').write_text(json.dumps({'archive_sha256': 'x', 'verified_files': 3}))
+    ops.reverify_export(receipt)
+    (folder/'hf-download-verification.json').write_text(json.dumps({'archive_sha256': 'y', 'verified_files': 3}))
+    with pytest.raises(ValueError, match='Export evidence'):
+        ops.reverify_export(receipt)
+    (folder/'hf-download-verification.json').write_text(json.dumps({'archive_sha256': 'x', 'verified_files': 2}))
+    with pytest.raises(ValueError, match='Export evidence'):
+        ops.reverify_export(receipt)

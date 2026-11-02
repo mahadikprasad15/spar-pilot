@@ -15,6 +15,7 @@ git status --short
 "$PY" -c 'import sys,importlib.metadata as m;print(sys.executable);print({n:m.version(n) for n in ["torch","transformers","peft","trl","huggingface-hub"]})'
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 echo "RUNPOD_POD_ID=${RUNPOD_POD_ID:-MISSING}"; df -hT /workspace /tmp | tail -2
+echo "artifact mount (must be the network volume at /workspace):"; grep " /workspace " /proc/mounts || echo "NO /workspace MOUNT"
 
 echo "== Training record and sources (CPU verification of the three trained arms)"
 JOBS=$(find "$ROOT/runs/sampling-sft" -path "*/pipeline/$TRAIN_NAME/training-jobs.json" 2>/dev/null | head -2)
