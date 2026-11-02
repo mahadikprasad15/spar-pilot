@@ -34,7 +34,7 @@ def test_stages_run_in_order_and_resume_after_failure_without_repeats(tmp_path):
     assert not (tmp_path/'drift.complete.json').exists()
     ops.fail_at = None; ops.calls = []
     overnight.orchestrate(tmp_path, ops)
-    assert ops.calls == ['preflight', 'reverify-agreement', 'reverify-behaviour', 'drift', 'geometry', 'export']
+    assert ops.calls == ['preflight', 'reverify-agreement', 'reverify-behaviour', 'drift', 'dataset', 'geometry', 'export']
     ops.calls = []; overnight.orchestrate(tmp_path, ops)
     # Completed work is never repeated, but its sealed evidence is re-checked before it is trusted.
     assert ops.calls == ['preflight']+['reverify-'+s for s in overnight.STAGES]+['reverify-export']
@@ -166,7 +166,7 @@ def test_stop_pod_requires_volume_identity(tmp_path):
 
 def test_status_is_read_only(tmp_path):
     out = overnight.status(tmp_path, 'night')
-    assert out['overnight'] is None and set(out['stages']) == {'agreement', 'behaviour', 'drift', 'geometry'}
+    assert out['overnight'] is None and set(out['stages']) == set(overnight.STAGES)
     assert not (tmp_path/'runs').exists()
 
 
@@ -182,8 +182,10 @@ def test_stage_wiring_passes_each_plan_to_the_next(tmp_path, monkeypatch):
                         calls.append(('behaviour', agreement_plan.name)) or plan('sampling-stage0.evaluation.json'))
     monkeypatch.setattr(drift, 'prepare', lambda behaviour, inputs, root, name: calls.append(('drift', behaviour.name, inputs.name)) or plan('d.json'))
     monkeypatch.setattr(geometry, 'prepare', lambda behaviour, root, name: calls.append(('geometry', behaviour.name)) or plan('g.json'))
+    from pilot_eval import sampling_stage0_dataset as dataset
+    monkeypatch.setattr(dataset, 'prepare', lambda behaviour, root, name: calls.append(('dataset', behaviour.name)) or plan('s.json'))
     monkeypatch.setattr(overnight, 'run_child', lambda stage, plan, cfg, log: calls.append(('child', stage, plan.name)))
-    for module in (agreement, evaluation, drift, geometry):
+    for module in (agreement, evaluation, drift, dataset, geometry):
         monkeypatch.setattr(module, 'verify', lambda plan, root: {'batch_sizes': {'k0': 16}} if plan.name == 'a.json' else {'variants': {}})
     (tmp_path/'inputs.json').write_text('{}')
     cfg = {'root': str(tmp_path), 'state_dir': 'runs/stage0/overnight/night', 'name': 'night', 'gpu': 'L4',
@@ -194,6 +196,7 @@ def test_stage_wiring_passes_each_plan_to_the_next(tmp_path, monkeypatch):
     assert calls == [('agreement', 'sources.json', 'L4'), ('child', 'agreement', 'a.json'),
                      ('behaviour', 'a.json'), ('child', 'behaviour', 'sampling-stage0.evaluation.json'),
                      ('drift', 'sampling-stage0.evaluation.json', 'inputs.json'), ('child', 'drift', 'd.json'),
+                     ('dataset', 'sampling-stage0.evaluation.json'), ('child', 'dataset', 's.json'),
                      ('geometry', 'sampling-stage0.evaluation.json'), ('child', 'geometry', 'g.json')]
     assert results['agreement']['summary'] == {'batch_sizes': {'k0': 16}}
 

@@ -12,9 +12,14 @@ original Stage 0 instruments, on the same L4 Pod and `sl-0` volume that trained 
 3. **Fixed-context KL and effective writes**: the original 150 GSM8K + 150 FineWeb
    sequences (pinned by file hash), singleton FP32, FP64 output-head KL (variant || untuned),
    untuned and shared Gold checkpoint-0 zero controls.
-4. **Geometry (CPU)**: base-weight SVD and principal-subspace overlap of each arm's
+4. **Dataset scoring**: the untuned base model teacher-forces the exact Gold and k0/k2/k5
+   training answers (original Stage 0 E0.6a engine): per-token surprise, entropy and rank;
+   token- and answer-weighted NLL, entropy, excess surprise and top-1 fraction per dataset,
+   first32/middle/last32 windows, on each arm's covered problems and on the 431 problems all
+   arms cover, with paired k-minus-Gold differences and whole-problem bootstrap intervals.
+5. **Geometry (CPU)**: base-weight SVD and principal-subspace overlap of each arm's
    factors at steps 0, 8, 16, 32, 64; update sizes, trajectory and cross-arm cosines.
-5. **Export**: one sealed bundle to the private HF repo, verified by a fresh download
+6. **Export**: one sealed bundle to the private HF repo, verified by a fresh download
    file by file; then, with `--stop-pod`, the Pod is stopped.
 
 Each measurement runs as a child process with a time limit and its own log. A crashed
@@ -33,7 +38,7 @@ exported (`partial-export.json`, state `exported-partial`), the Pod is **not** s
 rerunning the command finishes geometry and makes the full export.
 
 `complete.json` lists the stages it covers and what it does not: the historical
-Base/Gold/GRPO behaviour join, held-out gold NLL/entropy, training-data entropy/rank,
+Base/Gold/GRPO behaviour join, held-out gold NLL/entropy under each adapter,
 initial pushes, activation energy and interventions are separate follow-ups.
 
 Old Gold SFT and GRPO results are not regenerated. The original Stage 0 measured them with
@@ -82,7 +87,7 @@ tmux new -d -s stage0 'cd /root/spar-pilot-training && /root/training-venv/bin/p
 ```
 
 Replace `TRAINING_JOBS` with the `training jobs:` path the precheck prints. Default child
-limits are 2 h (agreement), 4 h (behaviour), 3 h (KL), 2 h (geometry); override with
+limits are 2 h (agreement), 4 h (behaviour), 3 h (KL), 2 h (dataset), 2 h (geometry); override with
 `--hours-<stage>`.
 
 ## 4. Status (any time; takes no lock, writes nothing)

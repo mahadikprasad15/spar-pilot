@@ -48,4 +48,4 @@ echo "== Existing overnight state (read-only)"
 
 echo "== Focused CPU tests"
 "$PY" -m pytest -q -p no:cacheprovider tests/test_sampling_stage0_evaluation.py tests/test_sampling_stage0_agreement.py \
-  tests/test_sampling_stage0_drift.py tests/test_sampling_stage0_geometry.py tests/test_sampling_stage0_overnight.py
+  tests/test_sampling_stage0_drift.py tests/test_sampling_stage0_dataset.py tests/test_sampling_stage0_geometry.py tests/test_sampling_stage0_overnight.py

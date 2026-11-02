@@ -26,15 +26,15 @@ from pilot_eval.stage0_sources import inside
 from pilot_eval.training import file_hash, run_lock
 from pilot_eval.workflow import _hash
 
-STAGES = ('agreement', 'behaviour', 'drift', 'geometry')
+STAGES = ('agreement', 'behaviour', 'drift', 'dataset', 'geometry')
 MODULES = {s:f'pilot_eval.sampling_stage0_{m}' for s,m in
-           [('agreement','agreement'),('behaviour','evaluation'),('drift','drift'),('geometry','geometry')]}
+           [('agreement','agreement'),('behaviour','evaluation'),('drift','drift'),('dataset','dataset'),('geometry','geometry')]}
 CODE = ['sampling_stage0_overnight.py','sampling_stage0_agreement.py','sampling_stage0_evaluation.py',
-        'sampling_stage0_drift.py','sampling_stage0_geometry.py','sampling_stage0_direct_backend.py',
-        'stage0_evaluation_backend.py','stage0_batching_backend.py','stage0_drift_backend.py']
+        'sampling_stage0_drift.py','sampling_stage0_dataset.py','sampling_stage0_geometry.py','sampling_stage0_direct_backend.py',
+        'stage0_evaluation_backend.py','stage0_batching_backend.py','stage0_drift_backend.py','stage0_distance_backend.py']
 OPTIONAL=('geometry',) # CPU-only; its failure must not strand the GPU results on the Pod.
 SCOPE=dict(stages=list(STAGES),
-    not_included=['historical Base/Gold/GRPO behaviour join','held-out gold NLL/entropy','training-data entropy/rank',
+    not_included=['historical Base/Gold/GRPO behaviour join','held-out gold NLL/entropy under each adapter',
                   'initial pushes','activation energy','interventions/edited adapters'],
     meaning='Completion covers only the declared stages for k0/k2/k5, not the whole Stage 0 programme.')
 
@@ -186,6 +186,9 @@ class Operations:
                                       agreement_plan=self.root/plans['agreement'])
         behaviour=self.root/'plans'/name/'sampling-stage0.evaluation.json'
         if stage=='drift':return drift.prepare(behaviour,self.path('inputs'),self.root,name)
+        if stage=='dataset':
+            from pilot_eval import sampling_stage0_dataset as dataset
+            return dataset.prepare(behaviour,self.root,name)
         return geometry.prepare(behaviour,self.root,name)
 
     def stage(self,stage):
@@ -193,7 +196,7 @@ class Operations:
         plan=self._plan(stage);module=importlib.import_module(MODULES[stage])
         run_child(stage,plan,self.cfg,self.state/'logs'/f'{stage}.console.log')
         result=module.verify(plan,self.root) # CPU re-verification of the sealed product
-        brief={k:result[k] for k in ['batch_sizes','arms','variants','controls','trajectory','endpoint_overlap','cross_arm'] if k in result}
+        brief={k:result[k] for k in ['batch_sizes','arms','variants','controls','paired_differences','trajectory','endpoint_overlap','cross_arm'] if k in result}
         return dict(plan=str(plan.relative_to(self.root)),plan_sha256=file_hash(plan),summary=brief)
 
     def export(self,partial=False):
@@ -251,7 +254,7 @@ def status(root,name):
     def tail(path,lines=4):
         try:return Path(path).read_text(errors='replace').splitlines()[-lines:]
         except OSError:return []
-    folders={'agreement':'batch-agreement','behaviour':'sampling-behaviour','drift':'fixed-context','geometry':'geometry'}
+    folders={'agreement':'batch-agreement','behaviour':'sampling-behaviour','drift':'fixed-context','dataset':'dataset','geometry':'geometry'}
     out=dict(overnight=read(state/'status.json'),complete=read(state/'complete.json'),stages={})
     for stage,folder in folders.items():
         out['stages'][stage]=dict(done=(state/f'{stage}.complete.json').exists(),
@@ -271,7 +274,7 @@ def main(argv=None):
     p.add_argument('--volume-id',help='Verify this Pod mounts the persistent volume (required with --stop-pod).')
     p.add_argument('--gpu',default='L4');p.add_argument('--hf-repo',default=DEFAULT_REPO)
     p.add_argument('--retries',type=int,default=1,help='Child relaunches per stage after a crash (resumes sealed units).')
-    for stage,hours in [('agreement',2),('behaviour',4),('drift',3),('geometry',2)]:
+    for stage,hours in [('agreement',2),('behaviour',4),('drift',3),('dataset',2),('geometry',2)]:
         p.add_argument(f'--hours-{stage}',default=str(hours),help='Child wall-clock limit in hours.')
     p.add_argument('--stop-pod',action='store_true',help='Stop this Pod only after verified HF export.')
     a=p.parse_args(argv);root=Path(a.root).resolve()
