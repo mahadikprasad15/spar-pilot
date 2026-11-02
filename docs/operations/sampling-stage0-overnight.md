@@ -20,8 +20,15 @@ original Stage 0 instruments, on the same L4 Pod and `sl-0` volume that trained 
 Each measurement runs as a child process with a time limit and its own log. A crashed
 child is relaunched once and resumes from sealed units; an integrity failure or timeout
 is not retried. The wrapper re-verifies each product on CPU before marking it complete.
-Rerunning the same command after any stop continues where it left off. A Pod restart does
-not block resuming; a different GPU, driver or package set does.
+Rerunning the same command after any stop continues where it left off; every stage already
+marked complete, and an existing export, is re-verified from its sealed evidence before it
+is trusted. A Pod restart does not block resuming; a different GPU, driver or package set does.
+With `--stop-pod`, preflight finds the artifact root's real mount in `/proc/mounts` and
+stops unless it is a persistent (non-container) mount matching the provider's volume.
+
+`complete.json` lists the stages it covers and what it does not: the historical
+Base/Gold/GRPO behaviour join, held-out gold NLL/entropy, training-data entropy/rank,
+initial pushes, activation energy and interventions are separate follow-ups.
 
 Old Gold SFT and GRPO results are not regenerated. The original Stage 0 measured them with
 the same instruments on a Colab L4; any join should disclose the environment recorded in

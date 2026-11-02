@@ -20,6 +20,10 @@ class Ops:
         self.calls.append('export'); return {'repo': 'r', 'revision': '0'*40, 'manifest_sha256': 'm'}
     def stop(self):
         self.calls.append('stop')
+    def reverify(self, stage, value):
+        self.calls.append('reverify-'+stage)
+        if stage == getattr(self, 'tampered', None): raise ValueError(stage+' evidence changed')
+    def reverify_export(self, receipt): self.calls.append('reverify-export')
 
 
 def test_stages_run_in_order_and_resume_after_failure_without_repeats(tmp_path):
@@ -30,9 +34,44 @@ def test_stages_run_in_order_and_resume_after_failure_without_repeats(tmp_path):
     assert not (tmp_path/'drift.complete.json').exists()
     ops.fail_at = None; ops.calls = []
     overnight.orchestrate(tmp_path, ops)
-    assert ops.calls == ['preflight', 'drift', 'geometry', 'export']
+    assert ops.calls == ['preflight', 'reverify-agreement', 'reverify-behaviour', 'drift', 'geometry', 'export']
     ops.calls = []; overnight.orchestrate(tmp_path, ops)
-    assert ops.calls == ['preflight'] # completed work is never repeated
+    # Completed work is never repeated, but its sealed evidence is re-checked before it is trusted.
+    assert ops.calls == ['preflight']+['reverify-'+s for s in overnight.STAGES]+['reverify-export']
+
+
+def test_changed_completed_result_stops_before_export_and_pod_stop(tmp_path):
+    ops = Ops(); ops.stop_requested = True
+    ops.export = lambda: (_ for _ in ()).throw(ValueError('HF down'))
+    with pytest.raises(ValueError):
+        overnight.orchestrate(tmp_path, ops)
+    ops.tampered = 'behaviour'; ops.calls = []
+    ops.export = lambda: ops.calls.append('export') or {'repo': 'r', 'revision': '0'*40, 'manifest_sha256': 'm'}
+    with pytest.raises(ValueError, match='behaviour evidence changed'):
+        overnight.orchestrate(tmp_path, ops)
+    assert 'export' not in ops.calls and 'stop' not in ops.calls
+
+
+def test_completion_record_declares_its_scope(tmp_path):
+    overnight.orchestrate(tmp_path, Ops())
+    scope = json.loads((tmp_path/'complete.json').read_text())['scope']
+    assert scope['stages'] == list(overnight.STAGES)
+    assert 'historical Base/Gold/GRPO behaviour join' in scope['not_included']
+
+
+MOUNTS = '''overlay / overlay rw 0 0
+/dev/sda1 /etc/hosts ext4 rw 0 0
+sl-0 /workspace fuse.geesefs rw 0 0
+'''
+
+
+def test_persistent_mount_is_established_or_the_run_stops(tmp_path):
+    assert overnight.persistent_mount('/workspace/artifacts', MOUNTS, None) == {'mount': '/workspace', 'fstype': 'fuse.geesefs'}
+    assert overnight.persistent_mount('/workspace/artifacts', MOUNTS, '/workspace')['mount'] == '/workspace'
+    with pytest.raises(ValueError, match='container disk'):
+        overnight.persistent_mount('/root/artifacts', MOUNTS, None)
+    with pytest.raises(ValueError, match='mount'):
+        overnight.persistent_mount('/workspace/artifacts', MOUNTS, '/runpod-volume')
 
 
 def test_pod_stop_only_after_verified_export(tmp_path):
@@ -157,3 +196,19 @@ def test_stage_wiring_passes_each_plan_to_the_next(tmp_path, monkeypatch):
                      ('drift', 'sampling-stage0.evaluation.json', 'inputs.json'), ('child', 'drift', 'd.json'),
                      ('geometry', 'sampling-stage0.evaluation.json'), ('child', 'geometry', 'g.json')]
     assert results['agreement']['summary'] == {'batch_sizes': {'k0': 16}}
+
+
+def test_reverify_detects_changed_plan_or_result(tmp_path, monkeypatch):
+    from pilot_eval import sampling_stage0_drift as drift
+    from pilot_eval.training import file_hash
+    plan = tmp_path/'plans/night/d.json'; plan.parent.mkdir(parents=True); plan.write_text('{}')
+    ops = overnight.Operations({'root': str(tmp_path), 'state_dir': 's', 'name': 'night'})
+    value = {'plan': 'plans/night/d.json', 'plan_sha256': file_hash(plan), 'summary': {'controls': {'untuned': {'exact_zero': True}}}}
+    monkeypatch.setattr(drift, 'verify', lambda p, r: {'controls': {'untuned': {'exact_zero': True}}, 'cells': []})
+    ops.reverify('drift', value)
+    monkeypatch.setattr(drift, 'verify', lambda p, r: {'controls': {'untuned': {'exact_zero': False}}})
+    with pytest.raises(ValueError, match='evidence changed'):
+        ops.reverify('drift', value)
+    plan.write_text('{"edited": true}')
+    with pytest.raises(ValueError, match='plan changed'):
+        ops.reverify('drift', value)

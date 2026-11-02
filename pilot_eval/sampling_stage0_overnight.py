@@ -32,6 +32,25 @@ MODULES = {s:f'pilot_eval.sampling_stage0_{m}' for s,m in
 CODE = ['sampling_stage0_overnight.py','sampling_stage0_agreement.py','sampling_stage0_evaluation.py',
         'sampling_stage0_drift.py','sampling_stage0_geometry.py','sampling_stage0_direct_backend.py',
         'stage0_evaluation_backend.py','stage0_batching_backend.py','stage0_drift_backend.py']
+SCOPE=dict(stages=list(STAGES),
+    not_included=['historical Base/Gold/GRPO behaviour join','held-out gold NLL/entropy','training-data entropy/rank',
+                  'initial pushes','activation energy','interventions/edited adapters'],
+    meaning='Completion covers only the declared stages for k0/k2/k5, not the whole Stage 0 programme.')
+
+
+def persistent_mount(root,mounts,provider_path):
+    """The artifact root's actual mount from /proc/mounts; never the container disk, never unknown."""
+    root=Path(root);best=None
+    for line in mounts.splitlines():
+        fields=line.split()
+        if len(fields)<3:continue
+        point=Path(fields[1].replace('\\040',' '))
+        if root.is_relative_to(point) and (best is None or len(point.parts)>len(best[0].parts)):best=(point,fields[2])
+    if best is None or best[0]==Path('/') or best[1]=='overlay':
+        raise ValueError(f'Artifact root {root} is on the container disk, which a Pod stop discards; use the persistent volume.')
+    if provider_path and best[0]!=Path(provider_path):
+        raise ValueError(f'Artifact root mount {best[0]} differs from the provider volume mount {provider_path}.')
+    return dict(mount=str(best[0]),fstype=best[1])
 
 
 def orchestrate(folder,ops):
@@ -43,15 +62,18 @@ def orchestrate(folder,ops):
         record(folder,'plans');source.frozen(plans,ops.plans())
     for stage in STAGES:
         marker=folder/f'{stage}.complete.json'
-        if not marker.exists():
+        # A marker proves one earlier verification; re-check the sealed product before trusting it.
+        if marker.exists():ops.reverify(stage,json.loads(marker.read_text()))
+        else:
             record(folder,stage);source.frozen(marker,ops.stage(stage))
     exported=folder/'export.complete.json'
-    if not exported.exists():
+    if exported.exists():ops.reverify_export(json.loads(exported.read_text()))
+    else:
         record(folder,'hf-export');source.frozen(exported,ops.export())
     receipt=json.loads(exported.read_text())
     source.frozen(folder/'complete.json',{'state':'exported-verified','external_copy_verified':True,
         'hf_repo':receipt['repo'],'hf_revision':receipt['revision'],'manifest_sha256':receipt['manifest_sha256'],
-        'results':{s:json.loads((folder/f'{s}.complete.json').read_text()) for s in STAGES}})
+        'scope':SCOPE,'results':{s:json.loads((folder/f'{s}.complete.json').read_text()) for s in STAGES}})
     record(folder,'exported-verified',external_copy_verified=True,hf_revision=receipt['revision'])
     if ops.stop_requested:
         record(folder,'pod-stop-requested',external_copy_verified=True)
@@ -114,8 +136,7 @@ class Operations:
             provider=RunPodProvider();pod=provider.own_pod_id();observed=provider.inspect(pod)
             if observed.get('id')!=pod or observed.get('storageVolumeId',observed.get('networkVolumeId'))!=self.cfg['volume_id']:
                 raise ValueError('Pod or persistent volume identity mismatch.')
-            if observed.get('storageMountPath') and not self.root.is_relative_to(Path(observed['storageMountPath'])):
-                raise ValueError('Artifact root is not on the verified persistent volume.')
+            self.mount=persistent_mount(self.root,Path('/proc/mounts').read_text(),observed.get('storageMountPath'))
         from pilot_eval import sampling_sft_hf as hf
         client=hf.Hub();hf.private(client,self.cfg['hf_repo']);client.api.whoami()
         hf.require_space(self.root,2*1024**3);hf.require_space(tempfile.gettempdir(),2*1024**3)
@@ -166,6 +187,22 @@ class Operations:
         source.save(folder/'hf-download-verification.json',check)
         return dict(repo=uploaded['repo'],revision=uploaded['revision'],archive=uploaded['archive'],
             archive_sha256=uploaded['archive_sha256'],manifest_sha256=manifest['sha256'],verification=check)
+
+    def reverify(self,stage,value):
+        import importlib
+        plan=inside(self.root,value['plan'])
+        if file_hash(plan)!=value['plan_sha256']:raise ValueError(f'{stage} plan changed after completion.')
+        result=importlib.import_module(MODULES[stage]).verify(plan,self.root)
+        brief={k:result[k] for k in value['summary']}
+        if json.loads(json.dumps(brief,default=str))!=value['summary']:raise ValueError(f'{stage} evidence changed after completion.')
+
+    def reverify_export(self,receipt):
+        from pilot_eval import sampling_sft_exports as exports
+        folder=self.state/'export';manifest=exports.verify_manifest(folder/'export-manifest.json',self.root)
+        upload=json.loads((folder/'hf-upload.json').read_text())
+        if (manifest['sha256']!=receipt['manifest_sha256'] or upload['revision']!=receipt['revision']
+                or not (folder/'hf-download-verification.json').exists()):
+            raise ValueError('Export evidence changed after verification.')
 
     def stop(self):
         from pilot_eval.sampling_sft_provider import RunPodProvider
