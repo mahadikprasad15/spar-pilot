@@ -195,3 +195,17 @@ def test_snapshot_checks_all_indexed_weight_shards(tmp_path):
         snapshot_files(tmp_path)
     (tmp_path/'b.safetensors').write_bytes(b'bc')
     assert snapshot_files(tmp_path)['weight_sizes']=={'a.safetensors':1,'b.safetensors':2}
+
+
+def test_sources_require_eos_and_pad_ids_before_any_gpu_work(tmp_path):
+    from pilot_eval import sampling_stage0_evaluation as module
+    from pilot_eval.workflow import _hash
+    rows=[{'id':str(i),'prompt':'p','gold':'#### 1'} for i in range(150)]
+    gold={'model':'qwen','model_revision':'r','tokenizer_revision':'r','evaluation_items_path':'items.json',
+          'evaluation_items_sha256':_hash(rows),'source_config':{'chat_template_sha256':'x',
+          'decoding':{'do_sample':False,'num_beams':1,'num_return_sequences':1,'max_new_tokens':1024,'eos_token_id':2}}}
+    (tmp_path/'gold.json').write_text(json.dumps(gold)); (tmp_path/'items.json').write_text(json.dumps(rows))
+    (tmp_path/'manifest.json').write_text(json.dumps({'gold_config':'gold.json','weights_dir':'w',
+        'training_plans':{a:f'{a}.json' for a in ('k0','k2','k5')}}))
+    with pytest.raises(ValueError, match='EOS/PAD'):
+        module.sources(tmp_path/'manifest.json', tmp_path)

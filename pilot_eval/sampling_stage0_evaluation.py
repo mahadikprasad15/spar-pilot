@@ -199,8 +199,9 @@ def sources(manifest_path, root):
         raise ValueError('Original 150-item evaluation cohort identity changed.')
     decoding=gold['source_config']['decoding']
     if (decoding.get('do_sample') is not False or decoding.get('num_beams')!=1
-            or decoding.get('num_return_sequences')!=1 or decoding.get('max_new_tokens')!=1024):
-        raise ValueError('Original greedy decoding contract changed.')
+            or decoding.get('num_return_sequences')!=1 or decoding.get('max_new_tokens')!=1024
+            or any(type(decoding.get(k)) is not int or decoding[k]<0 for k in ['eos_token_id','pad_token_id'])):
+        raise ValueError('Original greedy decoding contract changed or lacks EOS/PAD IDs.')
     parents={str(p.relative_to(root)):file_hash(p) for p in [manifest_path,gold_path,items_path]}
     variants={}; adapter_files={}; base=None; zero=None
     for arm in ARMS:
