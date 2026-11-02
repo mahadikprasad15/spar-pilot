@@ -29,7 +29,7 @@ from pilot_eval.workflow import _hash
 STAGES = ('agreement', 'behaviour', 'drift', 'dataset', 'geometry')
 MODULES = {s:f'pilot_eval.sampling_stage0_{m}' for s,m in
            [('agreement','agreement'),('behaviour','evaluation'),('drift','drift'),('dataset','dataset'),('geometry','geometry')]}
-CODE = ['sampling_stage0_overnight.py','sampling_stage0_agreement.py','sampling_stage0_evaluation.py',
+CODE = ['sampling_stage0_verification_cache.py','sampling_stage0_overnight.py','sampling_stage0_agreement.py','sampling_stage0_evaluation.py',
         'sampling_stage0_drift.py','sampling_stage0_dataset.py','sampling_stage0_geometry.py','sampling_stage0_direct_backend.py',
         'stage0_evaluation_backend.py','stage0_batching_backend.py','stage0_drift_backend.py','stage0_distance_backend.py']
 OPTIONAL=('geometry',) # CPU-only; its failure must not strand the GPU results on the Pod.

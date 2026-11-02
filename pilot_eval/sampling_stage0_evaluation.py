@@ -24,7 +24,7 @@ from pilot_eval.workflow import _hash, _save_frozen
 ARMS = ('k0', 'k2', 'k5')
 GROUP = 16 # Original Stage 0 behaviour batch membership: 9 x 16 + tail 6.
 SESSION_FIELDS = ('session_id', 'git_commit')
-IMPLEMENTATION = ['sampling_stage0_evaluation.py','sampling_stage0_direct_backend.py','stage0_evaluation_backend.py',
+IMPLEMENTATION = ['sampling_stage0_verification_cache.py','sampling_stage0_evaluation.py','sampling_stage0_direct_backend.py','stage0_evaluation_backend.py',
                   'stage0_evaluation_records.py','scoring.py']
 
 
@@ -199,6 +199,12 @@ def collect(config, items, directory, runtime, engine, *, max_new_units=None):
 
 
 def sources(manifest_path, root):
+    from pilot_eval.sampling_stage0_verification_cache import provenance_targets, verification_cache
+    with verification_cache(provenance_targets()):
+        return _sources(manifest_path, root)
+
+
+def _sources(manifest_path, root):
     """Verify the three trained arms, their shared checkpoint-0 control, Gold cohort and model files."""
     from pilot_eval import sampling_sft_training as training
     root=Path(root).resolve()
