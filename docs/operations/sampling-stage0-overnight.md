@@ -47,8 +47,8 @@ each product (`meta/runtime.json`).
 
 ## 1. Restore the fixed contexts (once)
 
-The Stage 0 fixed-context payload is not on `sl-0`. From the Mac (needs the user's
-go-ahead; uploads 7 MB of public-dataset text to the private repo):
+The Stage 0 fixed-context payload is not on `sl-0`. Already uploaded on 2026-11-02 to the
+private repo (HF commit `34c0ad39`; fresh-download hashes matched). For reference, from the Mac:
 
 ```bash
 cd ~/spar/pilot1/artifacts && hf upload Prasadmahadik/spar-sampling-sft-artifacts plans/pilot3-inputs-v1/activation.prepared.json plans/pilot3-inputs-v1/activation.prepared.json --repo-type dataset --commit-message "Stage 0 fixed-context inputs"
