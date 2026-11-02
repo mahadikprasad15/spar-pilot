@@ -293,7 +293,7 @@ def prepare(manifest_path, output_root, name, *, gpu='L4', agreement_plan=None):
                      complete_sha256=file_hash(inside(root,aconfig['run_path'])/'complete.json'),
                      environment=result['environment'])
     config=dict(protocol='sampling-stage0-evaluation-v2',name=name,run_path=f'runs/stage0/{name}/sampling-behaviour',
-        **{k:v for k,v in source.items() if k!='zero_adapter'},scorer='gsm8k-flexible-v3',seed=42,
+        **source,scorer='gsm8k-flexible-v3',seed=42,
         execution_kind='real-cuda',gpu=gpu,group_size=GROUP,batch_sizes=batch_sizes,batch_agreement=binding,
         qualification='direct PEFT; batching only where the same-environment agreement check passed',
         implementation={n:file_hash(Path(__file__).with_name(n)) for n in IMPLEMENTATION})
