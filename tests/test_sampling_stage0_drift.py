@@ -115,3 +115,13 @@ def test_resume_after_restart_measures_only_unsealed_units(tmp_path, monkeypatch
     resumed = Engine()
     drift.run(path, tmp_path, dependencies=Dependencies(resumed, session='boot-2'))
     assert len(resumed.calls) == 2 + 38*3 - 10
+
+
+def test_integrity_failure_is_persisted_and_blocks_reuse(tmp_path, monkeypatch):
+    path = setup(tmp_path, monkeypatch)
+    class Changed(Engine):
+        def check_integrity(self, *, full=False): return {'base_unchanged': not full, 'adapters_unchanged': True}
+    with pytest.raises(ValueError, match='integrity'):
+        drift.run(path, tmp_path, dependencies=Dependencies(Changed()))
+    with pytest.raises(ValueError, match='Prior integrity failure'):
+        drift.run(path, tmp_path, dependencies=Dependencies(Engine()))

@@ -142,6 +142,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
     from pilot_eval.stage0_distance_backend import DistanceDependencies
     by_id={a['answer_id']:a for a in answers}
     with run_lock(directory):
+        evaluation.no_prior_integrity_failure(directory)
         if (directory/'complete.json').exists():return verify(path,root)
         deps=dependencies or DistanceDependencies();runtime=deps.runtime()
         if runtime.get('execution_kind')!='real-cuda' or config['gpu'] not in runtime.get('device',''):
@@ -164,8 +165,8 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
                 for j,identifier in enumerate(unit['ids']):
                     scored=check_arrays(engine.score(by_id[identifier]),by_id[identifier]);values[identifier]=scored
                     arrays.update({f'{k}_{j}':v for k,v in scored.items()})
-                integrity=engine.check_integrity()
-                if integrity.get('base_unchanged') is not True:raise ValueError('Base-model integrity failed during scoring.')
+                integrity=evaluation.require_intact(directory,engine.check_integrity(),('base_unchanged',),
+                    message='Base-model integrity failed during scoring.')
                 folder=directory/'units'/unit['key'];folder.mkdir(parents=True,exist_ok=True)
                 with (folder/'tokens.npz.tmp').open('wb') as stream:np.savez_compressed(stream,**arrays)
                 (folder/'tokens.npz.tmp').replace(folder/'tokens.npz');_write_json(folder/'integrity.json',integrity)
@@ -174,8 +175,8 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
                 saved[i]=values;new+=1
                 _write_state(directory,'running',sum(s is not None for s in saved),len(saved))
                 print(f'Sampling dataset scoring: {sum(s is not None for s in saved)}/{len(saved)} units sealed',flush=True)
-            integrity=engine.check_integrity(full=True)
-            if integrity.get('base_unchanged') is not True:raise ValueError('Full base-model integrity failed.')
+            integrity=evaluation.require_intact(directory,engine.check_integrity(full=True),('base_unchanged',),
+                message='Full base-model integrity failed.')
             if any(s is None for s in saved):
                 _write_state(directory,'incomplete',sum(s is not None for s in saved),len(saved))
                 return dict(state='incomplete',completed=sum(s is not None for s in saved),total=len(saved))
@@ -208,6 +209,13 @@ def summarize(config,answers,memberships,arrays):
             summaries.append(dict(dataset=name,scope=scope,n_problems=len(ids),n_tokens=int(t[0]),nll=float(t[1]/t[0]),
                 entropy=float(t[2]/t[0]),excess_surprise=float((t[1]-t[2])/t[0]),top1_fraction=float(t[3]/t[0]),
                 answer_weighted_nll=float(t[5]/t[4]),answer_weighted_entropy=float(t[6]/t[4]),
+                answer_weighted_excess_surprise=float((t[5]-t[6])/t[4]),
+                answer_weighted_nll_ci=_ratio_ci(totals,draws,lambda s:s[:,5],lambda s:s[:,4]),
+                answer_weighted_entropy_ci=_ratio_ci(totals,draws,lambda s:s[:,6],lambda s:s[:,4]),
+                answer_weighted_excess_surprise_ci=_ratio_ci(totals,draws,lambda s:s[:,5]-s[:,6],lambda s:s[:,4]),
+                n_answers_under_64=sum(len(a['surprise'])<64 for a in rows.values()),
+                **{f'{w}_tokens':sum(position_windows(len(a['surprise'])).count(w) for a in rows.values())
+                   for w in ['first32','middle','last32']},
                 median_answer_tokens=float(statistics.median(len(a['surprise']) for a in rows.values())),
                 nll_ci=_ratio_ci(totals,draws,lambda s:s[:,1],lambda s:s[:,0]),
                 excess_surprise_ci=_ratio_ci(totals,draws,lambda s:s[:,1]-s[:,2],lambda s:s[:,0])))
@@ -216,8 +224,9 @@ def summarize(config,answers,memberships,arrays):
                 for a in rows.values():
                     mask=np.array([w==window for w in position_windows(len(a['surprise']))])
                     n+=mask.sum();s+=a['surprise'][mask].sum();e+=a['entropy'][mask].sum()
-                if n:windows.append(dict(dataset=name,scope=scope,window=window,n_tokens=int(n),nll=float(s/n),entropy=float(e/n),
-                                         excess_surprise=float((s-e)/n)))
+                windows.append(dict(dataset=name,scope=scope,window=window,n_tokens=int(n),
+                    nll=float(s/n) if n else None,entropy=float(e/n) if n else None,
+                    excess_surprise=float((s-e)/n) if n else None)) # zero-count windows stay visible
     ids=sorted(common);draws=np.random.default_rng(BOOTSTRAP['seed']).integers(0,len(ids),size=(BOOTSTRAP['draws'],len(ids)))
     gold=np.array([problem_sums('gold',common)[0][i] for i in ids])
     for arm in ARMS:
@@ -247,7 +256,7 @@ def _finish(config,directory,answers,memberships,saved):
 
 
 def verify(path,output_root):
-    root,config,directory,answers,memberships=_load(path,output_root)
+    root,config,directory,answers,memberships=_load(path,output_root);evaluation.no_prior_integrity_failure(directory)
     seal=json.loads((directory/'complete.json').read_text())
     if seal['config_sha256']!=_hash(config):raise ValueError('Dataset completion identity changed.')
     for name,digest in seal['files'].items():

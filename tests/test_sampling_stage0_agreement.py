@@ -109,3 +109,13 @@ def test_behaviour_plan_takes_batch_sizes_from_agreement(tmp_path, monkeypatch):
     assert config['batch_sizes'] == {'k0': 1, 'k2': 16, 'k5': 16} and config['gpu'] == 'L4'
     assert config['batch_agreement']['environment']['driver'] == '580'
     assert 'session_id' not in config['batch_agreement']['environment']
+
+
+def test_integrity_failure_is_persisted_and_blocks_reuse(tmp_path, monkeypatch):
+    path = plan(tmp_path, monkeypatch)
+    class Changed(Engine):
+        def check_integrity(self, *, full=False): return {'base_unchanged': True, 'adapters_unchanged': not full}
+    with pytest.raises(ValueError, match='integrity'):
+        agreement.run(path, tmp_path, dependencies=Dependencies(Changed()))
+    with pytest.raises(ValueError, match='Prior integrity failure'):
+        agreement.run(path, tmp_path, dependencies=Dependencies(Engine()))

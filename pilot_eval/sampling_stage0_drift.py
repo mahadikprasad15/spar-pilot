@@ -135,6 +135,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
     from pilot_eval.stage0_drift_backend import DriftDependencies
     by_id={r['id']:r for r in rows}
     with run_lock(directory):
+        evaluation.no_prior_integrity_failure(directory)
         if (directory/'complete.json').exists():return verify(path,root)
         deps=dependencies or DriftDependencies();runtime=deps.runtime()
         if runtime.get('execution_kind')!='real-cuda' or config['gpu'] not in runtime.get('device',''):
@@ -165,9 +166,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
                 with (evidence/'arrays.npz').open('wb') as stream:np.savez_compressed(stream,**result['arrays'])
                 _write_json(evidence/'result.json',{k:v for k,v in result.items() if k!='arrays'})
                 result=check(result,selected,config,unit['variant'],unit['diagnostic'])
-                integrity=engine.check_integrity()
-                if integrity.get('base_unchanged') is not True or integrity.get('adapters_unchanged') is not True:
-                    raise ValueError('Drift model-integrity guard failed.')
+                integrity=evaluation.require_intact(directory,engine.check_integrity(),message='Drift model-integrity guard failed.')
                 folder=directory/'units'/unit['key'];folder.mkdir(parents=True,exist_ok=True)
                 with (folder/'arrays.npz.tmp').open('wb') as stream:np.savez_compressed(stream,**result['arrays'])
                 (folder/'arrays.npz.tmp').replace(folder/'arrays.npz')
@@ -180,9 +179,8 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
                 saved[i]=result;new+=1
                 _write_state(directory,'running',sum(s is not None for s in saved),len(saved))
                 print(f'Sampling fixed context: {sum(s is not None for s in saved)}/{len(saved)} sealed; {unit["key"]}',flush=True)
-            integrity=engine.check_integrity(full=True)
-            if integrity.get('base_unchanged') is not True or integrity.get('adapters_unchanged') is not True:
-                raise ValueError('Full drift integrity failed; preserve this attempt.')
+            integrity=evaluation.require_intact(directory,engine.check_integrity(full=True),
+                message='Full drift integrity failed; preserve this attempt.')
             if any(s is None for s in saved):
                 _write_state(directory,'incomplete',sum(s is not None for s in saved),len(saved))
                 return dict(state='incomplete',completed=sum(s is not None for s in saved),total=len(saved))
@@ -205,7 +203,7 @@ def run(path,output_root,*,dependencies=None,max_new_units=None):
 
 
 def verify(path,output_root):
-    root,config,directory,rows=_load(path,output_root)
+    root,config,directory,rows=_load(path,output_root);evaluation.no_prior_integrity_failure(directory)
     seal=json.loads((directory/'complete.json').read_text())
     if seal.get('config_sha256')!=_hash(config):raise ValueError('Drift completion identity mismatch.')
     for p,digest in seal['files'].items():

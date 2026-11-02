@@ -57,6 +57,14 @@ def persistent_mount(root,mounts,provider_path):
     return dict(mount=str(best[0]),fstype=best[1])
 
 
+def export_status(missing):
+    """Manifest fields that state exactly which declared stages finished and which failed."""
+    done=[s for s in STAGES if s not in missing]
+    scope='sampling Stage 0 stages verified on CPU before sealing: '+', '.join(done)
+    if missing:scope+='; failed (not included): '+', '.join(missing)
+    return dict(workload_success=not missing,missing_expected_outputs=list(missing),scope=scope)
+
+
 def same_environment(state,runtime):
     """Every GPU stage of one run measures in one frozen hardware/software environment."""
     from pilot_eval.sampling_stage0_evaluation import environment
@@ -88,7 +96,7 @@ def orchestrate(folder,ops):
     if missing:
         # Get the verified GPU products off the Pod anyway; never stop the Pod on a partial run.
         record(folder,'hf-export-partial',missing_stages=missing)
-        receipt=ops.export(partial=True)
+        receipt=ops.export(partial=True,missing=missing)
         source.save(folder/'partial-export.json',dict(state='exported-partial',missing_stages=missing,receipt=receipt))
         record(folder,'exported-partial',external_copy_verified=True,missing_stages=missing,hf_revision=receipt['revision'])
         raise failure
@@ -199,7 +207,7 @@ class Operations:
         brief={k:result[k] for k in ['batch_sizes','arms','variants','controls','paired_differences','trajectory','endpoint_overlap','cross_arm'] if k in result}
         return dict(plan=str(plan.relative_to(self.root)),plan_sha256=file_hash(plan),summary=brief)
 
-    def export(self,partial=False):
+    def export(self,partial=False,missing=()):
         """One sealed bundle: the Stage 0 plans and run trees plus this wrapper's decisions. A partial
         export gets its own folder so the final full export is always built fresh."""
         import uuid
@@ -211,8 +219,7 @@ class Operations:
             internal=[p for p in self.state.iterdir() if p.name.startswith('export')]+[self.state/'status.json',self.state/'events.jsonl']
             names|=set(tree(root,self.state,exclude=internal))
             manifest=dict(schema_version=1,job_sha256=_hash(self.cfg),files=exports.inventory(root,sorted(names)),
-                simulation=False,worker_host=platform.node(),pod_id=os.environ.get('RUNPOD_POD_ID'),workload_success=True,
-                missing_expected_outputs=[],scope='sampling Stage 0 behaviour, agreement, fixed-context and geometry; sealed after CPU verification')
+                simulation=False,worker_host=platform.node(),pod_id=os.environ.get('RUNPOD_POD_ID'),**export_status(missing))
             manifest['sha256']=_hash(manifest);source.save(manifest_path,manifest)
             print(f'Uploading {len(manifest["files"])} sealed files to private HF repo {self.cfg["hf_repo"]}.',flush=True)
         manifest=exports.verify_manifest(manifest_path,root)

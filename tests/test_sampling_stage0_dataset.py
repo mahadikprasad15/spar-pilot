@@ -84,3 +84,24 @@ def test_resume_scores_only_unsealed_units(tmp_path, monkeypatch):
     resumed = Engine()
     dataset.run(path, tmp_path, dependencies=Dependencies(resumed, session='boot-2'))
     assert resumed.scored == 29-8 # two sealed units of four answers were kept
+
+
+def test_integrity_failure_is_persisted_and_blocks_reuse(tmp_path, monkeypatch):
+    path = setup(tmp_path, monkeypatch)
+    class Changed(Engine):
+        def check_integrity(self, *, full=False): return {'base_unchanged': not full}
+    with pytest.raises(ValueError, match='integrity'):
+        dataset.run(path, tmp_path, dependencies=Dependencies(Changed()))
+    assert (tmp_path/'runs/stage0/night/dataset/meta/integrity-failure.json').exists()
+    with pytest.raises(ValueError, match='Prior integrity failure'):
+        dataset.run(path, tmp_path, dependencies=Dependencies(Engine()))
+
+
+def test_answer_weighted_intervals_and_empty_windows_are_reported(tmp_path, monkeypatch):
+    path = setup(tmp_path, monkeypatch)
+    result = dataset.run(path, tmp_path, dependencies=Dependencies(Engine()))
+    gold = next(s for s in result['summaries'] if s['dataset'] == 'gold' and s['scope'] == 'covered')
+    assert gold['answer_weighted_nll_ci'] == [2.0, 2.0] and gold['answer_weighted_excess_surprise_ci'] == [1.5, 1.5]
+    assert gold['n_answers_under_64'] == 8 and gold['middle_tokens'] == 0 and gold['last32_tokens'] == 0
+    empty = next(w for w in result['position_windows'] if w['dataset'] == 'gold' and w['scope'] == 'covered' and w['window'] == 'middle')
+    assert empty['n_tokens'] == 0 and empty['nll'] is None

@@ -50,6 +50,18 @@ def snapshot_files(directory):
     return dict(config_sha256=file_hash(config),index_sha256=file_hash(index) if index.exists() else None,weight_sizes=sizes)
 
 
+def require_intact(directory, proof, keys=('base_unchanged','adapters_unchanged'), *, message):
+    """An integrity failure is persisted: the run is preserved for investigation, never resumed or retried."""
+    if all(proof.get(k) is True for k in keys):return proof
+    _write_json(Path(directory)/'meta/integrity-failure.json',dict(error=message,proof=proof))
+    raise ValueError(message)
+
+
+def no_prior_integrity_failure(directory):
+    if (Path(directory)/'meta/integrity-failure.json').exists():
+        raise ValueError('Prior integrity failure; preserve this run for investigation.')
+
+
 def _integrity(engine, full=False):
     proof = engine.check_integrity(full=full)
     if not all(proof.get(k) is True for k in ('base_unchanged', 'adapters_unchanged')):

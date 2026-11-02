@@ -126,6 +126,7 @@ def run(path,output_root,*,dependencies=None):
     root,config,items,directory=_load(path,output_root)
     from pilot_eval.stage0_batching_backend import BatchDependencies
     with run_lock(directory):
+        evaluation.no_prior_integrity_failure(directory)
         if (directory/'complete.json').exists():return verify(path,root)
         deps=dependencies or BatchDependencies();runtime=deps.runtime()
         if runtime.get('execution_kind')!='real-cuda' or config['gpu'] not in runtime.get('device',''):
@@ -168,17 +169,13 @@ def run(path,output_root,*,dependencies=None):
                     if len(responses)!=len(rows):raise ValueError('Wrong batched response count.')
                     value=replay(config,unit,rows,responses,references,engine)
                 value['seconds']=time.monotonic()-begin
-                proof=engine.check_integrity()
-                if proof.get('base_unchanged') is not True or proof.get('adapters_unchanged') is not True:
-                    raise ValueError('Model integrity failed during batch agreement.')
+                evaluation.require_intact(directory,engine.check_integrity(),message='Model integrity failed during batch agreement.')
                 folder=directory/'units'/unit['key'];_write_json(folder/'result.json',value)
                 _write_json(folder/'complete.json',dict(config_sha256=_hash(config),unit=unit,
                     runtime_sha256=file_hash(runtime_path),sha256=file_hash(folder/'result.json')))
                 values[i]=value
                 _write_state(directory,'running',sum(v is not None for v in values),len(values))
-            proof=engine.check_integrity(full=True)
-            if proof.get('base_unchanged') is not True or proof.get('adapters_unchanged') is not True:
-                raise ValueError('Final model integrity failed.')
+            proof=evaluation.require_intact(directory,engine.check_integrity(full=True),message='Final model integrity failed.')
             _write_json(directory/'meta/final-integrity.json',proof)
             result={**assess(config,values),'environment':env}
             _write_json(directory/'results/agreement.json',result)
@@ -196,7 +193,7 @@ def run(path,output_root,*,dependencies=None):
 
 
 def verify(path,output_root):
-    root,config,items,directory=_load(path,output_root)
+    root,config,items,directory=_load(path,output_root);evaluation.no_prior_integrity_failure(directory)
     seal=json.loads((directory/'complete.json').read_text())
     if seal['config_sha256']!=_hash(config):raise ValueError('Agreement completion identity changed.')
     for name,digest in seal['files'].items():

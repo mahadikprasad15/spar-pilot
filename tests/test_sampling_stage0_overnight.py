@@ -16,7 +16,7 @@ class Ops:
         self.calls.append(stage)
         if stage == self.fail_at: raise RuntimeError(stage+' child failed')
         return {'plan': stage}
-    def export(self, partial=False):
+    def export(self, partial=False, missing=()):
         self.calls.append('export'); return {'repo': 'r', 'revision': '0'*40, 'manifest_sha256': 'm'}
     def stop(self):
         self.calls.append('stop')
@@ -261,3 +261,20 @@ def test_export_resume_checks_the_saved_download_verification(tmp_path, monkeypa
     (folder/'hf-download-verification.json').write_text(json.dumps({'archive_sha256': 'x', 'verified_files': 2}))
     with pytest.raises(ValueError, match='Export evidence'):
         ops.reverify_export(receipt)
+
+
+def test_partial_export_manifest_names_what_finished_and_what_failed():
+    full = overnight.export_status([])
+    assert full['workload_success'] is True and full['missing_expected_outputs'] == []
+    assert 'dataset' in full['scope'] and 'geometry' in full['scope']
+    partial = overnight.export_status(['geometry'])
+    assert partial['workload_success'] is False and partial['missing_expected_outputs'] == ['geometry']
+    assert 'geometry' not in partial['scope'].split('failed')[0] and 'dataset' in partial['scope']
+
+
+def test_partial_export_passes_the_failed_stages(tmp_path):
+    ops = Ops(fail_at='geometry'); seen = []
+    ops.export = lambda partial=False, missing=(): seen.append((partial, list(missing))) or {'repo': 'r', 'revision': '0'*40, 'manifest_sha256': 'm'}
+    with pytest.raises(RuntimeError):
+        overnight.orchestrate(tmp_path, ops)
+    assert seen == [(True, ['geometry'])]
