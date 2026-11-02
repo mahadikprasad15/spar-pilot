@@ -262,6 +262,12 @@ def _sources(manifest_path, root):
 
 
 def check_sources(config, root):
+    from pilot_eval.sampling_stage0_verification_cache import provenance_targets, verification_cache
+    with verification_cache(provenance_targets()):
+        return _check_sources(config, root)
+
+
+def _check_sources(config, root):
     """Rehash every frozen source; shared by run, verify and the downstream collectors."""
     root=Path(root).resolve()
     for relative,digest in config['parents'].items():
