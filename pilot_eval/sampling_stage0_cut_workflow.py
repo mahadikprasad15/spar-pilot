@@ -22,6 +22,8 @@ def export(directory, root, *, repo, client=None):
         if not path.is_file(): return False
         if any(part in ('logs','checkpoints','preflight','attempts') for part in rel.parts): return False
         if path.name in ('hf-upload.json','status.json','overnight-status.json') or path.name.endswith(('.tmp','.lock')): return False
+        # Base singular vectors (~1.6 GB) are deterministic from the hashed base weights and stay sealed on the volume.
+        if path.name=='bases.npz': return False
         return True
     files=sorted(p for p in directory.rglob('*') if eligible(p))
     manifest={str(p.relative_to(root)):file_hash(p) for p in files}
@@ -30,7 +32,7 @@ def export(directory, root, *, repo, client=None):
     if receipt.exists():
         saved=json.loads(receipt.read_text())
         if saved['manifest_sha256']!=identity or saved['repo']!=repo: raise ValueError('Export identity changed.')
-        if file_hash(client.fetch(repo,saved['archive'],saved['revision']))!=saved['archive_sha256']:
+        if _fresh_hash(client,repo,saved['archive'],saved['revision'])!=saved['archive_sha256']:
             raise ValueError('Remote archive readback changed.')
         return saved
     with tempfile.TemporaryDirectory(dir=directory) as temporary:
@@ -46,12 +48,22 @@ def export(directory, root, *, repo, client=None):
         revision=client.publish(repo,{archive_name:archive,index_name:index})
         if not isinstance(revision,str) or len(revision)!=40 or any(c not in '0123456789abcdef' for c in revision):
             raise ValueError('HF export lacks exact commit revision.')
-        if file_hash(client.fetch(repo,archive_name,revision))!=archive_hash or file_hash(client.fetch(repo,index_name,revision))!=index_hash:
+        if _fresh_hash(client,repo,archive_name,revision)!=archive_hash or _fresh_hash(client,repo,index_name,revision)!=index_hash:
             raise ValueError('HF readback verification failed.')
         result=dict(repo=repo,revision=revision,archive=archive_name,archive_sha256=archive_hash,
                     index=index_name,index_sha256=index_hash,manifest_sha256=identity)
         _write_json(receipt,result)
         return result
+
+
+def _fresh_hash(client, repo, name, revision):
+    """Hash an exact-revision download into an empty cache, never a previously cached copy."""
+    import tempfile
+    from pilot_eval.training import file_hash
+    if not hasattr(client,'api'):return file_hash(client.fetch(repo,name,revision)) # CPU fixtures
+    from huggingface_hub import hf_hub_download
+    with tempfile.TemporaryDirectory(prefix='hf-readback-') as temp:
+        return file_hash(hf_hub_download(repo,name,repo_type='dataset',revision=revision,cache_dir=temp,force_download=True))
 
 
 def verify(directory):
@@ -63,29 +75,27 @@ def verify(directory):
     directory=Path(directory)
     if not (directory/'complete.json').is_file(): raise ValueError('Run is not complete.')
     config=json.loads((directory/'config.json').read_text())
-    if config.get('protocol')=='sampling-principal-cut-evaluation-v1':
-        check_products(config,directory)
+    if config.get('protocol')=='sampling-principal-cut-evaluation-v2':
+        check_products(config,directory);_agreement_binding(config,directory)
     items=json.loads((directory/'inputs/items.json').read_text())
     inputs=json.loads((directory/'inputs/tokenized-prompts.json').read_text())
     if [r['id'] for r in inputs] != [r['id'] for r in items]: raise ValueError('Input identity changed.')
     if any(t.get('prompt_sha256')!=_hash(i['prompt']) or t.get('attention_mask')!=[1]*len(t['input_ids']) for t,i in zip(inputs,items)):
         raise ValueError('Prompt identity changed.')
+    from pilot_eval.sampling_stage0_cuts import units
     rh=file_hash(directory/'meta/runtime.json'); ih=file_hash(directory/'inputs/tokenized-prompts.json'); items_hash=file_hash(directory/'inputs/items.json'); rows=[]
-    for variant in config['variant_order']:
-        for index,item in enumerate(items):
-            key=hashlib.sha256((variant+'\0'+str(item['id'])).encode()).hexdigest()
-            unit=dict(key=key,variant=variant,ids=[item['id']],seed=config['seed']+index//16)
-            folder=directory/'units'/key; payload=folder/'responses.jsonl'; proof=folder/'integrity.json'
-            expected=dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
-                          responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof))
-            if json.loads((folder/'complete.json').read_text())!=expected: raise ValueError('Response unit changed.')
-            evidence=json.loads(proof.read_text())
-            if any(not all(evidence[s].get(k) is True for k in ('base_unchanged','adapters_unchanged')) for s in ('before','after')):
-                raise ValueError('Response integrity failed.')
-            saved=[json.loads(line) for line in payload.read_text().splitlines()]
-            if saved!=records(config,unit,[item],[{k:r[k] for k in OUTPUT_FIELDS} for r in saved],runtime_sha256=rh,input_sha256=ih):
-                raise ValueError('Response scoring changed.')
-            rows.extend(saved)
+    for unit,selected in units(config,items):
+        folder=directory/'units'/unit['key']; payload=folder/'responses.jsonl'; proof=folder/'integrity.json'
+        expected=dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
+                      responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof))
+        if json.loads((folder/'complete.json').read_text())!=expected: raise ValueError('Response unit changed.')
+        evidence=json.loads(proof.read_text())
+        if any(not all(evidence[s].get(k) is True for k in ('base_unchanged','adapters_unchanged')) for s in ('before','after')):
+            raise ValueError('Response integrity failed.')
+        saved=[json.loads(line) for line in payload.read_text().splitlines()]
+        if saved!=records(config,unit,selected,[{k:r[k] for k in OUTPUT_FIELDS} for r in saved],runtime_sha256=rh,input_sha256=ih):
+            raise ValueError('Response scoring changed.')
+        rows.extend(saved)
     response=directory/'results/responses.jsonl';summary=directory/'results/results.json'
     integrity=directory/'meta/final-integrity.json'
     proof=json.loads(integrity.read_text())
@@ -96,10 +106,14 @@ def verify(directory):
     result=json.loads(summary.read_text())
     from pilot_eval.sampling_stage0_cuts import summarize
     if result!=summarize(config,rows): raise ValueError('Result summary does not match responses.')
+    if config.get('protocol')=='sampling-principal-cut-evaluation-v2':
+        if json.loads((directory/'results/consistency.json').read_text())!=consistency(config,rows,directory):
+            raise ValueError('Consistency report does not match responses.')
     return result
 
 
 IMPLEMENTATION = ('sampling_stage0_cut_workflow.py','sampling_stage0_cut_backend.py','sampling_stage0_cuts.py',
+                  'sampling_stage0_cut_agreement.py','sampling_stage0_agreement.py','stage0_batching.py','stage0_batching_backend.py',
                   'stage0_edit_math.py','stage0_spectral_math.py','stage0_edits.py','stage0_weights.py',
                   'stage0_evaluation_backend.py','stage0_evaluation_records.py','stage0_sources.py','scoring.py',
                   'sampling_stage0_evaluation.py','sampling_stage0_geometry.py','sampling_stage0_verification_cache.py',
@@ -112,7 +126,7 @@ def implementation():
     return {name:file_hash(Path(__file__).with_name(name)) for name in IMPLEMENTATION}
 
 
-def prepare(geometry_path, root, name):
+def prepare(geometry_path, root, name, *, gpu='A100'):
     from pilot_eval import sampling_stage0_geometry as geometry
     from pilot_eval.sft import safe_name
     from pilot_eval.stage0_sources import inside
@@ -121,9 +135,10 @@ def prepare(geometry_path, root, name):
     root=Path(root).resolve();safe_name(name);path=inside(root,geometry_path)
     _,source,_=geometry._load(path,root)
     if source['execution_kind'] != 'cpu-local-pinned-weights': raise ValueError('Real pinned base geometry required.')
+    if not isinstance(gpu,str) or not gpu.strip(): raise ValueError('An expected GPU name is required.')
     plan=dict(protocol='sampling-principal-cuts-v1',name=name,geometry_path=str(path.relative_to(root)),
               geometry_sha256=file_hash(path),run_path=f'runs/stage0/{name}/principal-cuts',
-              implementation=implementation(),gpu='A100')
+              implementation=implementation(),gpu=gpu)
     output=root/'plans'/name/'sampling-stage0.cuts.json';_save_frozen(output,plan)
     return output
 
@@ -167,13 +182,14 @@ def build(path,root,*,limit=None):
                        for name,v in variants.items()}
         behaviour=json.loads(inside(root,source['behaviour_plan']).read_text())
         config={key:behaviour[key] for key in ('model_identity','weights_dir','model_snapshot','prompt_contract','decoding','cohort_path','cohort_sha256')}
-        config.update(protocol='sampling-principal-cut-evaluation-v1',run_path=plan['run_path'],
+        config.update(protocol='sampling-principal-cut-sources-v1',run_path=plan['run_path'],
+                      behaviour_plan=source['behaviour_plan'],
                       geometry_plan=plan['geometry_path'],geometry_sha256=plan['geometry_sha256'],
                       plan_path=str(inside(root,path).relative_to(root)),plan_sha256=_hash(plan),implementation=plan['implementation'],variants=variants,
                       variant_order=list(variants),adapter_files=adapter_files,scorer='gsm8k-flexible-v3',seed=42,
-                      execution_kind='real-cuda',gpu=plan['gpu'],batch_size=1)
-        _save_frozen(directory/'evaluation-plan.json',config)
-        return dict(state='complete',variants=len(variants),modules=len(modules),evaluation_plan=str(directory/'evaluation-plan.json'))
+                      execution_kind='real-cuda',gpu=plan['gpu'])
+        _save_frozen(directory/'cut-sources.json',config)
+        return dict(state='complete',variants=len(variants),modules=len(modules),sources=str(directory/'cut-sources.json'))
 
 
 def check_products(config,directory):
@@ -231,33 +247,129 @@ def hf_preflight(directory, repo, plan_hash, *, client=None):
         return result
 
 
+def _sources(path,root):
+    """Verified cut sources, cohort and plan, shared by agreement and evaluation."""
+    from pilot_eval.stage0_sources import inside
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+    root=Path(root).resolve();plan,source=load_plan(path,root);directory=inside(root,plan['run_path'])
+    sources=json.loads((directory/'cut-sources.json').read_text())
+    if sources['plan_sha256']!=_hash(plan) or sources['implementation']!=implementation(): raise ValueError('Cut sources changed.')
+    check_products(sources,directory)
+    items=json.loads(inside(root,sources['cohort_path']).read_text())
+    if _hash(items)!=sources['cohort_sha256']:raise ValueError('Cohort changed.')
+    return root,plan,directory,sources,items
+
+
+def _runtime(plan):
+    from pilot_eval.stage0_qualification_backend import QualificationDependencies
+    deps=QualificationDependencies();runtime=deps.runtime()
+    if runtime['execution_kind']!='real-cuda' or plan['gpu'] not in runtime['device']:
+        raise ValueError(f"This run requires the configured {plan['gpu']} CUDA GPU.")
+    return deps,runtime
+
+
+def agreement(path,root,*,deadline_seconds=14400):
+    """Batch-versus-singleton agreement for every cut variant before any batched production."""
+    from pilot_eval import sampling_stage0_cut_agreement as cut_agreement
+    from pilot_eval.sampling_stage0_cut_backend import CutBatchEngine
+    from pilot_eval.stage0_qualification_backend import deadline_guard
+    from pilot_eval.training import run_lock
+    from pilot_eval.stage0_batching import BATCH_GATE
+    if deadline_seconds<=0:raise ValueError('Positive deadline required.')
+    root,plan,directory,sources,items=_sources(path,root)
+    config=cut_agreement.configuration(sources,items);folder=directory/'batch-agreement'
+    if (folder/'complete.json').exists():return cut_agreement.verify(config,folder)
+    deps,runtime=_runtime(plan);deps.preflight(sources,root)
+    with run_lock(folder),deadline_guard(deadline_seconds,True):
+        engine=CutBatchEngine({**sources,'batch_gate':BATCH_GATE},root)
+        try:return cut_agreement.run(config,items,folder,runtime,engine)
+        finally:engine.close()
+
+
+def _agreement_binding(config,directory):
+    from pilot_eval import sampling_stage0_cut_agreement as cut_agreement
+    from pilot_eval.training import file_hash
+    folder=Path(directory)/'batch-agreement';binding=config['batch_agreement']
+    sources=json.loads((Path(directory)/'cut-sources.json').read_text())
+    items=json.loads((Path(directory)/'inputs/items.json').read_text()) if (Path(directory)/'inputs/items.json').exists() else None
+    agreement_config=json.loads((folder/'config.json').read_text())
+    if agreement_config['sources_sha256']!=binding['sources_sha256'] or (items is not None and agreement_config!=cut_agreement.configuration(sources,items)):
+        raise ValueError('Batch agreement was measured on different cut sources.')
+    result=cut_agreement.verify(agreement_config,folder)
+    if (file_hash(folder/'complete.json')!=binding['complete_sha256'] or result['batch_sizes']!=config['batch_sizes']
+            or result['environment']!=binding['environment']):
+        raise ValueError('Batch agreement evidence differs from the frozen batch sizes.')
+    return result
+
+
+def evaluation_plan(sources,directory):
+    """Freeze the production plan: verified sources plus each variant's agreement-backed batch size."""
+    from pilot_eval import sampling_stage0_cut_agreement as cut_agreement
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+    folder=Path(directory)/'batch-agreement'
+    if not (folder/'complete.json').exists():raise ValueError('Run the cut batch agreement before evaluation.')
+    agreement_config=json.loads((folder/'config.json').read_text())
+    result=cut_agreement.verify(agreement_config,folder)
+    return {**sources,'protocol':'sampling-principal-cut-evaluation-v2','batch_sizes':result['batch_sizes'],
+            'batch_agreement':dict(sources_sha256=_hash(sources),complete_sha256=file_hash(folder/'complete.json'),
+                                   environment=result['environment'])}
+
+
+def consistency(config,rows,directory):
+    """Fresh 'original' answers against yesterday's behaviour answers for the same adapters.
+
+    Same adapters, cohort, decoder and 16-question batch membership; differences flag a
+    runtime/switching problem or a near tie. Reported, not gating."""
+    from pilot_eval.stage0_sources import inside
+    directory=Path(directory).resolve();root=directory.parents[len(Path(config['run_path']).parts)-1]
+    behaviour=json.loads(inside(root,config['behaviour_plan']).read_text())
+    path=inside(root,behaviour['run_path'])/'results/responses.jsonl'
+    if not path.is_file():return dict(state='behaviour-responses-unavailable')
+    old={(r['variant'],r['item_id']):r for r in (json.loads(x) for x in path.read_text().splitlines())}
+    arms={}
+    for variant,definition in config['variants'].items():
+        if definition['operation']!='original':continue
+        arm=definition['source_arm'];new=[r for r in rows if r['variant']==variant]
+        same=[r for r in new if (arm,r['item_id']) in old and old[(arm,r['item_id'])]['generated_token_ids']==r['generated_token_ids']]
+        arms[arm]=dict(variant=variant,compared=sum((arm,r['item_id']) in old for r in new),exact_token_matches=len(same),
+            differing_ids=sorted(r['item_id'] for r in new if (arm,r['item_id']) in old and r not in same),
+            accuracy_now=sum(r['flexible']['correct'] for r in new)/len(new),
+            accuracy_behaviour=sum(old[(arm,r['item_id'])]['flexible']['correct'] for r in new if (arm,r['item_id']) in old)/len(new),
+            batch_size_now=config['batch_sizes'].get(variant,1),batch_size_behaviour=behaviour['batch_sizes'].get(arm))
+    return dict(state='compared',arms=arms,behaviour_runtime=json.loads((inside(root,behaviour['run_path'])/'meta/runtime.json').read_text()),
+        note='Same adapters and decoder; exact matches expected in the same environment and batch shape.')
+
+
 def run(path,root,*,repo,limit=None,deadline_seconds=86400,client=None):
     from pilot_eval.sampling_stage0_evaluation import environment
     from pilot_eval.sampling_stage0_cut_backend import CutEngine
     from pilot_eval.sampling_stage0_cuts import collect
-    from pilot_eval.stage0_qualification_backend import QualificationDependencies,deadline_guard
-    from pilot_eval.stage0_sources import inside
-    from pilot_eval.training import file_hash,run_lock
-    from pilot_eval.workflow import _hash
-    root=Path(root).resolve();plan,source=load_plan(path,root);directory=inside(root,plan['run_path'])
-    config=json.loads((directory/'evaluation-plan.json').read_text())
-    if config['plan_sha256']!=_hash(plan) or config['implementation']!=implementation(): raise ValueError('Evaluation plan changed.')
-    check_products(config,directory)
-    for variant,files in config['adapter_files'].items():
-        folder=inside(root,config['variants'][variant]['adapter_path'])
-        if any(file_hash(folder/n)!=digest for n,digest in files.items()):raise ValueError('Cut adapter changed.')
-    items=json.loads(inside(root,config['cohort_path']).read_text())
-    if _hash(items)!=config['cohort_sha256']:raise ValueError('Cohort changed.')
+    from pilot_eval.stage0_qualification_backend import deadline_guard
+    from pilot_eval.training import run_lock
+    from pilot_eval.workflow import _hash, _save_frozen
     if deadline_seconds<=0:raise ValueError('Positive deadline required.')
+    root,plan,directory,sources,items=_sources(path,root)
+    config=evaluation_plan(sources,directory)
+    _save_frozen(directory/'evaluation-plan.json',config)
     hf_preflight(directory,repo,_hash(plan),client=client)
-    deps=QualificationDependencies();runtime=deps.runtime()
-    if runtime['execution_kind']!='real-cuda' or plan['gpu'] not in runtime['device']:
-        raise ValueError('This run requires the configured A100 CUDA GPU.')
+    deps,runtime=_runtime(plan)
+    if environment(runtime)!=config['batch_agreement']['environment']:
+        raise ValueError('Batching was qualified in a different hardware/software environment; rerun the agreement under a new name.')
     deps.preflight(config,root)
     with run_lock(directory),deadline_guard(deadline_seconds,True):
         engine=CutEngine(config,root)
-        try:return collect(config,items,directory,environment(runtime),engine,limit=limit)
+        try:result=collect(config,items,directory,environment(runtime),engine,limit=limit)
         finally:engine.close()
+    if result.get('state')=='complete':
+        from pilot_eval.run import _write_json
+        rows=[json.loads(x) for x in (directory/'results/responses.jsonl').read_text().splitlines()]
+        report=consistency(config,rows,directory)
+        if (directory/'results/consistency.json').exists():
+            if json.loads((directory/'results/consistency.json').read_text())!=report:raise ValueError('Consistency report changed.')
+        else:_write_json(directory/'results/consistency.json',report)
+    return result
 
 
 def status(directory):
@@ -265,7 +377,9 @@ def status(directory):
     def read(path):return json.loads(path.read_text()) if path.is_file() else None
     completion=read(directory/'complete.json')
     return dict(state='complete' if completion else ('incomplete' if (directory/'build').exists() or (directory/'config.json').exists() else 'not-started'),
-                build=read(directory/'build/meta/status.json'),evaluation=read(directory/'meta/status.json'),
+                build=read(directory/'build/meta/status.json'),agreement=read(directory/'batch-agreement/meta/status.json'),
+                batch_sizes=(read(directory/'batch-agreement/results/agreement.json') or {}).get('batch_sizes'),
+                evaluation=read(directory/'meta/status.json'),consistency=read(directory/'results/consistency.json'),
                 overnight=read(directory/'meta/overnight-status.json'),export=read(directory/'meta/hf-upload.json'))
 
 
@@ -273,6 +387,9 @@ def main(argv=None):
     import argparse
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='command',required=True)
     p=sub.add_parser('prepare');p.add_argument('--geometry',required=True);p.add_argument('--output-root',required=True);p.add_argument('--name',required=True)
+    p.add_argument('--gpu',default='A100')
+    p=sub.add_parser('agreement');p.add_argument('--plan',required=True);p.add_argument('--output-root',required=True)
+    p.add_argument('--deadline-seconds',type=int,default=14400)
     p=sub.add_parser('preflight');p.add_argument('--plan',required=True);p.add_argument('--output-root',required=True);p.add_argument('--repo',required=True)
     for command in ('build','run'):
         p=sub.add_parser(command);p.add_argument('--plan',required=True);p.add_argument('--output-root',required=True);p.add_argument('--max-new-units',type=int)
@@ -282,7 +399,8 @@ def main(argv=None):
         p=sub.add_parser(command);p.add_argument('--run-dir',required=True)
     p=sub.add_parser('export');p.add_argument('--run-dir',required=True);p.add_argument('--output-root',required=True);p.add_argument('--repo',required=True)
     args=parser.parse_args(argv)
-    if args.command=='prepare':result=str(prepare(args.geometry,args.output_root,args.name))
+    if args.command=='prepare':result=str(prepare(args.geometry,args.output_root,args.name,gpu=args.gpu))
+    elif args.command=='agreement':result=agreement(args.plan,args.output_root,deadline_seconds=args.deadline_seconds)
     elif args.command=='preflight':
         from pilot_eval.stage0_sources import inside
         from pilot_eval.workflow import _hash

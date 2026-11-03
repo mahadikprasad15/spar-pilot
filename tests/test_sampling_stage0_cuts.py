@@ -77,21 +77,22 @@ def test_collect_resumes_and_rejects_runtime_change(tmp_path):
     from pilot_eval.sampling_stage0_cuts import collect
     config={'variants':{'a-original':{'source_arm':'a','operation':'original'}},'variant_order':['a-original'],
             'seed':42,'scorer':'gsm8k-flexible-v3','decoding':{'max_new_tokens':3,'eos_token_id':2},'adapter_files':{}}
-    items=[{'id':'one','prompt':'one','gold':'1'},{'id':'two','prompt':'two','gold':'1'}]
+    items=[{'id':f'q{i}','prompt':f'q{i}','gold':'1'} for i in range(18)] # one 16-question group and a tail of 2
     class Engine:
         def __init__(self): self.calls=[]
         def prepare_inputs(self, rows): return [{'id':r['id'],'input_ids':[1], 'attention_mask':[1]} for r in rows]
         def check_integrity(self,full=False): return {'base_unchanged':True,'adapters_unchanged':True}
         def generate(self,rows,variant,seed):
             self.calls.append(rows[0]['id'])
-            return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos')]
+            return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos') for _ in rows]
     engine=Engine()
     assert collect(config,items,tmp_path,{'device':'fake','session_id':'first'},engine,limit=1)['state']=='incomplete'
+    assert len(engine.calls)==16 # the first sealed group, one question at a time
     assert collect(config,items,tmp_path,{'device':'fake','session_id':'second'},engine)['state']=='complete'
-    assert engine.calls==['one','two']
+    assert engine.calls==[f'q{i}' for i in range(18)]
     assert (tmp_path/'meta/final-integrity.json').is_file()
     from pilot_eval.sampling_stage0_cut_workflow import verify
-    assert verify(tmp_path)['total'] == 2
+    assert verify(tmp_path)['total'] == 18
     from pilot_eval.sampling_stage0_cut_workflow import export
     class Hub:
         def __init__(self): self.store={}
@@ -174,7 +175,8 @@ def test_fixture_workflow_build_run_verify_export(tmp_path,monkeypatch):
     (tmp_path/'weights').mkdir(); (tmp_path/'weights'/'shard').write_text('fixture')
     items=[dict(id='x',prompt='p',gold='1')];(tmp_path/'items.json').write_text(json.dumps(items))
     behaviour=dict(model_identity={'base_sha256':'base'},weights_dir='weights',model_snapshot={},prompt_contract={},
-                   decoding={'max_new_tokens':3,'eos_token_id':2},cohort_path='items.json',cohort_sha256=_hash(items))
+                   decoding={'max_new_tokens':3,'eos_token_id':2},cohort_path='items.json',cohort_sha256=_hash(items),
+                   run_path='runs/behaviour',batch_sizes={'x':16})
     (tmp_path/'behaviour.json').write_text(json.dumps(behaviour)); (tmp_path/'geometry.json').write_text('{}')
     source=dict(execution_kind='cpu-local-pinned-weights',behaviour_plan='behaviour.json',weights_dir='weights',
         model_identity={'base_sha256':'base'},base_sha256='base',modules={module:{'path':'weights/shard','key':'m'}},
@@ -185,22 +187,29 @@ def test_fixture_workflow_build_run_verify_export(tmp_path,monkeypatch):
         def matrix(self,entry):return matrix
     monkeypatch.setattr(stage0_weights,'LocalWeights',Weights)
     class Engine:
-        def __init__(self,config,root): pass
-        def prepare_inputs(self,rows):return [dict(id=r['id'],input_ids=[1],attention_mask=[1]) for r in rows]
+        def __init__(self,config,root): self.inputs={}; self.tokenizer=type('T',(),{'eos_token_id':2,'encode':lambda s,t,add_special_tokens=False:[5]})()
+        def prepare_inputs(self,rows):
+            self.inputs.update({r['id']:[1] for r in rows});return [dict(id=r['id'],input_ids=[1],attention_mask=[1]) for r in rows]
         def check_integrity(self,full=False):return dict(base_unchanged=True,adapters_unchanged=True)
-        def generate(self,rows,variant,seed):return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos')]
+        def generate(self,rows,variant,seed):return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos') for _ in rows]
+        def compare(self,rows,variant,tokens):return dict(max_absolute_error=1e-5,examples=[dict(id=r['id'],errors=[1e-5]) for r in rows])
         def close(self):pass
     monkeypatch.setattr(sampling_stage0_cut_backend,'CutEngine',Engine)
+    monkeypatch.setattr(sampling_stage0_cut_backend,'CutBatchEngine',Engine)
     monkeypatch.setattr(stage0_qualification_backend.QualificationDependencies,'runtime',lambda self:dict(execution_kind='real-cuda',device='A100'))
     monkeypatch.setattr(stage0_qualification_backend.QualificationDependencies,'preflight',lambda self,config,root:None)
     monkeypatch.setattr(workflow,'hf_preflight',lambda *args,**kwargs:None)
     plan=workflow.prepare(tmp_path/'geometry.json',tmp_path,'test')
     assert workflow.build(plan,tmp_path,limit=0)['state']=='incomplete'
     assert workflow.build(plan,tmp_path)['variants']==8
+    with pytest.raises(ValueError,match='agreement'):workflow.run(plan,tmp_path,repo='private/repo')
+    agreement=workflow.agreement(plan,tmp_path)
+    assert set(agreement['batch_sizes'].values())=={16} and list(agreement['replays'])==['x']
     assert workflow.run(plan,tmp_path,repo='private/repo',limit=2)['state']=='incomplete'
     assert workflow.run(plan,tmp_path,repo='private/repo')['total']==8
     directory=tmp_path/'runs/stage0/test/principal-cuts'
     assert workflow.verify(directory)['state']=='complete'
+    assert json.loads((directory/'results/consistency.json').read_text())['state']=='behaviour-responses-unavailable'
     adapter=directory/'build/adapters/x-output/adapter_model.safetensors'
     content=adapter.read_bytes();adapter.write_bytes(b'corrupt')
     with pytest.raises(ValueError,match='adapter'):workflow.verify(directory)

@@ -4,6 +4,13 @@ import re
 from pilot_eval.stage0_edit_math import edit_module
 from pilot_eval.stage0_spectral_math import decompose
 
+GROUP = 16 # Original Stage 0 behaviour batch membership: ordered 16-question groups, tail 6.
+
+
+class IntegrityFailure(ValueError):
+    """Base or adapter state changed; the run is preserved for investigation, never resumed."""
+
+
 OPERATIONS = {
     'output': 'V1', 'input': 'V2',
     'random0': 'V3-0', 'random1': 'V3-1', 'random2': 'V3-2',
@@ -158,11 +165,29 @@ def assemble(directory, root, sources, originals, modules, *, identity, load_fac
     return result
 
 
+def units(config, items):
+    """Paired 16-question groups per variant; a variant batches only if its agreement evidence passed."""
+    sizes = config.get('batch_sizes', {})
+    for variant in config['variant_order']:
+        size = sizes.get(variant, 1)
+        if size not in (1, GROUP):
+            raise ValueError('Each variant must generate singly or in the qualified 16-question groups.')
+        for start in range(0, len(items), GROUP):
+            selected = items[start:start+GROUP]; ids = [i['id'] for i in selected]; seed = config['seed']+start//GROUP
+            yield dict(key=f'{variant}-{start:04d}', variant=variant, ids=ids, seed=seed,
+                       generation_batches=[ids] if size == GROUP else [[i] for i in ids],
+                       item_seeds=dict.fromkeys(ids, seed)), selected
+
+
+def mark_integrity_failure(directory, exc):
+    from pathlib import Path
+    from pilot_eval.run import _write_json
+    _write_json(Path(directory)/'meta/integrity-failure.json', dict(error=str(exc), type=type(exc).__name__))
+
+
 def collect(config, items, directory, runtime, engine, *, limit=None):
-    """Singleton generation with independently sealed records and strict resume identity."""
-    import hashlib
+    """Generation in sealed 16-question groups per variant, with strict resume identity."""
     import json
-    import statistics
     from pathlib import Path
     from pilot_eval.run import _write_json, _write_state
     from pilot_eval.stage0_evaluation import _jsonl
@@ -194,46 +219,51 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
         row['prompt_sha256']=_hash(item['prompt'])
     _save_frozen(directory/'inputs/tokenized-prompts.json',inputs)
     rh=file_hash(directory/'meta/runtime.json'); ih=file_hash(directory/'inputs/tokenized-prompts.json'); items_hash=file_hash(directory/'inputs/items.json')
+    by_id={i['id']:i for i in items}
     all_rows=[]; new=0; total=len(items)*len(variants)
     def check(full=False):
         try:
             proof=engine.check_integrity(full=full)
             if not all(proof.get(k) is True for k in ('base_unchanged','adapters_unchanged')):
-                raise ValueError('Model integrity failed.')
+                raise IntegrityFailure('Model integrity failed.')
             return proof
         except Exception as exc:
-            _write_json(directory/'meta/integrity-failure.json',dict(error=str(exc)))
+            mark_integrity_failure(directory,exc)
             raise
-    for variant in variants:
-        for index,item in enumerate(items):
-            key=hashlib.sha256((variant+'\0'+str(item['id'])).encode()).hexdigest()
-            unit=dict(key=key,variant=variant,ids=[item['id']],seed=config['seed']+index//16)
-            folder=directory/'units'/key; seal=folder/'complete.json'; payload=folder/'responses.jsonl'; proof=folder/'integrity.json'
-            if seal.exists():
-                marker=json.loads(seal.read_text())
-                expected=dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
-                              responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof))
-                if marker != expected: raise ValueError('Saved response unit changed.')
-                evidence=json.loads(proof.read_text())
-                if any(not all(evidence[s].get(k) is True for k in ('base_unchanged','adapters_unchanged')) for s in ('before','after')):
-                    raise ValueError('Saved unit integrity failed.')
-                saved=[json.loads(line) for line in payload.read_text().splitlines()]
-                output=[{k:r[k] for k in OUTPUT_FIELDS} for r in saved]
-                if saved != records(config,unit,[item],output,runtime_sha256=rh,input_sha256=ih):
-                    raise ValueError('Saved response scoring changed.')
-            elif limit is None or new < limit:
-                before=check(); output=engine.generate([item],variant,unit['seed']); after=check()
-                saved=records(config,unit,[item],output,runtime_sha256=rh,input_sha256=ih)
-                _jsonl(payload,saved); _write_json(proof,dict(before=before,after=after))
-                _write_json(seal,dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
-                            responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof)))
-                new += 1
-                print(f'Cut evaluation: {len(all_rows)+1}/{total} {variant} {item["id"]}',flush=True)
-            else:
-                _write_state(directory,'incomplete',len(all_rows),total)
-                return dict(state='incomplete',completed=len(all_rows),total=total)
-            all_rows.extend(saved)
-            _write_state(directory,'running',len(all_rows),total)
+    for unit,selected in units(config,items):
+        folder=directory/'units'/unit['key']; seal=folder/'complete.json'; payload=folder/'responses.jsonl'; proof=folder/'integrity.json'
+        if seal.exists():
+            marker=json.loads(seal.read_text())
+            expected=dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
+                          responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof))
+            if marker != expected: raise ValueError('Saved response unit changed.')
+            evidence=json.loads(proof.read_text())
+            if any(not all(evidence[s].get(k) is True for k in ('base_unchanged','adapters_unchanged')) for s in ('before','after')):
+                raise ValueError('Saved unit integrity failed.')
+            saved=[json.loads(line) for line in payload.read_text().splitlines()]
+            output=[{k:r[k] for k in OUTPUT_FIELDS} for r in saved]
+            if saved != records(config,unit,selected,output,runtime_sha256=rh,input_sha256=ih):
+                raise ValueError('Saved response scoring changed.')
+        elif limit is None or new < limit:
+            before=check();output=[]
+            for batch in unit['generation_batches']:
+                try:generated=engine.generate([by_id[i] for i in batch],unit['variant'],unit['seed'])
+                except IntegrityFailure as exc:
+                    mark_integrity_failure(directory,exc);raise
+                if len(generated)!=len(batch):raise ValueError('Wrong generation response count.')
+                output.extend(generated)
+            after=check()
+            saved=records(config,unit,selected,output,runtime_sha256=rh,input_sha256=ih)
+            _jsonl(payload,saved); _write_json(proof,dict(before=before,after=after))
+            _write_json(seal,dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
+                        responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof)))
+            new += 1
+            print(f'Cut evaluation: {len(all_rows)+len(saved)}/{total} {unit["key"]}',flush=True)
+        else:
+            _write_state(directory,'incomplete',len(all_rows),total)
+            return dict(state='incomplete',completed=len(all_rows),total=total)
+        all_rows.extend(saved)
+        _write_state(directory,'running',len(all_rows),total)
     final=check(full=True)
     _save_frozen(directory/'meta/final-integrity.json',final)
     final_hash=file_hash(directory/'meta/final-integrity.json')
@@ -259,5 +289,7 @@ def summarize(config, all_rows):
         if not rows: raise ValueError('Missing variant responses.')
         summaries[variant]=dict(n=len(rows),accuracy=sum(r['flexible']['correct'] for r in rows)/len(rows),
             strict_accuracy=sum(r['strict']['correct'] for r in rows)/len(rows),
-            mean_tokens=statistics.mean(r['token_count'] for r in rows),cap_count=sum(r['capped'] for r in rows))
-    return dict(state='complete',total=len(all_rows),variants=summaries,batch_size=1)
+            mean_tokens=statistics.mean(r['token_count'] for r in rows),cap_count=sum(r['capped'] for r in rows),
+            inference_batch_size=config.get('batch_sizes',{}).get(variant,1))
+    return dict(state='complete',total=len(all_rows),variants=summaries,
+                batch_membership='ordered 16-question groups, tail 6; identical across variants')

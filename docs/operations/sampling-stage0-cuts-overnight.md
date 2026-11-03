@@ -1,32 +1,38 @@
 # Sampling Stage 0 principal-cut overnight run
 
-This is a separate run over the existing sealed Sampling Stage 0 geometry and behaviour plans. It uses each endpoint's rank-one adapter and the top singular vectors of the **base** weight matrix covering 50% of squared singular-value energy. Per arm it evaluates original, principal output and input removal, three random-output controls (seeds 1000–1002), and output/input per-module magnitude controls. With k0, k2 and k5 and 150 questions this is 24 variants and 3,600 fresh singleton responses. There is no inherited batch agreement. The run can take longer than overnight; no completion-time promise is implied.
+A separate run over the existing sealed Sampling Stage 0 geometry and behaviour plans. It uses each endpoint's rank-one adapter and the top singular vectors of the **base** weight matrix covering 50% of squared singular-value energy (the original Stage 0 edit maths, unchanged). Per arm it evaluates the original, principal output and input removal, three random-output controls (seeds 1000-1002), and output/input per-module magnitude controls: 24 variants x 150 questions = 3,600 responses.
 
-Use the checked-out reviewed revision, the original RunPod persistent volume and the already provisioned, pinned A100 environment from `sampling-stage0-overnight.md`. The source geometry plan, original behaviour plan, model snapshot, and sealed training checkpoints must all be present under the same artifact root. The geometry source is reverified, and the base SVD is recomputed once per module; its principal bases, edited factors and checks are sealed for resume. This extension does not modify existing training code or source artifacts. The private HF preflight creates a small JSON commit before the build, and the export is accepted only after complete response verification and archive/index readback at an exact revision.
+## Stages
 
-After the reviewed branch is available on the Pod and the shell is in that checkout:
+1. **prepare / preflight**: freeze the plan; prove private HF write and exact-revision readback.
+2. **build (CPU)**: base SVD per module, edited factors and 24 PEFT adapters, all sealed and resumable.
+3. **batch agreement**: the original Stage 0 batch16 protocol (ADR 0014). Every variant gets batched-vs-singleton FP32 answer-position logits and the cached decode step at the 16 and tail-6 shapes, within the unchanged 1e-3 gate. The first and last arm's principal output cuts (as V1/V5 were for Gold/GRPO) get batched greedy replay against fresh singleton answers: exact, or a measured near tie. A variant batches only if its numeric units pass and its arm's replay passes; otherwise it generates one question at a time.
+4. **evaluation**: ordered 16-question groups (tail 6), identical across variants, sealed per variant and group. Requires the agreement's hardware/software environment.
+5. **verify**: every unit, summary, adapter and agreement binding re-checked on CPU; `results/consistency.json` compares each arm's fresh *original* answers with the a100-stage0-v1 behaviour answers (same adapters, decoder and batch membership; exact matches are expected in the same environment).
+6. **export**: verified tree to the private HF repo, read back from an empty cache. Base singular vectors (`bases.npz`, about 1.6 GB) stay sealed on the volume and are not uploaded; they are deterministic from the hashed base weights.
 
-```bash
-export OUTPUT_ROOT=/workspace/artifacts
-export GEOMETRY_PLAN="$OUTPUT_ROOT/plans/a100-stage0-v1/sampling-stage0.geometry.json"
-export RUN_NAME=a100-stage0-cuts-v1
-export HF_REPO=Prasadmahadik/spar-sampling-sft-artifacts
-export BUILD_SECONDS=86400
-export EVAL_SECONDS=86400
-export TRANSFER_SECONDS=3600
-# HF_TOKEN must already be present in the shell environment or configured with hf auth.
-tmux new-session -d -s sampling-cuts 'bash scripts/sampling_stage0_cuts_overnight.sh'
-```
+Timing on the A100 measured on 2026-11-02: one question at a time 9.4 tokens/s (about 34 s per answer); batch 16 about 4.9 s per answer. Expect roughly 25 min build, 30-40 min agreement, about 5 h evaluation. A variant that falls back to one at a time adds about 1.4 h. The script does not stop the Pod.
 
-Inspect progress and logs:
+## Launch
+
+Use the pinned A100 environment, the original volume and a detached checkout of the reviewed commit.
 
 ```bash
-RUN_DIR="$OUTPUT_ROOT/runs/stage0/$RUN_NAME/principal-cuts"
-python -m pilot_eval.sampling_stage0_cut_workflow status --run-dir "$RUN_DIR"
-tail -f "$RUN_DIR/logs/overnight.log"
-tmux attach -t sampling-cuts
+tmux new-session -d -s sampling-cuts 'cd /root/spar-pilot-stage0 && export PYTHON=/root/stage0-venv/bin/python OUTPUT_ROOT=/workspace/artifacts GEOMETRY_PLAN=/workspace/artifacts/plans/a100-stage0-v1/sampling-stage0.geometry.json RUN_NAME=a100-stage0-cuts-v1 HF_REPO=Prasadmahadik/spar-sampling-sft-artifacts HF_HUB_CACHE=/root/hf-stage0-cache && bash scripts/sampling_stage0_cuts_overnight.sh'
 ```
 
-Detach with `Ctrl-b`, then `d`. On failure, inspect the status and log, fix the cause without changing frozen sources or implementation, and rerun the same script with the same environment and name. Completed cut modules and response records are checked and skipped. A runtime hardware/software difference, source drift, integrity failure, or modified seal stops resume; do not delete evidence to bypass it. A deadline stops the child and leaves partial artifacts; increase the relevant limit only after reviewing the status. The script does not stop or terminate the Pod.
+`PYTHON` must be the pinned venv interpreter; the script refuses to start otherwise and checks the pinned package versions first. Optional: `GPU` (default A100), `RETRIES` (default 1), `BUILD_SECONDS`/`AGREEMENT_SECONDS` (default 4 h), `EVAL_SECONDS` (default 12 h), `TRANSFER_SECONDS` (default 1 h).
 
-Successful completion records the exact private Hub revision and archive/index hashes in `meta/hf-upload.json`. The local response file contains raw tokens, extracted scores, cap information and prompts; automatic scoring has not received human review. Real A100 execution and adapter switching require a live smoke check: the CPU fixtures alone do not establish GPU correctness, speed or memory use.
+Each crashed stage is relaunched once and resumes from sealed units. An integrity failure (base or adapter changed, including during an adapter switch) is recorded in `meta/integrity-failure.json`, is never retried, and blocks reuse until investigated.
+
+## Watch
+
+```bash
+tail -n 30 -F /workspace/artifacts/runs/stage0/a100-stage0-cuts-v1/principal-cuts/logs/overnight.log
+```
+
+```bash
+/root/stage0-venv/bin/python -m pilot_eval.sampling_stage0_cut_workflow status --run-dir /workspace/artifacts/runs/stage0/a100-stage0-cuts-v1/principal-cuts
+```
+
+Status shows the stage, each variant's batch size once the agreement finishes, progress, the consistency report and the export receipt. After any stop, inspect status and log, then rerun the same command: completed work is checked and skipped. Do not change the checkout mid-run: the plan freezes implementation hashes.
