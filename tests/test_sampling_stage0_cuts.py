@@ -71,3 +71,23 @@ def test_assemble_preserves_reference_and_writes_all_edits(tmp_path):
     assert (tmp_path/paths['a-original']['adapter_path']/'adapter_model.safetensors').read_bytes()==(source/'adapter_model.safetensors').read_bytes()
     edited=read(tmp_path/paths['a-output']['adapter_path'])
     assert not np.array_equal(edited[module][1],b)
+
+
+def test_collect_resumes_and_rejects_runtime_change(tmp_path):
+    from pilot_eval.sampling_stage0_cuts import collect
+    config={'variants':{'a-original':{'source_arm':'a','operation':'original'}},'variant_order':['a-original'],
+            'seed':42,'scorer':'gsm8k-flexible-v3','decoding':{'max_new_tokens':3,'eos_token_id':2},'adapter_files':{}}
+    items=[{'id':'one','prompt':'one','gold':'1'},{'id':'two','prompt':'two','gold':'1'}]
+    class Engine:
+        def __init__(self): self.calls=[]
+        def prepare_inputs(self, rows): return [{'id':r['id'],'input_ids':[1], 'attention_mask':[1]} for r in rows]
+        def check_integrity(self,full=False): return {'base_unchanged':True,'adapters_unchanged':True}
+        def generate(self,rows,variant,seed):
+            self.calls.append(rows[0]['id'])
+            return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos')]
+    engine=Engine()
+    assert collect(config,items,tmp_path,{'device':'fake'},engine,limit=1)['state']=='incomplete'
+    assert collect(config,items,tmp_path,{'device':'fake'},engine)['state']=='complete'
+    assert engine.calls==['one','two']
+    with pytest.raises(ValueError,match='runtime'):
+        collect(config,items,tmp_path,{'device':'changed'},engine)

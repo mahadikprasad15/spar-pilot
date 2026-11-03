@@ -156,3 +156,93 @@ def assemble(directory, root, sources, originals, modules, *, identity, load_fac
                 ('adapter_config.json','adapter_model.safetensors')}))
         result[name] = dict(adapter_path=str(target.resolve().relative_to(root)),**definition)
     return result
+
+
+def collect(config, items, directory, runtime, engine, *, limit=None):
+    """Singleton generation with independently sealed records and strict resume identity."""
+    import hashlib
+    import json
+    import statistics
+    from pathlib import Path
+    from pilot_eval.run import _write_json, _write_state
+    from pilot_eval.stage0_evaluation import _jsonl
+    from pilot_eval.stage0_evaluation_records import OUTPUT_FIELDS, records
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash, _save_frozen
+
+    directory = Path(directory)
+    variants = config['variant_order']
+    if (not variants or len(set(variants)) != len(variants) or set(variants) != set(config['variants'])
+            or not items or len({i['id'] for i in items}) != len(items)
+            or (limit is not None and (type(limit) is not int or limit < 0))):
+        raise ValueError('Invalid evaluation scope.')
+    if (directory/'meta/integrity-failure.json').exists():
+        raise ValueError('Prior integrity failure; preserve the run.')
+    for path,value,label in [(directory/'config.json',config,'config'),(directory/'meta/runtime.json',runtime,'runtime')]:
+        if path.exists() and json.loads(path.read_text()) != value:
+            raise ValueError(f'Resume {label} differs from saved {label}.')
+        _save_frozen(path,value)
+    inputs=engine.prepare_inputs(items)
+    if [r['id'] for r in inputs] != [r['id'] for r in items]: raise ValueError('Input order mismatch.')
+    for row,item in zip(inputs,items):
+        if not row['input_ids'] or row['attention_mask'] != [1]*len(row['input_ids']):
+            raise ValueError('Invalid tokenized input.')
+        row['prompt_sha256']=_hash(item['prompt'])
+    _save_frozen(directory/'inputs/tokenized-prompts.json',inputs)
+    rh=file_hash(directory/'meta/runtime.json'); ih=file_hash(directory/'inputs/tokenized-prompts.json')
+    all_rows=[]; new=0; total=len(items)*len(variants)
+    def check(full=False):
+        proof=engine.check_integrity(full=full)
+        if not all(proof.get(k) is True for k in ('base_unchanged','adapters_unchanged')):
+            _write_json(directory/'meta/integrity-failure.json',proof)
+            raise ValueError('Model integrity failed.')
+        return proof
+    for variant in variants:
+        for index,item in enumerate(items):
+            key=hashlib.sha256((variant+'\0'+str(item['id'])).encode()).hexdigest()
+            unit=dict(key=key,variant=variant,ids=[item['id']],seed=config['seed']+index//16)
+            folder=directory/'units'/key; seal=folder/'complete.json'; payload=folder/'responses.jsonl'; proof=folder/'integrity.json'
+            if seal.exists():
+                marker=json.loads(seal.read_text())
+                expected=dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,
+                              responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof))
+                if marker != expected: raise ValueError('Saved response unit changed.')
+                evidence=json.loads(proof.read_text())
+                if any(not all(evidence[s].get(k) is True for k in ('base_unchanged','adapters_unchanged')) for s in ('before','after')):
+                    raise ValueError('Saved unit integrity failed.')
+                saved=[json.loads(line) for line in payload.read_text().splitlines()]
+                output=[{k:r[k] for k in OUTPUT_FIELDS} for r in saved]
+                if saved != records(config,unit,[item],output,runtime_sha256=rh,input_sha256=ih):
+                    raise ValueError('Saved response scoring changed.')
+            elif limit is None or new < limit:
+                before=check(); output=engine.generate([item],variant,unit['seed']); after=check()
+                saved=records(config,unit,[item],output,runtime_sha256=rh,input_sha256=ih)
+                _jsonl(payload,saved); _write_json(proof,dict(before=before,after=after))
+                _write_json(seal,dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,
+                            responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof)))
+                new += 1
+                print(f'Cut evaluation: {len(all_rows)+1}/{total} {variant} {item["id"]}',flush=True)
+            else:
+                _write_state(directory,'incomplete',len(all_rows),total)
+                return dict(state='incomplete',completed=len(all_rows),total=total)
+            all_rows.extend(saved)
+            _write_state(directory,'running',len(all_rows),total)
+    check(full=True)
+    summaries={}
+    for variant in variants:
+        rows=[r for r in all_rows if r['variant']==variant]
+        summaries[variant]=dict(n=len(rows),accuracy=sum(r['flexible']['correct'] for r in rows)/len(rows),
+            strict_accuracy=sum(r['strict']['correct'] for r in rows)/len(rows),
+            mean_tokens=statistics.mean(r['token_count'] for r in rows),cap_count=sum(r['capped'] for r in rows))
+    result=dict(state='complete',total=total,variants=summaries,batch_size=1)
+    response=directory/'results/responses.jsonl'; summary=directory/'results/results.json'; complete=directory/'complete.json'
+    if complete.exists():
+        if json.loads(complete.read_text()) != dict(config_sha256=_hash(config),responses_sha256=file_hash(response),results_sha256=file_hash(summary)):
+            raise ValueError('Completed result changed.')
+        if [json.loads(x) for x in response.read_text().splitlines()] != all_rows or json.loads(summary.read_text()) != result:
+            raise ValueError('Completed aggregate changed.')
+    else:
+        _jsonl(response,all_rows);_write_json(summary,result)
+        _write_json(complete,dict(config_sha256=_hash(config),responses_sha256=file_hash(response),results_sha256=file_hash(summary)))
+    _write_state(directory,'complete',total,total)
+    return result
