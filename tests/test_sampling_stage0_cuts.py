@@ -116,3 +116,22 @@ def test_export_refuses_incomplete_and_verifies_remote_readback(tmp_path):
     run=tmp_path/'runs'/'x';run.mkdir(parents=True)
     with pytest.raises(ValueError,match='complete'):
         export(run,tmp_path,repo='test/private',client=Hub())
+
+
+def test_switch_adapter_verifies_before_and_after_swap(monkeypatch,tmp_path):
+    from pilot_eval.sampling_stage0_cut_backend import CutEngine
+    from pilot_eval import sampling_stage0_cut_backend as backend
+    calls=[]
+    class Model:
+        def load_adapter(self,path,adapter_name,is_trainable): calls.append(('load',adapter_name))
+        def set_adapter(self,name): calls.append(('set',name))
+        def delete_adapter(self,name): calls.append(('delete',name))
+    engine=CutEngine.__new__(CutEngine); engine.model=Model();engine.root=tmp_path
+    engine.config={'variants':{'a':{'adapter_path':'a'},'b':{'adapter_path':'b'}}}; engine.current='a'
+    engine._versions=lambda adapters=False: {'guard':1}
+    engine.check_integrity=lambda full=False: {'base_unchanged':True,'adapters_unchanged':True}
+    monkeypatch.setattr(backend,'verify_loaded_adapter',lambda model,name,path: calls.append(('verify',name)))
+    (tmp_path/'b').mkdir()
+    engine.select('b')
+    assert calls==[('load','b'),('set','b'),('verify','b'),('delete','a')]
+    assert engine.current=='b'
