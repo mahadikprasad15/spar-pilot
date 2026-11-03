@@ -66,6 +66,15 @@ def assess(config, values):
         batch_sizes={v: GROUP if variants[v]['batching_qualified'] else 1 for v in config['variant_order']})
 
 
+def _intact(directory, engine, *, full=False, message):
+    """An exception inside the check is as much an integrity failure as a failed check."""
+    from pilot_eval.sampling_stage0_evaluation import require_intact
+    try:proof = engine.check_integrity(full=full)
+    except Exception as exc:
+        mark_integrity_failure(directory, exc); raise
+    return require_intact(directory, proof, message=message)
+
+
 def _sealed(config, directory, unit):
     folder = directory/'units'/unit['key']
     if not (folder/'complete.json').exists():return None
@@ -78,7 +87,7 @@ def _sealed(config, directory, unit):
 def run(config, items, directory, runtime, engine):
     """Collect every sealed agreement unit; caller owns the lock, deadline and engine lifetime."""
     import time
-    from pilot_eval.sampling_stage0_evaluation import environment, no_prior_integrity_failure, require_intact
+    from pilot_eval.sampling_stage0_evaluation import environment, no_prior_integrity_failure
     directory = Path(directory); no_prior_integrity_failure(directory)
     env = environment(runtime); runtime_path = directory/'meta/runtime.json'
     for path, value, label in [(directory/'config.json', config, 'config'), (runtime_path, env, 'runtime')]:
@@ -107,14 +116,14 @@ def run(config, items, directory, runtime, engine):
                 if len(responses) != len(rows):raise ValueError('Wrong batched response count.')
                 value = replay(config, unit, rows, responses, references, engine)
             value['seconds'] = time.monotonic()-begin
-            require_intact(directory, engine.check_integrity(), message='Model integrity failed during cut batch agreement.')
+            _intact(directory, engine, message='Model integrity failed during cut batch agreement.')
             folder = directory/'units'/unit['key']; _write_json(folder/'result.json', value)
             _write_json(folder/'complete.json', dict(config_sha256=_hash(config), unit=unit,
                 runtime_sha256=file_hash(runtime_path), sha256=file_hash(folder/'result.json')))
             values[i] = value; _write_state(directory, 'running', sum(v is not None for v in values), len(values))
     except IntegrityFailure as exc:
         mark_integrity_failure(directory, exc); raise
-    proof = require_intact(directory, engine.check_integrity(full=True), message='Final model integrity failed.')
+    proof = _intact(directory, engine, full=True, message='Final model integrity failed.')
     _write_json(directory/'meta/final-integrity.json', proof)
     result = {**assess(config, values), 'environment': env}
     _write_json(directory/'results/agreement.json', result)

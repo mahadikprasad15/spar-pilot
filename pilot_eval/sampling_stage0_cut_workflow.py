@@ -25,6 +25,12 @@ def export(directory, root, *, repo, client=None):
         # Base singular vectors (~1.6 GB) are deterministic from the hashed base weights and stay sealed on the volume.
         if path.name=='bases.npz': return False
         return True
+    omitted={str(p.relative_to(directory)):file_hash(p) for p in sorted(directory.rglob('bases.npz'))}
+    record=dict(files=omitted,reason='base singular vectors; deterministic from the hashed base weights; kept on the volume')
+    path=directory/'meta/omitted-files.json'
+    if path.exists():
+        if json.loads(path.read_text())!=record:raise ValueError('Omitted-file record changed.')
+    else:_write_json(path,record)
     files=sorted(p for p in directory.rglob('*') if eligible(p))
     manifest={str(p.relative_to(root)):file_hash(p) for p in files}
     identity=hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -66,8 +72,12 @@ def _fresh_hash(client, repo, name, revision):
         return file_hash(hf_hub_download(repo,name,repo_type='dataset',revision=revision,cache_dir=temp,force_download=True))
 
 
-def verify(directory):
-    """Verify complete aggregate and every response unit without loading a model."""
+def verify(directory, *, restored=False):
+    """Verify complete aggregate and every response unit without loading a model.
+
+    restored=True verifies a downloaded export away from the artifact volume: everything in
+    the bundle, with omitted base vectors accepted only through their recorded hashes; the
+    volume-only sources (plan, geometry, training, behaviour answers) are not available."""
     import hashlib
     from pilot_eval.training import file_hash
     from pilot_eval.workflow import _hash
@@ -76,7 +86,7 @@ def verify(directory):
     if not (directory/'complete.json').is_file(): raise ValueError('Run is not complete.')
     config=json.loads((directory/'config.json').read_text())
     if config.get('protocol')=='sampling-principal-cut-evaluation-v2':
-        check_products(config,directory);_agreement_binding(config,directory)
+        check_products(config,directory,restored=restored);_agreement_binding(config,directory)
     items=json.loads((directory/'inputs/items.json').read_text())
     inputs=json.loads((directory/'inputs/tokenized-prompts.json').read_text())
     if [r['id'] for r in inputs] != [r['id'] for r in items]: raise ValueError('Input identity changed.')
@@ -107,8 +117,11 @@ def verify(directory):
     from pilot_eval.sampling_stage0_cuts import summarize
     if result!=summarize(config,rows): raise ValueError('Result summary does not match responses.')
     if config.get('protocol')=='sampling-principal-cut-evaluation-v2':
-        if json.loads((directory/'results/consistency.json').read_text())!=consistency(config,rows,directory):
+        saved_report=json.loads((directory/'results/consistency.json').read_text())
+        # Restored copies lack the behaviour answers it was computed from; it stays as sealed evidence.
+        if not restored and saved_report!=consistency(config,rows,directory):
             raise ValueError('Consistency report does not match responses.')
+    if restored:result={**result,'verification_scope':'restored export: bundle contents and recorded omissions; volume sources not rechecked'}
     return result
 
 
@@ -192,7 +205,7 @@ def build(path,root,*,limit=None):
         return dict(state='complete',variants=len(variants),modules=len(modules),sources=str(directory/'cut-sources.json'))
 
 
-def check_products(config,directory):
+def check_products(config,directory,*,restored=False):
     import hashlib
     from pilot_eval.stage0_sources import inside
     from pilot_eval.training import file_hash
@@ -201,22 +214,29 @@ def check_products(config,directory):
     parts=Path(config['run_path']).parts
     root=directory.parents[len(parts)-1]
     if (root/config['run_path']).resolve()!=directory:raise ValueError('Run path identity changed.')
-    plan,source=load_plan(inside(root,config['plan_path']),root)
-    if config['plan_sha256']!=_hash(plan) or config['implementation']!=implementation():
-        raise ValueError('Cut plan or implementation changed.')
-    if config['geometry_plan']!=plan['geometry_path'] or config['geometry_sha256']!=plan['geometry_sha256']:
-        raise ValueError('Geometry binding changed.')
+    if not restored:
+        plan,source=load_plan(inside(root,config['plan_path']),root)
+        if config['plan_sha256']!=_hash(plan) or config['implementation']!=implementation():
+            raise ValueError('Cut plan or implementation changed.')
+        if config['geometry_plan']!=plan['geometry_path'] or config['geometry_sha256']!=plan['geometry_sha256']:
+            raise ValueError('Geometry binding changed.')
     for variant,files in config['adapter_files'].items():
         folder=inside(root,config['variants'][variant]['adapter_path'])
         if any(file_hash(folder/n)!=digest for n,digest in files.items()):raise ValueError('Cut adapter changed.')
     build=directory/'build'; binding=json.loads((build/'build-config.json').read_text())
-    if binding['identity']!=_hash(plan) or binding['modules']!=list(source['modules']):
+    if binding['identity']!=config['plan_sha256'] or (not restored and binding['modules']!=list(source['modules'])):
         raise ValueError('Cut build identity changed.')
+    omitted=json.loads((directory/'meta/omitted-files.json').read_text())['files'] if restored else {}
     for module in binding['modules']:
         folder=build/'units'/hashlib.sha256(module.encode()).hexdigest()
-        expected=dict(config_sha256=_hash(binding),module=module,
-            files={n:file_hash(folder/n) for n in ('factors.npz','bases.npz','checks.json')})
-        if json.loads((folder/'complete.json').read_text())!=expected:raise ValueError('Cut build unit changed.')
+        files={}
+        for n in ('factors.npz','bases.npz','checks.json'):
+            if (folder/n).exists():files[n]=file_hash(folder/n)
+            elif restored and n=='bases.npz':files[n]=omitted.get(str((folder/n).relative_to(directory)))
+            else:raise ValueError(f'Cut build file missing: {folder/n}')
+        expected=dict(config_sha256=_hash(binding),module=module,files=files)
+        if json.loads((folder/'complete.json').read_text())!=expected:
+            raise ValueError('Cut build unit changed or its omitted basis record differs.')
 
 
 def hf_preflight(directory, repo, plan_hash, *, client=None):
@@ -303,7 +323,7 @@ def _agreement_binding(config,directory):
     return result
 
 
-def evaluation_plan(sources,directory):
+def evaluation_plan(sources,directory,items):
     """Freeze the production plan: verified sources plus each variant's agreement-backed batch size."""
     from pilot_eval import sampling_stage0_cut_agreement as cut_agreement
     from pilot_eval.training import file_hash
@@ -311,6 +331,8 @@ def evaluation_plan(sources,directory):
     folder=Path(directory)/'batch-agreement'
     if not (folder/'complete.json').exists():raise ValueError('Run the cut batch agreement before evaluation.')
     agreement_config=json.loads((folder/'config.json').read_text())
+    if agreement_config!=cut_agreement.configuration(sources,items):
+        raise ValueError('Batch agreement was measured on different cut sources; rerun it under a new name.')
     result=cut_agreement.verify(agreement_config,folder)
     return {**sources,'protocol':'sampling-principal-cut-evaluation-v2','batch_sizes':result['batch_sizes'],
             'batch_agreement':dict(sources_sha256=_hash(sources),complete_sha256=file_hash(folder/'complete.json'),
@@ -351,7 +373,7 @@ def run(path,root,*,repo,limit=None,deadline_seconds=86400,client=None):
     from pilot_eval.workflow import _hash, _save_frozen
     if deadline_seconds<=0:raise ValueError('Positive deadline required.')
     root,plan,directory,sources,items=_sources(path,root)
-    config=evaluation_plan(sources,directory)
+    config=evaluation_plan(sources,directory,items)
     _save_frozen(directory/'evaluation-plan.json',config)
     hf_preflight(directory,repo,_hash(plan),client=client)
     deps,runtime=_runtime(plan)
@@ -397,6 +419,7 @@ def main(argv=None):
         if command=='run':p.add_argument('--repo',required=True)
     for command in ('verify','status'):
         p=sub.add_parser(command);p.add_argument('--run-dir',required=True)
+        if command=='verify':p.add_argument('--restored',action='store_true',help='Verify a downloaded export away from the volume.')
     p=sub.add_parser('export');p.add_argument('--run-dir',required=True);p.add_argument('--output-root',required=True);p.add_argument('--repo',required=True)
     args=parser.parse_args(argv)
     if args.command=='prepare':result=str(prepare(args.geometry,args.output_root,args.name,gpu=args.gpu))
@@ -411,7 +434,7 @@ def main(argv=None):
         if args.deadline_seconds<=0:raise ValueError('Positive deadline required.')
         with deadline_guard(args.deadline_seconds,True):result=build(args.plan,args.output_root,limit=args.max_new_units)
     elif args.command=='run':result=run(args.plan,args.output_root,repo=args.repo,limit=args.max_new_units,deadline_seconds=args.deadline_seconds)
-    elif args.command=='verify':result=verify(args.run_dir)
+    elif args.command=='verify':result=verify(args.run_dir,restored=args.restored)
     elif args.command=='status':result=status(args.run_dir)
     else:result=export(args.run_dir,args.output_root,repo=args.repo)
     print(json.dumps(result,indent=2,sort_keys=True))

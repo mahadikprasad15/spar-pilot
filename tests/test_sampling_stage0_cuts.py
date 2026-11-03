@@ -210,6 +210,23 @@ def test_fixture_workflow_build_run_verify_export(tmp_path,monkeypatch):
     directory=tmp_path/'runs/stage0/test/principal-cuts'
     assert workflow.verify(directory)['state']=='complete'
     assert json.loads((directory/'results/consistency.json').read_text())['state']=='behaviour-responses-unavailable'
+    # A downloaded export omits the reconstructible bases yet still verifies, with that omission recorded.
+    import tarfile
+    store={}
+    class Hub:
+        def info(self,repo): return type('Info',(),{'private':True})()
+        def publish(self,repo,files): store.update({k:p.read_bytes() for k,p in files.items()}); return 'b'*40
+        def fetch(self,repo,name,revision):
+            p=tmp_path/'remote.bin';p.write_bytes(store[name]);return p
+    receipt=workflow.export(directory,tmp_path,repo='private/repo',client=Hub())
+    restored=tmp_path/'restored';restored.mkdir();(tmp_path/'bundle.tar.gz').write_bytes(store[receipt['archive']])
+    with tarfile.open(tmp_path/'bundle.tar.gz') as bundle:bundle.extractall(restored,filter='data')
+    copy=restored/'runs/stage0/test/principal-cuts'
+    assert not list(copy.rglob('bases.npz')) and (copy/'meta/omitted-files.json').is_file()
+    assert workflow.verify(copy,restored=True)['state']=='complete'
+    omitted=json.loads((copy/'meta/omitted-files.json').read_text())
+    key=next(iter(omitted['files']));omitted['files'][key]='0'*64;(copy/'meta/omitted-files.json').write_text(json.dumps(omitted))
+    with pytest.raises(ValueError,match='omitted'):workflow.verify(copy,restored=True)
     adapter=directory/'build/adapters/x-output/adapter_model.safetensors'
     content=adapter.read_bytes();adapter.write_bytes(b'corrupt')
     with pytest.raises(ValueError,match='adapter'):workflow.verify(directory)

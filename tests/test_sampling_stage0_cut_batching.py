@@ -120,3 +120,24 @@ def test_consistency_compares_fresh_originals_with_yesterdays_behaviour(tmp_path
             for i in range(3)]
     report = consistency(config, rows, run)['arms']['a']
     assert report['compared'] == 3 and report['exact_token_matches'] == 2 and report['differing_ids'] == ['q0']
+
+
+def test_exception_inside_agreement_integrity_check_is_persisted(tmp_path):
+    class Broken(Engine):
+        def check_integrity(self, full=False): raise RuntimeError('guard crashed')
+    with pytest.raises(RuntimeError, match='guard crashed'):
+        run_agreement(tmp_path, Broken())
+    assert (tmp_path/'meta/integrity-failure.json').exists()
+    with pytest.raises(ValueError, match='Prior integrity'):
+        run_agreement(tmp_path, Engine())
+
+
+def test_agreement_for_other_sources_is_rejected_before_any_model_load(tmp_path):
+    from pilot_eval.sampling_stage0_cut_workflow import evaluation_plan
+    src = sources(); cohort = items()
+    config = cut_agreement.configuration(src, cohort)
+    cut_agreement.run(config, cohort, tmp_path/'batch-agreement', {'device': 'NVIDIA A100'}, Engine())
+    changed = dict(src, decoding={**src['decoding'], 'max_new_tokens': 9})
+    with pytest.raises(ValueError, match='different cut sources'):
+        evaluation_plan(changed, tmp_path, cohort)
+    assert evaluation_plan(src, tmp_path, cohort)['batch_sizes'] == {v: 16 for v in src['variants']}
