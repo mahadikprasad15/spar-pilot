@@ -47,3 +47,27 @@ def test_build_resumes_sealed_units_and_rejects_changed_payload(tmp_path):
     unit.write_bytes(b'corrupt')
     with pytest.raises(ValueError, match='changed'):
         build_modules(tmp_path, ['one','two'], adapters, load, identity='abc')
+
+
+def test_assemble_preserves_reference_and_writes_all_edits(tmp_path):
+    from pilot_eval.sampling_stage0_cuts import build_modules, assemble
+    from pilot_eval.stage0_edits import _save_tensors
+    from pilot_eval.stage0_sources import factors
+    import json
+    rng = np.random.default_rng(6)
+    module='base_model.model.layer'
+    a=rng.normal(size=(1,40)).astype('f4'); b=rng.normal(size=(40,1)).astype('f4')
+    source=tmp_path/'source'; source.mkdir()
+    (source/'adapter_config.json').write_text('{}')
+    _save_tensors(source/'adapter_model.safetensors', {module+'.lora_A.weight':a,module+'.lora_B.weight':b})
+    originals={'a':{module:(a,b)}}
+    build_modules(tmp_path/'build',[module],originals,lambda _:rng.normal(size=(40,40)),identity='test')
+    from pilot_eval.trace_readout_assets import read_weight
+    def read(folder):
+        path=folder/'adapter_model.safetensors'
+        return {module:(read_weight(path,module+'.lora_A.weight'), read_weight(path,module+'.lora_B.weight'))}
+    paths=assemble(tmp_path/'build',tmp_path,{'a':source},originals,[module],identity='test',load_factors=read)
+    assert len(paths)==8
+    assert (tmp_path/paths['a-original']['adapter_path']/'adapter_model.safetensors').read_bytes()==(source/'adapter_model.safetensors').read_bytes()
+    edited=read(tmp_path/paths['a-output']['adapter_path'])
+    assert not np.array_equal(edited[module][1],b)

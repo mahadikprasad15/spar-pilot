@@ -96,3 +96,63 @@ def build_modules(directory, modules, adapters, matrix_loader, *, identity, limi
         print(f'Cut build: {module} sealed', flush=True)
     _write_state(directory, 'complete', len(modules), len(modules))
     return dict(state='complete', completed=len(modules), total=len(modules))
+
+
+def assemble(directory, root, sources, originals, modules, *, identity, load_factors=None):
+    """Materialize PEFT adapters from sealed units and verify their serialized factors."""
+    import hashlib
+    import json
+    import shutil
+    from pathlib import Path
+    import numpy as np
+    from pilot_eval.run import _write_json
+    from pilot_eval.stage0_edits import _save_tensors
+    from pilot_eval.stage0_sources import factors
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+
+    directory, root = Path(directory), Path(root).resolve()
+    config = json.loads((directory/'build-config.json').read_text())
+    if config['identity'] != identity or config['modules'] != list(modules) or config['arms'] != list(sources):
+        raise ValueError('Build identity mismatch.')
+    for module in modules:
+        folder = directory/'units'/hashlib.sha256(module.encode()).hexdigest()
+        marker = json.loads((folder/'complete.json').read_text())
+        expected = dict(config_sha256=_hash(config), module=module,
+                        files={name:file_hash(folder/name) for name in ('factors.npz','bases.npz','checks.json')})
+        if marker != expected: raise ValueError('Saved cut unit changed.')
+    result = {}
+    for name, definition in variant_catalogue(sources).items():
+        arm, operation = definition['source_arm'], definition['operation']
+        source = Path(sources[arm]); target = directory/'adapters'/name
+        target.mkdir(parents=True, exist_ok=True)
+        arrays = {module+suffix:factor.copy() for module,pair in originals[arm].items()
+                  for suffix,factor in zip(('.lora_A.weight','.lora_B.weight'),pair)}
+        if operation != 'original':
+            for module in modules:
+                unit = directory/'units'/hashlib.sha256(module.encode()).hexdigest()/'factors.npz'
+                with np.load(unit,allow_pickle=False) as saved:
+                    arrays[module+'.lora_A.weight'] = saved[name+'/a']
+                    arrays[module+'.lora_B.weight'] = saved[name+'/b']
+        # A previously sealed adapter may never be overwritten, even after interruption.
+        complete = target/'complete.json'
+        if complete.exists():
+            receipt=json.loads(complete.read_text())
+            expected=dict(identity=identity,variant=name,files={n:file_hash(target/n) for n in
+                ('adapter_config.json','adapter_model.safetensors')})
+            if receipt != expected: raise ValueError('Saved adapter changed.')
+        else:
+            shutil.copyfile(source/'adapter_config.json',target/'adapter_config.json')
+            if operation == 'original':
+                shutil.copyfile(source/'adapter_model.safetensors',target/'adapter_model.safetensors')
+            else:
+                _save_tensors(target/'adapter_model.safetensors',arrays)
+            actual=(load_factors or factors)(target)
+            if set(actual)!=set(originals[arm]) or any(
+                not np.array_equal(actual[m][i],arrays[m+suffix])
+                for m in actual for i,suffix in enumerate(('.lora_A.weight','.lora_B.weight'))):
+                raise ValueError('Serialized adapter mismatch.')
+            _write_json(complete,dict(identity=identity,variant=name,files={n:file_hash(target/n) for n in
+                ('adapter_config.json','adapter_model.safetensors')}))
+        result[name] = dict(adapter_path=str(target.resolve().relative_to(root)),**definition)
+    return result
