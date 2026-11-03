@@ -135,3 +135,63 @@ def test_switch_adapter_verifies_before_and_after_swap(monkeypatch,tmp_path):
     engine.select('b')
     assert calls==[('load','b'),('set','b'),('verify','b'),('delete','a')]
     assert engine.current=='b'
+
+
+def test_cli_verifies_completed_fixture(tmp_path, capsys):
+    from pilot_eval.sampling_stage0_cuts import collect
+    from pilot_eval.sampling_stage0_cut_workflow import main
+    class Engine:
+        def prepare_inputs(self,rows): return [dict(id=r['id'],input_ids=[1],attention_mask=[1]) for r in rows]
+        def check_integrity(self,full=False): return dict(base_unchanged=True,adapters_unchanged=True)
+        def generate(self,rows,variant,seed): return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos')]
+    config=dict(variants={'x-original':dict(source_arm='x',operation='original')},variant_order=['x-original'],
+                seed=42,scorer='gsm8k-flexible-v3',decoding=dict(max_new_tokens=3,eos_token_id=2),adapter_files={})
+    collect(config,[dict(id='x',prompt='p',gold='1')],tmp_path,{},Engine())
+    main(['verify','--run-dir',str(tmp_path)])
+    assert 'complete' in capsys.readouterr().out
+
+
+def test_fixture_workflow_build_run_verify_export(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import sampling_stage0_cut_workflow as workflow, sampling_stage0_geometry as geometry
+    from pilot_eval import stage0_sources, stage0_weights, sampling_stage0_cut_backend, stage0_qualification_backend
+    from pilot_eval.stage0_edits import _save_tensors
+    from pilot_eval.trace_readout_assets import read_weight
+    from pilot_eval.workflow import _hash
+    rng=np.random.default_rng(7); module='base_model.model.layer'
+    matrix=rng.normal(size=(40,40)).astype('f4'); a=rng.normal(size=(1,40)).astype('f4'); b=rng.normal(size=(40,1)).astype('f4')
+    src=tmp_path/'source';src.mkdir();(src/'adapter_config.json').write_text('{}')
+    _save_tensors(src/'adapter_model.safetensors',{module+'.lora_A.weight':a,module+'.lora_B.weight':b})
+    def factors(path):
+        p=path/'adapter_model.safetensors'
+        return {module:(read_weight(p,module+'.lora_A.weight'),read_weight(p,module+'.lora_B.weight'))}
+    monkeypatch.setattr(stage0_sources,'factors',factors)
+    (tmp_path/'weights').mkdir(); (tmp_path/'weights'/'shard').write_text('fixture')
+    items=[dict(id='x',prompt='p',gold='1')];(tmp_path/'items.json').write_text(json.dumps(items))
+    behaviour=dict(model_identity={'base_sha256':'base'},weights_dir='weights',model_snapshot={},prompt_contract={},
+                   decoding={'max_new_tokens':3,'eos_token_id':2},cohort_path='items.json',cohort_sha256=_hash(items))
+    (tmp_path/'behaviour.json').write_text(json.dumps(behaviour)); (tmp_path/'geometry.json').write_text('{}')
+    source=dict(execution_kind='cpu-local-pinned-weights',behaviour_plan='behaviour.json',weights_dir='weights',
+        model_identity={'base_sha256':'base'},base_sha256='base',modules={module:{'path':'weights/shard','key':'m'}},
+        variants={'x':{'adapter_path':'source'}})
+    monkeypatch.setattr(geometry,'_load',lambda path,root:(root,source,None))
+    class Weights:
+        def inventory(self,directory,audit): return dict(base_sha256='base',modules={module:{'path':str(tmp_path/'weights'/'shard'),'key':'m'}})
+        def matrix(self,entry):return matrix
+    monkeypatch.setattr(stage0_weights,'LocalWeights',Weights)
+    class Engine:
+        def __init__(self,config,root): pass
+        def prepare_inputs(self,rows):return [dict(id=r['id'],input_ids=[1],attention_mask=[1]) for r in rows]
+        def check_integrity(self,full=False):return dict(base_unchanged=True,adapters_unchanged=True)
+        def generate(self,rows,variant,seed):return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos')]
+        def close(self):pass
+    monkeypatch.setattr(sampling_stage0_cut_backend,'CutEngine',Engine)
+    monkeypatch.setattr(stage0_qualification_backend.QualificationDependencies,'runtime',lambda self:dict(execution_kind='real-cuda',device='A100'))
+    monkeypatch.setattr(stage0_qualification_backend.QualificationDependencies,'preflight',lambda self,config,root:None)
+    plan=workflow.prepare(tmp_path/'geometry.json',tmp_path,'test')
+    assert workflow.build(plan,tmp_path,limit=0)['state']=='incomplete'
+    assert workflow.build(plan,tmp_path)['variants']==8
+    assert workflow.run(plan,tmp_path,limit=2)['state']=='incomplete'
+    assert workflow.run(plan,tmp_path)['total']==8
+    directory=tmp_path/'runs/stage0/test/principal-cuts'
+    assert workflow.verify(directory)['state']=='complete'
