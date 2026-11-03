@@ -197,6 +197,10 @@ def test_fixture_workflow_build_run_verify_export(tmp_path,monkeypatch):
     assert workflow.run(plan,tmp_path,repo='private/repo')['total']==8
     directory=tmp_path/'runs/stage0/test/principal-cuts'
     assert workflow.verify(directory)['state']=='complete'
+    adapter=directory/'build/adapters/x-output/adapter_model.safetensors'
+    content=adapter.read_bytes();adapter.write_bytes(b'corrupt')
+    with pytest.raises(ValueError,match='adapter'):workflow.verify(directory)
+    adapter.write_bytes(content)
 
 
 def test_verify_recomputes_summary(tmp_path):

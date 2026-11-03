@@ -57,6 +57,8 @@ def verify(directory):
     directory=Path(directory)
     if not (directory/'complete.json').is_file(): raise ValueError('Run is not complete.')
     config=json.loads((directory/'config.json').read_text())
+    if config.get('protocol')=='sampling-principal-cut-evaluation-v1':
+        check_products(config,directory)
     items=json.loads((directory/'inputs/items.json').read_text())
     inputs=json.loads((directory/'inputs/tokenized-prompts.json').read_text())
     if [r['id'] for r in inputs] != [r['id'] for r in items]: raise ValueError('Input identity changed.')
@@ -158,11 +160,38 @@ def build(path,root,*,limit=None):
         config={key:behaviour[key] for key in ('model_identity','weights_dir','model_snapshot','prompt_contract','decoding','cohort_path','cohort_sha256')}
         config.update(protocol='sampling-principal-cut-evaluation-v1',run_path=plan['run_path'],
                       geometry_plan=plan['geometry_path'],geometry_sha256=plan['geometry_sha256'],
-                      plan_sha256=_hash(plan),implementation=plan['implementation'],variants=variants,
+                      plan_path=str(inside(root,path).relative_to(root)),plan_sha256=_hash(plan),implementation=plan['implementation'],variants=variants,
                       variant_order=list(variants),adapter_files=adapter_files,scorer='gsm8k-flexible-v3',seed=42,
                       execution_kind='real-cuda',gpu=plan['gpu'],batch_size=1)
         _save_frozen(directory/'evaluation-plan.json',config)
         return dict(state='complete',variants=len(variants),modules=len(modules),evaluation_plan=str(directory/'evaluation-plan.json'))
+
+
+def check_products(config,directory):
+    import hashlib
+    from pilot_eval.stage0_sources import inside
+    from pilot_eval.training import file_hash
+    from pilot_eval.workflow import _hash
+    directory=Path(directory).resolve()
+    parts=Path(config['run_path']).parts
+    root=directory.parents[len(parts)-1]
+    if (root/config['run_path']).resolve()!=directory:raise ValueError('Run path identity changed.')
+    plan,source=load_plan(inside(root,config['plan_path']),root)
+    if config['plan_sha256']!=_hash(plan) or config['implementation']!=implementation():
+        raise ValueError('Cut plan or implementation changed.')
+    if config['geometry_plan']!=plan['geometry_path'] or config['geometry_sha256']!=plan['geometry_sha256']:
+        raise ValueError('Geometry binding changed.')
+    for variant,files in config['adapter_files'].items():
+        folder=inside(root,config['variants'][variant]['adapter_path'])
+        if any(file_hash(folder/n)!=digest for n,digest in files.items()):raise ValueError('Cut adapter changed.')
+    build=directory/'build'; binding=json.loads((build/'build-config.json').read_text())
+    if binding['identity']!=_hash(plan) or binding['modules']!=list(source['modules']):
+        raise ValueError('Cut build identity changed.')
+    for module in binding['modules']:
+        folder=build/'units'/hashlib.sha256(module.encode()).hexdigest()
+        expected=dict(config_sha256=_hash(binding),module=module,
+            files={n:file_hash(folder/n) for n in ('factors.npz','bases.npz','checks.json')})
+        if json.loads((folder/'complete.json').read_text())!=expected:raise ValueError('Cut build unit changed.')
 
 
 def hf_preflight(directory, repo, plan_hash, *, client=None):
@@ -204,6 +233,7 @@ def run(path,root,*,repo,limit=None,deadline_seconds=86400,client=None):
     root=Path(root).resolve();plan,source=load_plan(path,root);directory=inside(root,plan['run_path'])
     config=json.loads((directory/'evaluation-plan.json').read_text())
     if config['plan_sha256']!=_hash(plan) or config['implementation']!=implementation(): raise ValueError('Evaluation plan changed.')
+    check_products(config,directory)
     for variant,files in config['adapter_files'].items():
         folder=inside(root,config['variants'][variant]['adapter_path'])
         if any(file_hash(folder/n)!=digest for n,digest in files.items()):raise ValueError('Cut adapter changed.')
