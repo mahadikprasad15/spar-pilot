@@ -28,3 +28,22 @@ def test_catalogue_is_arm_parameterized_and_rejects_unsafe_names():
     assert variants['a-original']['operation'] == 'original'
     with pytest.raises(ValueError): variant_catalogue(['../escape'])
     with pytest.raises(ValueError): variant_catalogue(['a', 'a'])
+
+
+def test_build_resumes_sealed_units_and_rejects_changed_payload(tmp_path):
+    from pilot_eval.sampling_stage0_cuts import build_modules
+    rng = np.random.default_rng(4)
+    adapters = {'a': {m: (rng.normal(size=(1,40)).astype('f4'), rng.normal(size=(40,1)).astype('f4')) for m in ['one', 'two']}}
+    matrices = {m: rng.normal(size=(40,40)).astype('f4') for m in ['one', 'two']}
+    calls = []
+    def load(m):
+        calls.append(m)
+        return matrices[m]
+    assert build_modules(tmp_path, ['one','two'], adapters, load, identity='abc', limit=1)['state'] == 'incomplete'
+    assert calls == ['one']
+    assert build_modules(tmp_path, ['one','two'], adapters, load, identity='abc')['state'] == 'complete'
+    assert calls == ['one', 'two']
+    unit = next((tmp_path/'units').glob('*/factors.npz'))
+    unit.write_bytes(b'corrupt')
+    with pytest.raises(ValueError, match='changed'):
+        build_modules(tmp_path, ['one','two'], adapters, load, identity='abc')
