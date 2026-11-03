@@ -188,7 +188,8 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
     inputs=engine.prepare_inputs(items)
     if [r['id'] for r in inputs] != [r['id'] for r in items]: raise ValueError('Input order mismatch.')
     for row,item in zip(inputs,items):
-        if not row['input_ids'] or row['attention_mask'] != [1]*len(row['input_ids']):
+        if (not row['input_ids'] or row['attention_mask'] != [1]*len(row['input_ids'])
+                or ('prompt_tokens' in item and len(row['input_ids']) != item['prompt_tokens'])):
             raise ValueError('Invalid tokenized input.')
         row['prompt_sha256']=_hash(item['prompt'])
     _save_frozen(directory/'inputs/tokenized-prompts.json',inputs)
@@ -234,13 +235,7 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
             all_rows.extend(saved)
             _write_state(directory,'running',len(all_rows),total)
     check(full=True)
-    summaries={}
-    for variant in variants:
-        rows=[r for r in all_rows if r['variant']==variant]
-        summaries[variant]=dict(n=len(rows),accuracy=sum(r['flexible']['correct'] for r in rows)/len(rows),
-            strict_accuracy=sum(r['strict']['correct'] for r in rows)/len(rows),
-            mean_tokens=statistics.mean(r['token_count'] for r in rows),cap_count=sum(r['capped'] for r in rows))
-    result=dict(state='complete',total=total,variants=summaries,batch_size=1)
+    result=summarize(config,all_rows)
     response=directory/'results/responses.jsonl'; summary=directory/'results/results.json'; complete=directory/'complete.json'
     if complete.exists():
         if json.loads(complete.read_text()) != dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)):
@@ -252,3 +247,15 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
         _write_json(complete,dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)))
     _write_state(directory,'complete',total,total)
     return result
+
+
+def summarize(config, all_rows):
+    import statistics
+    summaries={}
+    for variant in config['variant_order']:
+        rows=[r for r in all_rows if r['variant']==variant]
+        if not rows: raise ValueError('Missing variant responses.')
+        summaries[variant]=dict(n=len(rows),accuracy=sum(r['flexible']['correct'] for r in rows)/len(rows),
+            strict_accuracy=sum(r['strict']['correct'] for r in rows)/len(rows),
+            mean_tokens=statistics.mean(r['token_count'] for r in rows),cap_count=sum(r['capped'] for r in rows))
+    return dict(state='complete',total=len(all_rows),variants=summaries,batch_size=1)

@@ -86,8 +86,8 @@ def test_collect_resumes_and_rejects_runtime_change(tmp_path):
             self.calls.append(rows[0]['id'])
             return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos')]
     engine=Engine()
-    assert collect(config,items,tmp_path,{'device':'fake'},engine,limit=1)['state']=='incomplete'
-    assert collect(config,items,tmp_path,{'device':'fake'},engine)['state']=='complete'
+    assert collect(config,items,tmp_path,{'device':'fake','session_id':'first'},engine,limit=1)['state']=='incomplete'
+    assert collect(config,items,tmp_path,{'device':'fake','session_id':'second'},engine)['state']=='complete'
     assert engine.calls==['one','two']
     from pilot_eval.sampling_stage0_cut_workflow import verify
     assert verify(tmp_path)['total'] == 2
@@ -195,3 +195,21 @@ def test_fixture_workflow_build_run_verify_export(tmp_path,monkeypatch):
     assert workflow.run(plan,tmp_path)['total']==8
     directory=tmp_path/'runs/stage0/test/principal-cuts'
     assert workflow.verify(directory)['state']=='complete'
+
+
+def test_verify_recomputes_summary(tmp_path):
+    import json
+    from pilot_eval.sampling_stage0_cuts import collect
+    from pilot_eval.sampling_stage0_cut_workflow import verify
+    from pilot_eval.training import file_hash
+    class E:
+        def prepare_inputs(self,rows):return [dict(id=r['id'],input_ids=[1],attention_mask=[1]) for r in rows]
+        def check_integrity(self,full=False):return dict(base_unchanged=True,adapters_unchanged=True)
+        def generate(self,rows,variant,seed):return [dict(text='#### 1',token_ids=[1],generated_token_ids=[1,2],stop_reason='eos')]
+    c=dict(variants={'x-original':dict(source_arm='x',operation='original')},variant_order=['x-original'],seed=42,
+           scorer='gsm8k-flexible-v3',decoding=dict(max_new_tokens=3,eos_token_id=2))
+    collect(c,[dict(id='x',prompt='p',gold='1')],tmp_path,{},E())
+    summary=tmp_path/'results/results.json'; data=json.loads(summary.read_text());data['variants']['x-original']['accuracy']=0
+    summary.write_text(json.dumps(data));marker=tmp_path/'complete.json';receipt=json.loads(marker.read_text())
+    receipt['results_sha256']=file_hash(summary);marker.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError,match='summary'):verify(tmp_path)

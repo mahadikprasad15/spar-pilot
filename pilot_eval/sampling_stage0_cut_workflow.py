@@ -82,7 +82,10 @@ def verify(directory):
     expected=dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary))
     if json.loads((directory/'complete.json').read_text())!=expected: raise ValueError('Completed result seal changed.')
     if [json.loads(x) for x in response.read_text().splitlines()]!=rows: raise ValueError('Aggregate changed.')
-    return json.loads(summary.read_text())
+    result=json.loads(summary.read_text())
+    from pilot_eval.sampling_stage0_cuts import summarize
+    if result!=summarize(config,rows): raise ValueError('Result summary does not match responses.')
+    return result
 
 
 IMPLEMENTATION = ('sampling_stage0_cut_workflow.py','sampling_stage0_cut_backend.py','sampling_stage0_cuts.py',
