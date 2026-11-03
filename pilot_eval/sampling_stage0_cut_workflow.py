@@ -21,7 +21,7 @@ def export(directory, root, *, repo, client=None):
         if path.is_symlink(): raise ValueError('Symlink in cut artifact tree.')
         if not path.is_file(): return False
         if any(part in ('logs','checkpoints','preflight','attempts') for part in rel.parts): return False
-        if path.name in ('hf-upload.json','status.json') or path.name.endswith(('.tmp','.lock')): return False
+        if path.name in ('hf-upload.json','status.json','overnight-status.json') or path.name.endswith(('.tmp','.lock')): return False
         return True
     files=sorted(p for p in directory.rglob('*') if eligible(p))
     manifest={str(p.relative_to(root)):file_hash(p) for p in files}
@@ -101,7 +101,10 @@ def verify(directory):
 
 IMPLEMENTATION = ('sampling_stage0_cut_workflow.py','sampling_stage0_cut_backend.py','sampling_stage0_cuts.py',
                   'stage0_edit_math.py','stage0_spectral_math.py','stage0_edits.py','stage0_weights.py',
-                  'stage0_evaluation_backend.py','stage0_evaluation_records.py','stage0_sources.py','scoring.py')
+                  'stage0_evaluation_backend.py','stage0_evaluation_records.py','stage0_sources.py','scoring.py',
+                  'sampling_stage0_evaluation.py','sampling_stage0_geometry.py','sampling_stage0_verification_cache.py',
+                  'stage0_evaluation.py','stage0_qualification_backend.py','sampling_sft_hf.py',
+                  'sft_backend.py','trace_readout_assets.py','workflow.py','training.py','run.py','sft.py')
 
 
 def implementation():
