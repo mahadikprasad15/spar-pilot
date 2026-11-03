@@ -234,17 +234,19 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
                 return dict(state='incomplete',completed=len(all_rows),total=total)
             all_rows.extend(saved)
             _write_state(directory,'running',len(all_rows),total)
-    check(full=True)
+    final=check(full=True)
+    _save_frozen(directory/'meta/final-integrity.json',final)
+    final_hash=file_hash(directory/'meta/final-integrity.json')
     result=summarize(config,all_rows)
     response=directory/'results/responses.jsonl'; summary=directory/'results/results.json'; complete=directory/'complete.json'
     if complete.exists():
-        if json.loads(complete.read_text()) != dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)):
+        if json.loads(complete.read_text()) != dict(config_sha256=_hash(config),items_sha256=items_hash,final_integrity_sha256=final_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)):
             raise ValueError('Completed result changed.')
         if [json.loads(x) for x in response.read_text().splitlines()] != all_rows or json.loads(summary.read_text()) != result:
             raise ValueError('Completed aggregate changed.')
     else:
         _jsonl(response,all_rows);_write_json(summary,result)
-        _write_json(complete,dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)))
+        _write_json(complete,dict(config_sha256=_hash(config),items_sha256=items_hash,final_integrity_sha256=final_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)))
     _write_state(directory,'complete',total,total)
     return result
 

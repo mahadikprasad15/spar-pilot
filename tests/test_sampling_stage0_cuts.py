@@ -89,6 +89,7 @@ def test_collect_resumes_and_rejects_runtime_change(tmp_path):
     assert collect(config,items,tmp_path,{'device':'fake','session_id':'first'},engine,limit=1)['state']=='incomplete'
     assert collect(config,items,tmp_path,{'device':'fake','session_id':'second'},engine)['state']=='complete'
     assert engine.calls==['one','two']
+    assert (tmp_path/'meta/final-integrity.json').is_file()
     from pilot_eval.sampling_stage0_cut_workflow import verify
     assert verify(tmp_path)['total'] == 2
     from pilot_eval.sampling_stage0_cut_workflow import export
@@ -227,3 +228,16 @@ def test_hf_preflight_proves_private_write_and_readback(tmp_path):
     hub=Hub(); result=hf_preflight(tmp_path, 'private/repo', 'a'*64, client=hub)
     assert result['revision']=='a'*40
     assert hf_preflight(tmp_path, 'private/repo', 'a'*64, client=hub)==result
+
+
+def test_integrity_exception_is_sticky(tmp_path):
+    from pilot_eval.sampling_stage0_cuts import collect
+    class E:
+        def prepare_inputs(self,rows):return [dict(id=r['id'],input_ids=[1],attention_mask=[1]) for r in rows]
+        def check_integrity(self,full=False):raise RuntimeError('broken guard')
+    c=dict(variants={'x-original':dict(source_arm='x',operation='original')},variant_order=['x-original'],seed=42,
+           scorer='gsm8k-flexible-v3',decoding=dict(max_new_tokens=3,eos_token_id=2))
+    items=[dict(id='x',prompt='p',gold='1')]
+    with pytest.raises(RuntimeError,match='broken guard'):collect(c,items,tmp_path,{},E())
+    assert (tmp_path/'meta/integrity-failure.json').exists()
+    with pytest.raises(ValueError,match='Prior integrity'):collect(c,items,tmp_path,{},E())

@@ -79,7 +79,10 @@ def verify(directory):
                 raise ValueError('Response scoring changed.')
             rows.extend(saved)
     response=directory/'results/responses.jsonl';summary=directory/'results/results.json'
-    expected=dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary))
+    integrity=directory/'meta/final-integrity.json'
+    proof=json.loads(integrity.read_text())
+    if not all(proof.get(k) is True for k in ('base_unchanged','adapters_unchanged')):raise ValueError('Final integrity failed.')
+    expected=dict(config_sha256=_hash(config),items_sha256=items_hash,final_integrity_sha256=file_hash(integrity),responses_sha256=file_hash(response),results_sha256=file_hash(summary))
     if json.loads((directory/'complete.json').read_text())!=expected: raise ValueError('Completed result seal changed.')
     if [json.loads(x) for x in response.read_text().splitlines()]!=rows: raise ValueError('Aggregate changed.')
     result=json.loads(summary.read_text())
