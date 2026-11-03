@@ -257,21 +257,41 @@ def run(path,root,*,repo,limit=None,deadline_seconds=86400,client=None):
         finally:engine.close()
 
 
+def status(directory):
+    directory=Path(directory)
+    def read(path):return json.loads(path.read_text()) if path.is_file() else None
+    completion=read(directory/'complete.json')
+    return dict(state='complete' if completion else ('incomplete' if (directory/'build').exists() or (directory/'config.json').exists() else 'not-started'),
+                build=read(directory/'build/meta/status.json'),evaluation=read(directory/'meta/status.json'),
+                overnight=read(directory/'meta/overnight-status.json'),export=read(directory/'meta/hf-upload.json'))
+
+
 def main(argv=None):
     import argparse
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='command',required=True)
     p=sub.add_parser('prepare');p.add_argument('--geometry',required=True);p.add_argument('--output-root',required=True);p.add_argument('--name',required=True)
+    p=sub.add_parser('preflight');p.add_argument('--plan',required=True);p.add_argument('--output-root',required=True);p.add_argument('--repo',required=True)
     for command in ('build','run'):
         p=sub.add_parser(command);p.add_argument('--plan',required=True);p.add_argument('--output-root',required=True);p.add_argument('--max-new-units',type=int)
-        if command=='run':
-            p.add_argument('--deadline-seconds',type=int,default=86400);p.add_argument('--repo',required=True)
-    p=sub.add_parser('verify');p.add_argument('--run-dir',required=True)
+        p.add_argument('--deadline-seconds',type=int,default=86400)
+        if command=='run':p.add_argument('--repo',required=True)
+    for command in ('verify','status'):
+        p=sub.add_parser(command);p.add_argument('--run-dir',required=True)
     p=sub.add_parser('export');p.add_argument('--run-dir',required=True);p.add_argument('--output-root',required=True);p.add_argument('--repo',required=True)
     args=parser.parse_args(argv)
     if args.command=='prepare':result=str(prepare(args.geometry,args.output_root,args.name))
-    elif args.command=='build':result=build(args.plan,args.output_root,limit=args.max_new_units)
+    elif args.command=='preflight':
+        from pilot_eval.stage0_sources import inside
+        from pilot_eval.workflow import _hash
+        plan,_=load_plan(args.plan,args.output_root)
+        result=hf_preflight(inside(Path(args.output_root).resolve(),plan['run_path']),args.repo,_hash(plan))
+    elif args.command=='build':
+        from pilot_eval.stage0_qualification_backend import deadline_guard
+        if args.deadline_seconds<=0:raise ValueError('Positive deadline required.')
+        with deadline_guard(args.deadline_seconds,True):result=build(args.plan,args.output_root,limit=args.max_new_units)
     elif args.command=='run':result=run(args.plan,args.output_root,repo=args.repo,limit=args.max_new_units,deadline_seconds=args.deadline_seconds)
     elif args.command=='verify':result=verify(args.run_dir)
+    elif args.command=='status':result=status(args.run_dir)
     else:result=export(args.run_dir,args.output_root,repo=args.repo)
     print(json.dumps(result,indent=2,sort_keys=True))
     return result

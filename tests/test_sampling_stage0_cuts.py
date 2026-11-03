@@ -249,3 +249,8 @@ def test_integrity_exception_is_sticky(tmp_path):
     with pytest.raises(RuntimeError,match='broken guard'):collect(c,items,tmp_path,{},E())
     assert (tmp_path/'meta/integrity-failure.json').exists()
     with pytest.raises(ValueError,match='Prior integrity'):collect(c,items,tmp_path,{},E())
+
+
+def test_status_reports_missing_run(tmp_path):
+    from pilot_eval.sampling_stage0_cut_workflow import status
+    assert status(tmp_path)['state']=='not-started'
