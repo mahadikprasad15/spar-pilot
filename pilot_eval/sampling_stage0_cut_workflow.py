@@ -16,8 +16,14 @@ def export(directory, root, *, repo, client=None):
     if not (directory/'complete.json').is_file(): raise ValueError('Cannot export incomplete run.')
     verify(directory)
     client=client or Hub();private(client,repo)
-    files=sorted(p for p in directory.rglob('*') if p.is_file() and not p.is_symlink()
-                 and p.name != 'hf-upload.json' and not p.name.endswith('.tmp'))
+    def eligible(path):
+        rel=path.relative_to(directory)
+        if path.is_symlink(): raise ValueError('Symlink in cut artifact tree.')
+        if not path.is_file(): return False
+        if any(part in ('logs','checkpoints','preflight','attempts') for part in rel.parts): return False
+        if path.name in ('hf-upload.json','status.json') or path.name.endswith(('.tmp','.lock')): return False
+        return True
+    files=sorted(p for p in directory.rglob('*') if eligible(p))
     manifest={str(p.relative_to(root)):file_hash(p) for p in files}
     identity=hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
     receipt=directory/'meta/hf-upload.json'

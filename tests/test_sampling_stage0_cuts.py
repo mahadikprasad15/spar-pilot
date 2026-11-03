@@ -100,7 +100,11 @@ def test_collect_resumes_and_rejects_runtime_change(tmp_path):
             self.store={k:p.read_bytes() for k,p in files.items()}; return 'a'*40
         def fetch(self,repo,name,revision):
             p=tmp_path.parent/'remote';p.write_bytes(self.store[name]);return p
-    assert export(tmp_path,tmp_path,repo='private/repo',client=Hub())['revision']=='a'*40
+    hub=Hub()
+    receipt=export(tmp_path,tmp_path,repo='private/repo',client=hub)
+    assert receipt['revision']=='a'*40
+    (tmp_path/'meta/status.json').write_text('{"state":"complete"}')
+    assert export(tmp_path,tmp_path,repo='private/repo',client=hub)==receipt
     with pytest.raises(ValueError,match='runtime'):
         collect(config,items,tmp_path,{'device':'changed'},engine)
 
