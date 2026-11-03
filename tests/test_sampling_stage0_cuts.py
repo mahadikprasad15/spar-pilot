@@ -188,11 +188,12 @@ def test_fixture_workflow_build_run_verify_export(tmp_path,monkeypatch):
     monkeypatch.setattr(sampling_stage0_cut_backend,'CutEngine',Engine)
     monkeypatch.setattr(stage0_qualification_backend.QualificationDependencies,'runtime',lambda self:dict(execution_kind='real-cuda',device='A100'))
     monkeypatch.setattr(stage0_qualification_backend.QualificationDependencies,'preflight',lambda self,config,root:None)
+    monkeypatch.setattr(workflow,'hf_preflight',lambda *args,**kwargs:None)
     plan=workflow.prepare(tmp_path/'geometry.json',tmp_path,'test')
     assert workflow.build(plan,tmp_path,limit=0)['state']=='incomplete'
     assert workflow.build(plan,tmp_path)['variants']==8
-    assert workflow.run(plan,tmp_path,limit=2)['state']=='incomplete'
-    assert workflow.run(plan,tmp_path)['total']==8
+    assert workflow.run(plan,tmp_path,repo='private/repo',limit=2)['state']=='incomplete'
+    assert workflow.run(plan,tmp_path,repo='private/repo')['total']==8
     directory=tmp_path/'runs/stage0/test/principal-cuts'
     assert workflow.verify(directory)['state']=='complete'
 
@@ -213,3 +214,16 @@ def test_verify_recomputes_summary(tmp_path):
     summary.write_text(json.dumps(data));marker=tmp_path/'complete.json';receipt=json.loads(marker.read_text())
     receipt['results_sha256']=file_hash(summary);marker.write_text(json.dumps(receipt))
     with pytest.raises(ValueError,match='summary'):verify(tmp_path)
+
+
+def test_hf_preflight_proves_private_write_and_readback(tmp_path):
+    from pilot_eval.sampling_stage0_cut_workflow import hf_preflight
+    class Hub:
+        def __init__(self):self.files={}
+        def info(self,repo):return type('Info',(),{'private':True})()
+        def publish(self,repo,files):self.files={k:p.read_bytes() for k,p in files.items()};return 'a'*40
+        def fetch(self,repo,name,revision):
+            p=tmp_path/'remote';p.write_bytes(self.files[name]);return p
+    hub=Hub(); result=hf_preflight(tmp_path, 'private/repo', 'a'*64, client=hub)
+    assert result['revision']=='a'*40
+    assert hf_preflight(tmp_path, 'private/repo', 'a'*64, client=hub)==result

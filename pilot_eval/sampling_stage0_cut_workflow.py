@@ -162,7 +162,35 @@ def build(path,root,*,limit=None):
         return dict(state='complete',variants=len(variants),modules=len(modules),evaluation_plan=str(directory/'evaluation-plan.json'))
 
 
-def run(path,root,*,limit=None,deadline_seconds=86400):
+def hf_preflight(directory, repo, plan_hash, *, client=None):
+    """Prove private repository write and exact-revision readback before GPU use."""
+    import tempfile
+    from pilot_eval.run import _write_json
+    from pilot_eval.sampling_sft_hf import Hub, private
+    from pilot_eval.training import file_hash
+    directory=Path(directory); client=client or Hub(); private(client,repo)
+    receipt=directory/'meta/hf-preflight.json'
+    if receipt.exists():
+        result=json.loads(receipt.read_text())
+        if result['repo']!=repo or result['plan_sha256']!=plan_hash:raise ValueError('HF preflight identity differs.')
+        if file_hash(client.fetch(repo,result['path'],result['revision']))!=result['sha256']:
+            raise ValueError('HF preflight readback changed.')
+        return result
+    directory.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=directory) as temp:
+        payload=Path(temp)/'preflight.json'
+        payload.write_text(json.dumps(dict(plan_sha256=plan_hash,purpose='sampling-principal-cuts-preflight'),sort_keys=True))
+        remote=f'preflight/sampling-cuts-{plan_hash}.json';digest=file_hash(payload)
+        revision=client.publish(repo,{remote:payload})
+        if not isinstance(revision,str) or len(revision)!=40 or any(c not in '0123456789abcdef' for c in revision):
+            raise ValueError('HF preflight lacks exact revision.')
+        if file_hash(client.fetch(repo,remote,revision))!=digest:raise ValueError('HF preflight readback failed.')
+        result=dict(repo=repo,plan_sha256=plan_hash,path=remote,revision=revision,sha256=digest)
+        _write_json(receipt,result)
+        return result
+
+
+def run(path,root,*,repo,limit=None,deadline_seconds=86400,client=None):
     from pilot_eval.sampling_stage0_evaluation import environment
     from pilot_eval.sampling_stage0_cut_backend import CutEngine
     from pilot_eval.sampling_stage0_cuts import collect
@@ -179,6 +207,7 @@ def run(path,root,*,limit=None,deadline_seconds=86400):
     items=json.loads(inside(root,config['cohort_path']).read_text())
     if _hash(items)!=config['cohort_sha256']:raise ValueError('Cohort changed.')
     if deadline_seconds<=0:raise ValueError('Positive deadline required.')
+    hf_preflight(directory,repo,_hash(plan),client=client)
     deps=QualificationDependencies();runtime=deps.runtime()
     if runtime['execution_kind']!='real-cuda' or plan['gpu'] not in runtime['device']:
         raise ValueError('This run requires the configured A100 CUDA GPU.')
@@ -195,13 +224,14 @@ def main(argv=None):
     p=sub.add_parser('prepare');p.add_argument('--geometry',required=True);p.add_argument('--output-root',required=True);p.add_argument('--name',required=True)
     for command in ('build','run'):
         p=sub.add_parser(command);p.add_argument('--plan',required=True);p.add_argument('--output-root',required=True);p.add_argument('--max-new-units',type=int)
-        if command=='run':p.add_argument('--deadline-seconds',type=int,default=86400)
+        if command=='run':
+            p.add_argument('--deadline-seconds',type=int,default=86400);p.add_argument('--repo',required=True)
     p=sub.add_parser('verify');p.add_argument('--run-dir',required=True)
     p=sub.add_parser('export');p.add_argument('--run-dir',required=True);p.add_argument('--output-root',required=True);p.add_argument('--repo',required=True)
     args=parser.parse_args(argv)
     if args.command=='prepare':result=str(prepare(args.geometry,args.output_root,args.name))
     elif args.command=='build':result=build(args.plan,args.output_root,limit=args.max_new_units)
-    elif args.command=='run':result=run(args.plan,args.output_root,limit=args.max_new_units,deadline_seconds=args.deadline_seconds)
+    elif args.command=='run':result=run(args.plan,args.output_root,repo=args.repo,limit=args.max_new_units,deadline_seconds=args.deadline_seconds)
     elif args.command=='verify':result=verify(args.run_dir)
     else:result=export(args.run_dir,args.output_root,repo=args.repo)
     print(json.dumps(result,indent=2,sort_keys=True))
