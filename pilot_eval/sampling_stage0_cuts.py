@@ -170,6 +170,8 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
     from pilot_eval.training import file_hash
     from pilot_eval.workflow import _hash, _save_frozen
 
+    from pilot_eval.sampling_stage0_evaluation import environment
+    runtime = environment(runtime)
     directory = Path(directory)
     variants = config['variant_order']
     if (not variants or len(set(variants)) != len(variants) or set(variants) != set(config['variants'])
@@ -182,6 +184,7 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
         if path.exists() and json.loads(path.read_text()) != value:
             raise ValueError(f'Resume {label} differs from saved {label}.')
         _save_frozen(path,value)
+    _save_frozen(directory/'inputs/items.json', items)
     inputs=engine.prepare_inputs(items)
     if [r['id'] for r in inputs] != [r['id'] for r in items]: raise ValueError('Input order mismatch.')
     for row,item in zip(inputs,items):
@@ -189,14 +192,17 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
             raise ValueError('Invalid tokenized input.')
         row['prompt_sha256']=_hash(item['prompt'])
     _save_frozen(directory/'inputs/tokenized-prompts.json',inputs)
-    rh=file_hash(directory/'meta/runtime.json'); ih=file_hash(directory/'inputs/tokenized-prompts.json')
+    rh=file_hash(directory/'meta/runtime.json'); ih=file_hash(directory/'inputs/tokenized-prompts.json'); items_hash=file_hash(directory/'inputs/items.json')
     all_rows=[]; new=0; total=len(items)*len(variants)
     def check(full=False):
-        proof=engine.check_integrity(full=full)
-        if not all(proof.get(k) is True for k in ('base_unchanged','adapters_unchanged')):
-            _write_json(directory/'meta/integrity-failure.json',proof)
-            raise ValueError('Model integrity failed.')
-        return proof
+        try:
+            proof=engine.check_integrity(full=full)
+            if not all(proof.get(k) is True for k in ('base_unchanged','adapters_unchanged')):
+                raise ValueError('Model integrity failed.')
+            return proof
+        except Exception as exc:
+            _write_json(directory/'meta/integrity-failure.json',dict(error=str(exc)))
+            raise
     for variant in variants:
         for index,item in enumerate(items):
             key=hashlib.sha256((variant+'\0'+str(item['id'])).encode()).hexdigest()
@@ -204,7 +210,7 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
             folder=directory/'units'/key; seal=folder/'complete.json'; payload=folder/'responses.jsonl'; proof=folder/'integrity.json'
             if seal.exists():
                 marker=json.loads(seal.read_text())
-                expected=dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,
+                expected=dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
                               responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof))
                 if marker != expected: raise ValueError('Saved response unit changed.')
                 evidence=json.loads(proof.read_text())
@@ -218,7 +224,7 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
                 before=check(); output=engine.generate([item],variant,unit['seed']); after=check()
                 saved=records(config,unit,[item],output,runtime_sha256=rh,input_sha256=ih)
                 _jsonl(payload,saved); _write_json(proof,dict(before=before,after=after))
-                _write_json(seal,dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,
+                _write_json(seal,dict(config_sha256=_hash(config),runtime_sha256=rh,input_sha256=ih,items_sha256=items_hash,
                             responses_sha256=file_hash(payload),integrity_sha256=file_hash(proof)))
                 new += 1
                 print(f'Cut evaluation: {len(all_rows)+1}/{total} {variant} {item["id"]}',flush=True)
@@ -237,12 +243,12 @@ def collect(config, items, directory, runtime, engine, *, limit=None):
     result=dict(state='complete',total=total,variants=summaries,batch_size=1)
     response=directory/'results/responses.jsonl'; summary=directory/'results/results.json'; complete=directory/'complete.json'
     if complete.exists():
-        if json.loads(complete.read_text()) != dict(config_sha256=_hash(config),responses_sha256=file_hash(response),results_sha256=file_hash(summary)):
+        if json.loads(complete.read_text()) != dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)):
             raise ValueError('Completed result changed.')
         if [json.loads(x) for x in response.read_text().splitlines()] != all_rows or json.loads(summary.read_text()) != result:
             raise ValueError('Completed aggregate changed.')
     else:
         _jsonl(response,all_rows);_write_json(summary,result)
-        _write_json(complete,dict(config_sha256=_hash(config),responses_sha256=file_hash(response),results_sha256=file_hash(summary)))
+        _write_json(complete,dict(config_sha256=_hash(config),items_sha256=items_hash,responses_sha256=file_hash(response),results_sha256=file_hash(summary)))
     _write_state(directory,'complete',total,total)
     return result

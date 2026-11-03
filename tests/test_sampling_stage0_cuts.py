@@ -89,5 +89,30 @@ def test_collect_resumes_and_rejects_runtime_change(tmp_path):
     assert collect(config,items,tmp_path,{'device':'fake'},engine,limit=1)['state']=='incomplete'
     assert collect(config,items,tmp_path,{'device':'fake'},engine)['state']=='complete'
     assert engine.calls==['one','two']
+    from pilot_eval.sampling_stage0_cut_workflow import verify
+    assert verify(tmp_path)['total'] == 2
+    from pilot_eval.sampling_stage0_cut_workflow import export
+    class Hub:
+        def __init__(self): self.store={}
+        def info(self,repo): return type('Info',(),{'private':True})()
+        def publish(self,repo,files):
+            self.store={k:p.read_bytes() for k,p in files.items()}; return 'a'*40
+        def fetch(self,repo,name,revision):
+            p=tmp_path.parent/'remote';p.write_bytes(self.store[name]);return p
+    assert export(tmp_path,tmp_path,repo='private/repo',client=Hub())['revision']=='a'*40
     with pytest.raises(ValueError,match='runtime'):
         collect(config,items,tmp_path,{'device':'changed'},engine)
+
+
+def test_export_refuses_incomplete_and_verifies_remote_readback(tmp_path):
+    from pilot_eval.sampling_stage0_cut_workflow import export
+    class Hub:
+        def __init__(self): self.store={}
+        def info(self,repo): return type('Info',(),{'private':True})()
+        def publish(self,repo,files):
+            self.store={k:p.read_bytes() for k,p in files.items()}; return 'a'*40
+        def fetch(self,repo,name,revision):
+            p=tmp_path/'remote';p.write_bytes(self.store[name]);return p
+    run=tmp_path/'runs'/'x';run.mkdir(parents=True)
+    with pytest.raises(ValueError,match='complete'):
+        export(run,tmp_path,repo='test/private',client=Hub())
