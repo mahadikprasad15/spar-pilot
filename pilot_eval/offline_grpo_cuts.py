@@ -313,7 +313,7 @@ def _reservation(config, execution, directory, root, runtime, approval_path):
     return existing_reservation(config, execution, directory, root, runtime, approval_path)
 
 
-def _execution(path, output_root, stage, *, approval_path=None, dependencies=None, max_new_units=None):
+def _execution(path, output_root, stage, *, approval_path=None, dependencies=None, max_new_units=None, reservation_provider=None):
     import time
     import uuid
     from pilot_eval.run import _write_json, _write_state
@@ -343,7 +343,7 @@ def _execution(path, output_root, stage, *, approval_path=None, dependencies=Non
         runtime = dependencies.runtime()
         if runtime != plan['runtime']:
             raise ValueError('Cut evaluation runtime differs from approved runtime')
-        reservation, remaining = _reservation(config,
+        reservation, remaining = (reservation_provider or _reservation)(config,
             {'reservation':{'reservation_id':None,'job_sha256':_hash(config)}},
             directory, root, runtime, approval_path)
         attempt = directory/'attempts'/uuid.uuid4().hex

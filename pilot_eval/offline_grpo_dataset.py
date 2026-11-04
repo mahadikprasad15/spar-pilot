@@ -241,7 +241,7 @@ def _read_unit(config,directory,answer,attempt_cache=None):
     return arrays
 
 
-def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=None,progress=True):
+def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=None,progress=True,reservation_provider=None):
     from pilot_eval.stage0_distance_backend import DistanceDependencies
     root=Path(output_root).resolve();config,directory,answers,_=load(path,root)
     if max_new_units is not None and (type(max_new_units) is not int or max_new_units<0):raise ValueError('Invalid new-unit bound')
@@ -258,7 +258,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         deps=dependencies or DistanceDependencies();runtime=deps.runtime()
         if runtime!=config['runtime'] or runtime['execution_kind']!=config['execution_kind']:raise ValueError('Scoring runtime differs from approved session')
         execution={'reservation':{'reservation_id':None,'job_sha256':_hash(config)}}
-        reservation,remaining=_reservation(config,execution,directory,root,runtime,approval_path)
+        reservation,remaining=(reservation_provider or _reservation)(config,execution,directory,root,runtime,approval_path)
         attempt=directory/'attempts'/uuid.uuid4().hex
         _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],runtime_sha256=_hash(runtime)))
         started=time.monotonic();engine=None;new=0

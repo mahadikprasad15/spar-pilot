@@ -255,7 +255,7 @@ def _reserve(config,execution,directory,root,runtime,approval_path):
     return _reservation(config,execution,directory,root,runtime,approval_path)
 
 
-def collect(path,output_root,kind,*,approval_path=None,max_new_units=None,dependencies=None):
+def collect(path,output_root,kind,*,approval_path=None,max_new_units=None,dependencies=None,reservation_provider=None):
     import time,uuid
     from pilot_eval.run import _write_json
     from pilot_eval.stage0_qualification_backend import deadline_guard
@@ -280,7 +280,7 @@ def collect(path,output_root,kind,*,approval_path=None,max_new_units=None,depend
         if max_new_units==0:return dict(complete=False,completed=sum(x is not None for x in saved),total=len(units))
         runtime=dependencies.runtime()
         if runtime!=config['runtime']:raise ValueError('Actual runtime differs from approved session')
-        reservation,remaining=_reserve(collector,{'reservation':{'reservation_id':None,'job_sha256':_hash(collector)}},directory,root,runtime,approval_path)
+        reservation,remaining=(reservation_provider or _reserve)(collector,{'reservation':{'reservation_id':None,'job_sha256':_hash(collector)}},directory,root,runtime,approval_path)
         attempt=directory/'attempts'/uuid.uuid4().hex
         _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],runtime_sha256=_hash(runtime)))
         started=time.monotonic();engine=None;new=0

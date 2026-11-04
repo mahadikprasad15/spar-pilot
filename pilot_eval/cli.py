@@ -12,9 +12,17 @@ from pilot_eval.rescoring import rescore_gsm8k
 from pilot_eval.sft import prepare_sft
 
 
-def main(argv=None, *, dependencies=None):
+def main(argv=None, *, dependencies=None, reservation_provider=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['template','prepare','preflight','run','status','verify']:
+        overnight=commands.add_parser('offline-grpo-overnight-'+operation,help='resumable offline experiment orchestration')
+        overnight.add_argument('--output-root',type=Path,required=True)
+        if operation=='template':
+            overnight.add_argument('--inputs',type=Path,required=True);overnight.add_argument('--name',required=True)
+        elif operation=='prepare':overnight.add_argument('--spec',type=Path,required=True)
+        else:overnight.add_argument('--config',type=Path,required=True)
+        if operation=='run':overnight.add_argument('--authorization',type=Path,required=True)
     for operation in ['prepare','build','agreement','evaluate','verify','report']:
         cuts=commands.add_parser('offline-grpo-cuts-'+operation,help='offline principal cuts and paired evaluation')
         cuts.add_argument('--output-root',type=Path,required=True)
@@ -1011,12 +1019,21 @@ def main(argv=None, *, dependencies=None):
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-overnight-'):
+            from pilot_eval import offline_grpo_overnight as workflow
+            operation=args.command.removeprefix('offline-grpo-overnight-')
+            if operation=='template':result=workflow.template(args.inputs,args.output_root,args.name)
+            elif operation=='prepare':result=workflow.prepare(args.spec,args.output_root)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,args.authorization,dependencies=dependencies)
+            elif operation in ['preflight','verify']:result=getattr(workflow,operation)(args.config,args.output_root,dependencies=dependencies)
+            else:result=workflow.status(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-grpo-cuts-'):
             from pilot_eval import offline_grpo_cuts as workflow
             operation=args.command.removeprefix('offline-grpo-cuts-')
             if operation=='prepare':result=workflow.prepare(args.internals,args.behaviour,args.reference,args.reference_root,args.output_root,args.name)
             elif operation=='build':result=workflow.build(args.config,args.output_root,max_new_units=args.max_new_units)
-            elif operation in ['agreement','evaluate']:result=getattr(workflow,operation)(args.config,args.output_root,approval_path=args.approval,dependencies=dependencies,max_new_units=args.max_new_units)
+            elif operation in ['agreement','evaluate']:result=getattr(workflow,operation)(args.config,args.output_root,approval_path=args.approval,dependencies=dependencies,max_new_units=args.max_new_units,reservation_provider=reservation_provider)
             elif operation=='verify':
                 if args.stage=='build':result=workflow.verify_build(args.config,args.output_root,deep=args.deep)
                 elif args.stage=='report':result=workflow.verify_report(args.config,args.output_root)
@@ -1028,7 +1045,7 @@ def main(argv=None, *, dependencies=None):
             operation=args.command.removeprefix('offline-grpo-internals-')
             if operation=='prepare':result=workflow.prepare(args.training,args.spectral,args.inputs,args.runtime,args.output_root,args.name,qualification_path=args.qualification,online_path=args.online)
             elif operation=='geometry':result=workflow.run_geometry(args.config,args.output_root,max_new_units=args.max_new_units)
-            elif operation=='collect':result=workflow.collect(args.config,args.output_root,args.kind,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies)
+            elif operation=='collect':result=workflow.collect(args.config,args.output_root,args.kind,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies,reservation_provider=reservation_provider)
             elif operation=='verify':
                 if args.kind=='geometry':result=workflow.verify_geometry(args.config,args.output_root)
                 elif args.kind=='report':result=workflow.verify_report(args.config,args.output_root)
@@ -1039,7 +1056,7 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval import offline_grpo_dataset as workflow
             operation=args.command.removeprefix('offline-grpo-dataset-')
             if operation=='prepare':result=workflow.prepare(args.pool,args.sft,args.sampler,args.runtime,args.output_root,args.name,comparison_root=args.comparison_root,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
-            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,reservation_provider=reservation_provider)
             else:result=getattr(workflow,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-grpo-behaviour-'):
@@ -1055,7 +1072,7 @@ def main(argv=None, *, dependencies=None):
         elif args.command.startswith('offline-grpo-train-'):
             from pilot_eval import offline_grpo_training as workflow
             operation=args.command.removeprefix('offline-grpo-train-')
-            if operation=='prepare':result=workflow.prepare(args.frozen,args.pool,args.checkpoint_zero,args.output_root,args.name,runtime=json.loads(args.runtime.read_text()),weights_sha256=args.checkpoint_zero_sha256,config_sha256=args.checkpoint_zero_config_sha256)
+            if operation=='prepare':result=workflow.prepare(args.frozen,args.pool,args.checkpoint_zero,args.output_root,args.name,runtime=json.loads((args.output_root.resolve()/args.runtime).read_text()),weights_sha256=args.checkpoint_zero_sha256,config_sha256=args.checkpoint_zero_config_sha256)
             elif operation=='check-diagnostics':result=workflow.check_diagnostics(args.config,args.output_root,long_min_tokens=args.long_min_tokens,prompt_count=args.prompt_count)
             else:result=workflow.run(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
@@ -1063,7 +1080,7 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval import offline_grpo_fresh as fresh
             operation=args.command.removeprefix('offline-pool-fresh-')
             if operation=='prepare':result=fresh.prepare(args.pool,args.audit,args.weights_dir,args.runtime,args.output_root,dependencies=dependencies)
-            elif operation=='run':result=fresh.run(args.config,args.output_root,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies)
+            elif operation=='run':result=fresh.run(args.config,args.output_root,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies,reservation_provider=reservation_provider)
             else:result=fresh.verify(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-pool-'):

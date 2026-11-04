@@ -126,7 +126,7 @@ def _saved(config, directory, runtime, specials, rows):
     return result
 
 
-def run(path, output_root, *, approval_path=None, max_new_units=None, dependencies=None):
+def run(path, output_root, *, approval_path=None, max_new_units=None, dependencies=None, reservation_provider=None):
     from pilot_eval.stage0_rollout_backend import RolloutDependencies
     root=Path(output_root).resolve(); config,directory,rows=_load(path,root)
     if max_new_units is not None and (type(max_new_units) is not int or max_new_units<0):raise ValueError('Invalid group bound')
@@ -140,7 +140,7 @@ def run(path, output_root, *, approval_path=None, max_new_units=None, dependenci
         if runtime_path.exists() and json.loads(runtime_path.read_text())!=runtime:raise ValueError('Resume runtime changed')
         # The existing ledger supplies the explicit session and wall-time bound.
         execution={'reservation':{'reservation_id':None,'job_sha256':_hash(config)}}
-        reservation,remaining=_reservation(config,execution,directory,root,runtime,approval_path)
+        reservation,remaining=(reservation_provider or _reservation)(config,execution,directory,root,runtime,approval_path)
         attempt=directory/'attempts'/uuid.uuid4().hex
         _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],runtime_sha256=_hash(runtime)))
         started=time.monotonic(); engine=None;new=0;saved=[]
