@@ -125,3 +125,43 @@ def test_decision_is_reused_on_resume_and_tamper_is_rejected(world):
     (folder/'historical.jsonl').write_text('{}\n')
     with pytest.raises(ValueError, match='Historical pool snapshot changed'):
         route.load_decision(world['root']/'runs/offline-grpo/example/pool', world['root'])
+
+
+def test_failed_base_check_during_replay_stops_without_a_decision(world):
+    class FailedBase(Engine):
+        def check_integrity(self, *, full=False):
+            return dict(base_unchanged=not full)
+    with pytest.raises(ValueError, match='integrity'):
+        choose(world, FailedBase())
+    assert route.load_decision(world['root']/'runs/offline-grpo/example/pool', world['root']) is None
+
+
+def test_replay_evidence_is_bound_to_the_decision(world):
+    choose(world, Engine())
+    directory = world['root']/'runs/offline-grpo/example/pool'
+    replay = directory/'route/replay.jsonl'
+    saved = replay.read_bytes()
+    replay.unlink()
+    with pytest.raises(ValueError, match='Replay evidence changed'):
+        route.load_decision(directory, world['root'])
+    replay.write_bytes(saved)
+    route.load_decision(directory, world['root'])
+    final = next((directory/'route/attempts').glob('*/final-integrity.json'))
+    final.write_text(json.dumps(dict(base_unchanged=False)))
+    with pytest.raises(ValueError, match='Replay evidence changed'):
+        route.load_decision(directory, world['root'])
+
+
+def test_units_from_an_attempt_that_failed_its_integrity_check_are_not_reused(world):
+    class Failing(Engine):
+        checks = 0
+        def check_integrity(self, *, full=False):
+            type(self).checks += 1
+            return dict(base_unchanged=type(self).checks < 4)
+    plan = prepare_fresh(world, Engine(mismatch=True))
+    with pytest.raises(ValueError, match='integrity'):
+        fresh.run(plan, world['root'], dependencies=Failing())
+    sealed = list((world['root']/'runs/offline-grpo/example/pool/fresh/units').glob('*/complete.json'))
+    assert sealed
+    with pytest.raises(ValueError, match='invalidates'):
+        fresh.run(plan, world['root'], dependencies=Engine())

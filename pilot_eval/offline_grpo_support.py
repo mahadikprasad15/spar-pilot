@@ -21,8 +21,9 @@ def attempt_start(attempt, required):
     """Apply the Stage 0 reuse rule: a missing closing check is not a failed one.
 
     Each sealed unit carries its own integrity proof. An attempt that was killed or
-    ran out of time therefore keeps its units, while a failed or altered closing
-    record still invalidates them. Elapsed-time accounting stays with the reservation.
+    ran out of time therefore keeps its units, while a detected failure, a failed
+    closing check or an altered record invalidates them. Elapsed-time accounting stays
+    with the reservation.
     """
     final = attempt/'final-integrity.json'
     timing = _attempt_timing(attempt, required=False)
@@ -45,7 +46,11 @@ def attempt_scope(directory, reservation, runtime, remaining, *, real, on_failur
             yield scope
     except (Exception, KeyboardInterrupt) as exc:
         left = remaining-(time.monotonic()-scope.started)
-        if scope.engine is not None and not isinstance(exc, IntegrityFailure) and left > 0:
+        if isinstance(exc, IntegrityFailure):
+            # A detected failure must not look like an interruption on resume.
+            if not (path/'final-integrity.json').exists():
+                _write_json(path/'final-integrity.json', dict(integrity_failure=str(exc)))
+        elif scope.engine is not None and left > 0:
             try:
                 with deadline_guard(left, real):
                     _write_json(path/'final-integrity.json', scope.engine.check_integrity(full=True))

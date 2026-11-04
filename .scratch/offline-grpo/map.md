@@ -31,7 +31,10 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 
 - Pool route selection added: `offline-pool-route` runs after pool preparation and seals a decision. It keeps the historical 128 groups and samples the remaining 384 only when the source audit, recorded runtime and exact two-group replay all agree; otherwise it records why and samples 512. CPU fixtures cover both routes; whether the historical raw groups exist and replay on a real GPU remains unverified.
 
+- External review follow-up: a detected integrity failure now records a failing closing result, so its units are not reused as if interrupted; a replay's failed base check stops route selection; replay draws and integrity receipts are bound to the decision; backups carry the specification, wrapper state, attempt timing and budget ledger, with `offline-grpo-overnight-restore` to put them back; the final report lists omitted comparisons. Restore-and-resume is fixture-tested with mocked child verifiers at the same root and session.
+
 ## Open decisions
 
 - Fidelity tolerance: `offline-grpo-train-check-diagnostics` now requires an explicit `--fidelity-tolerance` in nats (template input `fidelity_tolerance_nats`). No value has been chosen; a reviewed number is required before a real run.
 - A new session or machine still needs a new plan, because plans bind the runtime session identity. A stale `writer.json` after a hard kill still requires inspection and removal by hand.
+- Completion does not imply every comparison was made: Gold and Sampling SFT internal comparisons are unavailable and the online comparison can be omitted. Read `omissions` in the final report; decide whether any should block completion.

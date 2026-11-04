@@ -135,7 +135,7 @@ def test_partial_manifest_lists_unavailable_stage_plans(tmp_path):
     import json
     from pilot_eval import offline_grpo_overnight as workflow
     spec=make_spec(tmp_path)
-    plan=dict(spec=spec)
+    plan=dict(spec=spec,spec_path='source.json')
     directory=tmp_path/'runs/offline-grpo/fixture/overnight'
     snapshot=directory/'results/snapshots/test';snapshot.mkdir(parents=True)
     (snapshot/'final-report.json').write_text(json.dumps(dict(stages={'train':dict(state='failed')})))
@@ -365,6 +365,9 @@ def test_completed_run_is_not_exported_twice(tmp_path,monkeypatch):
     final=json.loads(next((directory/'results/snapshots').glob('*/final-report.json')).read_text())
     assert final['measurements']['behaviour']['summary']['online_comparison_status']==dict(state='not-selected')
     assert final['measurements']['internals_report']['summary']['push_alignment']==7
+    assert final['omissions']==['Online behaviour comparison: not-selected']
+    report=next((directory/'results/snapshots').glob('*/final-report.md')).read_text()
+    assert '## Omitted comparisons' in report and 'Online behaviour comparison: not-selected' in report
     second=workflow.run(path,tmp_path,auth,dependencies=deps)
     assert second['state']=='completed' and hub.commits==1
     assert second['export']['manifest_sha256']==first['export']['manifest_sha256']
@@ -454,3 +457,31 @@ def test_spec_requires_explicit_fidelity_tolerance(tmp_path):
             if '--fidelity-tolerance' in command:del command[command.index('--fidelity-tolerance'):]
     path=tmp_path/'spec.json';path.write_text(json.dumps(spec))
     with pytest.raises(ValueError,match='fidelity tolerance'):workflow.prepare(path,tmp_path)
+
+
+def test_backup_restores_and_resumes_after_local_files_are_lost(tmp_path,monkeypatch):
+    import json,shutil,tarfile
+    from pilot_eval.training import file_hash
+    workflow,path,auth,deps,hub,directory=real_export_run(tmp_path,monkeypatch)
+    ledger=tmp_path/'runs/stage0/budget/ledger.jsonl';ledger.parent.mkdir(parents=True);ledger.write_text('{}\n')
+    state=workflow.run(path,tmp_path,auth,dependencies=deps)
+    assert state['export']['state']=='partial_verified'
+    manifest=tmp_path/state['export']['manifest_path']
+    receipt=json.loads((manifest.parent/'hf-upload.json').read_text())
+    archive=hub.published[receipt['archive'],receipt['revision']]
+    first_attempt=next((directory/'attempts').iterdir()).name
+    source_hash=file_hash(tmp_path/'source.json')
+    for child in list(tmp_path.iterdir()):
+        shutil.rmtree(child) if child.is_dir() else child.unlink()
+    with tarfile.open(archive,'r:gz') as bundle:bundle.extractall(tmp_path,filter='data')
+    assert not (directory/'config.json').exists()
+    restored=workflow.restore_wrapper(manifest,tmp_path)
+    assert restored['restored_files']>0
+    assert file_hash(tmp_path/'source.json')==source_hash and ledger.exists()
+    for name in ['config.json','meta/run_manifest.json','meta/status.json','meta/umbrella.json','meta/authorization.json']:
+        assert (directory/name).is_file()
+    assert (directory/'attempts'/first_attempt/'timing.complete.json').is_file()
+    assert json.loads((directory/'attempts'/first_attempt/'timing.json').read_text())['seconds']>=0
+    deps.fail=False
+    state=workflow.run(path,tmp_path,directory/'meta/authorization.json',dependencies=deps)
+    assert state['state']=='completed' and state['export']['state']=='verified'

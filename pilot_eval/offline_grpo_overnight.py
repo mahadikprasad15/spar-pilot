@@ -441,7 +441,7 @@ def _authorization(path, plan, preflight_result, root):
     return value
 
 
-def _snapshot_report(plan, directory, root, state):
+def _snapshot_report(plan, directory, root, state, attempt=None, elapsed=0.):
     """Freeze measured child summaries and wrapper progress for this attempt."""
     measured={}
     locations={
@@ -475,6 +475,11 @@ def _snapshot_report(plan, directory, root, state):
           'Matched-norm KL requires a separate scaled-adapter measurement.'])
     progress=directory/'checkpoints/progress.json'
     result['progress_sha256']=file_hash(progress) if progress.exists() else None
+    omissions=[]
+    if 'behaviour' in measured and measured['behaviour']['summary']['online_comparison_status']['state']!='performed':
+        omissions.append('Online behaviour comparison: '+measured['behaviour']['summary']['online_comparison_status']['state'])
+    if 'internals_report' in measured:omissions.extend(measured['internals_report']['summary']['unavailable'])
+    result['omissions']=omissions
     folder=directory/'results/snapshots'/_hash(result)
     _save_frozen(folder/'final-report.json',result)
     lines=['# Offline GRPO research report','','Complete: '+str(result['complete']),'',
@@ -484,6 +489,7 @@ def _snapshot_report(plan, directory, root, state):
     for name,value in measured.items():
         lines.extend(['## '+name,'',f"Source: {value['result']} (SHA-256 {value['result_sha256']})",'',
                       '```json',json.dumps(value['summary'],indent=2,sort_keys=True),'```',''])
+    if omissions:lines.extend(['## Omitted comparisons','']+['- '+x for x in omissions]+[''])
     lines.extend(['## Limitations','']+['- '+x for x in result['limitations']])
     text='\n'.join(lines)+'\n';report_path=folder/'final-report.md'
     if report_path.exists() and report_path.read_text()!=text:raise ValueError('Snapshot report changed')
@@ -498,7 +504,47 @@ def _snapshot_report(plan, directory, root, state):
             data=source.read_bytes()
             if target.exists() and target.read_bytes()!=data:raise ValueError('Snapshot progress changed')
             target.write_bytes(data)
+    _snapshot_recovery(directory, root, folder, attempt, elapsed)
     return folder
+
+
+def _snapshot_recovery(directory, root, folder, attempt, elapsed):
+    """Copy the state a resume reads, since these files keep changing after the export."""
+    for start in sorted((directory/'attempts').glob('*/start.json')):
+        for name in ['start.json','timing.json','timing.complete.json']:
+            source=start.parent/name
+            if source.is_file():
+                target=folder/'attempts'/start.parent.name/name
+                target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(source.read_bytes())
+    if attempt is not None:
+        # This attempt is still running, so the backup charges its time so far.
+        target=folder/'attempts'/attempt.name
+        start=json.loads((attempt/'start.json').read_text())
+        _write_json(target/'timing.json',dict(seconds=elapsed,reservation_id=start['reservation_id'],
+            start_sha256=file_hash(attempt/'start.json'),final_integrity_sha256=None,usage_reconciled=False))
+        _write_json(target/'timing.complete.json',dict(sha256=file_hash(target/'timing.json')))
+    budget=root/'runs/stage0/budget'
+    if budget.is_dir():
+        for source in sorted(budget.rglob('*')):
+            if source.is_file() and source.name not in ['.lock','writer.json'] and not source.name.endswith('.tmp'):
+                target=folder/'budget'/source.relative_to(budget)
+                target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(source.read_bytes())
+
+
+def restore_wrapper(manifest_path, output_root):
+    """After extracting a backup at the same root, put its recovery state back in place."""
+    import shutil as copier
+    from pilot_eval.sampling_sft_exports import verify_manifest
+    root=Path(output_root).resolve();manifest=verify_manifest(inside(root,manifest_path),root)
+    snapshot=inside(root,manifest['wrapper_snapshot']);directory=snapshot.parent.parent.parent;restored=0
+    for source in sorted(snapshot.rglob('*')):
+        relative=source.relative_to(snapshot)
+        if not source.is_file() or relative.name.startswith('final-report'):continue
+        target=root/'runs/stage0'/relative if relative.parts[0]=='budget' else directory/relative
+        if target.exists():continue
+        target.parent.mkdir(parents=True,exist_ok=True);copier.copyfile(source,target);restored+=1
+    return dict(restored_files=restored,partial=manifest['partial'],missing=manifest['missing'],
+                note='Resume still requires the same approved runtime session; otherwise use a new plan.')
 
 
 def _artifact_manifest(plan, root, directory, snapshot, *, partial):
@@ -551,11 +597,12 @@ def _artifact_manifest(plan, root, directory, snapshot, *, partial):
     if setup.count('--checkpoint-zero')!=1:raise ValueError('Checkpoint-zero source is not explicitly bound')
     add(inside(root,setup[setup.index('--checkpoint-zero')+1]),'checkpoint-zero source')
     add(root/'plans'/plan['spec']['name']/'offline.overnight.json','overnight plan')
+    add(root/plan['spec_path'],'overnight specification')
     add(snapshot,'wrapper snapshot')
     if missing and not partial:raise ValueError('Required export products missing: '+', '.join(missing))
     value=dict(schema_version=1,job_sha256=_hash(plan),files=inventory(root,sorted(paths)),
                worker_host=platform.node(),simulation=False,partial=partial,missing=missing,
-               restore_requires_model_snapshot=True,external_sources=_external_sources(plan,root),
+               restore_requires_model_snapshot=True,wrapper_snapshot=str(snapshot.relative_to(root)),external_sources=_external_sources(plan,root),
                scope='offline GRPO artifact snapshot; missing items are explicit; base model weights and external_sources are excluded and must be restored separately')
     value['sha256']=_hash(value)
     target=directory/'exports'/value['sha256']/'manifest.json'
@@ -688,7 +735,7 @@ def run(path, output_root, authorization_path, *, dependencies=None):
                 complete=all(state['stages'].get(name,{}).get('state')=='verified' for name in STAGES)
                 state['state']='exporting' if complete else 'incomplete'
                 _write_state(directory,plan,state)
-                snapshot=bounded(_snapshot_report,plan,directory,root,state)
+                snapshot=bounded(_snapshot_report,plan,directory,root,state,attempt,time.monotonic()-began)
                 try:
                     proof=bounded(_export,plan,root,directory,snapshot,partial=not complete,dependencies=deps)
                     record=proof['record']

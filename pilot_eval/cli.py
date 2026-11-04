@@ -15,12 +15,13 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None, reservation_provider=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
-    for operation in ['template','prepare','preflight','run','status','verify']:
+    for operation in ['template','prepare','preflight','run','status','verify','restore']:
         overnight=commands.add_parser('offline-grpo-overnight-'+operation,help='resumable offline experiment orchestration')
         overnight.add_argument('--output-root',type=Path,required=True)
         if operation=='template':
             overnight.add_argument('--inputs',type=Path,required=True);overnight.add_argument('--name',required=True)
         elif operation=='prepare':overnight.add_argument('--spec',type=Path,required=True)
+        elif operation=='restore':overnight.add_argument('--manifest',type=Path,required=True)
         else:overnight.add_argument('--config',type=Path,required=True)
         if operation=='run':overnight.add_argument('--authorization',type=Path,required=True)
     for operation in ['prepare','build','agreement','evaluate','verify','report']:
@@ -1029,6 +1030,7 @@ def main(argv=None, *, dependencies=None, reservation_provider=None):
             operation=args.command.removeprefix('offline-grpo-overnight-')
             if operation=='template':result=workflow.template(args.inputs,args.output_root,args.name)
             elif operation=='prepare':result=workflow.prepare(args.spec,args.output_root)
+            elif operation=='restore':result=workflow.restore_wrapper(args.manifest,args.output_root)
             elif operation=='run':result=workflow.run(args.config,args.output_root,args.authorization,dependencies=dependencies)
             elif operation in ['preflight','verify']:result=getattr(workflow,operation)(args.config,args.output_root,dependencies=dependencies)
             else:result=workflow.status(args.config,args.output_root)

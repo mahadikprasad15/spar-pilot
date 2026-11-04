@@ -38,8 +38,10 @@ def test_integrity_failure_skips_final_check_but_records_timing(tmp_path):
         with scope(tmp_path) as run:
             run.engine=engine
             raise IntegrityFailure('base changed')
-    assert engine.full==0 and not (run.path/'final-integrity.json').exists()
-    assert json.loads((run.path/'timing.json').read_text())['final_integrity_sha256'] is None
+    assert engine.full==0
+    from pilot_eval.offline_grpo_support import attempt_start
+    assert json.loads((run.path/'timing.json').read_text())['final_integrity_sha256']==file_hash(run.path/'final-integrity.json')
+    with pytest.raises(ValueError,match='invalidates'):attempt_start(run.path,['base_unchanged'])
 
 
 def test_no_final_check_after_allocation_is_spent(tmp_path):
@@ -99,3 +101,13 @@ def test_source_roots_relocate_inside_the_artifact_root(tmp_path):
     assert resolve_root(tmp_path/'moved','sources')==(tmp_path/'moved'/'sources').resolve()
     assert portable_root(tmp_path/'run',outside)==str(outside.resolve())
     assert resolve_root(tmp_path/'moved',str(outside))==outside.resolve()
+
+
+def test_failed_integrity_result_is_not_overwritten_by_failure_record(tmp_path):
+    from pilot_eval.offline_grpo_support import IntegrityFailure
+    from pilot_eval.run import _write_json
+    with pytest.raises(IntegrityFailure):
+        with scope(tmp_path) as run:
+            _write_json(run.path/'final-integrity.json',dict(base_unchanged=False,kind='full'))
+            raise IntegrityFailure('base changed')
+    assert json.loads((run.path/'final-integrity.json').read_text())['kind']=='full'

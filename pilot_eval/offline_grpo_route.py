@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from pilot_eval import offline_grpo_pool
-from pilot_eval.offline_grpo_support import attempt_scope
+from pilot_eval.offline_grpo_support import IntegrityFailure, attempt_scope, attempt_start
 from pilot_eval.run import _write_json
 from pilot_eval.stage0_evaluation import _jsonl, _reservation
 from pilot_eval.stage0_rollout_math import normalize, replay_comparison
@@ -34,7 +34,29 @@ def load_decision(directory, root):
         raise ValueError('Route implementation changed; prepare a new plan')
     if decision['route'] == REUSE and file_hash(folder/'historical.jsonl') != decision['historical_sha256']:
         raise ValueError('Historical pool snapshot changed')
+    if decision['comparison'] is not None:
+        _verify_replay(folder, decision)
     return decision
+
+
+def _verify_replay(folder, decision):
+    """A replay outcome counts only with its saved draws and passed integrity check."""
+    attempt = folder/'attempts'/decision['replay_attempt']; replay = folder/'replay.jsonl'; final = attempt/'final-integrity.json'
+    if (not replay.is_file() or not final.is_file() or file_hash(replay) != decision['replay_sha256']
+            or file_hash(final) != decision['replay_integrity_sha256']
+            or json.loads(final.read_text()).get('base_unchanged') is not True):
+        raise ValueError('Replay evidence changed')
+    try:
+        attempt_start(attempt, ['base_unchanged'])
+    except ValueError as exc:
+        raise ValueError('Replay evidence changed') from exc
+    if decision['route'] == REUSE:
+        current = [json.loads(line) for line in replay.read_text().splitlines()]
+        ids = list(dict.fromkeys(row['group_id'] for row in current))
+        historical = [json.loads(line) for line in (folder/'historical.jsonl').read_text().splitlines()]
+        reference = [row for identifier in ids for row in historical if row['group_id'] == identifier]
+        if replay_comparison(reference, current) != decision['comparison'] or not decision['comparison']['exact']:
+            raise ValueError('Replay evidence changed')
 
 
 def historical_records(directory):
@@ -65,7 +87,7 @@ def _replay(source, weights, runtime, policy, root, target, deps, reservation, r
         engine = run.engine = deps.engine(config, root)
         eos = engine.special_tokens()['eos_token_id']
         if eos != source['legacy_runtime']['eos_token_id']:
-            return None, eos
+            return None, eos, run.path
         rows = [by_id[u['id']] for u in policy['units']]
         if engine.prepare_inputs(rows) != [dict(id=r['id'], input_ids=r['input_ids'][:r['prompt_tokens']]) for r in rows]:
             raise ValueError('Replay prompt token identity differs from the frozen training source')
@@ -75,8 +97,11 @@ def _replay(source, weights, runtime, policy, root, target, deps, reservation, r
             if len(values) != 8:
                 raise ValueError('Expected eight replay draws')
             current.extend(normalize(row, v, n, origin='replay', seed=unit['seed'], limit=1024, eos=eos) for n, v in enumerate(values))
-        _write_json(run.path/'final-integrity.json', engine.check_integrity(full=True))
-        return current, eos
+        integrity = engine.check_integrity(full=True)
+        _write_json(run.path/'final-integrity.json', integrity)
+        if integrity.get('base_unchanged') is not True:
+            raise IntegrityFailure('Full base integrity failed during replay')
+        return current, eos, run.path
 
 
 def select(pool_path, audit_path, baseline_path, weights_dir, runtime_path, output_root, *,
@@ -108,7 +133,7 @@ def select(pool_path, audit_path, baseline_path, weights_dir, runtime_path, outp
             job = dict(protocol='offline-grpo-pool-route-v1', pool_sha256=file_hash(inside(root, pool_path)), units=policy['units'])
             execution = {'reservation': {'reservation_id': None, 'job_sha256': _hash(job)}}
             reservation, remaining = (reservation_provider or _reservation)(job, execution, target, root, runtime, approval_path)
-            current, eos = _replay(source, weights, runtime, policy, root, target, deps, reservation, remaining, by_id)
+            current, eos, attempt = _replay(source, weights, runtime, policy, root, target, deps, reservation, remaining, by_id)
             if current is None:
                 reasons.append(f'Current tokenizer EOS {eos} differs from the recorded historical EOS')
             else:
@@ -122,6 +147,9 @@ def select(pool_path, audit_path, baseline_path, weights_dir, runtime_path, outp
             runtime=runtime, pool_sha256=file_hash(inside(root, pool_path)), audit_path=str(audit_path.relative_to(root)),
             baseline_path=str(baseline_path.relative_to(root)), implementation_sha256=file_hash(Path(__file__)),
             verified_historical_groups=source['verified_historical_groups'], missing=source['missing'])
+        if comparison is not None:
+            decision.update(replay_attempt=attempt.name, replay_sha256=file_hash(target/'replay.jsonl'),
+                            replay_integrity_sha256=file_hash(attempt/'final-integrity.json'))
         if chosen == REUSE:
             _jsonl(target/'historical.jsonl', source['historical'])
             decision.update(historical_order=source['historical_order'], historical_sha256=file_hash(target/'historical.jsonl'),
