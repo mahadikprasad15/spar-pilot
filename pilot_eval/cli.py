@@ -1014,7 +1014,7 @@ def main(argv=None, *, dependencies=None, reservation_provider=None):
         elif args.command.startswith('stage0-distance-'):
             from pilot_eval import stage0_distance as workflow
             operation=args.command.removeprefix('stage0-distance-')
-            if operation=='prepare':result=workflow.prepare(args.rollouts,args.output_root,args.name,comparison_root=args.comparison_root,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
+            if operation=='prepare':result=workflow.prepare(args.rollouts,args.output_root,args.name,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
             elif operation=='runtime':result=workflow.runtime(args.config,args.output_root,dependencies=dependencies)
             elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
             elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
