@@ -15,6 +15,18 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','build','agreement','evaluate','verify','report']:
+        cuts=commands.add_parser('offline-grpo-cuts-'+operation,help='offline principal cuts and paired evaluation')
+        cuts.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            cuts.add_argument('--internals',type=Path,required=True);cuts.add_argument('--behaviour',type=Path,required=True)
+            cuts.add_argument('--reference',type=Path,required=True);cuts.add_argument('--reference-root',type=Path,required=True);cuts.add_argument('--name',required=True)
+        else:cuts.add_argument('--config',type=Path,required=True)
+        if operation in ['build','agreement','evaluate']:cuts.add_argument('--max-new-units',type=int)
+        if operation in ['agreement','evaluate']:cuts.add_argument('--approval',type=Path)
+        if operation=='verify':
+            cuts.add_argument('--stage',choices=['build','agreement','evaluation','report'],required=True)
+            cuts.add_argument('--deep',action='store_true',help='recompute numerical construction for build verification')
     for operation in ['prepare','geometry','collect','verify','report']:
         internal=commands.add_parser('offline-grpo-internals-'+operation,help='offline internal measurements')
         internal.add_argument('--output-root',type=Path,required=True)
@@ -998,6 +1010,18 @@ def main(argv=None, *, dependencies=None):
                 result=getattr(stage0_distance_report,operation)(args.config,args.output_root)
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-cuts-'):
+            from pilot_eval import offline_grpo_cuts as workflow
+            operation=args.command.removeprefix('offline-grpo-cuts-')
+            if operation=='prepare':result=workflow.prepare(args.internals,args.behaviour,args.reference,args.reference_root,args.output_root,args.name)
+            elif operation=='build':result=workflow.build(args.config,args.output_root,max_new_units=args.max_new_units)
+            elif operation in ['agreement','evaluate']:result=getattr(workflow,operation)(args.config,args.output_root,approval_path=args.approval,dependencies=dependencies,max_new_units=args.max_new_units)
+            elif operation=='verify':
+                if args.stage=='build':result=workflow.verify_build(args.config,args.output_root,deep=args.deep)
+                elif args.stage=='report':result=workflow.verify_report(args.config,args.output_root)
+                else:result=workflow.verify_stage(args.config,args.output_root,args.stage)
+            else:result=workflow.report(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-grpo-internals-'):
             from pilot_eval import offline_grpo_internals as workflow
