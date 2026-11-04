@@ -52,6 +52,8 @@ def test_public_agreement_evaluation_resume_and_tamper(tmp_path,monkeypatch):
     path=tmp_path/'plan.json';path.write_text('{}')
     args=['--output-root',str(tmp_path),'--config',str(path)]
     assert main(['offline-grpo-cuts-agreement',*args,'--max-new-units','2'],dependencies=Engine())==0
+    for attempt in (directory/'attempts').iterdir():
+        for name in ['final-integrity.json','timing.json','timing.complete.json']:(attempt/name).unlink()
     assert main(['offline-grpo-cuts-agreement',*args],dependencies=Engine())==0
     result=cuts.verify_stage(path,tmp_path,'agreement')
     assert result['batch_sizes']['input']==1 and result['batch_sizes']['output']==16
@@ -129,6 +131,7 @@ def test_public_prepare_and_load_bind_reference_and_sources(tmp_path,monkeypatch
     assert main(['offline-grpo-cuts-prepare',*args])==0
     plan=tmp_path/'plans/test/offline.cuts.json'
     assert cuts.load(plan,tmp_path)[0]['conditions']==list(cuts.CONDITIONS)
+    assert json.loads(plan.read_text())['reference_root']=='.'
     (tmp_path/'reference.json').write_text('{"changed":true}')
     with pytest.raises(ValueError,match='reference changed'):cuts.load(plan,tmp_path)
 

@@ -23,6 +23,16 @@ def summarize(log_mu, log_pi):
                 interpretation='empirical fixed-data log ratio; KL(mu || pi) requires fixed, unselected fresh mu samples')
 
 
+def fidelity_gate(fidelity, tolerance):
+    """Fail when generation and teacher-forced scores differ beyond an explicit limit."""
+    if type(tolerance) not in [int, float] or not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError('explicit positive fidelity tolerance required')
+    worst = max(abs(x) for item in fidelity['observations'] for x in item['differences'])
+    if worst > tolerance:
+        raise ValueError(f'generation and teacher-forced scores differ by {worst} nats, which exceeds tolerance {tolerance}')
+    return worst
+
+
 def score_window(model, rows, *, pad_token_id, batch_size=8):
     """Score generated tokens including EOS with both policies before update.
 
@@ -69,7 +79,7 @@ def score_window(model, rows, *, pad_token_id, batch_size=8):
             draw_ids=[d['draw_id'] for _,d in flat], question_ids=[r['id'] for r,_ in flat],
             generated_token_ids=[d['generated_token_ids'] for _,d in flat],
             masks=[d['completion_mask'] for _,d in flat], log_mu=log_mu, log_pi=log_pi,
-            diagnostic_batch_size=batch_size, mu_fidelity='pending-real-generation-score-check', summary=summary)
+            diagnostic_batch_size=batch_size, mu_fidelity='teacher-forced; generation-score agreement is gated by the diagnostic preflight', summary=summary)
     finally:
         for module, training in modes: module.training = training
         random.setstate(rng[0]); np.random.set_state(rng[1]); torch.set_rng_state(rng[2])

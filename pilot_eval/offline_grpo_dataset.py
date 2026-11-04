@@ -1,7 +1,6 @@
 """Untuned-model dataset scoring for a sealed offline pool and SFT exports."""
 import json
 import time
-import uuid
 from pathlib import Path
 
 import numpy as np
@@ -10,8 +9,8 @@ from pilot_eval import offline_grpo_pool, sampling_sft_training_data
 from pilot_eval.run import _write_json
 from pilot_eval.sft import safe_name
 from pilot_eval.stage0_distance_math import check_arrays
-from pilot_eval.stage0_evaluation import _reservation, _attempt_timing
-from pilot_eval.stage0_qualification_backend import deadline_guard
+from pilot_eval.offline_grpo_support import IntegrityFailure, attempt_scope, attempt_start, portable_root, resolve_root
+from pilot_eval.stage0_evaluation import _reservation
 from pilot_eval.stage0_sources import inside
 from pilot_eval.stage0_workflow import _writer, _state
 from pilot_eval.training import file_hash
@@ -59,7 +58,8 @@ def aggregate(members,scores):
 
 def _identity():
     from pilot_eval import stage0_distance
-    return dict(workflow=file_hash(Path(__file__)),distance=stage0_distance.implementation())
+    from pilot_eval import offline_grpo_support
+    return dict(workflow=file_hash(Path(__file__)),support=file_hash(Path(offline_grpo_support.__file__)),distance=stage0_distance.implementation())
 
 
 def _legacy(path,root,identity,eos):
@@ -182,7 +182,7 @@ def prepare(pool_path,sft_path,sampler_path,runtime_path,output_root,name,*,comp
     if type(context_chunk) is not int or context_chunk<1 or type(workspace_bytes) is not int or workspace_bytes<1:raise ValueError('Positive scoring workspace and chunk required')
     directory=root/'runs/offline-grpo'/name/'dataset';path=root/'plans'/name/'offline.dataset.json'
     config=dict(protocol='offline-grpo-dataset-v1',run_path=str(directory.relative_to(root)),
-        pool_path=str(pool_path.relative_to(root)),pool_sha256=file_hash(pool_path),sft_root=str(comparison_root),sft_path=str(sft_path.relative_to(comparison_root)),sft_sha256=file_hash(sft_path),
+        pool_path=str(pool_path.relative_to(root)),pool_sha256=file_hash(pool_path),sft_root=portable_root(root,comparison_root),sft_path=str(sft_path.relative_to(comparison_root)),sft_sha256=file_hash(sft_path),
         sampler_path=str(sampler_path.relative_to(root)),sampler_sha256=file_hash(sampler_path),runtime_path=str(runtime_path.relative_to(root)),runtime_sha256=file_hash(runtime_path),runtime=runtime,
         model_identity=sampler['model_identity'],weights_dir=sampler['weights_dir'],execution_kind=sampler['execution_kind'],
         context_chunk=context_chunk,workspace_bytes=workspace_bytes,answers_sha256=_hash(answers),memberships_sha256=_hash(members),
@@ -200,11 +200,10 @@ def load(path,root):
     path=inside(root,path);config=json.loads(path.read_text());directory=inside(root,config['run_path'])
     if config.get('protocol')!='offline-grpo-dataset-v1' or config['implementation']!=_identity() or json.loads((directory/'config.json').read_text())!=config:
         raise ValueError('Dataset configuration or implementation changed')
-    comparison_root=Path(config['sft_root']).resolve()
+    comparison_root=resolve_root(root,config['sft_root'])
     for key in ['pool','sft','sampler','runtime']:
         source_root=comparison_root if key=='sft' else root
         if file_hash(inside(source_root,config[key+'_path']))!=config[key+'_sha256']:raise ValueError('Dataset source metadata changed')
-    offline_grpo_pool._verified_r0(root/config['sampler_path'],root)
     answers,members,receipt=_inputs(root/config['pool_path'],comparison_root/config['sft_path'],root,comparison_root)
     if _hash(answers)!=config['answers_sha256'] or _hash(members)!=config['memberships_sha256'] or answers!=json.loads((directory/'inputs/answers.json').read_text()) or members!=json.loads((directory/'inputs/memberships.json').read_text()):
         raise ValueError('Dataset token or membership identity changed')
@@ -225,12 +224,7 @@ def _read_unit(config,directory,answer,attempt_cache=None):
     if metadata['integrity'].get('base_unchanged') is not True:
         raise ValueError('Scoring attempt integrity changed')
     if metadata['attempt_id'] not in attempt_cache:
-        final=attempt/'final-integrity.json'
-        if not final.exists() or not json.loads(final.read_text()).get('base_unchanged'):
-            raise ValueError('Scoring attempt lacks successful full base integrity proof')
-        timing=_attempt_timing(attempt)
-        if timing.get('final_integrity_sha256')!=file_hash(final):raise ValueError('Scoring attempt integrity timing changed')
-        attempt_cache[metadata['attempt_id']]=file_hash(attempt/'start.json')
+        attempt_cache[metadata['attempt_id']]=attempt_start(attempt,['base_unchanged'])
     if attempt_cache[metadata['attempt_id']]!=metadata['attempt_start_sha256']:
         raise ValueError('Scoring attempt identity changed')
     with np.load(folder/'tokens.npz',allow_pickle=False) as data:arrays={k:data[k] for k in data.files}
@@ -251,7 +245,7 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         saved=[_read_unit(config,directory,a,cache) for a in answers]
         if max_new_units==0:return dict(complete=False,completed=sum(v is not None for v in saved),total=len(answers))
         historical={}
-        comparison_root=Path(config['sft_root']).resolve()
+        comparison_root=resolve_root(root,config['sft_root'])
         source=json.loads(inside(comparison_root,config['sft_path']).read_text())
         if source.get('protocol')=='sampling-stage0-dataset-v1':
             _,_,historical=_legacy(comparison_root/config['sft_path'],comparison_root,config['model_identity'],config['eos_token_id'])
@@ -259,60 +253,47 @@ def run(path,output_root,*,dependencies=None,approval_path=None,max_new_units=No
         if runtime!=config['runtime'] or runtime['execution_kind']!=config['execution_kind']:raise ValueError('Scoring runtime differs from approved session')
         execution={'reservation':{'reservation_id':None,'job_sha256':_hash(config)}}
         reservation,remaining=(reservation_provider or _reservation)(config,execution,directory,root,runtime,approval_path)
-        attempt=directory/'attempts'/uuid.uuid4().hex
-        _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],runtime_sha256=_hash(runtime)))
-        started=time.monotonic();engine=None;new=0
-        try:
-            with deadline_guard(remaining,config['execution_kind']=='real-cuda'):
-                if hasattr(deps,'preflight'):deps.preflight(config,root)
-                _save_frozen(directory/'meta/runtime.json',runtime)
-                engine=deps.engine(config,root)
-                vocabulary=engine.vocabulary()
-                if (type(vocabulary.get('logit_vocabulary_size')) is not int or vocabulary['logit_vocabulary_size']<1
-                    or type(vocabulary.get('tokenizer_vocabulary_size')) is not int or vocabulary['tokenizer_vocabulary_size']<1
-                    or vocabulary.get('padded_output_rows')!=max(0,vocabulary['logit_vocabulary_size']-vocabulary['tokenizer_vocabulary_size'])
-                    or vocabulary.get('includes_padded_rows') is not True or vocabulary.get('rank_and_softmax_same_full_vector') is not True):
-                    raise ValueError('Full scoring vocabulary identity required')
-                if historical:
-                    old_dir=inside(comparison_root,source['run_path'])
-                    if json.loads((old_dir/'meta/vocabulary.json').read_text())!=vocabulary:
-                        raise ValueError('Historical and current scoring vocabulary differ')
-                _save_frozen(directory/'meta/vocabulary.json',vocabulary)
-                for index,answer in enumerate(answers):
-                    if saved[index] is not None:continue
-                    if max_new_units is not None and new>=max_new_units:break
-                    if time.monotonic()-started>=remaining:raise TimeoutError('Scoring allocation exhausted')
-                    arrays=check_arrays(historical[answer['answer_id']] if answer['answer_id'] in historical else engine.score(answer),answer)
-                    if np.any(arrays['rank']>vocabulary['logit_vocabulary_size']) or any(t>=vocabulary['logit_vocabulary_size'] for t in answer['target_ids']):
-                        raise ValueError('Token or rank outside scoring vocabulary')
-                    integrity=engine.check_integrity()
-                    if not integrity.get('base_unchanged'):raise ValueError('Base integrity failed')
-                    folder=directory/'units'/answer['answer_id'];folder.mkdir(parents=True,exist_ok=True)
-                    tmp=folder/'tokens.tmp.npz';np.savez_compressed(tmp,**arrays);tmp.replace(folder/'tokens.npz')
-                    _write_json(folder/'metadata.json',dict(attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=integrity,vocabulary_sha256=file_hash(directory/'meta/vocabulary.json'),origin='historical-verified' if answer['answer_id'] in historical else 'fresh'))
-                    _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),answer_sha256=_hash(answer)),files={n:file_hash(folder/n) for n in ['tokens.npz','metadata.json']}))
-                    saved[index]=arrays;new+=1
-                    done=sum(v is not None for v in saved);_state(directory,'running',done,len(answers))
-                    if progress:print(f'Offline dataset: {done}/{len(answers)} unique answers sealed',flush=True)
-                integrity=engine.check_integrity(full=True);_write_json(attempt/'final-integrity.json',integrity)
-                if not integrity.get('base_unchanged'):raise ValueError('Final base integrity failed')
-                if any(v is None for v in saved):return _state(directory,'incomplete',sum(v is not None for v in saved),len(answers))
-                _save_frozen(directory/'measurement.complete.json',dict(config_sha256=_hash(config),
-                    units={a['answer_id']:file_hash(directory/'units'/a['answer_id']/'complete.json') for a in answers},
-                    final_attempt=attempt.name,final_sha256=file_hash(attempt/'final-integrity.json')))
-                _state(directory,'complete',len(answers),len(answers))
-                return dict(complete=True,unique_answers=len(answers),execution_kind=config['execution_kind'])
-        except (Exception,KeyboardInterrupt) as exc:
-            if engine is not None and 'integrity' not in str(exc).lower() and time.monotonic()-started<remaining:
-                try:
-                    with deadline_guard(remaining-(time.monotonic()-started),config['execution_kind']=='real-cuda'):
-                        _write_json(attempt/'final-integrity.json',engine.check_integrity(full=True))
-                except Exception:pass
-            _state(directory,'failed',sum(v is not None for v in saved),len(answers),error=str(exc));raise
-        finally:
-            if engine:engine.close()
-            _write_json(attempt/'timing.json',dict(seconds=time.monotonic()-started,newly_sealed_groups=new,reservation_id=reservation['reservation_id'],start_sha256=file_hash(attempt/'start.json'),final_integrity_sha256=file_hash(attempt/'final-integrity.json') if (attempt/'final-integrity.json').exists() else None,usage_reconciled=False,reservation_stays_charged=True))
-            _write_json(attempt/'timing.complete.json',dict(sha256=file_hash(attempt/'timing.json')))
+        def failed(exc):_state(directory,'failed',sum(v is not None for v in saved),len(answers),error=str(exc))
+        with attempt_scope(directory,reservation,runtime,remaining,real=config['execution_kind']=='real-cuda',on_failure=failed) as run:
+            attempt=run.path
+            if hasattr(deps,'preflight'):deps.preflight(config,root)
+            _save_frozen(directory/'meta/runtime.json',runtime)
+            engine=run.engine=deps.engine(config,root)
+            vocabulary=engine.vocabulary()
+            if (type(vocabulary.get('logit_vocabulary_size')) is not int or vocabulary['logit_vocabulary_size']<1
+                or type(vocabulary.get('tokenizer_vocabulary_size')) is not int or vocabulary['tokenizer_vocabulary_size']<1
+                or vocabulary.get('padded_output_rows')!=max(0,vocabulary['logit_vocabulary_size']-vocabulary['tokenizer_vocabulary_size'])
+                or vocabulary.get('includes_padded_rows') is not True or vocabulary.get('rank_and_softmax_same_full_vector') is not True):
+                raise ValueError('Full scoring vocabulary identity required')
+            if historical:
+                old_dir=inside(comparison_root,source['run_path'])
+                if json.loads((old_dir/'meta/vocabulary.json').read_text())!=vocabulary:
+                    raise ValueError('Historical and current scoring vocabulary differ')
+            _save_frozen(directory/'meta/vocabulary.json',vocabulary)
+            for index,answer in enumerate(answers):
+                if saved[index] is not None:continue
+                if max_new_units is not None and run.new>=max_new_units:break
+                if time.monotonic()-run.started>=remaining:raise TimeoutError('Scoring allocation exhausted')
+                arrays=check_arrays(historical[answer['answer_id']] if answer['answer_id'] in historical else engine.score(answer),answer)
+                if np.any(arrays['rank']>vocabulary['logit_vocabulary_size']) or any(t>=vocabulary['logit_vocabulary_size'] for t in answer['target_ids']):
+                    raise ValueError('Token or rank outside scoring vocabulary')
+                integrity=engine.check_integrity()
+                if not integrity.get('base_unchanged'):raise IntegrityFailure('Base integrity failed')
+                folder=directory/'units'/answer['answer_id'];folder.mkdir(parents=True,exist_ok=True)
+                tmp=folder/'tokens.tmp.npz';np.savez_compressed(tmp,**arrays);tmp.replace(folder/'tokens.npz')
+                _write_json(folder/'metadata.json',dict(attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=integrity,vocabulary_sha256=file_hash(directory/'meta/vocabulary.json'),origin='historical-verified' if answer['answer_id'] in historical else 'fresh'))
+                _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),answer_sha256=_hash(answer)),files={n:file_hash(folder/n) for n in ['tokens.npz','metadata.json']}))
+                saved[index]=arrays;run.new+=1
+                done=sum(v is not None for v in saved);_state(directory,'running',done,len(answers))
+                if progress:print(f'Offline dataset: {done}/{len(answers)} unique answers sealed',flush=True)
+            integrity=engine.check_integrity(full=True);_write_json(attempt/'final-integrity.json',integrity)
+            if not integrity.get('base_unchanged'):raise IntegrityFailure('Final base integrity failed')
+            if any(v is None for v in saved):return _state(directory,'incomplete',sum(v is not None for v in saved),len(answers))
+            _save_frozen(directory/'measurement.complete.json',dict(config_sha256=_hash(config),
+                units={a['answer_id']:file_hash(directory/'units'/a['answer_id']/'complete.json') for a in answers},
+                final_attempt=attempt.name,final_sha256=file_hash(attempt/'final-integrity.json')))
+            _state(directory,'complete',len(answers),len(answers))
+            return dict(complete=True,unique_answers=len(answers),execution_kind=config['execution_kind'])
 
 
 def verify(path,output_root):
@@ -323,7 +304,7 @@ def verify(path,output_root):
     if file_hash(final)!=seal['final_sha256'] or not json.loads(final.read_text()).get('base_unchanged'):raise ValueError('Dataset final integrity changed')
     if json.loads((directory/'meta/runtime.json').read_text())!=config['runtime']:raise ValueError('Dataset runtime changed')
     cache={}
-    comparison_root=Path(config['sft_root']).resolve()
+    comparison_root=resolve_root(root,config['sft_root'])
     source=json.loads(inside(comparison_root,config['sft_path']).read_text())
     historical={}
     if source.get('protocol')=='sampling-stage0-dataset-v1':
@@ -363,10 +344,10 @@ def report(path,output_root):
     for answer in answers:
         meta=json.loads((directory/'units'/answer['answer_id']/'metadata.json').read_text())
         origins[meta['origin']]=origins.get(meta['origin'],0)+1
-    source=json.loads(inside(Path(config['sft_root']),config['sft_path']).read_text())
+    source=json.loads(inside(resolve_root(root,config['sft_root']),config['sft_path']).read_text())
     old_runtime=None
     if source.get('protocol')=='sampling-stage0-dataset-v1':
-        old_runtime=json.loads((inside(Path(config['sft_root']),source['run_path'])/'meta/runtime.json').read_text())
+        old_runtime=json.loads((inside(resolve_root(root,config['sft_root']),source['run_path'])/'meta/runtime.json').read_text())
     result=dict(protocol='offline-grpo-dataset-report-v1',execution_kind=config['execution_kind'],
         scoring_runtime=config['runtime'],historical_scoring_runtime=old_runtime,unique_answer_origins=origins,
         full={name:aggregate(rows,scores) for name,rows in selections.items()},

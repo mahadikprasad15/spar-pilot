@@ -21,3 +21,7 @@ Implementation under review; ticket 02 remains scientifically unqualified. Focus
 ## Root verification
 
 Integrated pool, training and diagnostic tests passed 17 tests with one pinned-TRL skip. The working-Torch diagnostic fixture passed independently, including failure-before-update and state restoration. The real generation-score command records raw differences and coverage; it does not assert numerical fidelity using an unapproved tolerance. Actual GPU evidence and pinned-TRL parity remain pending.
+
+## Review follow-up
+
+The generation-score fidelity check is now a real gate: it fails when any absolute difference exceeds an explicit `--fidelity-tolerance`, with no default. The reviewed tolerance value is still pending, and the actual GPU evidence and pinned-TRL parity remain pending.

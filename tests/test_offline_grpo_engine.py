@@ -57,7 +57,8 @@ def test_interrupted_run_replays_only_after_checkpoint(tmp_path, monkeypatch):
     from pilot_eval import offline_grpo_training as training
     groups = [[f'q{s}-{i}' for i in range(8)] for s in range(64)]
     windows = [[{'id': q} for q in group] for group in groups]
-    config = {'optimizer_groups': groups, 'settings': {}, 'weights_sha256': 'x',
+    import hashlib
+    config = {'optimizer_groups': groups, 'settings': {}, 'weights_sha256': hashlib.sha256(b'fixture').hexdigest(),
               'adapter_config_sha256': 'x', 'runtime': {'fixture': True},
               'monitor_policy': {k: {'threshold': 2, 'action': 'flag'} for k in
                   ('cap_fraction', 'dead_group_fraction', 'length_ratio_change_8_steps')},
@@ -148,3 +149,31 @@ def test_pinned_trl_online_and_offline_update_parity(tmp_path):
     for (name, p), (other_name, q) in zip(online.model.named_parameters(), offline.model.named_parameters()):
         assert name == other_name
         torch.testing.assert_close(p, q, atol=1e-6, rtol=1e-4)
+
+
+def test_resaved_checkpoint_zero_must_match_before_any_training_step(tmp_path, monkeypatch):
+    import json
+    from pilot_eval import offline_grpo_training as training
+    groups = [[f'q{s}-{i}' for i in range(8)] for s in range(64)]
+    config = {'optimizer_groups': groups, 'settings': {}, 'weights_sha256': '0' * 64,
+              'adapter_config_sha256': 'x', 'runtime': {'fixture': True}}
+    directory = tmp_path / 'run'; directory.mkdir()
+    (directory / 'config.json').write_text(json.dumps(config))
+    monkeypatch.setattr(training, '_load', lambda *args: (config, directory, {}, {}, [], tmp_path))
+    steps = []
+    class Engine:
+        def runtime(self): return {'fixture': True}
+        def check_integrity(self): return {'base_unchanged': True}
+        def close(self): pass
+        def train_window(self, rows, step): steps.append(step)
+        def save_checkpoint(self, path, step):
+            path.mkdir(parents=True)
+            for f in ('adapter_config.json', 'adapter_model.safetensors', 'optimizer.pt',
+                      'scheduler.pt', 'rng_state.pth', 'prior-gradient.pt'):
+                (path/f).write_text('different bytes')
+            (path/'trainer_state.json').write_text(json.dumps({'global_step': step}))
+    class Dependencies:
+        def load_training(self, *args): return Engine()
+    with pytest.raises(ValueError, match='re-saved checkpoint-0'):
+        training.run(tmp_path/'unused', tmp_path, dependencies=Dependencies())
+    assert steps == []

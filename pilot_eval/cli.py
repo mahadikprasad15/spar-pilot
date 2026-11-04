@@ -72,7 +72,7 @@ def main(argv=None, *, dependencies=None, reservation_provider=None):
         else:
             train.add_argument('--config',type=Path,required=True)
             if operation=='check-diagnostics':
-                train.add_argument('--long-min-tokens',type=int,required=True)
+                train.add_argument('--long-min-tokens',type=int,required=True);train.add_argument('--fidelity-tolerance',type=float,required=True)
                 train.add_argument('--prompt-count',type=int,required=True)
     for operation in ['prepare','run','verify']:
         fresh=commands.add_parser('offline-pool-fresh-'+operation,help='bounded fresh R0 pool collection')
@@ -1073,7 +1073,7 @@ def main(argv=None, *, dependencies=None, reservation_provider=None):
             from pilot_eval import offline_grpo_training as workflow
             operation=args.command.removeprefix('offline-grpo-train-')
             if operation=='prepare':result=workflow.prepare(args.frozen,args.pool,args.checkpoint_zero,args.output_root,args.name,runtime=json.loads((args.output_root.resolve()/args.runtime).read_text()),weights_sha256=args.checkpoint_zero_sha256,config_sha256=args.checkpoint_zero_config_sha256)
-            elif operation=='check-diagnostics':result=workflow.check_diagnostics(args.config,args.output_root,long_min_tokens=args.long_min_tokens,prompt_count=args.prompt_count)
+            elif operation=='check-diagnostics':result=workflow.check_diagnostics(args.config,args.output_root,long_min_tokens=args.long_min_tokens,prompt_count=args.prompt_count,fidelity_tolerance=args.fidelity_tolerance)
             else:result=workflow.run(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-pool-fresh-'):

@@ -39,6 +39,10 @@ def _verified_r0(path, root):
 def _source(path, root):
     frozen = load_frozen(path, root)
     config, training, evaluation = _prepared(inside(root, frozen['source_path']), root)
+    from pilot_eval.stage0_rollout_sources import POLICY
+    expected = dict(completion_limit=POLICY['max_new_tokens'], top_p=POLICY['top_p'], top_k=POLICY['top_k'])
+    if {k: frozen['settings'].get(k) for k in expected} != expected:
+        raise ValueError('Frozen online sampling settings differ from the pool sampler policy')
     groups = frozen['optimizer_groups']
     if len(groups) != 64 or any(not isinstance(group, list) or len(group) != 8 or len(set(group)) != 8 for group in groups):
         raise ValueError('Frozen optimizer plan must contain 64 distinct eight-question windows')

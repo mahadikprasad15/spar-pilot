@@ -11,7 +11,7 @@ def test_pool_cli_prepares_and_revalidates_complete_handoff(tmp_path, monkeypatc
     rows = [dict(id=f'q{i}', prompt=f'question {i}', gold='#### 2', input_ids=[11, i+100, 5], prompt_tokens=2) for i in range(512)]
     plan = dict(optimizer_prompt_order=[r['id'] for r in rows], model='fixture', model_revision='fixture', tokenizer_revision='fixture', dtype='float32')
     monkeypatch.setattr(pool, '_prepared', lambda path, root: (plan, rows, [dict(id='heldout')]))
-    monkeypatch.setattr(pool, 'load_frozen', lambda path, root: dict(source_path='prepared.json', optimizer_groups=[plan['optimizer_prompt_order'][i:i+8] for i in range(0,512,8)]))
+    monkeypatch.setattr(pool, 'load_frozen', lambda path, root: dict(source_path='prepared.json', settings=dict(completion_limit=1024,top_p=1.,top_k=0), optimizer_groups=[plan['optimizer_prompt_order'][i:i+8] for i in range(0,512,8)]))
     source=tmp_path/'prepared.json'; source.write_text('{}')
     args=['--output-root',str(tmp_path)]
     assert main(['offline-pool-prepare', *args, '--source', str(source), '--name', 'example']) == 0
@@ -74,7 +74,7 @@ def test_source_rejects_frozen_window_reordering(tmp_path, monkeypatch):
     order=[row['id'] for row in rows]
     groups=[order[i:i+8] for i in range(0,512,8)]
     groups[0][0],groups[0][1]=groups[0][1],groups[0][0]
-    monkeypatch.setattr(pool,'load_frozen',lambda path,root:dict(source_path='prepared.json',optimizer_groups=groups))
+    monkeypatch.setattr(pool,'load_frozen',lambda path,root:dict(source_path='prepared.json',settings=dict(completion_limit=1024,top_p=1.,top_k=0),optimizer_groups=groups))
     monkeypatch.setattr(pool,'_prepared',lambda path,root:(dict(optimizer_prompt_order=order),rows,[dict(id='heldout')]))
     with pytest.raises(ValueError,match='windows differ'):
         pool._source(tmp_path/'frozen.json',tmp_path)
@@ -85,7 +85,7 @@ def test_source_rejects_heldout_overlap(tmp_path, monkeypatch):
     from pilot_eval import offline_grpo_pool as pool
     rows=[dict(id=f'q{i}',prompt='q',gold='#### 2',input_ids=[1],prompt_tokens=1) for i in range(512)]
     order=[row['id'] for row in rows]
-    monkeypatch.setattr(pool,'load_frozen',lambda path,root:dict(source_path='prepared.json',optimizer_groups=[order[i:i+8] for i in range(0,512,8)]))
+    monkeypatch.setattr(pool,'load_frozen',lambda path,root:dict(source_path='prepared.json',settings=dict(completion_limit=1024,top_p=1.,top_k=0),optimizer_groups=[order[i:i+8] for i in range(0,512,8)]))
     monkeypatch.setattr(pool,'_prepared',lambda path,root:(dict(optimizer_prompt_order=order),rows,[dict(id='q3')]))
     with pytest.raises(ValueError,match='Held-out'):
         pool._source(tmp_path/'frozen.json',tmp_path)
@@ -113,7 +113,7 @@ def test_fresh_public_workflow_resumes_and_imports_cpu_fixture(tmp_path, monkeyp
     order=[r['id'] for r in rows]
     identity=dict(model='fixture',model_revision='revision',tokenizer_revision='revision',dtype='float32',base_sha256='base')
     prepared=dict(optimizer_prompt_order=order,**{k:identity[k] for k in ['model','model_revision','tokenizer_revision','dtype']})
-    monkeypatch.setattr(pool,'load_frozen',lambda path,root:dict(source_path='prepared.json',optimizer_groups=[order[i:i+8] for i in range(0,512,8)]))
+    monkeypatch.setattr(pool,'load_frozen',lambda path,root:dict(source_path='prepared.json',settings=dict(completion_limit=1024,top_p=1.,top_k=0),optimizer_groups=[order[i:i+8] for i in range(0,512,8)]))
     monkeypatch.setattr(pool,'_prepared',lambda path,root:(prepared,rows,[dict(id='heldout')]))
     monkeypatch.setattr(fresh,'status',lambda path,root:dict(audit=dict(primary_sources_ready=True,sources=dict(sft=dict(identity=identity)))))
     monkeypatch.setattr(fresh,'_reservation',lambda *args:(dict(reservation_id='fixture'),1000))
@@ -136,7 +136,8 @@ def test_fresh_public_workflow_resumes_and_imports_cpu_fixture(tmp_path, monkeyp
     assert main(['offline-pool-prepare',*root,'--source',str(tmp_path/'frozen.json'),'--name','fresh'])==0
     plan=tmp_path/'plans/fresh/offline.pool.json'
     deps=Dependencies()
-    assert main(['offline-pool-fresh-prepare',*root,'--pool',str(plan),'--audit',str(tmp_path/'audit.json'),'--weights-dir',str(weights),'--runtime',str(runtime_path)],dependencies=deps)==0
+    monkeypatch.chdir(tmp_path.parent)
+    assert main(['offline-pool-fresh-prepare',*root,'--pool',str(plan.relative_to(tmp_path)),'--audit',str(tmp_path/'audit.json'),'--weights-dir',str(weights),'--runtime',str(runtime_path)],dependencies=deps)==0
     fresh_plan=tmp_path/'runs/offline-grpo/fresh/pool/fresh.plan.json'
     assert main(['offline-pool-fresh-run',*root,'--config',str(fresh_plan),'--max-new-units','1'],dependencies=deps)==0
     attempts=tmp_path/'runs/offline-grpo/fresh/pool/fresh/attempts'
@@ -149,6 +150,7 @@ def test_fresh_public_workflow_resumes_and_imports_cpu_fixture(tmp_path, monkeyp
     runtime['session_id']='other-session'
     assert main(['offline-pool-fresh-run',*root,'--config',str(fresh_plan)],dependencies=deps)==1
     runtime['session_id']='fixture'
+    for name in ['final-integrity.json','timing.json','timing.complete.json']:(first_attempt/name).unlink()
     assert main(['offline-pool-fresh-run',*root,'--config',str(fresh_plan)],dependencies=deps)==0
     assert main(['offline-pool-fresh-verify',*root,'--config',str(fresh_plan)])==0
     assert main(['offline-pool-import',*root,'--config',str(plan),'--rollouts',str(fresh_plan)])==0
@@ -167,3 +169,26 @@ def test_fresh_collection_reservation_requires_recorded_budget(tmp_path):
     with pytest.raises(ValueError, match='usage'):
         _reservation({}, {'reservation': {'reservation_id': None, 'job_sha256': 'job'}},
                      tmp_path/'run',tmp_path,{'session_id':'fixture'},None)
+
+
+def test_source_rejects_sampling_settings_that_differ_from_online_plan(tmp_path, monkeypatch):
+    import pytest
+    from pilot_eval import offline_grpo_pool as pool
+    rows=[dict(id=f'q{i}',prompt='q',gold='#### 2',input_ids=[1],prompt_tokens=1) for i in range(512)]
+    order=[row['id'] for row in rows]
+    monkeypatch.setattr(pool,'_prepared',lambda path,root:(dict(optimizer_prompt_order=order),rows,[dict(id='heldout')]))
+    for change in [dict(completion_limit=512),dict(top_p=.9),dict(top_k=50)]:
+        settings=dict(dict(completion_limit=1024,top_p=1.,top_k=0),**change)
+        monkeypatch.setattr(pool,'load_frozen',lambda path,root:dict(source_path='prepared.json',settings=settings,optimizer_groups=[order[i:i+8] for i in range(0,512,8)]))
+        with pytest.raises(ValueError,match='sampling settings'):
+            pool._source(tmp_path/'frozen.json',tmp_path)
+
+
+def test_verified_records_validates_saved_groups_once(tmp_path, monkeypatch):
+    from pilot_eval import offline_grpo_fresh as fresh
+    config=dict(model_identity=dict(model='m',model_revision='r',tokenizer_revision='r',dtype='float32'),execution_kind='x',
+                units=[],expected_eos_token_id=99,runtime={'r':1},run_path='run')
+    calls=[]
+    monkeypatch.setattr(fresh,'_verified',lambda path,root:calls.append(path) or (config,[[dict(id=1)]],dict(eos_token_id=99)))
+    records,metadata=fresh.verified_records(tmp_path/'plan.json',tmp_path)
+    assert records==[dict(id=1)] and metadata['eos_token_id']==99 and len(calls)==1

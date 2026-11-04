@@ -92,6 +92,8 @@ def test_public_drift_collection_resume_checks_actual_mapping(tmp_path,monkeypat
         def close(self):pass
     path=tmp_path/'plan.json';path.write_text('{}');args=['--output-root',str(tmp_path),'--config',str(path),'--kind','drift']
     assert main(['offline-grpo-internals-collect',*args,'--max-new-units','1'],dependencies=Backend())==0
+    for attempt in (tmp_path/'internals/drift/attempts').iterdir():
+        for name in ['final-integrity.json','timing.json','timing.complete.json']:(attempt/name).unlink()
     assert main(['offline-grpo-internals-collect',*args],dependencies=Backend())==0
     assert main(['offline-grpo-internals-verify',*args])==0
     result=json.loads((tmp_path/'internals/drift/units/off8-000/result.json').read_text())
@@ -151,7 +153,7 @@ def test_report_reconstructs_observed_kl_and_matched_window(tmp_path,monkeypatch
     training_path=tmp_path/'train.json';training_path.write_text(json.dumps(dict(run_path='train',optimizer_groups=[])))
     config=dict(modules=['module'],execution_kind=runtime['execution_kind'],source=dict(checkpoints=refs,training_path='train.json'),online=None)
     base=tmp_path/'internals';folder=base/'geometry/units/000';folder.mkdir(parents=True)
-    geom=dict(module='module',norms={str(i):float(i) for i in [0,8,16,32,64]},online_product_comparisons={})
+    geom=dict(module='module',norms={str(i):float(i) for i in [0,8,16,32,64]},online_product_comparisons={'8':dict(cosine=.5),'16':dict(cosine=.25),'64':dict(cosine=.1)})
     _write_json(folder/'result.json',geom);(folder/'geometry.npz').write_bytes(b'geometry')
     _write_json(folder/'complete.json',dict(config_sha256=_hash(config),files={n:file_hash(folder/n) for n in ['result.json','geometry.npz']}))
     _write_json(base/'geometry/complete.json',dict(config_sha256=_hash(config),units={'0':file_hash(folder/'complete.json')}))
@@ -185,7 +187,10 @@ def test_report_reconstructs_observed_kl_and_matched_window(tmp_path,monkeypatch
     result=mod.report(plan,tmp_path)
     assert result['drift'][0]['kl_token_mean']==pytest.approx(.2)
     assert result['drift'][0]['module_effective_write_ratio']['module']==pytest.approx(.5)
-    assert result['preupdate']['8']['sequence_mean']==8 and result['adapter_frobenius_norms']['64']==64
+    assert result['preupdate']['9']['sequence_mean']==9 and result['adapter_frobenius_norms']['64']==64
+    points=result['descriptive_similarities'][0]['points']
+    assert [(p['checkpoint'],p['preupdate_window'],p['learner_updates']) for p in points]==[(8,9,8),(16,17,16)]
+    assert any('checkpoint 64' in line for line in result['limitations'])
     assert result['push_alignment'][0]['offline']['cosine']==pytest.approx(1.)
     assert mod.verify_report(plan,tmp_path)['complete']
     (base/'report/report.md').write_text('tampered')

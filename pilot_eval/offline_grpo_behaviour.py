@@ -17,12 +17,16 @@ from pilot_eval.workflow import _hash, _save_frozen
 summarize = _summary
 
 
-def compatible(first, second):
+def incompatible_fields(first, second):
     """Conservative full-contract comparison; caller verifies each source separately."""
     fields = ['items', 'prompt_template', 'scorer', 'strict_scorer', 'runtime',
               'policies', 'units', 'settings', 'seed', 'seed_rule', 'cap_reward',
               'model', 'model_revision', 'tokenizer_revision', 'dtype']
-    return all(k in first and k in second and first[k] == second[k] for k in fields)
+    return [k for k in fields if k not in first or k not in second or first[k] != second[k]]
+
+
+def compatible(first, second):
+    return not incompatible_fields(first, second)
 
 
 def _identity():
@@ -217,7 +221,9 @@ def run(path,output_root,*,dependencies=None):
 
 
 def report(path, output_root, name, *, online_path=None):
-    root=Path(output_root).resolve();source,records=verify(path,root)
+    root=Path(output_root).resolve();path=_within(root,path)
+    online_path=None if online_path is None else _within(root,online_path)
+    source,records=verify(path,root)
     ids=[item['id'] for item in source['items']]
     grouped={}
     for row in records:grouped.setdefault((row['mode'],row['step'],row['item_id']),[]).append(row)
@@ -244,15 +250,17 @@ def report(path, output_root, name, *, online_path=None):
     anchor=dict(state='passed',source=source['reference_zero']['path'],origin='fresh same-runtime historical checkpoint-zero inference')
     comparison=None
     cross_arm_transitions=[]
+    comparison_status=dict(state='not-selected')
     if online_path is not None:
-        other,other_records=online.verify_evaluation(_within(root,online_path),root)
+        other,other_records=online.verify_evaluation(online_path,root)
         if compatible(source,other):
             if source['checkpoints']['0']['adapter_sha256']!=other['checkpoints']['0']['adapter_sha256']:
                 raise ValueError('checkpoint-zero adapter identities differ')
             offline_zero={(r['item_id'],r['draw_index']):r['generated_token_ids'] for r in records if r['mode']=='greedy' and r['step']==0}
             online_zero={(r['item_id'],r['draw_index']):r['generated_token_ids'] for r in other_records if r['mode']=='greedy' and r['step']==0}
             if offline_zero!=online_zero:raise ValueError('same-runtime checkpoint-zero token anchor failed')
-            anchor=dict(state='passed',source=str(_within(root,online_path).relative_to(root)),source_sha256=file_hash(online_path))
+            anchor=dict(state='passed',source=str(online_path.relative_to(root)),source_sha256=file_hash(online_path))
+            comparison_status=dict(state='performed')
             comparison={}
             other_groups={}
             for row in other_records:
@@ -283,12 +291,13 @@ def report(path, output_root, name, *, online_path=None):
                             offline=grouped[(mode,step,identifier)][0]['reward']))
         else:
             anchor['historical_output_reuse']='incompatible runtime, cohort, decoder or batch contract; fresh anchor retained'
+            comparison_status=dict(state='not-performed',differing_fields=incompatible_fields(source,other))
     directory=root/'reports'/safe_name(name)
     config=dict(protocol='offline-grpo-behaviour-report-v1',source=str(_within(root,path).relative_to(root)),
                 source_sha256=file_hash(path),source_seal_sha256=file_hash(root/source['run_path']/'complete.json'),
-                online_path=None if online_path is None else str(_within(root,online_path).relative_to(root)),
+                online_path=None if online_path is None else str(online_path.relative_to(root)),
                 online_sha256=None if online_path is None else file_hash(online_path),implementation=_identity())
-    result=dict(summaries=summaries,changes=changes,online_comparison=comparison,anchor=anchor,
+    result=dict(summaries=summaries,changes=changes,online_comparison=comparison,online_comparison_status=comparison_status,anchor=anchor,
                 note='Sampled accuracy is mean reward per draw, not pass@8. Intervals are pointwise paired item bootstraps; one training seed does not estimate run variability.')
     with run_lock(directory):
         _save_frozen(directory/'config.json',config)
@@ -303,6 +312,7 @@ def report(path, output_root, name, *, online_path=None):
         _save_frozen(directory/'results/cross-arm-transitions.json',cross_arm_transitions)
         report_path=directory/'results/report.md'
         content='# Offline GRPO behavior\n\n'+result['note']+'\n\nCheckpoint-zero anchor: '+anchor['state']+'\n\n'
+        content+='Online comparison: '+{'performed':'performed','not-selected':'not selected'}.get(comparison_status['state'],'NOT performed; differing fields: '+', '.join(comparison_status.get('differing_fields',[])))+'\n\n'
         content+='| Setting | Flexible accuracy | Strict accuracy | Mean tokens | Cap rate |\n|---|---:|---:|---:|---:|\n'
         for key,row in summaries.items():
             content+=f"| {key} | {row['flexible_accuracy']:.3f} | {row['strict_accuracy']:.3f} | {row['mean_tokens']:.2f} | {row['cap_rate']:.3f} |\n"

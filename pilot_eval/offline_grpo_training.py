@@ -189,6 +189,7 @@ def run(config_path, output_root, *, dependencies=None):
             else:
                 if not engine.check_integrity()['base_unchanged']: raise ValueError('base integrity failure')
                 _seal(directory, 0, engine, [], groups)
+            _verify_saved_zero(directory/'checkpoints/checkpoint-0', config)
             for step in range(last+1, 65):
                 def diagnostic_sink(kind, diagnostic_step, value):
                     if diagnostic_step != step: raise ValueError('diagnostic step mismatch')
@@ -245,6 +246,11 @@ def run(config_path, output_root, *, dependencies=None):
             if engine is not None: engine.close()
 
 
+def _verify_saved_zero(checkpoint, config):
+    if file_hash(checkpoint/'adapter_model.safetensors') != config['weights_sha256']:
+        raise ValueError('re-saved checkpoint-0 bytes differ from the verified adapter; behaviour evaluation would refuse this run')
+
+
 def _verify_preflight(directory, config, *, marker=None):
     path = directory/'diagnostics/preflight.json'
     if marker is None:
@@ -279,6 +285,8 @@ def _verify_preflight(directory, config, *, marker=None):
                 or item['capped'] != (not item['eos'] and len(item['generated_token_ids']) == fidelity['max_new_tokens'])
                 or (not item['eos'] and not item['capped'])):
             raise ValueError('fidelity cap identity invalid')
+    from pilot_eval.offline_grpo_diagnostics import fidelity_gate
+    fidelity_gate(fidelity, receipt.get('fidelity_tolerance'))
     if (receipt['smoke'].get('finite_gradients') is not True
             or receipt['smoke'].get('same_input_gradient_match') is not True
             or receipt['smoke'].get('optimizer_steps') != 0
@@ -288,11 +296,12 @@ def _verify_preflight(directory, config, *, marker=None):
     return receipt
 
 
-def check_diagnostics(config_path, output_root, *, long_min_tokens, prompt_count):
+def check_diagnostics(config_path, output_root, *, long_min_tokens, prompt_count, fidelity_tolerance):
     """Explicit bounded real-GPU preflight; never steps the optimizer."""
     import time
     from pilot_eval.offline_grpo_engine import pool_window
-    from pilot_eval.offline_grpo_diagnostics import measure_generation_scores, independent_push
+    from pilot_eval.offline_grpo_diagnostics import fidelity_gate, measure_generation_scores, independent_push
+    fidelity_gate(dict(observations=[dict(differences=[0.])]),fidelity_tolerance)
     root=Path(output_root).resolve()
     config,directory,_,plan,windows,zero=_load(config_path,root)
     if type(prompt_count) is not int or not 1 <= prompt_count <= 8:
@@ -300,7 +309,7 @@ def check_diagnostics(config_path, output_root, *, long_min_tokens, prompt_count
     with run_lock(directory):
         if (directory/'diagnostics/preflight.complete.json').exists():
             existing = _verify_preflight(directory,config)
-            if existing['prompt_count'] != prompt_count or existing['fidelity']['long_min_tokens'] != long_min_tokens:
+            if existing['prompt_count'] != prompt_count or existing['fidelity']['long_min_tokens'] != long_min_tokens or existing['fidelity_tolerance'] != fidelity_tolerance:
                 raise ValueError('existing diagnostic preflight uses different bounds')
             return existing
         if _verified_checkpoints(directory):
@@ -322,6 +331,8 @@ def check_diagnostics(config_path, output_root, *, long_min_tokens, prompt_count
             fidelity=measure_generation_scores(engine.model,[r['input_ids'] for r in windows[0][:prompt_count]],
                 eos_token_id=engine.tokenizer.eos_token_id, pad_token_id=engine.tokenizer.pad_token_id,
                 max_new_tokens=config['settings']['completion_limit'],long_min_tokens=long_min_tokens)
+            _write_json(directory/'diagnostics/fidelity-observation.json',dict(fidelity_tolerance=fidelity_tolerance,fidelity=fidelity))
+            worst=fidelity_gate(fidelity,fidelity_tolerance)
             prompts,outputs=pool_window(windows[0]); rewards=[d['reward_v3'] for r in windows[0] for d in r['draws']]
             capped=[d['capped'] for r in windows[0] for d in r['draws']]
             engine.optimizer.zero_grad(set_to_none=True)
@@ -336,6 +347,7 @@ def check_diagnostics(config_path, output_root, *, long_min_tokens, prompt_count
                 raise ValueError('adapter changed during diagnostic preflight')
             proof=dict(protocol='offline-grpo-diagnostic-preflight-v1',config_sha256=_hash(config),
                 execution_kind='real-cuda',runtime=config['runtime'],prompt_count=prompt_count,fidelity=fidelity,
+                fidelity_tolerance=fidelity_tolerance,fidelity_max_absolute_difference=worst,
                 smoke=dict(finite_gradients=True,same_input_gradient_match=True,optimizer_steps=0,loss=loss,
                     adapter_unchanged=True,base_unchanged=True,
                     gradient_norm=float(gradient.norm()),seconds=time.perf_counter()-started,

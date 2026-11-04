@@ -26,3 +26,10 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 - Ticket 06 software implementation reviewed: additive offline source, geometry, initial-push and fixed-context drift collectors and report. Combined regression 34 passed, 3 skipped; final focused suite 8 passed. CPU fixtures do not establish actual GPU results; Gold and Sampling SFT internal-source comparisons remain explicitly unavailable.
 
 - Ticket 07 software implementation resolved. Eight principal-cut conditions, batch agreement, resumable paired evaluation and JSON/Markdown reports are available. Combined regression passed 13 tests before the last performance refactor, then final focused verification passed 5. Real preparation awaits restoration of the historical cut plan, and GPU measurements remain pending. The original endpoint is freshly evaluated.
+
+- Ticket 08 software implementation resolved; see its evidence. Code review follow-up added a shared attempt lifecycle (`offline_grpo_support.py`) that adopts the Stage 0 rule for sealed units from killed or expired attempts, fails on re-saved checkpoint-0 bytes before training, binds pool sampling to the frozen online settings, states a missing online comparison in reports, records external export sources, and pairs checkpoint N with window N+1 in descriptive slopes.
+
+## Open decisions
+
+- Fidelity tolerance: `offline-grpo-train-check-diagnostics` now requires an explicit `--fidelity-tolerance` in nats (template input `fidelity_tolerance_nats`). No value has been chosen; a reviewed number is required before a real run.
+- A new session or machine still needs a new plan, because plans bind the runtime session identity. A stale `writer.json` after a hard kill still requires inspection and removal by hand.

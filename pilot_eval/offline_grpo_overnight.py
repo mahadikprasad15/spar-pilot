@@ -82,6 +82,8 @@ def _validate_spec(spec, root):
         for cmd in commands:
             if cmd.count('--output-root') != 1 or Path(cmd[cmd.index('--output-root')+1]).resolve() != root:
                 raise ValueError('Child command must bind the selected artifact root')
+            if cmd[0]=='offline-grpo-train-check-diagnostics' and cmd.count('--fidelity-tolerance')!=1:
+                raise ValueError('Diagnostics require one explicit fidelity tolerance')
             if '--approval' in cmd:
                 raise ValueError('Child approvals must use the single umbrella reservation')
             if '--config' in cmd:
@@ -456,9 +458,9 @@ def _snapshot_report(plan, directory, root, state):
         config=json.loads(source_plan.read_text())
         result_path=locations[name](stage,config)
         value=json.loads(result_path.read_text())
-        if name=='behaviour':summary=value['summaries']
+        if name=='behaviour':summary={k:value[k] for k in ['summaries','changes','online_comparison','online_comparison_status','anchor']}
         elif name=='dataset':summary={k:value[k] for k in ['full','paired_common','common_question_ids']}
-        elif name=='internals_report':summary={k:value[k] for k in ['adapter_frobenius_norms','drift','preupdate','unavailable']}
+        elif name=='internals_report':summary={k:value[k] for k in ['adapter_frobenius_norms','drift','preupdate','descriptive_similarities','push_alignment','unavailable','limitations']}
         else:summary={k:value[k] for k in ['paired','summaries','note']}
         measured[name]=dict(plan=str(source_plan.relative_to(root)),plan_sha256=file_hash(source_plan),
                             result=str(result_path.relative_to(root)),result_sha256=file_hash(result_path),summary=summary)
@@ -553,12 +555,26 @@ def _artifact_manifest(plan, root, directory, snapshot, *, partial):
     if missing and not partial:raise ValueError('Required export products missing: '+', '.join(missing))
     value=dict(schema_version=1,job_sha256=_hash(plan),files=inventory(root,sorted(paths)),
                worker_host=platform.node(),simulation=False,partial=partial,missing=missing,
-               restore_requires_model_snapshot=True,
-               scope='offline GRPO artifact snapshot; missing items are explicit; base model weights are excluded')
+               restore_requires_model_snapshot=True,external_sources=_external_sources(plan,root),
+               scope='offline GRPO artifact snapshot; missing items are explicit; base model weights and external_sources are excluded and must be restored separately')
     value['sha256']=_hash(value)
     target=directory/'exports'/value['sha256']/'manifest.json'
     _save_frozen(target,value)
     return target
+
+
+def _external_sources(plan, root):
+    """Name verification inputs outside the artifact root, which an export cannot contain."""
+    found=[]
+    fields=dict(dataset=('sft_root','sft_path','sft_sha256'),cut_build=('reference_root','reference_path','reference_sha256'))
+    for stage in plan['spec']['stages']:
+        if stage['id'] not in fields:continue
+        path=inside(root,stage['plan'])
+        if not path.is_file():continue
+        config=json.loads(path.read_text());base,relative,digest=fields[stage['id']]
+        if config.get(base) and Path(config[base]).is_absolute():
+            found.append(dict(stage=stage['id'],root=config[base],path=config[relative],sha256=config[digest]))
+    return found
 
 
 def _export(plan, root, directory, snapshot, *, partial, dependencies):
@@ -569,7 +585,7 @@ def _export(plan, root, directory, snapshot, *, partial, dependencies):
     if record['manifest_sha256']!=value['sha256']:
         raise ValueError('HF receipt does not bind the export manifest')
     _fresh_readback(record,value,dependencies)
-    return dict(record=record,manifest_path=str(manifest.relative_to(root)),partial=partial)
+    return dict(record=record,manifest_path=str(manifest.relative_to(root)),partial=partial,external_sources=len(value['external_sources']))
 
 
 def _umbrella(plan, directory, root, authorization):
@@ -677,7 +693,7 @@ def run(path, output_root, authorization_path, *, dependencies=None):
                     proof=bounded(_export,plan,root,directory,snapshot,partial=not complete,dependencies=deps)
                     record=proof['record']
                     state['export']=dict(state='verified' if complete else 'partial_verified',revision=record['revision'],
-                                         manifest_sha256=record['manifest_sha256'],manifest_path=proof['manifest_path'])
+                                         manifest_sha256=record['manifest_sha256'],manifest_path=proof['manifest_path'],external_sources=proof.get('external_sources',0))
                     state['state']='completed' if complete else 'incomplete'
                 except Exception as exc:
                     state['export']=dict(state='failed',error_type=type(exc).__name__,message=_safe_message(exc))
@@ -802,7 +818,7 @@ def template(inputs_path, output_root, name):
         'diagnostics':[cmd('offline-grpo-train-prepare','--frozen',need('frozen'),'--pool',pool,'--checkpoint-zero',need('checkpoint_zero'),
                     '--checkpoint-zero-sha256',need('checkpoint_weights_sha256'),'--checkpoint-zero-config-sha256',need('checkpoint_config_sha256'),
                     '--runtime',need('training_runtime_file'),'--name',f'{name}-training'),
-                    cmd('offline-grpo-train-check-diagnostics','--config',training,'--long-min-tokens',need('long_min_tokens'),'--prompt-count',need('prompt_count'))],
+                    cmd('offline-grpo-train-check-diagnostics','--config',training,'--long-min-tokens',need('long_min_tokens'),'--prompt-count',need('prompt_count'),'--fidelity-tolerance',need('fidelity_tolerance_nats'))],
         'train':[cmd('offline-grpo-train-run','--config',training)],
         'behaviour':[cmd('offline-grpo-behaviour-prepare','--config',training,'--name',f'{name}-behaviour'),
                      cmd('offline-grpo-behaviour-run','--config',behaviour),

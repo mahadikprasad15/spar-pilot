@@ -25,8 +25,8 @@ def product_metrics(left,right):
 
 
 def _identity():
-    from pilot_eval import stage0_drift_backend,stage0_drift_math,stage0_push_backend,stage0_push_math,stage0_spectral_math,stage0_intruder_math,stage0_weights
-    return {k:file_hash(Path(v.__file__)) for k,v in dict(workflow=__import__(__name__,fromlist=['']),
+    from pilot_eval import offline_grpo_support,stage0_drift_backend,stage0_drift_math,stage0_push_backend,stage0_push_math,stage0_spectral_math,stage0_intruder_math,stage0_weights
+    return {k:file_hash(Path(v.__file__)) for k,v in dict(workflow=__import__(__name__,fromlist=['']),support=offline_grpo_support,
         drift=stage0_drift_backend,drift_math=stage0_drift_math,push=stage0_push_backend,
         push_math=stage0_push_math,spectral_math=stage0_spectral_math,intruder_math=stage0_intruder_math,weights=stage0_weights).items()}
 
@@ -222,7 +222,7 @@ def _collector(config,kind,windows,rows,root):
 
 
 def _read_collection(config,kind,directory,unit,root,collector,rows,cache):
-    from pilot_eval.stage0_evaluation import _attempt_timing
+    from pilot_eval.offline_grpo_support import attempt_start
     from pilot_eval.stage0_pushes import validate_arrays
     from pilot_eval.stage0_drift_math import check
     folder=directory/'units'/unit['key'];marker=folder/'complete.json'
@@ -234,12 +234,7 @@ def _read_collection(config,kind,directory,unit,root,collector,rows,cache):
         if file_hash(folder/name)!=digest:raise ValueError('Collection unit payload changed')
     saved=json.loads((folder/'result.json').read_text());attempt=inside(directory/'attempts',saved['attempt_id'])
     if saved['attempt_id'] not in cache:
-        final=attempt/'final-integrity.json'
-        if not final.exists() or not all(json.loads(final.read_text()).get(k) is True for k in ['base_unchanged','adapters_unchanged']):
-            raise ValueError('Collection attempt lacks successful full integrity')
-        timing=_attempt_timing(attempt)
-        if timing['final_integrity_sha256']!=file_hash(final):raise ValueError('Collection attempt timing changed')
-        cache[saved['attempt_id']]=file_hash(attempt/'start.json')
+        cache[saved['attempt_id']]=attempt_start(attempt,['base_unchanged','adapters_unchanged'])
     if saved['attempt_start_sha256']!=cache[saved['attempt_id']] or not all(saved['integrity'].get(k) is True for k in ['base_unchanged','adapters_unchanged']):
         raise ValueError('Collection attempt identity changed')
     with np.load(folder/'arrays.npz',allow_pickle=False) as data:arrays={k:data[k] for k in data.files}
@@ -256,9 +251,10 @@ def _reserve(config,execution,directory,root,runtime,approval_path):
 
 
 def collect(path,output_root,kind,*,approval_path=None,max_new_units=None,dependencies=None,reservation_provider=None):
-    import time,uuid
+    import time
+    from pilot_eval.offline_grpo_support import IntegrityFailure,attempt_scope
     from pilot_eval.run import _write_json
-    from pilot_eval.stage0_qualification_backend import deadline_guard
+    from pilot_eval.stage0_workflow import _state
     from pilot_eval.stage0_pushes import validate_arrays
     from pilot_eval.stage0_drift_math import check
     root=Path(output_root).resolve();config,base,windows,rows,_,_=load(path,root)
@@ -281,58 +277,39 @@ def collect(path,output_root,kind,*,approval_path=None,max_new_units=None,depend
         runtime=dependencies.runtime()
         if runtime!=config['runtime']:raise ValueError('Actual runtime differs from approved session')
         reservation,remaining=(reservation_provider or _reserve)(collector,{'reservation':{'reservation_id':None,'job_sha256':_hash(collector)}},directory,root,runtime,approval_path)
-        attempt=directory/'attempts'/uuid.uuid4().hex
-        _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],runtime_sha256=_hash(runtime)))
-        started=time.monotonic();engine=None;new=0
-        try:
-            with deadline_guard(remaining,config['execution_kind']=='real-cuda'):
-                if hasattr(dependencies,'preflight'):dependencies.preflight(collector,root)
-                _save_frozen(directory/'meta/runtime.json',runtime)
-                engine=dependencies.engine(collector,root);byid={r['id']:r for r in rows}
-                for index,unit in enumerate(units):
-                    if saved[index] is not None:continue
-                    if max_new_units is not None and new>=max_new_units:break
-                    if time.monotonic()-started>=remaining:raise TimeoutError('Collection allocation exhausted')
-                    if kind=='push':
-                        arrays,proof=engine.measure(unit);validate_arrays(collector,unit,arrays,proof,root);result=dict(proof=proof)
-                    else:
-                        result=engine.measure([byid[i] for i in unit['ids']],unit['variant'],diagnostic=unit['diagnostic'])
-                        check(result,[byid[i] for i in unit['ids']],collector,unit['variant'],unit['diagnostic'])
-                        arrays=result.pop('arrays')
-                    integrity=engine.check_integrity()
-                    if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):raise ValueError('Collection weight integrity failed')
-                    folder=directory/'units'/unit['key'];folder.mkdir(parents=True,exist_ok=True)
-                    tmp=folder/'arrays.tmp.npz';np.savez_compressed(tmp,**arrays);tmp.replace(folder/'arrays.npz')
-                    result.update(attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=integrity)
-                    _write_json(folder/'result.json',result)
-                    _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),unit_sha256=_hash(unit)),files={n:file_hash(folder/n) for n in ['arrays.npz','result.json']}))
-                    saved[index]=(arrays,result);new+=1
-                    from pilot_eval.stage0_workflow import _state
-                    _state(directory,'running',sum(x is not None for x in saved),len(units),reservation_id=reservation['reservation_id'])
-                    print(f'Offline {kind}: {sum(x is not None for x in saved)}/{len(units)} units sealed; {unit["key"]}',flush=True)
-                integrity=engine.check_integrity(full=True);_write_json(attempt/'final-integrity.json',integrity)
-                if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):raise ValueError('Full collection integrity failed')
-                if any(x is None for x in saved):
-                    from pilot_eval.stage0_workflow import _state
-                    return _state(directory,'incomplete',sum(x is not None for x in saved),len(units))
-                _save_frozen(directory/'complete.json',dict(config_sha256=_hash(config),units={u['key']:file_hash(directory/'units'/u['key']/'complete.json') for u in units}))
-                from pilot_eval.stage0_workflow import _state
-                _state(directory,'complete',len(units),len(units))
-                return dict(complete=True,units=len(units),execution_kind=config['execution_kind'])
-        except (Exception,KeyboardInterrupt) as exc:
-            if engine is not None and 'integrity' not in str(exc).lower() and time.monotonic()-started<remaining:
-                try:
-                    with deadline_guard(remaining-(time.monotonic()-started),config['execution_kind']=='real-cuda'):
-                        _write_json(attempt/'final-integrity.json',engine.check_integrity(full=True))
-                except Exception:pass
-            from pilot_eval.stage0_workflow import _state
-            _state(directory,'failed',sum(x is not None for x in saved),len(units),error=str(exc))
-            raise
-        finally:
-            if engine:engine.close()
-            _write_json(attempt/'timing.json',dict(seconds=time.monotonic()-started,reservation_id=reservation['reservation_id'],
-                start_sha256=file_hash(attempt/'start.json'),final_integrity_sha256=file_hash(attempt/'final-integrity.json') if (attempt/'final-integrity.json').exists() else None))
-            _write_json(attempt/'timing.complete.json',dict(sha256=file_hash(attempt/'timing.json')))
+        def failed(exc):_state(directory,'failed',sum(x is not None for x in saved),len(units),error=str(exc))
+        with attempt_scope(directory,reservation,runtime,remaining,real=config['execution_kind']=='real-cuda',on_failure=failed) as run:
+            attempt=run.path
+            if hasattr(dependencies,'preflight'):dependencies.preflight(collector,root)
+            _save_frozen(directory/'meta/runtime.json',runtime)
+            engine=run.engine=dependencies.engine(collector,root);byid={r['id']:r for r in rows}
+            for index,unit in enumerate(units):
+                if saved[index] is not None:continue
+                if max_new_units is not None and run.new>=max_new_units:break
+                if time.monotonic()-run.started>=remaining:raise TimeoutError('Collection allocation exhausted')
+                if kind=='push':
+                    arrays,proof=engine.measure(unit);validate_arrays(collector,unit,arrays,proof,root);result=dict(proof=proof)
+                else:
+                    result=engine.measure([byid[i] for i in unit['ids']],unit['variant'],diagnostic=unit['diagnostic'])
+                    check(result,[byid[i] for i in unit['ids']],collector,unit['variant'],unit['diagnostic'])
+                    arrays=result.pop('arrays')
+                integrity=engine.check_integrity()
+                if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):raise IntegrityFailure('Collection weight integrity failed')
+                folder=directory/'units'/unit['key'];folder.mkdir(parents=True,exist_ok=True)
+                tmp=folder/'arrays.tmp.npz';np.savez_compressed(tmp,**arrays);tmp.replace(folder/'arrays.npz')
+                result.update(attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=integrity)
+                _write_json(folder/'result.json',result)
+                _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),unit_sha256=_hash(unit)),files={n:file_hash(folder/n) for n in ['arrays.npz','result.json']}))
+                saved[index]=(arrays,result);run.new+=1
+                _state(directory,'running',sum(x is not None for x in saved),len(units),reservation_id=reservation['reservation_id'])
+                print(f'Offline {kind}: {sum(x is not None for x in saved)}/{len(units)} units sealed; {unit["key"]}',flush=True)
+            integrity=engine.check_integrity(full=True);_write_json(attempt/'final-integrity.json',integrity)
+            if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):raise IntegrityFailure('Full collection integrity failed')
+            if any(x is None for x in saved):
+                return _state(directory,'incomplete',sum(x is not None for x in saved),len(units))
+            _save_frozen(directory/'complete.json',dict(config_sha256=_hash(config),units={u['key']:file_hash(directory/'units'/u['key']/'complete.json') for u in units}))
+            _state(directory,'complete',len(units),len(units))
+            return dict(complete=True,units=len(units),execution_kind=config['execution_kind'])
 
 
 def verify_collection(path,output_root,kind):
@@ -405,7 +382,7 @@ def report(path,output_root):
     training=json.loads((root/config['source']['training_path']).read_text());checkpoints=_verified_checkpoints(root/training['run_path'])
     _,_,logs=_accepted_history(root,checkpoints[64],training['optimizer_groups'])
     diagnostics={}
-    for step in [8,16,32,64]:
+    for step in [9,17,33,64]:
         ref=logs[step-1]['diagnostic_evidence']['logratio'];d=json.loads(inside(root,ref['path']).read_text())
         from pilot_eval.offline_grpo_diagnostics import summarize
         expected=[(q,draw) for q in windows[step-1] for draw in q['draws']]
@@ -424,8 +401,8 @@ def report(path,output_root):
         diagnostics[str(step)]=dict(sequence_mean=rebuilt['sequence_mean'],token_rate=rebuilt['token_rate'])
     correlations=[]
     for row in geometry_rows:
-        points=[dict(checkpoint=step,preupdate_window=step,similarity=row['online_product_comparisons'][str(step)]['cosine'],
-                     empirical_log_ratio=diagnostics[str(step)]['sequence_mean']) for step in [8,16,32,64] if str(step) in row['online_product_comparisons']]
+        points=[dict(checkpoint=step,preupdate_window=step+1,learner_updates=step,similarity=row['online_product_comparisons'][str(step)]['cosine'],
+                     empirical_log_ratio=diagnostics[str(step+1)]['sequence_mean']) for step in [8,16,32] if str(step) in row['online_product_comparisons']]
         valid=[p for p in points if p['similarity'] is not None]
         slope=None
         if len(valid)>=2 and np.ptp([p['empirical_log_ratio'] for p in valid])>0:
@@ -465,7 +442,9 @@ def report(path,output_root):
         window1='separately computed actual first-window negative gradient; training diagnostic independently checks negative gradient sign',
         unavailable=([] if config['online'] else ['online checkpoint comparisons not selected']) + ['Gold and Sampling SFT internal-source comparisons are not wired by this version'],
         limitations=['Geometry and slopes are descriptive, not behavioral causes.','Observed adapter norm and KL are not matched-norm measurements.',
-                     'One seed cannot estimate run-to-run variability.','Fixed-context KL is adapter || untuned; pre-update empirical log ratio has the opposite direction.'])
+                     'One seed cannot estimate run-to-run variability.',
+                     'Window N+1 measures the learner at checkpoint N on that window\'s questions; checkpoint 64 has no later window, so descriptive slopes exclude it.',
+                     'Fixed-context KL is adapter || untuned; pre-update empirical log ratio has the opposite direction.'])
     with _writer(base/'report'):
         _save_frozen(base/'report/results.json',result)
         lines=['# Offline GRPO internals','','Geometry and associations are descriptive. Fixed-context KL is adapter || untuned; pre-update log ratios use the opposite direction.','','| Checkpoint | Adapter Frobenius norm |','|---:|---:|']

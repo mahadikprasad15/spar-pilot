@@ -59,10 +59,13 @@ def test_public_cpu_scoring_resume_report_and_tamper(tmp_path,monkeypatch):
     assert main(['offline-grpo-dataset-prepare',*args,'--pool',str(tmp_path/'pool.json'),'--sft',str(tmp_path/'sft.json'),'--sampler',str(sampler),'--runtime',str(tmp_path/'runtime.json'),'--name','test'])==0
     config=tmp_path/'plans/test/offline.dataset.json';deps=Engine()
     assert main(['offline-grpo-dataset-run',*args,'--config',str(config),'--max-new-units','1'],dependencies=deps)==0
+    for attempt in (tmp_path/'runs/offline-grpo/test/dataset/attempts').iterdir():
+        for name in ['final-integrity.json','timing.json','timing.complete.json']:(attempt/name).unlink()
     assert main(['offline-grpo-dataset-run',*args,'--config',str(config)],dependencies=deps)==0
     assert main(['offline-grpo-dataset-verify',*args,'--config',str(config)])==0
     assert main(['offline-grpo-dataset-report',*args,'--config',str(config)])==0
     result=json.loads((tmp_path/'runs/offline-grpo/test/dataset/results/results.json').read_text())
+    assert json.loads(config.read_text())['sft_root']=='.'
     assert calls==[answer2['answer_id']]
     assert result['full']['pool']['answers']==8 and result['full']['pool_incorrect']['answers']==8
     assert result['paired_common']['k5']['questions']==1 and result['full']['pool']['token_weighted']['top1']==1

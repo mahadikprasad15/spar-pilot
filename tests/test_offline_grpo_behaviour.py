@@ -61,6 +61,17 @@ def test_public_cpu_evaluation_and_source_tamper(tmp_path, monkeypatch):
     assert main(['offline-grpo-behaviour-report',*args,'--config',str(config),'--name','report'])==0
     report=json.loads((tmp_path/'reports/report/results/results.json').read_text())
     assert report['anchor']['state']=='passed' and report['summaries']['sampled-64']['flexible_accuracy']==1
+    assert report['online_comparison_status']['state']=='not-selected'
+    other=dict(json.loads(config.read_text()),runtime={'kind':'other'})
+    (tmp_path/'online.json').write_text('{}')
+    monkeypatch.setattr(behavior.online,'verify_evaluation',lambda *args:(other,[]))
+    monkeypatch.chdir(tmp_path.parent)
+    assert main(['offline-grpo-behaviour-report',*args,'--config',str(config.relative_to(tmp_path)),'--name','report2','--online','online.json'])==0
+    missing=json.loads((tmp_path/'reports/report2/results/results.json').read_text())
+    assert missing['online_comparison'] is None
+    assert missing['online_comparison_status']==dict(state='not-performed',differing_fields=['runtime'])
+    text=(tmp_path/'reports/report2/results/report.md').read_text()
+    assert 'Online comparison: NOT performed; differing fields: runtime' in text
     (checkpoints[8]/'adapter_model.safetensors').write_bytes(b'tampered')
     with pytest.raises(ValueError,match='source, plan or implementation changed'):
         behavior.verify(config,tmp_path)

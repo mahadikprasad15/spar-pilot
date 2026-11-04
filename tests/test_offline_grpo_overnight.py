@@ -23,6 +23,7 @@ def make_spec(root):
             if not operation.endswith('prepare'):command+=['--config',plan]
             if operation=='offline-grpo-internals-collect':command+=['--kind',name]
             if operation=='offline-grpo-train-prepare':command+=['--checkpoint-zero',str(source)]
+            if operation=='offline-grpo-train-check-diagnostics':command+=['--fidelity-tolerance','0.5']
             commands.append(command)
         stages.append(dict(id=name,depends_on=overnight.DEPENDENCIES[name],plan=plan,commands=commands))
     for group in [('diagnostics','train'),('geometry','push','drift','internals_report'),('cut_build','cut_agreement','cut_evaluation','cut_report')]:
@@ -223,7 +224,7 @@ def test_generated_recipe_binds_complete_stage_matrix(tmp_path,monkeypatch):
         stage0_runtime_file='stage0.json',training_runtime_file='training.json',checkpoint_zero='source.json',
         checkpoint_weights_sha256='a'*64,checkpoint_config_sha256='b'*64,dataset_source='source.json',dataset_root=str(tmp_path),
         spectral='source.json',fixed_inputs='source.json',qualification='source.json',cut_reference='source.json',cut_reference_root=str(tmp_path),
-        long_min_tokens=10,prompt_count=1,model_identity=dict(model='m',model_revision='r',tokenizer_revision='r',base_sha256='h'),eos_token_id=99,
+        long_min_tokens=10,prompt_count=1,fidelity_tolerance_nats=.5,model_identity=dict(model='m',model_revision='r',tokenizer_revision='r',base_sha256='h'),eos_token_id=99,
         snapshot_hashes={'model.safetensors':'h'},hf_cache_root=str(tmp_path),minimum_cache_free_bytes=0,
         source_hashes={'source.json':file_hash(tmp_path/'source.json')},predictions_path='source.json',reporting_protocol_path='source.json',software_versions={'trl':'0.26.2'},minimum_free_bytes=0,
         hf_repo='owner/private',export_paths=['source.json'])
@@ -259,13 +260,16 @@ def real_export_run(tmp_path,monkeypatch,*,tamper=False):
     (tmp_path/'rollout.json').write_text(json.dumps(dict(run_path='runs/child',parents={})))
     for stage in spec['stages']:
         (tmp_path/f"{stage['id']}.json").write_text(json.dumps(dict(run_path='runs/child')))
+    (tmp_path/'dataset.json').write_text(json.dumps(dict(run_path='runs/child',sft_root='/elsewhere/sources',sft_path='sft.json',sft_sha256='a'*64)))
+    (tmp_path/'cut_build.json').write_text(json.dumps(dict(run_path='runs/child',reference_root='.',reference_path='source.json',reference_sha256='b'*64)))
+    for stage in spec['stages']:
         if stage['id']=='behaviour':stage['report']='runs/child/behaviour-report'
     (runs/'behaviour-report/results').mkdir(parents=True)
-    (runs/'behaviour-report/results/results.json').write_text(json.dumps(dict(summaries={'greedy-64':1})))
+    (runs/'behaviour-report/results/results.json').write_text(json.dumps(dict(summaries={'greedy-64':1},changes={'greedy-64':2},online_comparison=None,online_comparison_status=dict(state='not-selected'),anchor=dict(state='passed'))))
     (runs/'results').mkdir()
     (runs/'results/results.json').write_text(json.dumps(dict(full=1,paired_common=2,common_question_ids=[])))
     (runs/'report').mkdir()
-    (runs/'report/results.json').write_text(json.dumps(dict(adapter_frobenius_norms=1,drift=2,preupdate=3,unavailable=[],paired=4,summaries=5,note='n')))
+    (runs/'report/results.json').write_text(json.dumps(dict(adapter_frobenius_norms=1,drift=2,preupdate=3,unavailable=[],descriptive_similarities=6,push_alignment=7,limitations=[],paired=4,summaries=5,note='n')))
     spec_path=tmp_path/'spec.json';spec_path.write_text(json.dumps(spec))
     path=workflow.prepare(spec_path,tmp_path);plan=json.loads(path.read_text())
     directory=tmp_path/'runs/offline-grpo/fixture/overnight';preflight=dict(ok=True,evidence={},issues=[])
@@ -328,7 +332,9 @@ def test_real_partial_export_lists_gaps_and_keeps_evidence(tmp_path,monkeypatch)
     snapshot=next(name.rsplit('/',1)[0] for name in files if name.endswith('final-report.md'))
     for name in ['meta/preflight.json','meta/authorization.json','meta/umbrella.json','config.json','logs/train.log','logs/events.jsonl']:
         assert snapshot+'/'+name in files
+    assert manifest['external_sources']==[dict(stage='dataset',root='/elsewhere/sources',path='sft.json',sha256='a'*64)]
     report=(tmp_path/snapshot/'final-report.md').read_text()
+    assert state['export']['external_sources']==1
     assert '| train | failed |' in report and '| behaviour | blocked_dependency |' in report
     assert 'not a pure effect of staleness' in report
     with pytest.raises(ValueError,match='Completed verified export'):
@@ -350,10 +356,14 @@ def test_readback_mismatch_is_not_called_verified_and_can_recover(tmp_path,monke
 
 
 def test_completed_run_is_not_exported_twice(tmp_path,monkeypatch):
+    import json
     workflow,path,auth,deps,hub,directory=real_export_run(tmp_path,monkeypatch)
     deps.fail=False
     first=workflow.run(path,tmp_path,auth,dependencies=deps)
     assert first['state']=='completed' and hub.commits==1
+    final=json.loads(next((directory/'results/snapshots').glob('*/final-report.json')).read_text())
+    assert final['measurements']['behaviour']['summary']['online_comparison_status']==dict(state='not-selected')
+    assert final['measurements']['internals_report']['summary']['push_alignment']==7
     second=workflow.run(path,tmp_path,auth,dependencies=deps)
     assert second['state']=='completed' and hub.commits==1
     assert second['export']['manifest_sha256']==first['export']['manifest_sha256']
@@ -432,3 +442,14 @@ def test_parity_gate_runs_from_project_root(monkeypatch,tmp_path):
     monkeypatch.chdir(tmp_path)
     assert workflow.Dependencies().parity()['passed'] is True
     assert P(seen['cwd'])==P(workflow.__file__).parent.parent
+
+
+def test_spec_requires_explicit_fidelity_tolerance(tmp_path):
+    import json
+    from pilot_eval import offline_grpo_overnight as workflow
+    spec=make_spec(tmp_path)
+    for stage in spec['stages']:
+        for command in stage['commands']:
+            if '--fidelity-tolerance' in command:del command[command.index('--fidelity-tolerance'):]
+    path=tmp_path/'spec.json';path.write_text(json.dumps(spec))
+    with pytest.raises(ValueError,match='fidelity tolerance'):workflow.prepare(path,tmp_path)

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
+from pilot_eval.offline_grpo_support import IntegrityFailure, attempt_scope, attempt_start, portable_root, resolve_root
 from pilot_eval.stage0_edit_math import edit_module
 from pilot_eval.stage0_sources import inside
 from pilot_eval.training import file_hash
@@ -25,9 +26,9 @@ def make_edits(a, b, u, v):
 
 
 def _identity():
-    from pilot_eval import stage0_edit_math, stage0_spectral_math, stage0_evaluation_backend, stage0_evaluation_records, stage0_batching_backend, stage0_batching, scoring
+    from pilot_eval import offline_grpo_support, stage0_edit_math, stage0_spectral_math, stage0_evaluation_backend, stage0_evaluation_records, stage0_batching_backend, stage0_batching, scoring
     return {name: file_hash(Path(module.__file__)) for name, module in {
-        'workflow': __import__(__name__, fromlist=['']), 'edit_math': stage0_edit_math,
+        'workflow': __import__(__name__, fromlist=['']), 'support': offline_grpo_support, 'edit_math': stage0_edit_math,
         'spectral_math': stage0_spectral_math, 'evaluation_backend': stage0_evaluation_backend,
         'records':stage0_evaluation_records,'batch_backend':stage0_batching_backend,'batching':stage0_batching,'scorer':scoring}.items()}
 
@@ -117,7 +118,7 @@ def prepare(internals_path, behaviour_path, reference_path, reference_root, outp
     plan = dict(protocol='offline-grpo-cuts-v1', name=name, run_path=str(directory.relative_to(root)),
         internals_path=str(internals_path.relative_to(root)), internals_sha256=file_hash(internals_path),
         behaviour_path=str(behaviour_path.relative_to(root)), behaviour_sha256=file_hash(behaviour_path),
-        reference_root=str(reference_root), reference_path=str(reference_path.relative_to(reference_root)),
+        reference_root=portable_root(root, reference_root), reference_path=str(reference_path.relative_to(reference_root)),
         reference_sha256=file_hash(reference_path), source=internal['source'], runtime=internal['runtime'],
         model_identity=identity, weights_dir=internal['weights_dir'], decoding=internal['decoding'],
         prompt_contract=internal['source']['prompt_contract'], items=behaviour['items'],
@@ -144,7 +145,7 @@ def load(path, output_root):
     for name in ['internals','behaviour']:
         if file_hash(inside(root, plan[name+'_path'])) != plan[name+'_sha256']:
             raise ValueError('Offline cut parent source changed')
-    reference_root = Path(plan['reference_root'])
+    reference_root = resolve_root(root, plan['reference_root'])
     reference_path = inside(reference_root, plan['reference_path'])
     if file_hash(reference_path) != plan['reference_sha256']:
         raise ValueError('Historical cut reference changed')
@@ -314,10 +315,7 @@ def _reservation(config, execution, directory, root, runtime, approval_path):
 
 
 def _execution(path, output_root, stage, *, approval_path=None, dependencies=None, max_new_units=None, reservation_provider=None):
-    import time
-    import uuid
     from pilot_eval.run import _write_json, _write_state
-    from pilot_eval.stage0_qualification_backend import deadline_guard
     from pilot_eval.stage0_workflow import _writer
     from pilot_eval.stage0_batching_backend import BatchDependencies
     root = Path(output_root).resolve()
@@ -346,62 +344,42 @@ def _execution(path, output_root, stage, *, approval_path=None, dependencies=Non
         reservation, remaining = (reservation_provider or _reservation)(config,
             {'reservation':{'reservation_id':None,'job_sha256':_hash(config)}},
             directory, root, runtime, approval_path)
-        attempt = directory/'attempts'/uuid.uuid4().hex
-        _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],runtime_sha256=_hash(runtime)))
-        started = time.monotonic()
-        engine = None
-        try:
-            with deadline_guard(remaining, plan['execution_kind']=='real-cuda'):
-                _save_frozen(work/'meta/runtime.json', runtime)
-                engine = dependencies.engine(config, root)
-                items = plan['items']
-                tokenized = engine.prepare_inputs(items)
-                if [r['id'] for r in tokenized] != [r['id'] for r in items]:
-                    raise ValueError('Tokenized paired cohort differs')
-                for saved,item in zip(tokenized,items):
-                    if (not saved.get('input_ids') or saved.get('attention_mask') != [1]*len(saved['input_ids'])
-                            or ('prompt_tokens' in item and len(saved['input_ids'])!=item['prompt_tokens'])):
-                        raise ValueError('Tokenized paired prompt or mask differs')
-                _save_frozen(work/'inputs/tokenized.json', tokenized)
-                if stage == 'agreement':
-                    result = _agreement(config, work, items, engine, max_new_units, attempt)
-                elif stage == 'evaluation':
-                    agreement = _verify_stage(config, plan, directory, root, 'agreement')
-                    if tokenized!=json.loads((directory/'agreement/inputs/tokenized.json').read_text()):
-                        raise ValueError('Evaluation prompts differ from batch agreement')
-                    result = _evaluate(config, work, items, engine, agreement, max_new_units, attempt)
-                else:
-                    raise ValueError('Unsupported cut execution stage')
-                integrity = engine.check_integrity(full=True)
-                _write_json(attempt/'final-integrity.json', integrity)
-                if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):
-                    raise ValueError('Cut collection full model integrity failed')
-                if result.get('complete'):
-                    _save_frozen(work/'complete.json',dict(config_sha256=_hash(config),stage=stage,
-                        result_sha256=file_hash(work/'results/results.json'),
-                        final_attempt=attempt.name,final_sha256=file_hash(attempt/'final-integrity.json'),
-                        agreement_sha256=file_hash(directory/'agreement/complete.json') if stage=='evaluation' else None))
-                return result
-        except (Exception,KeyboardInterrupt) as exc:
-            if engine is not None and 'integrity' not in str(exc).lower() and time.monotonic()-started < remaining:
-                try:
-                    with deadline_guard(remaining-(time.monotonic()-started),plan['execution_kind']=='real-cuda'):
-                        _write_json(attempt/'final-integrity.json',engine.check_integrity(full=True))
-                except Exception:
-                    pass
-            _write_state(work,'failed',0,1,error=str(exc))
-            raise
-        finally:
-            if engine is not None:
-                engine.close()
-            _write_json(attempt/'timing.json',dict(seconds=time.monotonic()-started,
-                reservation_id=reservation['reservation_id'],start_sha256=file_hash(attempt/'start.json'),
-                final_integrity_sha256=file_hash(attempt/'final-integrity.json') if (attempt/'final-integrity.json').exists() else None))
-            _write_json(attempt/'timing.complete.json',dict(sha256=file_hash(attempt/'timing.json')))
+        def failed(exc):_write_state(work,'failed',0,1,error=str(exc))
+        with attempt_scope(directory,reservation,runtime,remaining,real=plan['execution_kind']=='real-cuda',on_failure=failed) as run:
+            attempt=run.path
+            _save_frozen(work/'meta/runtime.json', runtime)
+            engine = run.engine = dependencies.engine(config, root)
+            items = plan['items']
+            tokenized = engine.prepare_inputs(items)
+            if [r['id'] for r in tokenized] != [r['id'] for r in items]:
+                raise ValueError('Tokenized paired cohort differs')
+            for saved,item in zip(tokenized,items):
+                if (not saved.get('input_ids') or saved.get('attention_mask') != [1]*len(saved['input_ids'])
+                        or ('prompt_tokens' in item and len(saved['input_ids'])!=item['prompt_tokens'])):
+                    raise ValueError('Tokenized paired prompt or mask differs')
+            _save_frozen(work/'inputs/tokenized.json', tokenized)
+            if stage == 'agreement':
+                result = _agreement(config, work, items, engine, max_new_units, run)
+            elif stage == 'evaluation':
+                agreement = _verify_stage(config, plan, directory, root, 'agreement')
+                if tokenized!=json.loads((directory/'agreement/inputs/tokenized.json').read_text()):
+                    raise ValueError('Evaluation prompts differ from batch agreement')
+                result = _evaluate(config, work, items, engine, agreement, max_new_units, run)
+            else:
+                raise ValueError('Unsupported cut execution stage')
+            integrity = engine.check_integrity(full=True)
+            _write_json(attempt/'final-integrity.json', integrity)
+            if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):
+                raise IntegrityFailure('Cut collection full model integrity failed')
+            if result.get('complete'):
+                _save_frozen(work/'complete.json',dict(config_sha256=_hash(config),stage=stage,
+                    result_sha256=file_hash(work/'results/results.json'),
+                    final_attempt=attempt.name,final_sha256=file_hash(attempt/'final-integrity.json'),
+                    agreement_sha256=file_hash(directory/'agreement/complete.json') if stage=='evaluation' else None))
+            return result
 
 
 def _unit(work, config, key):
-    from pilot_eval.stage0_evaluation import _attempt_timing
     folder = work/'units'/key
     marker = folder/'complete.json'
     if not marker.exists():
@@ -411,16 +389,12 @@ def _unit(work, config, key):
         raise ValueError('Cut unit seal changed')
     value = json.loads((folder/'result.json').read_text())
     attempt = inside(work.parent/'attempts', value['attempt_id'])
-    final = attempt/'final-integrity.json'
     if not all(value.get('integrity',{}).get(k) is True for k in ['base_unchanged','adapters_unchanged']):
         raise ValueError('Cut unit integrity proof missing')
-    if (not final.exists() or not all(json.loads(final.read_text()).get(k) is True
-            for k in ['base_unchanged','adapters_unchanged'])):
-        raise ValueError('Cut attempt lacks successful full integrity proof')
-    timing = _attempt_timing(attempt)
+    start = attempt_start(attempt, ['base_unchanged','adapters_unchanged'])
     if json.loads((attempt/'start.json').read_text()).get('runtime_sha256')!=_hash(config['runtime']):
         raise ValueError('Cut attempt runtime identity changed')
-    if timing['final_integrity_sha256'] != file_hash(final) or value['attempt_start_sha256'] != file_hash(attempt/'start.json'):
+    if value['attempt_start_sha256'] != start:
         raise ValueError('Cut attempt timing or identity changed')
     return value
 
@@ -434,7 +408,7 @@ def _save_unit(work, config, key, value, attempt):
     return value
 
 
-def _agreement(config, work, items, engine, limit, attempt):
+def _agreement(config, work, items, engine, limit, run):
     from pilot_eval.run import _write_json
     from pilot_eval.stage0_batching import BATCH_GATE, numeric_ok
     selected = items[:16]
@@ -446,13 +420,12 @@ def _agreement(config, work, items, engine, limit, attempt):
         token_rows.append(dict(id=row['id'],input_ids=full,attention_mask=[1]*len(full),
                                prompt_tokens=len(prompt),answer_positions=list(range(len(prompt)-1,len(full)-1))))
     values = {}
-    created = 0
     for condition in CONDITIONS:
         existing = _unit(work,config,condition)
         if existing is not None:
             values[condition] = existing
             continue
-        if limit is not None and created >= limit:
+        if limit is not None and run.new >= limit:
             return dict(complete=False,completed=len(values),total=len(CONDITIONS))
         numeric = [engine.compare(selected[:size],condition,token_rows) for size in [16,6]]
         passed = all(numeric_ok(result,BATCH_GATE) for result in numeric)
@@ -474,9 +447,9 @@ def _agreement(config, work, items, engine, limit, attempt):
             replay = all(row['exact'] or row['near_tie'] for row in checks)
         integrity = engine.check_integrity()
         if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):
-            raise ValueError('Cut agreement model integrity failed')
-        values[condition] = _save_unit(work,config,condition,dict(numeric=numeric,numeric_passed=passed,replay_passed=replay,replay_checks=checks,integrity=integrity),attempt)
-        created += 1
+            raise IntegrityFailure('Cut agreement model integrity failed')
+        values[condition] = _save_unit(work,config,condition,dict(numeric=numeric,numeric_passed=passed,replay_passed=replay,replay_checks=checks,integrity=integrity),run.path)
+        run.new += 1
     replay_passed = values['output']['replay_passed']
     result = dict(complete=True, batch_gate=BATCH_GATE, sizes=[16,6],
         batch_sizes={condition:16 if values[condition]['numeric_passed'] and replay_passed else 1 for condition in CONDITIONS},
@@ -485,11 +458,10 @@ def _agreement(config, work, items, engine, limit, attempt):
     return result
 
 
-def _evaluate(config, work, items, engine, agreement, limit, attempt):
+def _evaluate(config, work, items, engine, agreement, limit, run):
     from pilot_eval.run import _write_json, _write_state
     from pilot_eval.stage0_evaluation_records import records
     rows = []
-    created = 0
     runtime_hash = file_hash(work/'meta/runtime.json')
     input_hash = file_hash(work/'inputs/tokenized.json')
     for condition in CONDITIONS:
@@ -501,7 +473,7 @@ def _evaluate(config, work, items, engine, agreement, limit, attempt):
             unit['item_seeds'] = dict.fromkeys(unit['ids'],unit['seed'])
             value = _unit(work,config,key)
             if value is None:
-                if limit is not None and created >= limit:
+                if limit is not None and run.new >= limit:
                     return dict(complete=False,completed=len(rows),total=1200)
                 outputs = []
                 for offset in range(0,len(selected),size):
@@ -509,9 +481,9 @@ def _evaluate(config, work, items, engine, agreement, limit, attempt):
                 scored = records(config,unit,selected,outputs,runtime_sha256=runtime_hash,input_sha256=input_hash)
                 integrity = engine.check_integrity()
                 if not all(integrity.get(k) is True for k in ['base_unchanged','adapters_unchanged']):
-                    raise ValueError('Cut evaluation model integrity failed')
-                value = _save_unit(work,config,key,dict(records=scored,integrity=integrity),attempt)
-                created += 1
+                    raise IntegrityFailure('Cut evaluation model integrity failed')
+                value = _save_unit(work,config,key,dict(records=scored,integrity=integrity),run.path)
+                run.new += 1
             outputs = [{k:r[k] for k in ['text','token_ids','generated_token_ids','stop_reason']} for r in value['records']]
             if value['records'] != records(config,unit,selected,outputs,runtime_sha256=runtime_hash,input_sha256=input_hash):
                 raise ValueError('Cut response identity or score changed')
