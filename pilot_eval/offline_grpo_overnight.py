@@ -22,6 +22,7 @@ from pilot_eval.workflow import _hash, _save_frozen
 
 STAGES = {
     'pool': ('offline-pool-inventory','offline-pool-prepare','offline-pool-route','offline-pool-fresh-prepare','offline-pool-fresh-run','offline-pool-import'),
+    'spectral': ('stage0-spectral-prepare','stage0-spectral-run'),
     'dataset': ('offline-grpo-dataset-prepare','offline-grpo-dataset-run','offline-grpo-dataset-report'),
     'diagnostics': ('offline-grpo-train-prepare','offline-grpo-train-check-diagnostics'),
     'train': ('offline-grpo-train-run',),
@@ -38,8 +39,8 @@ STAGES = {
 # The approval may set max_seconds; otherwise only this fault guard bounds the run.
 DEFAULT_MAX_SECONDS = 30*24*3600.
 DEPENDENCIES = {
-    'pool': [], 'dataset': ['pool'], 'diagnostics': ['pool'], 'train': ['diagnostics'],
-    'behaviour': ['train'], 'geometry': ['train'], 'push': ['train'], 'drift': ['train'],
+    'pool': [], 'spectral': [], 'dataset': ['pool'], 'diagnostics': ['pool'], 'train': ['diagnostics'],
+    'behaviour': ['train'], 'geometry': ['train','spectral'], 'push': ['train'], 'drift': ['train'],
     'internals_report': ['geometry','push','drift'], 'cut_build': ['behaviour','geometry'],
     'cut_agreement': ['cut_build'], 'cut_evaluation': ['cut_agreement'], 'cut_report': ['cut_evaluation'],
 }
@@ -348,6 +349,10 @@ def _native_verify(stage, root):
     if name=='pool':
         from pilot_eval.offline_grpo_pool import verify
         verify(path,root)
+    elif name=='spectral':
+        from pilot_eval.stage0_spectral import _load,_verify_cache
+        config,_=_load(path,root)
+        _verify_cache(config,inside(root,config['run_path']))
     elif name=='diagnostics':
         from pilot_eval.offline_grpo_training import _load,_verify_preflight
         config,directory,*_=_load(path,root)
@@ -794,6 +799,7 @@ def template(inputs_path, output_root, name):
     behaviour=plan('behaviour','offline.behaviour.json')
     dataset=plan('dataset','offline.dataset.json')
     internals=plan('internals','offline.internals.json')
+    spectral=plan('spectral','stage0.spectral.json')
     cuts=plan('cuts','offline.cuts.json')
     common=['--output-root',str(root)]
     def cmd(operation,*args):return [operation,*common,*map(str,args)]
@@ -803,6 +809,8 @@ def template(inputs_path, output_root, name):
                 cmd('offline-pool-route','--pool',pool,'--audit',need('audit'),'--baseline',need('historical_baseline'),'--weights-dir',need('weights_dir'),'--runtime',need('stage0_runtime_file')),
                 cmd('offline-pool-fresh-prepare','--pool',pool,'--audit',need('audit'),'--weights-dir',need('weights_dir'),'--runtime',need('stage0_runtime_file')),
                 cmd('offline-pool-fresh-run','--config',fresh),cmd('offline-pool-import','--config',pool,'--rollouts',fresh)],
+        'spectral':[cmd('stage0-spectral-prepare','--audit',need('audit'),'--weights-dir',need('weights_dir'),'--name',f'{name}-spectral'),
+                    cmd('stage0-spectral-run','--config',spectral)],
         'dataset':[cmd('offline-grpo-dataset-prepare','--pool',pool,'--sft',need('dataset_source'),'--comparison-root',need('dataset_root'),'--sampler',fresh,'--runtime',need('stage0_runtime_file'),'--name',f'{name}-dataset'),
                    cmd('offline-grpo-dataset-run','--config',dataset),cmd('offline-grpo-dataset-report','--config',dataset)],
         'diagnostics':[cmd('offline-grpo-train-prepare','--frozen',need('frozen'),'--pool',pool,'--checkpoint-zero',need('checkpoint_zero'),
@@ -813,7 +821,7 @@ def template(inputs_path, output_root, name):
         'behaviour':[cmd('offline-grpo-behaviour-prepare','--config',training,'--name',f'{name}-behaviour'),
                      cmd('offline-grpo-behaviour-run','--config',behaviour),
                      cmd('offline-grpo-behaviour-report','--config',behaviour,'--name',f'{name}-behaviour-report',*(['--online',inputs['online_behaviour']] if inputs.get('online_behaviour') else []))],
-        'geometry':[cmd('offline-grpo-internals-prepare','--training',training,'--spectral',need('spectral'),
+        'geometry':[cmd('offline-grpo-internals-prepare','--training',training,'--spectral',spectral,
                         '--inputs',need('fixed_inputs'),'--runtime',need('stage0_runtime_file'),'--qualification',need('qualification'),
                         '--name',f'{name}-internals',*(['--online',inputs['online_training']] if inputs.get('online_training') else [])),
                     cmd('offline-grpo-internals-geometry','--config',internals)],
@@ -827,7 +835,7 @@ def template(inputs_path, output_root, name):
         'cut_evaluation':[cmd('offline-grpo-cuts-evaluate','--config',cuts)],
         'cut_report':[cmd('offline-grpo-cuts-report','--config',cuts)],
     }
-    plans=dict(pool=pool,dataset=dataset,diagnostics=training,train=training,behaviour=behaviour,
+    plans=dict(pool=pool,spectral=spectral,dataset=dataset,diagnostics=training,train=training,behaviour=behaviour,
                geometry=internals,push=internals,drift=internals,internals_report=internals,
                cut_build=cuts,cut_agreement=cuts,cut_evaluation=cuts,cut_report=cuts)
     stages=[]

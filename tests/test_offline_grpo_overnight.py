@@ -217,7 +217,7 @@ def test_generated_recipe_binds_complete_stage_matrix(tmp_path,monkeypatch):
     inputs=dict(audit='source.json',historical_baseline='source.json',frozen='source.json',weights_dir='source.json',
         stage0_runtime_file='stage0.json',training_runtime_file='training.json',checkpoint_zero='source.json',
         checkpoint_weights_sha256='a'*64,checkpoint_config_sha256='b'*64,dataset_source='source.json',dataset_root=str(tmp_path),
-        spectral='source.json',fixed_inputs='source.json',qualification='source.json',cut_reference='source.json',cut_reference_root=str(tmp_path),
+        fixed_inputs='source.json',qualification='source.json',cut_reference='source.json',cut_reference_root=str(tmp_path),
         long_min_tokens=10,prompt_count=1,fidelity_tolerance_nats=.5,model_identity=dict(model='m',model_revision='r',tokenizer_revision='r',base_sha256='h'),eos_token_id=99,
         snapshot_hashes={'model.safetensors':'h'},hf_cache_root=str(tmp_path),minimum_cache_free_bytes=0,
         source_hashes={'source.json':file_hash(tmp_path/'source.json')},software_versions={'trl':'0.26.2'},minimum_free_bytes=0,
@@ -227,10 +227,16 @@ def test_generated_recipe_binds_complete_stage_matrix(tmp_path,monkeypatch):
     spec=json.loads(output.read_text())
     assert {stage['id'] for stage in spec['stages']}==set(workflow.STAGES)
     assert spec['stages'][0]['commands'][0][0]=='offline-pool-inventory'
+    by_id={stage['id']:stage for stage in spec['stages']}
+    assert [c[0] for c in by_id['spectral']['commands']]==['stage0-spectral-prepare','stage0-spectral-run']
+    assert by_id['spectral']['plan']==str(tmp_path/'plans/example-spectral/stage0.spectral.json')
+    assert 'spectral' in by_id['geometry']['depends_on']
+    internals=next(c for c in by_id['geometry']['commands'] if c[0]=='offline-grpo-internals-prepare')
+    assert internals[internals.index('--spectral')+1]==by_id['spectral']['plan']
     assert [c[0] for c in spec['stages'][0]['commands']][2:4]==['offline-pool-route','offline-pool-fresh-prepare']
     assert workflow.prepare(output,tmp_path).is_file()
-    from pilot_eval import cli,offline_grpo_route,offline_grpo_pool,offline_grpo_fresh,offline_grpo_training,offline_grpo_dataset,offline_grpo_behaviour,offline_grpo_internals,offline_grpo_cuts
-    for module,names in [(offline_grpo_route,['select']),(offline_grpo_pool,['inventory','prepare','import_rollouts']),
+    from pilot_eval import cli,stage0_spectral,offline_grpo_route,offline_grpo_pool,offline_grpo_fresh,offline_grpo_training,offline_grpo_dataset,offline_grpo_behaviour,offline_grpo_internals,offline_grpo_cuts
+    for module,names in [(stage0_spectral,['prepare','run']),(offline_grpo_route,['select']),(offline_grpo_pool,['inventory','prepare','import_rollouts']),
         (offline_grpo_fresh,['prepare','run']),(offline_grpo_training,['prepare','run','check_diagnostics']),
         (offline_grpo_dataset,['prepare','run','report']),(offline_grpo_behaviour,['prepare','run','report']),
         (offline_grpo_internals,['prepare','run_geometry','collect','report']),
@@ -499,3 +505,24 @@ def test_backup_restores_and_resumes_after_local_files_are_lost(tmp_path,monkeyp
     deps.fail=False
     state=workflow.run(path,tmp_path,directory/'meta/authorization.json',dependencies=deps)
     assert state['state']=='completed' and state['export']['state']=='verified'
+
+
+def test_spectral_stage_verifies_the_generated_cache_and_blocks_only_its_dependents(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import offline_grpo_overnight as workflow,stage0_spectral
+    seen=[]
+    (tmp_path/'plan.json').write_text('{}')
+    monkeypatch.setattr(stage0_spectral,'_load',lambda path,root:(dict(run_path='runs/spectral'),{}))
+    monkeypatch.setattr(stage0_spectral,'_verify_cache',lambda config,directory:seen.append(directory) or {})
+    assert workflow._native_verify(dict(id='spectral',plan=str(tmp_path/'plan.json')),tmp_path) is True
+    assert seen==[tmp_path/'runs/spectral']
+    workflow_,path,auth,deps,hub,directory=real_export_run(tmp_path/'run' if (tmp_path/'run').mkdir() is None else tmp_path,monkeypatch)
+    original=deps.invoke
+    def invoke(command,*,reservation_provider):
+        return 1 if command[0]=='stage0-spectral-run' else original(command,reservation_provider=reservation_provider)
+    deps.invoke=invoke;deps.fail=False
+    state=workflow.run(path,tmp_path/'run',auth,dependencies=deps)
+    assert state['stages']['spectral']['state']=='failed'
+    assert state['stages']['geometry']['state']=='blocked_dependency'
+    assert state['stages']['cut_build']['state']=='blocked_dependency'
+    assert state['stages']['train']['state']=='verified' and state['stages']['behaviour']['state']=='verified'

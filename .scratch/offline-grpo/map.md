@@ -35,6 +35,8 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 
 - Prelaunch requirements reduced at the researcher's direction: predictions, reporting protocol, whole-run estimate and budget ledger are no longer required by the overnight wrapper. Approval has an optional `max_seconds`; without it a 30-day fault guard is the only time bound. Standalone child commands still use the Stage 0 ledger.
 
+- The overnight run now generates the spectral cache as a CPU stage with the existing `stage0-spectral-*` commands, so it is no longer a template input. Geometry and everything after it depend on that stage; pool, training and behaviour do not. The generated cache is included in the export so downstream results stay verifiable.
+
 ## Open decisions
 
 - Fidelity tolerance: `offline-grpo-train-check-diagnostics` now requires an explicit `--fidelity-tolerance` in nats (template input `fidelity_tolerance_nats`). No value has been chosen; a reviewed number is required before a real run.
