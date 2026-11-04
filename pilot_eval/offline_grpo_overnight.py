@@ -35,6 +35,8 @@ STAGES = {
     'cut_evaluation': ('offline-grpo-cuts-evaluate',),
     'cut_report': ('offline-grpo-cuts-report',),
 }
+# The approval may set max_seconds; otherwise only this fault guard bounds the run.
+DEFAULT_MAX_SECONDS = 30*24*3600.
 DEPENDENCIES = {
     'pool': [], 'dataset': ['pool'], 'diagnostics': ['pool'], 'train': ['diagnostics'],
     'behaviour': ['train'], 'geometry': ['train'], 'push': ['train'], 'drift': ['train'],
@@ -85,7 +87,7 @@ def _validate_spec(spec, root):
             if cmd[0]=='offline-grpo-train-check-diagnostics' and cmd.count('--fidelity-tolerance')!=1:
                 raise ValueError('Diagnostics require one explicit fidelity tolerance')
             if '--approval' in cmd:
-                raise ValueError('Child approvals must use the single umbrella reservation')
+                raise ValueError('Child approvals must use the single overnight approval')
             if '--config' in cmd:
                 allowed={inside(root,stage['plan'])}
                 allowed.update(inside(root,p) for p in stage.get('additional_plans',[]))
@@ -106,10 +108,6 @@ def _validate_spec(spec, root):
         raise ValueError('Nonnegative free-space requirement required')
     if not spec.get('source_hashes') or not spec.get('software_versions'):
         raise ValueError('Pinned sources and software versions are required')
-    for field in ['predictions_path','reporting_protocol_path']:
-        path=inside(root,spec[field])
-        if str(path.relative_to(root)) not in spec['source_hashes']:
-            raise ValueError('Frozen '+field+' must be included in source hashes')
     by_id={stage['id']:stage for stage in stages}
     for group in [('diagnostics','train'),('geometry','push','drift','internals_report'),('cut_build','cut_agreement','cut_evaluation','cut_report')]:
         if len({str(inside(root,by_id[name]['plan'])) for name in group})!=1:
@@ -292,17 +290,6 @@ def preflight(path, output_root, *, dependencies=None):
                 approved.append(path)
         if not approved:raise ValueError('Matching approved Stage 0 qualification receipt missing')
         return dict(verified=True)
-    def preregistration():
-        value=json.loads(inside(root,spec['predictions_path']).read_text())
-        predictions=value.get('predictions',[])
-        if (value.get('training_results_seen') is not False or not value.get('frozen_at')
-                or {p.get('id') for p in predictions}!={f'P{i}' for i in range(1,9)}
-                or any(type(p.get('confidence')) not in [int,float] or not 0<=p['confidence']<=1
-                       or p.get('value') in [None,''] for p in predictions)):
-            raise ValueError('Freeze P1–P8 values and confidence before training results')
-        protocol=inside(root,spec['reporting_protocol_path'])
-        if not protocol.read_text().strip():raise ValueError('Frozen reporting protocol is empty')
-        return dict(predictions=8,reporting_protocol='bound')
     def runtime_files():
         training=next(c for c in stages['diagnostics']['commands'] if c[0]=='offline-grpo-train-prepare')
         if json.loads(inside(root,option(training,'--runtime')).read_text())!=spec['training_runtime']:
@@ -333,26 +320,13 @@ def preflight(path, output_root, *, dependencies=None):
             os.replace(first,second)
             if second.read_bytes()!=b'offline-grpo':raise ValueError('Storage readback failed')
         return dict(free_bytes=free,root=str(root),atomic_rename=True)
-    def ledger():
-        from pilot_eval.stage0_workflow import budget_status
-        from pilot_eval.stage0_budget import reservations
-        usage=budget_status(root);active=[r for r in reservations(root).values() if r['state']=='active']
-        if usage['state']!='observed':raise ValueError('A current observed usage total is required')
-        marker=directory/'meta/umbrella.json'
-        expected=json.loads(marker.read_text())['reservation_id'] if marker.exists() else None
-        if any(r['reservation_id']!=expected or r['job_sha256']!=_hash(plan) for r in active):
-            raise ValueError('An unrelated active reservation requires a real usage observation and reconciliation')
-        if marker.exists() and not active:
-            raise ValueError('Saved umbrella reservation is no longer active; prepare a new approved plan')
-        return dict(usage=usage,active_reservations=[r['reservation_id'] for r in active],
-                    note='Resume only the same active umbrella; settlement needs a newer real usage observation.')
     def hub():
         if os.environ.get('HF_HUB_ENABLE_HF_TRANSFER')!='0':
             raise ValueError('Set HF_HUB_ENABLE_HF_TRANSFER=0 for the approved storage environment')
         client=deps.hub();principal=client.api.whoami().get('name');info=client.info(spec['export']['repo'])
         if not principal or info.private is not True:raise ValueError('Authenticated private HF destination required')
         return dict(repo=spec['export']['repo'],principal=principal,private=True,write_access='not yet verified')
-    for name,function in [('sources',sources),('cut_reference',cut_reference),('dataset_source',dataset_source),('qualification',qualification),('preregistration',preregistration),('runtime_files',runtime_files),('snapshot',snapshot),('model_cache',model_cache),('runtime',runtime),('software',software),('parity',deps.parity),('storage',storage),('ledger',ledger),('hf',hub)]:
+    for name,function in [('sources',sources),('cut_reference',cut_reference),('dataset_source',dataset_source),('qualification',qualification),('runtime_files',runtime_files),('snapshot',snapshot),('model_cache',model_cache),('runtime',runtime),('software',software),('parity',deps.parity),('storage',storage),('hf',hub)]:
         check(name,function)
     result=dict(ok=not issues,issues=issues,evidence=evidence,checked_at=datetime.now(timezone.utc).isoformat())
     _write_json(directory/'meta/preflight.json',result)
@@ -427,17 +401,13 @@ def _write_state(directory, plan, state):
 
 def _authorization(path, plan, preflight_result, root):
     value=json.loads(inside(root,path).read_text())
-    allocation=value.get('allocation',{})
+    limit=value.get('max_seconds',DEFAULT_MAX_SECONDS)
     if (value.get('protocol')!='offline-grpo-prelaunch-v1' or value.get('approved') is not True
             or value.get('plan_sha256')!=_hash(plan) or value.get('stage0_runtime')!=plan['spec']['stage0_runtime'] or value.get('training_runtime')!=plan['spec']['training_runtime']
             or value.get('repo')!=plan['spec']['export']['repo'] or not value.get('reviewer')
             or value.get('preflight_sha256')!=_hash(preflight_result)
-            or type(value.get('max_total_units')) not in [int,float] or value['max_total_units']<=0
-            or allocation.get('session_id')!=plan['spec']['stage0_runtime']['session_id']
-            or type(allocation.get('max_seconds')) not in [int,float] or allocation['max_seconds']<=0
-            or type(allocation.get('max_units_per_hour')) not in [int,float] or allocation['max_units_per_hour']<=0
-            or allocation['max_seconds']*allocation['max_units_per_hour']/3600>value['max_total_units']):
-        raise ValueError('Explicit prelaunch approval must bind this exact plan, preflight, runtime, destination and budget')
+            or type(limit) not in [int,float] or not limit>0):
+        raise ValueError('Explicit prelaunch approval must bind this exact plan, preflight, runtime and destination')
     return value
 
 
@@ -494,7 +464,7 @@ def _snapshot_report(plan, directory, root, state, attempt=None, elapsed=0.):
     text='\n'.join(lines)+'\n';report_path=folder/'final-report.md'
     if report_path.exists() and report_path.read_text()!=text:raise ValueError('Snapshot report changed')
     report_path.write_text(text)
-    wrapper_files=['config.json','meta/run_manifest.json','meta/preflight.json','meta/authorization.json','meta/umbrella.json',
+    wrapper_files=['config.json','meta/run_manifest.json','meta/preflight.json','meta/authorization.json',
                    'meta/status.json','checkpoints/progress.json','logs/events.jsonl']
     wrapper_files += [str(p.relative_to(directory)) for p in sorted((directory/'logs').glob('*.log'))]
     for name in wrapper_files:
@@ -517,18 +487,12 @@ def _snapshot_recovery(directory, root, folder, attempt, elapsed):
                 target=folder/'attempts'/start.parent.name/name
                 target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(source.read_bytes())
     if attempt is not None:
-        # This attempt is still running, so the backup charges its time so far.
+        # This attempt is still running, so the backup records its time so far.
         target=folder/'attempts'/attempt.name
         start=json.loads((attempt/'start.json').read_text())
         _write_json(target/'timing.json',dict(seconds=elapsed,reservation_id=start['reservation_id'],
             start_sha256=file_hash(attempt/'start.json'),final_integrity_sha256=None,usage_reconciled=False))
         _write_json(target/'timing.complete.json',dict(sha256=file_hash(target/'timing.json')))
-    budget=root/'runs/stage0/budget'
-    if budget.is_dir():
-        for source in sorted(budget.rglob('*')):
-            if source.is_file() and source.name not in ['.lock','writer.json'] and not source.name.endswith('.tmp'):
-                target=folder/'budget'/source.relative_to(budget)
-                target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(source.read_bytes())
 
 
 def restore_wrapper(manifest_path, output_root):
@@ -540,7 +504,7 @@ def restore_wrapper(manifest_path, output_root):
     for source in sorted(snapshot.rglob('*')):
         relative=source.relative_to(snapshot)
         if not source.is_file() or relative.name.startswith('final-report'):continue
-        target=root/'runs/stage0'/relative if relative.parts[0]=='budget' else directory/relative
+        target=directory/relative
         if target.exists():continue
         target.parent.mkdir(parents=True,exist_ok=True);copier.copyfile(source,target);restored+=1
     return dict(restored_files=restored,partial=manifest['partial'],missing=manifest['missing'],
@@ -635,26 +599,9 @@ def _export(plan, root, directory, snapshot, *, partial, dependencies):
     return dict(record=record,manifest_path=str(manifest.relative_to(root)),partial=partial,external_sources=len(value['external_sources']))
 
 
-def _umbrella(plan, directory, root, authorization):
-    """Reserve once, or recover the same active reservation without settling it."""
-    from pilot_eval.stage0_budget import reserve, reservations
-    marker=directory/'meta/umbrella.json'
-    if marker.exists():
-        saved=json.loads(marker.read_text())
-        row=reservations(root).get(saved['reservation_id'])
-        if (not row or row['state']!='active' or row['job_sha256']!=_hash(plan)
-                or row['approval']!=authorization['allocation']):
-            raise ValueError('The approved umbrella reservation is unavailable or changed')
-        return row
-    row=reserve(root,_hash(plan),authorization['allocation'])
-    _save_frozen(marker,dict(reservation_id=row['reservation_id'],plan_sha256=_hash(plan)))
-    return row
-
-
 def run(path, output_root, authorization_path, *, dependencies=None):
     import time
     import uuid
-    from pilot_eval.stage0_evaluation import _attempt_timing
     from pilot_eval.stage0_qualification_backend import deadline_guard
     root=Path(output_root).resolve();plan,directory=_load(path,root);deps=dependencies or Dependencies()
     with _writer(directory/'execution'):
@@ -670,34 +617,29 @@ def run(path, output_root, authorization_path, *, dependencies=None):
         if current.get('state')=='completed' and current.get('export',{}).get('state')=='verified':
             verify(path,root,dependencies=deps)
             return current
-        umbrella=_umbrella(plan,directory,root,authorization)
-        used=0.
-        for start in (directory/'attempts').glob('*/start.json'):
-            if json.loads(start.read_text())['reservation_id']==umbrella['reservation_id']:
-                used+=_attempt_timing(start.parent)['seconds']
-        remaining=umbrella['approval']['max_seconds']-used
-        if remaining<=0:raise ValueError('Approved umbrella time is exhausted; reconcile actual usage')
+        remaining=authorization.get('max_seconds',DEFAULT_MAX_SECONDS)
+        reservation=dict(reservation_id='overnight-'+_hash(plan)[:16])
         attempt=directory/'attempts'/uuid.uuid4().hex
-        _save_frozen(attempt/'start.json',dict(reservation_id=umbrella['reservation_id'],plan_sha256=_hash(plan)))
+        _save_frozen(attempt/'start.json',dict(reservation_id=reservation['reservation_id'],plan_sha256=_hash(plan)))
         began=time.monotonic()
         state=dict(state='running',stages={},export=dict(state='not_started'))
         _write_state(directory,plan,state)
         active_stage=None
         def provider(child_config,execution,child_dir,child_root,runtime,approval_path):
             if Path(child_root).resolve()!=root or runtime!=plan['spec']['stage0_runtime'] or approval_path is not None:
-                raise ValueError('Child runtime, root or separate approval differs from umbrella authorization')
+                raise ValueError('Child runtime, root or separate approval differs from the overnight approval')
             if active_stage is None or state['stages'].get(active_stage,{}).get('state')!='running':
                 raise ValueError('Child reservation is not bound to the active approved stage')
             left=remaining-(time.monotonic()-began)
-            if left<=0:raise TimeoutError('Approved umbrella allocation expired')
-            return umbrella,left
+            if left<=0:raise TimeoutError('Approved run time limit expired')
+            return reservation,left
         def bounded(function, *args, **kwargs):
             left=remaining-(time.monotonic()-began)
-            if left<=0:raise TimeoutError('Approved umbrella allocation expired')
+            if left<=0:raise TimeoutError('Approved run time limit expired')
             with deadline_guard(left,plan['spec']['stage0_runtime']['execution_kind']=='real-cuda'):
                 value=function(*args,**kwargs)
             if time.monotonic()-began>=remaining:
-                raise TimeoutError('Approved umbrella allocation expired')
+                raise TimeoutError('Approved run time limit expired')
             return value
         try:
             with deadline_guard(remaining,plan['spec']['stage0_runtime']['execution_kind']=='real-cuda'):
@@ -717,7 +659,7 @@ def run(path, output_root, authorization_path, *, dependencies=None):
                             active_stage=identifier
                             for command in stage['commands']:
                                 left=remaining-(time.monotonic()-began)
-                                if left<=0:raise TimeoutError('Approved umbrella allocation expired')
+                                if left<=0:raise TimeoutError('Approved run time limit expired')
                                 print(f"Offline overnight: {identifier}: {command[0]}",flush=True)
                                 log_path=directory/'logs'/f'{identifier}.log'
                                 with _tee_output(log_path), deadline_guard(left,plan['spec']['stage0_runtime']['execution_kind']=='real-cuda'):
@@ -755,7 +697,7 @@ def run(path, output_root, authorization_path, *, dependencies=None):
             raise
         finally:
             _write_json(attempt/'timing.json',dict(seconds=time.monotonic()-began,
-                reservation_id=umbrella['reservation_id'],start_sha256=file_hash(attempt/'start.json'),
+                reservation_id=reservation['reservation_id'],start_sha256=file_hash(attempt/'start.json'),
                 final_integrity_sha256=None,usage_reconciled=False))
             _write_json(attempt/'timing.complete.json',dict(sha256=file_hash(attempt/'timing.json')))
 
@@ -902,8 +844,7 @@ def template(inputs_path, output_root, name):
         model_identity=need('model_identity'),eos_token_id=need('eos_token_id'),
         snapshot_path=need('weights_dir'),snapshot_hashes=need('snapshot_hashes'),
         hf_cache_root=need('hf_cache_root'),minimum_cache_free_bytes=need('minimum_cache_free_bytes'),
-        source_hashes=need('source_hashes'),predictions_path=need('predictions_path'),
-        reporting_protocol_path=need('reporting_protocol_path'),software_versions=need('software_versions'),
+        source_hashes=need('source_hashes'),software_versions=need('software_versions'),
         minimum_free_bytes=need('minimum_free_bytes'),export=dict(repo=need('hf_repo'),paths=need('export_paths')))
     _validate_spec(spec,root)
     output=root/'plans'/name/'offline.overnight.input.json'

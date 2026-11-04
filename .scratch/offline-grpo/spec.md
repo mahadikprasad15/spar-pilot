@@ -78,3 +78,5 @@ A later real-GPU smoke checks the actual base and checkpoint-0 adapter, runtime,
 ## Further Notes
 
 The approved delivery is a specification followed by eight implementation tickets. The run still requires a concrete prelaunch approval covering its plan, predictions, destinations, resource and budget bounds. Historical data availability, compatible runtime and reusable analysis outputs must be verified rather than assumed. A completed process is not a completed experiment until all required products and the backup readback are verified.
+
+Decision update, 2026-11-04: the overnight run does not require frozen predictions, a reporting protocol, a whole-run time estimate or the Stage 0 budget ledger. Approval binds the plan, preflight, runtimes and destination. A time limit is optional through `max_seconds`. Earlier mentions of predictions, spending bounds and budget in this spec are superseded for the overnight wrapper.

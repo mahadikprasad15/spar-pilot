@@ -35,13 +35,13 @@ def make_spec(root):
                     if '--config' in command:command[command.index('--config')+1]=shared
     return dict(protocol='offline-grpo-overnight-v1',name='fixture',stages=stages,
         export=dict(repo='fixture/private',paths=['source.json']),stage0_runtime=dict(session_id='fixture',execution_kind='synthetic-cpu-fixture'),training_runtime=dict(dtype='float32'),
-        model_identity=dict(model='fixture',model_revision='rev',tokenizer_revision='rev',base_sha256='base'),eos_token_id=99,snapshot_path='source.json',snapshot_hashes={'source.json':'fixture'},hf_cache_root=str(root),minimum_cache_free_bytes=0,software_versions={'trl':'0.26.2'},predictions_path='source.json',reporting_protocol_path='source.json',source_hashes={'source.json':file_hash(source)},minimum_free_bytes=0)
+        model_identity=dict(model='fixture',model_revision='rev',tokenizer_revision='rev',base_sha256='base'),eos_token_id=99,snapshot_path='source.json',snapshot_hashes={'source.json':'fixture'},hf_cache_root=str(root),minimum_cache_free_bytes=0,software_versions={'trl':'0.26.2'},source_hashes={'source.json':file_hash(source)},minimum_free_bytes=0)
 
 
 def test_public_run_continues_independent_stage_and_resumes(tmp_path,monkeypatch):
     import json
     from types import SimpleNamespace
-    from pilot_eval import offline_grpo_overnight as workflow,stage0_budget
+    from pilot_eval import offline_grpo_overnight as workflow
     from pilot_eval.workflow import _hash
     from pilot_eval.cli import main
     spec=make_spec(tmp_path);spec_path=tmp_path/'spec.json';spec_path.write_text(json.dumps(spec))
@@ -49,12 +49,8 @@ def test_public_run_continues_independent_stage_and_resumes(tmp_path,monkeypatch
     path=tmp_path/'plans/fixture/offline.overnight.json';plan=json.loads(path.read_text())
     directory=tmp_path/'runs/offline-grpo/fixture/overnight';preflight=dict(ok=True,evidence={},issues=[])
     (directory/'meta/preflight.json').write_text(json.dumps(preflight))
-    allocation=dict(reviewer='test',notes='fixture',session_id='fixture',source_reviewed=True,max_units_per_hour=1.,max_seconds=60.)
-    auth=dict(protocol='offline-grpo-prelaunch-v1',approved=True,plan_sha256=_hash(plan),stage0_runtime=spec['stage0_runtime'],training_runtime=spec['training_runtime'],repo=spec['export']['repo'],reviewer='test',preflight_sha256=_hash(preflight),max_total_units=1.,allocation=allocation)
+    auth=dict(protocol='offline-grpo-prelaunch-v1',approved=True,plan_sha256=_hash(plan),stage0_runtime=spec['stage0_runtime'],training_runtime=spec['training_runtime'],repo=spec['export']['repo'],reviewer='test',preflight_sha256=_hash(preflight))
     auth_path=tmp_path/'auth.json';auth_path.write_text(json.dumps(auth))
-    row=dict(reservation_id='fixture',state='active',job_sha256=_hash(plan),approval=allocation)
-    monkeypatch.setattr(stage0_budget,'reserve',lambda *args:row)
-    monkeypatch.setattr(stage0_budget,'reservations',lambda *args:{'fixture':row})
     done=set();attempts=[]
     def native(stage,root):
         if stage['id'] not in done:raise FileNotFoundError(stage['id'])
@@ -73,7 +69,7 @@ def test_public_run_continues_independent_stage_and_resumes(tmp_path,monkeypatch
             if command[0]==workflow.STAGES[name][-1]:done.add(name)
             if name in ['pool','dataset','push','drift','cut_agreement','cut_evaluation']:
                 got,left=reservation_provider({},None,None,tmp_path,spec['stage0_runtime'],None)
-                assert got['reservation_id']=='fixture' and left>0
+                assert got['reservation_id'].startswith('overnight-') and left>0
             return 0
     deps=Deps()
     state=workflow.run(path,tmp_path,auth_path,dependencies=deps)
@@ -182,20 +178,18 @@ def test_model_cache_uses_pinned_revisions_and_rejects_changed_bytes(tmp_path):
         _verify_model_cache(spec,Deps())
 
 
-def test_budget_expiry_stops_later_stages_and_export(tmp_path,monkeypatch):
+def test_time_limit_stops_later_stages_and_export(tmp_path,monkeypatch):
     import json,time
     from types import SimpleNamespace
-    from pilot_eval import offline_grpo_overnight as workflow,stage0_budget
+    from pilot_eval import offline_grpo_overnight as workflow
     from pilot_eval.workflow import _hash
     spec=make_spec(tmp_path);spec_path=tmp_path/'spec.json';spec_path.write_text(json.dumps(spec))
     path=workflow.prepare(spec_path,tmp_path);plan=json.loads(path.read_text())
     directory=tmp_path/'runs/offline-grpo/fixture/overnight';preflight=dict(ok=True,evidence={},issues=[])
     (directory/'meta/preflight.json').write_text(json.dumps(preflight))
-    allocation=dict(reviewer='test',notes='fixture',session_id='fixture',source_reviewed=True,max_units_per_hour=1.,max_seconds=1.)
-    auth=dict(protocol='offline-grpo-prelaunch-v1',approved=True,plan_sha256=_hash(plan),stage0_runtime=spec['stage0_runtime'],training_runtime=spec['training_runtime'],repo=spec['export']['repo'],reviewer='test',preflight_sha256=_hash(preflight),max_total_units=1.,allocation=allocation)
+    auth=dict(protocol='offline-grpo-prelaunch-v1',approved=True,plan_sha256=_hash(plan),stage0_runtime=spec['stage0_runtime'],training_runtime=spec['training_runtime'],repo=spec['export']['repo'],reviewer='test',preflight_sha256=_hash(preflight))
+    auth['max_seconds']=1.
     auth_path=tmp_path/'auth.json';auth_path.write_text(json.dumps(auth))
-    row=dict(reservation_id='fixture',state='active',job_sha256=_hash(plan),approval=allocation)
-    monkeypatch.setattr(stage0_budget,'reserve',lambda *args:row)
     monkeypatch.setattr(workflow,'_native_verify',lambda *args:(_ for _ in ()).throw(FileNotFoundError()))
     clock={'now':0.}
     monkeypatch.setattr(time,'monotonic',lambda:clock['now'])
@@ -206,7 +200,7 @@ def test_budget_expiry_stops_later_stages_and_export(tmp_path,monkeypatch):
         def invoke(self,command,*,reservation_provider):
             self.calls+=1;clock['now']=2.;return 0
     deps=Deps()
-    with pytest.raises(TimeoutError,match='allocation expired'):
+    with pytest.raises(TimeoutError,match='time limit expired'):
         workflow.run(path,tmp_path,auth_path,dependencies=deps)
     assert deps.calls==1
     status=json.loads((directory/'meta/status.json').read_text())
@@ -226,7 +220,7 @@ def test_generated_recipe_binds_complete_stage_matrix(tmp_path,monkeypatch):
         spectral='source.json',fixed_inputs='source.json',qualification='source.json',cut_reference='source.json',cut_reference_root=str(tmp_path),
         long_min_tokens=10,prompt_count=1,fidelity_tolerance_nats=.5,model_identity=dict(model='m',model_revision='r',tokenizer_revision='r',base_sha256='h'),eos_token_id=99,
         snapshot_hashes={'model.safetensors':'h'},hf_cache_root=str(tmp_path),minimum_cache_free_bytes=0,
-        source_hashes={'source.json':file_hash(tmp_path/'source.json')},predictions_path='source.json',reporting_protocol_path='source.json',software_versions={'trl':'0.26.2'},minimum_free_bytes=0,
+        source_hashes={'source.json':file_hash(tmp_path/'source.json')},software_versions={'trl':'0.26.2'},minimum_free_bytes=0,
         hf_repo='owner/private',export_paths=['source.json'])
     path=tmp_path/'inputs.json';path.write_text(json.dumps(inputs))
     output=workflow.template(path,tmp_path,'example')
@@ -251,7 +245,7 @@ def real_export_run(tmp_path,monkeypatch,*,tamper=False):
     """Run the real report, manifest, upload and readback against a local fake Hub."""
     import json,shutil
     from types import SimpleNamespace
-    from pilot_eval import offline_grpo_overnight as workflow,stage0_budget
+    from pilot_eval import offline_grpo_overnight as workflow
     from pilot_eval.workflow import _hash
     spec=make_spec(tmp_path)
     runs=tmp_path/'runs/child';(runs/'checkpoints/checkpoint-0064').mkdir(parents=True)
@@ -275,12 +269,8 @@ def real_export_run(tmp_path,monkeypatch,*,tamper=False):
     path=workflow.prepare(spec_path,tmp_path);plan=json.loads(path.read_text())
     directory=tmp_path/'runs/offline-grpo/fixture/overnight';preflight=dict(ok=True,evidence={},issues=[])
     (directory/'meta/preflight.json').write_text(json.dumps(preflight))
-    allocation=dict(reviewer='test',notes='fixture',session_id='fixture',source_reviewed=True,max_units_per_hour=1.,max_seconds=600.)
-    auth=dict(protocol='offline-grpo-prelaunch-v1',approved=True,plan_sha256=_hash(plan),stage0_runtime=spec['stage0_runtime'],training_runtime=spec['training_runtime'],repo=spec['export']['repo'],reviewer='test',preflight_sha256=_hash(preflight),max_total_units=1.,allocation=allocation)
+    auth=dict(protocol='offline-grpo-prelaunch-v1',approved=True,plan_sha256=_hash(plan),stage0_runtime=spec['stage0_runtime'],training_runtime=spec['training_runtime'],repo=spec['export']['repo'],reviewer='test',preflight_sha256=_hash(preflight))
     auth_path=tmp_path/'auth.json';auth_path.write_text(json.dumps(auth))
-    row=dict(reservation_id='fixture',state='active',job_sha256=_hash(plan),approval=allocation)
-    monkeypatch.setattr(stage0_budget,'reserve',lambda *args:row)
-    monkeypatch.setattr(stage0_budget,'reservations',lambda *args:{'fixture':row})
     done=set()
     def native(stage,root):
         if stage['id'] not in done:raise FileNotFoundError(stage['id'])
@@ -331,7 +321,7 @@ def test_real_partial_export_lists_gaps_and_keeps_evidence(tmp_path,monkeypatch)
     assert 'runs/child/checkpoints/checkpoint-0064/adapter_model.safetensors' in files
     assert not any(name.startswith('models/') for name in files)
     snapshot=next(name.rsplit('/',1)[0] for name in files if name.endswith('final-report.md'))
-    for name in ['meta/preflight.json','meta/authorization.json','meta/umbrella.json','config.json','logs/train.log','logs/events.jsonl']:
+    for name in ['meta/preflight.json','meta/authorization.json','config.json','logs/train.log','logs/events.jsonl']:
         assert snapshot+'/'+name in files
     assert manifest['external_sources']==[dict(stage='dataset',root='/elsewhere/sources',path='sft.json',sha256='a'*64)]
     report=(tmp_path/snapshot/'final-report.md').read_text()
@@ -373,7 +363,7 @@ def test_completed_run_is_not_exported_twice(tmp_path,monkeypatch):
     assert second['export']['manifest_sha256']==first['export']['manifest_sha256']
 
 
-def test_interruption_preserves_budget_and_resumes_only_unverified_stages(tmp_path,monkeypatch):
+def test_interruption_records_timing_and_resumes_only_unverified_stages(tmp_path,monkeypatch):
     import json
     workflow,path,auth,deps,hub,directory=real_export_run(tmp_path,monkeypatch)
     deps.fail=False;calls=[];original=deps.invoke
@@ -394,13 +384,38 @@ def test_interruption_preserves_budget_and_resumes_only_unverified_stages(tmp_pa
     assert calls.count('offline-grpo-train-run')==2
 
 
-def test_killed_attempt_without_timing_refuses_resume(tmp_path,monkeypatch):
+def test_killed_attempt_without_timing_does_not_block_resume(tmp_path,monkeypatch):
     workflow,path,auth,deps,hub,directory=real_export_run(tmp_path,monkeypatch)
     workflow.run(path,tmp_path,auth,dependencies=deps)
     killed=directory/'attempts/killed';killed.mkdir()
     (killed/'start.json').write_text('{"reservation_id":"fixture"}')
-    with pytest.raises(ValueError,match='unmeasured elapsed time'):
+    deps.fail=False
+    assert workflow.run(path,tmp_path,auth,dependencies=deps)['state']=='completed'
+
+
+def test_approval_needs_no_budget_and_time_limit_is_optional(tmp_path,monkeypatch):
+    import json
+    from pilot_eval.workflow import _hash
+    workflow,path,auth,deps,hub,directory=real_export_run(tmp_path,monkeypatch)
+    value=json.loads(auth.read_text())
+    assert not {'allocation','max_total_units','max_seconds'}&set(value)
+    value['max_seconds']=-1.;auth.write_text(json.dumps(value))
+    with pytest.raises(ValueError,match='bind this exact plan'):
         workflow.run(path,tmp_path,auth,dependencies=deps)
+    assert not (tmp_path/'runs/stage0/budget').exists()
+
+
+def test_preflight_does_not_require_predictions_or_budget(tmp_path):
+    import json
+    from pilot_eval import offline_grpo_overnight as workflow
+    spec=make_spec(tmp_path);spec_path=tmp_path/'spec.json';spec_path.write_text(json.dumps(spec))
+    path=workflow.prepare(spec_path,tmp_path)
+    class Deps:
+        def runtime(self):raise ValueError('unavailable')
+        def parity(self):raise ValueError('skipped')
+        def hub(self):raise ValueError('none')
+    checks={r['check'] for r in workflow.preflight(path,tmp_path,dependencies=Deps())['issues']}
+    assert not {'preregistration','ledger'}&checks
 
 
 def test_run_requires_passing_preflight_and_reports_missing_source(tmp_path,monkeypatch):
@@ -463,7 +478,6 @@ def test_backup_restores_and_resumes_after_local_files_are_lost(tmp_path,monkeyp
     import json,shutil,tarfile
     from pilot_eval.training import file_hash
     workflow,path,auth,deps,hub,directory=real_export_run(tmp_path,monkeypatch)
-    ledger=tmp_path/'runs/stage0/budget/ledger.jsonl';ledger.parent.mkdir(parents=True);ledger.write_text('{}\n')
     state=workflow.run(path,tmp_path,auth,dependencies=deps)
     assert state['export']['state']=='partial_verified'
     manifest=tmp_path/state['export']['manifest_path']
@@ -477,8 +491,8 @@ def test_backup_restores_and_resumes_after_local_files_are_lost(tmp_path,monkeyp
     assert not (directory/'config.json').exists()
     restored=workflow.restore_wrapper(manifest,tmp_path)
     assert restored['restored_files']>0
-    assert file_hash(tmp_path/'source.json')==source_hash and ledger.exists()
-    for name in ['config.json','meta/run_manifest.json','meta/status.json','meta/umbrella.json','meta/authorization.json']:
+    assert file_hash(tmp_path/'source.json')==source_hash
+    for name in ['config.json','meta/run_manifest.json','meta/status.json','meta/authorization.json']:
         assert (directory/name).is_file()
     assert (directory/'attempts'/first_attempt/'timing.complete.json').is_file()
     assert json.loads((directory/'attempts'/first_attempt/'timing.json').read_text())['seconds']>=0

@@ -33,6 +33,8 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 
 - External review follow-up: a detected integrity failure now records a failing closing result, so its units are not reused as if interrupted; a replay's failed base check stops route selection; replay draws and integrity receipts are bound to the decision; backups carry the specification, wrapper state, attempt timing and budget ledger, with `offline-grpo-overnight-restore` to put them back; the final report lists omitted comparisons. Restore-and-resume is fixture-tested with mocked child verifiers at the same root and session.
 
+- Prelaunch requirements reduced at the researcher's direction: predictions, reporting protocol, whole-run estimate and budget ledger are no longer required by the overnight wrapper. Approval has an optional `max_seconds`; without it a 30-day fault guard is the only time bound. Standalone child commands still use the Stage 0 ledger.
+
 ## Open decisions
 
 - Fidelity tolerance: `offline-grpo-train-check-diagnostics` now requires an explicit `--fidelity-tolerance` in nats (template input `fidelity_tolerance_nats`). No value has been chosen; a reviewed number is required before a real run.
