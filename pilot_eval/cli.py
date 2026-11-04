@@ -16,6 +16,15 @@ def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
     for operation in ['prepare','run','verify','report']:
+        dataset=commands.add_parser('offline-grpo-dataset-'+operation,help='untuned-model offline dataset scoring')
+        dataset.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            dataset.add_argument('--pool',type=Path,required=True);dataset.add_argument('--sft',type=Path,required=True)
+            dataset.add_argument('--sampler',type=Path,required=True);dataset.add_argument('--runtime',type=Path,required=True);dataset.add_argument('--name',required=True)
+            dataset.add_argument('--comparison-root',type=Path);dataset.add_argument('--context-chunk',type=int,default=16);dataset.add_argument('--workspace-bytes',type=int,default=536870912)
+        else:dataset.add_argument('--config',type=Path,required=True)
+        if operation=='run':dataset.add_argument('--approval',type=Path);dataset.add_argument('--max-new-units',type=int)
+    for operation in ['prepare','run','verify','report']:
         behaviour=commands.add_parser('offline-grpo-behaviour-'+operation,help='verified offline behavior evaluation')
         behaviour.add_argument('--output-root',type=Path,required=True);behaviour.add_argument('--config',type=Path,required=True)
         if operation in ['prepare','report']:behaviour.add_argument('--name',required=True)
@@ -967,7 +976,7 @@ def main(argv=None, *, dependencies=None):
         elif args.command.startswith('stage0-distance-'):
             from pilot_eval import stage0_distance as workflow
             operation=args.command.removeprefix('stage0-distance-')
-            if operation=='prepare':result=workflow.prepare(args.rollouts,args.output_root,args.name,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
+            if operation=='prepare':result=workflow.prepare(args.rollouts,args.output_root,args.name,comparison_root=args.comparison_root,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
             elif operation=='runtime':result=workflow.runtime(args.config,args.output_root,dependencies=dependencies)
             elif operation=='freeze':result=workflow.freeze(args.config,args.output_root,args.review)
             elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,progress=not args.no_progress)
@@ -977,6 +986,13 @@ def main(argv=None, *, dependencies=None):
                 result=getattr(stage0_distance_report,operation)(args.config,args.output_root)
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-dataset-'):
+            from pilot_eval import offline_grpo_dataset as workflow
+            operation=args.command.removeprefix('offline-grpo-dataset-')
+            if operation=='prepare':result=workflow.prepare(args.pool,args.sft,args.sampler,args.runtime,args.output_root,args.name,comparison_root=args.comparison_root,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units)
+            else:result=getattr(workflow,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-grpo-behaviour-'):
             from pilot_eval import offline_grpo_behaviour as workflow

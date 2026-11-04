@@ -18,3 +18,7 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 - Ticket 03 is implemented and claimed pending actual pinned-TRL and real-GPU evidence. Pre-update token diagnostics are linked to accepted history and window-one push agreement gates the optimizer step. Integrated CPU validation passed 17 tests with one skip.
 
 - Ticket 04 behavioral source handoff and evaluation/report commands are implemented. Checkpoint-zero token comparison gates nonzero evaluation. Regression passed 11 tests with one skip, with 3 focused tests after final manifest addition. Actual GPU evaluation awaits verified real offline training and runtime evidence.
+
+- Ticket 05 additive dataset scoring and reporting is implemented and claimed for review. Synthetic CPU fixtures validate resume, multiplicity and saved-score identity; the inspected historical product cannot be reused until its missing source plan is restored. No GPU scoring has run.
+
+- Ticket 05 implementation and CPU verification resolved. Public dataset scorer/report supports verified historical score reuse with exact token contracts, all pool memberships and derived paired cohorts. Combined regression 15 passed; final focused 4 passed. Actual historical source graph restoration and GPU scoring remain execution work.
