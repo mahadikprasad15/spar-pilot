@@ -22,7 +22,7 @@ ONLINE_BEHAVIOUR = 'plans/pilot4-grpo-fp32-v1-behaviour-v1/grpo.evaluation.json'
 ONLINE_TRAINING = 'plans/pilot4-grpo-fp32-v1-arm-v1/grpo.training.json'
 
 
-def build_inputs(root, *, name, tolerance, repo, plan, training, snapshot, cache, versions, file_hash, long_min_tokens=100, prompt_count=8):
+def build_inputs(root, *, name, qualification, tolerance, repo, plan, training, snapshot, cache, versions, file_hash, long_min_tokens=100, prompt_count=8):
     directory = f'notebook/{name}'
     weights = 'inputs/models/'+plan['model_revision']
     zero = plan['source_evidence']['checkpoints']['0']['path']
@@ -31,13 +31,13 @@ def build_inputs(root, *, name, tolerance, repo, plan, training, snapshot, cache
         checkpoint_zero=zero, checkpoint_weights_sha256=file_hash(root/zero/'adapter_model.safetensors'),
         checkpoint_config_sha256=file_hash(root/zero/'adapter_config.json'),
         dataset_source=DATASET, dataset_root=str(root), fixed_inputs=FIXED_INPUTS,
-        qualification=f'plans/{name}-qualification/stage0.qualification.json',
+        qualification=f'plans/{qualification}/stage0.qualification.json',
         cut_reference=CUT_REFERENCE, cut_reference_root=str(root), long_min_tokens=long_min_tokens, prompt_count=prompt_count,
-        fidelity_tolerance_nats=tolerance, model_identity=json.loads((root/f'plans/{name}-qualification/stage0.qualification.json').read_text())['model_identity'],
+        fidelity_tolerance_nats=tolerance, model_identity=json.loads((root/f'plans/{qualification}/stage0.qualification.json').read_text())['model_identity'],
         eos_token_id=training['eos_token_id'], snapshot_hashes=snapshot, hf_cache_root=cache, minimum_cache_free_bytes=5*10**9,
         source_hashes={n: file_hash(root/n) for n in [AUDIT, BASELINE, FROZEN, DATASET, CUT_REFERENCE, FIXED_INPUTS]},
         software_versions=versions, minimum_free_bytes=50*10**9, hf_repo=repo,
-        export_paths=[directory, f'{directory}-qualification', f'runs/stage0/{name}-qualification'],
+        export_paths=[directory, f'runs/stage0/{qualification}'],
         online_behaviour=ONLINE_BEHAVIOUR, online_training=ONLINE_TRAINING)
 
 
@@ -45,11 +45,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--name', required=True)
+    parser.add_argument('--qualification', help='qualification plan name; defaults to NAME-qualification')
     parser.add_argument('--fidelity-tolerance', type=float, required=True)
     parser.add_argument('--hf-repo', required=True)
     args = parser.parse_args()
-    # Stage 0 always records this value, while training records the environment's.
-    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+    os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
     os.environ.setdefault('HF_HUB_OFFLINE', '1')
     from huggingface_hub import try_to_load_from_cache
     from huggingface_hub.constants import HF_HUB_CACHE
@@ -70,7 +70,7 @@ def main():
     _write_json(output/'training-runtime.json', training)
     snapshot = {p.name: file_hash(p) for p in sorted((root/'inputs/models'/plan['model_revision']).iterdir())
                 if p.is_file() and isinstance(try_to_load_from_cache(plan['model'], p.name, revision=plan['model_revision']), str)}
-    inputs = build_inputs(root, name=args.name, tolerance=args.fidelity_tolerance, repo=args.hf_repo, plan=plan,
+    inputs = build_inputs(root, name=args.name, qualification=args.qualification or args.name+'-qualification', tolerance=args.fidelity_tolerance, repo=args.hf_repo, plan=plan,
                           training=training, snapshot=snapshot, cache=HF_HUB_CACHE, versions=dict(PINS), file_hash=file_hash)
     _write_json(output/'inputs.json', inputs)
     print('written', output/'inputs.json', len(snapshot), 'model files;', training['device'], stage0['git_commit'][:7])

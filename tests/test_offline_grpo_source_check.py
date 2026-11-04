@@ -47,7 +47,7 @@ def test_prepared_inputs_supply_every_template_requirement(tmp_path):
     (tmp_path/'plans/run-qualification').mkdir(parents=True)
     (tmp_path/'plans/run-qualification/stage0.qualification.json').write_text(json.dumps(dict(model_identity=dict(model='m',dtype='float32'))))
     plan = dict(model_revision='r', source_evidence=dict(checkpoints={'0': dict(path='zero')}))
-    inputs = script.build_inputs(tmp_path, name='run', tolerance=.001, repo='o/r', plan=plan, training=dict(eos_token_id=7),
+    inputs = script.build_inputs(tmp_path, name='run', qualification='run-qualification', tolerance=.001, repo='o/r', plan=plan, training=dict(eos_token_id=7),
                                  snapshot={'a': 'h'}, cache='cache', versions=dict(trl='x'), file_hash=lambda path: 'h')
     assert inputs['model_identity'] == dict(model='m', dtype='float32')
     assert inputs['fidelity_tolerance_nats'] == .001 and inputs['qualification'] == 'plans/run-qualification/stage0.qualification.json'

@@ -242,7 +242,9 @@ def preflight(path, output_root, *, dependencies=None):
         actual=deps.runtime()
         if actual!=spec['stage0_runtime']:raise ValueError('Stage 0 runtime differs from approved identity')
         training=spec['training_runtime']
-        for field in ['device','python','cuda','versions','compute_capability','cublas_workspace_config']:
+        # Transformers' full determinism sets its own CUBLAS value in training; Stage 0 records
+        # the value it requested. Both are deterministic, so that field is not compared.
+        for field in ['device','python','cuda','versions','compute_capability']:
             if training.get(field)!=actual.get(field):raise ValueError('Training and Stage 0 runtimes differ on '+field)
         if (training.get('dtype')!='float32' or training.get('adapter_dtype')!='float32' or training.get('tf32') is not False
                 or training.get('attention_implementation')!='eager' or training.get('deterministic_algorithms') is not True

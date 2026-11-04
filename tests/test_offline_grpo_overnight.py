@@ -534,3 +534,20 @@ def test_spectral_stage_verifies_the_generated_cache_and_blocks_only_its_depende
     assert state['stages']['geometry']['state']=='blocked_dependency'
     assert state['stages']['cut_build']['state']=='blocked_dependency'
     assert state['stages']['train']['state']=='verified' and state['stages']['behaviour']['state']=='verified'
+
+
+def test_preflight_accepts_the_two_deterministic_cublas_settings(tmp_path,monkeypatch):
+    import json
+    from pilot_eval import offline_grpo_overnight as workflow
+    common=dict(device='gpu',python='3',cuda='12',versions={},compute_capability=[8,0])
+    spec=make_spec(tmp_path)
+    spec['stage0_runtime']=dict(common,session_id='fixture',execution_kind='synthetic-cpu-fixture',precision='float32',tf32=False,attention='eager',cublas_workspace_config=':4096:8')
+    spec['training_runtime']=dict(common,dtype='float32',adapter_dtype='float32',tf32=False,attention_implementation='eager',deterministic_algorithms=True,cublas_workspace_config=':16:8')
+    spec_path=tmp_path/'spec.json';spec_path.write_text(json.dumps(spec))
+    path=workflow.prepare(spec_path,tmp_path)
+    class Deps:
+        def runtime(self):return spec['stage0_runtime']
+        def parity(self):return {}
+        def hub(self):raise ValueError('none')
+    checks={r['check'] for r in workflow.preflight(path,tmp_path,dependencies=Deps())['issues']}
+    assert 'runtime' not in checks
