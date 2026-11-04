@@ -233,9 +233,10 @@ def test_generated_recipe_binds_complete_stage_matrix(tmp_path,monkeypatch):
     spec=json.loads(output.read_text())
     assert {stage['id'] for stage in spec['stages']}==set(workflow.STAGES)
     assert spec['stages'][0]['commands'][0][0]=='offline-pool-inventory'
+    assert [c[0] for c in spec['stages'][0]['commands']][2:4]==['offline-pool-route','offline-pool-fresh-prepare']
     assert workflow.prepare(output,tmp_path).is_file()
-    from pilot_eval import cli,offline_grpo_pool,offline_grpo_fresh,offline_grpo_training,offline_grpo_dataset,offline_grpo_behaviour,offline_grpo_internals,offline_grpo_cuts
-    for module,names in [(offline_grpo_pool,['inventory','prepare','import_rollouts']),
+    from pilot_eval import cli,offline_grpo_route,offline_grpo_pool,offline_grpo_fresh,offline_grpo_training,offline_grpo_dataset,offline_grpo_behaviour,offline_grpo_internals,offline_grpo_cuts
+    for module,names in [(offline_grpo_route,['select']),(offline_grpo_pool,['inventory','prepare','import_rollouts']),
         (offline_grpo_fresh,['prepare','run']),(offline_grpo_training,['prepare','run','check_diagnostics']),
         (offline_grpo_dataset,['prepare','run','report']),(offline_grpo_behaviour,['prepare','run','report']),
         (offline_grpo_internals,['prepare','run_geometry','collect','report']),

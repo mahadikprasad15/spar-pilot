@@ -18,7 +18,22 @@ from pilot_eval.stage0_sources import inside
 from pilot_eval.stage0_workflow import _state, _writer, status
 from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash, _save_frozen
-from pilot_eval import offline_grpo_pool
+from pilot_eval import offline_grpo_pool, offline_grpo_route
+
+
+def _units(pool, decision):
+    """Sample only groups the route still needs, in frozen optimizer order."""
+    if decision is not None and decision['route'] == offline_grpo_route.REUSE:
+        remaining = [i for i in pool['optimizer_order'] if i not in decision['historical_order']]
+        return [dict(key=f'group-{n:04d}',id=i,seed=decision['extension_seed_start']+n,origin='new-extension') for n,i in enumerate(remaining)]
+    return [dict(key=f'group-{n:04d}',id=i,seed=42+n,origin='new-uniform') for n,i in enumerate(pool['optimizer_order'])]
+
+
+def _route(directory, root):
+    decision = offline_grpo_route.load_decision(directory, root)
+    if decision is None:
+        return None, dict(route=offline_grpo_route.FRESH, selection='not-evaluated')
+    return decision, dict(route=decision['route'], selection='evaluated', sha256=file_hash(directory/'route/decision.json'))
 
 
 def prepare(pool_path, audit_path, weights_dir, runtime_path, output_root, *, dependencies=None):
@@ -51,6 +66,9 @@ def prepare(pool_path, audit_path, weights_dir, runtime_path, output_root, *, de
     for filename in ['config.json', 'tokenizer.json', 'tokenizer_config.json']:
         path = weights / filename
         parents[str(path.relative_to(root))] = file_hash(path)
+    decision, route = _route(directory, root)
+    if decision is not None and decision['route'] == offline_grpo_route.REUSE:
+        parents.update(decision['parents'])
     fresh = dict(protocol='offline-grpo-fresh-r0-v1', pool_path=str(pool_path.relative_to(root)),
                  pool_sha256=file_hash(pool_path), audit_path=str(audit_path.relative_to(root)), audit_sha256=file_hash(audit_path),
                  weights_dir=str(weights.relative_to(root)), model_identity=identity, parents=parents,
@@ -59,7 +77,7 @@ def prepare(pool_path, audit_path, weights_dir, runtime_path, output_root, *, de
                  expected_eos_token_id=expected_eos,
                  execution_kind='real-cuda' if inventory['execution_kind'] != 'synthetic-cpu-fixture' else 'synthetic-cpu-fixture',
                  run_path=str((directory/'fresh').relative_to(root)), generation_settings={**POLICY,'seed':42},
-                 units=[dict(key=f'group-{n:04d}',id=identifier,seed=42+n,origin='new-uniform') for n,identifier in enumerate(pool['optimizer_order'])])
+                 units=_units(pool, decision), route=route, baseline_path=decision['baseline_path'] if decision else None)
     path = directory/'fresh.plan.json'
     with _writer(directory):
         _save_frozen(path, fresh)
@@ -76,7 +94,9 @@ def _load(path, root):
     pool_path=inside(root,config['pool_path'])
     if file_hash(pool_path)!=config['pool_sha256'] or file_hash(inside(root,config['audit_path']))!=config['audit_sha256']:
         raise ValueError('Fresh source plan or audit changed')
-    pool,_,training=offline_grpo_pool._plan(pool_path,root)
+    pool,pool_directory,training=offline_grpo_pool._plan(pool_path,root)
+    decision,route=_route(pool_directory,root)
+    if config['route']!=route:raise ValueError('Route decision changed')
     audit=status(inside(root,config['audit_path']),root)['audit']
     if not audit or not audit['primary_sources_ready'] or audit['sources']['sft']['identity']!=config['model_identity']:
         raise ValueError('Fresh model source audit changed')
@@ -84,8 +104,7 @@ def _load(path, root):
         raise ValueError('Approved runtime changed')
     for path_,digest in config['parents'].items():
         if pinned_hash(inside(root,path_))!=digest:raise ValueError('Pinned weight/tokenizer payload changed')
-    expected=[dict(key=f'group-{n:04d}',id=i,seed=42+n,origin='new-uniform') for n,i in enumerate(pool['optimizer_order'])]
-    if config['units']!=expected or config['generation_settings']!={**POLICY,'seed':42}:
+    if config['units']!=_units(pool,decision) or config['generation_settings']!={**POLICY,'seed':42}:
         raise ValueError('Fresh group order or sampling settings changed')
     return config,inside(root,config['run_path']),{r['id']:r for r in training}
 
@@ -133,7 +152,7 @@ def run(path, output_root, *, approval_path=None, max_new_units=None, dependenci
         execution={'reservation':{'reservation_id':None,'job_sha256':_hash(config)}}
         reservation,remaining=(reservation_provider or _reservation)(config,execution,directory,root,runtime,approval_path)
         saved=[]
-        def failed(exc):_state(directory,'failed',sum(x is not None for x in saved),512,error=str(exc))
+        def failed(exc):_state(directory,'failed',sum(x is not None for x in saved),len(config['units']),error=str(exc))
         with attempt_scope(directory,reservation,runtime,remaining,real=config['execution_kind']=='real-cuda',on_failure=failed) as run:
             attempt=run.path
             if hasattr(deps,'preflight'):deps.preflight(config,root)
@@ -164,16 +183,16 @@ def run(path, output_root, *, approval_path=None, max_new_units=None, dependenci
                 _write_json(folder/'metadata.json',dict(attempt_id=attempt.name,attempt_start_sha256=file_hash(attempt/'start.json'),integrity=integrity))
                 _write_json(folder/'complete.json',dict(identity=dict(config_sha256=_hash(config),unit=unit,runtime_sha256=_hash(runtime),specials=specials),files={n:file_hash(folder/n) for n in ['responses.jsonl','metadata.json']}))
                 saved[index]=records;run.new+=1
-                _state(directory,'running',sum(x is not None for x in saved),512,reservation_id=reservation['reservation_id'])
-                print(f"Fresh R0: {sum(x is not None for x in saved)}/512 groups; {unit['id']}",flush=True)
+                _state(directory,'running',sum(x is not None for x in saved),len(config['units']),reservation_id=reservation['reservation_id'])
+                print(f"Fresh R0: {sum(x is not None for x in saved)}/{len(config['units'])} groups; {unit['id']}",flush=True)
             integrity=engine.check_integrity(full=True)
             _write_json(attempt/'final-integrity.json',integrity)
             if integrity.get('base_unchanged') is not True:raise IntegrityFailure('Full base integrity failed')
-            if any(group is None for group in saved):return _state(directory,'incomplete',sum(x is not None for x in saved),512)
+            if any(group is None for group in saved):return _state(directory,'incomplete',sum(x is not None for x in saved),len(config['units']))
             _load(path,root)
             _write_json(directory/'complete.json',dict(config_sha256=_hash(config),runtime_sha256=_hash(runtime),specials_sha256=_hash(specials),final_integrity_sha256=file_hash(attempt/'final-integrity.json'),final_attempt=attempt.name))
-            _state(directory,'complete',512,512)
-            return dict(complete=True,execution_kind=config['execution_kind'],groups=512)
+            _state(directory,'complete',len(config['units']),len(config['units']))
+            return dict(complete=True,execution_kind=config['execution_kind'],groups=len(config['units']))
 
 
 def _verified(path,root):
@@ -195,11 +214,14 @@ def _verified(path,root):
 
 def verify(path,output_root):
     config,_,_=_verified(path,Path(output_root).resolve())
-    return dict(complete=True,execution_kind=config['execution_kind'],groups=512)
+    return dict(complete=True,execution_kind=config['execution_kind'],groups=len(config['units']))
 
 
 def verified_records(path,root):
     config,saved,specials=_verified(path,root)
     records=[r for group in saved for r in group]
+    route=config.get('route',{}).get('route',offline_grpo_route.FRESH)
+    if route==offline_grpo_route.REUSE:
+        records=offline_grpo_route.historical_records(inside(root,config['run_path']).parent)+records
     identity=config['model_identity']
-    return records,dict(eos_token_id=specials['eos_token_id'],route='uniform-fresh-512',execution_kind=config['execution_kind'],model_identity={k:identity[k] for k in ['model','model_revision','tokenizer_revision','dtype']})
+    return records,dict(eos_token_id=specials['eos_token_id'],route=route,execution_kind=config['execution_kind'],model_identity={k:identity[k] for k in ['model','model_revision','tokenizer_revision','dtype']})

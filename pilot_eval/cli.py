@@ -83,6 +83,11 @@ def main(argv=None, *, dependencies=None, reservation_provider=None):
         else:fresh.add_argument('--config',type=Path,required=True)
         if operation=='run':
             fresh.add_argument('--approval',type=Path);fresh.add_argument('--max-new-units',type=int)
+    pool_route=commands.add_parser('offline-pool-route',help='choose 128-plus-384 or fresh-512 from recorded evidence')
+    pool_route.add_argument('--output-root',type=Path,required=True);pool_route.add_argument('--pool',type=Path,required=True)
+    pool_route.add_argument('--audit',type=Path,required=True);pool_route.add_argument('--baseline',type=Path,required=True)
+    pool_route.add_argument('--weights-dir',type=Path,required=True);pool_route.add_argument('--runtime',type=Path,required=True)
+    pool_route.add_argument('--approval',type=Path)
     for operation in ['prepare','import','verify','inventory']:
         pool=commands.add_parser('offline-pool-'+operation,help='verified offline GRPO pool handoff')
         pool.add_argument('--output-root',type=Path,required=True)
@@ -1076,6 +1081,9 @@ def main(argv=None, *, dependencies=None, reservation_provider=None):
             elif operation=='check-diagnostics':result=workflow.check_diagnostics(args.config,args.output_root,long_min_tokens=args.long_min_tokens,prompt_count=args.prompt_count,fidelity_tolerance=args.fidelity_tolerance)
             else:result=workflow.run(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command=='offline-pool-route':
+            from pilot_eval import offline_grpo_route as route
+            print(json.dumps(route.select(args.pool,args.audit,args.baseline,args.weights_dir,args.runtime,args.output_root,dependencies=dependencies,approval_path=args.approval,reservation_provider=reservation_provider),indent=2))
         elif args.command.startswith('offline-pool-fresh-'):
             from pilot_eval import offline_grpo_fresh as fresh
             operation=args.command.removeprefix('offline-pool-fresh-')

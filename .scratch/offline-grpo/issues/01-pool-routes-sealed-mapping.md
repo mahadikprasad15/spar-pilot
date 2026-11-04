@@ -17,3 +17,7 @@ Inventory available historical pool evidence and support an evidence-selected ex
 ## Answer
 
 Implemented public pool prepare, inventory, import and verification plus bounded fresh-R0 prepare/run/verify. Historical modules retain their fingerprints. Root regression passed 35 tests with 2 skips across offline pool/training and existing GRPO/R0 workflows. Latest focused pool suite passed 9 tests. The 512-group interruption/resume is synthetic CPU evidence. Real pool recovery, approved runtime/ledger and actual generation remain execution work.
+
+## Route selection follow-up
+
+The overnight template previously always sampled 512. `offline-pool-route` now applies the spec's evidence rule before the fresh plan is prepared: audited raw groups, matching recorded runtime, then an exact two-group replay. Passing keeps 128 historical groups and samples the remaining 384 in frozen optimizer order with continued recorded seeds; anything else records its reasons and samples 512. Existing-full-pool reuse still goes through the separate `offline-pool-import` recipe. CPU fixture evidence only.

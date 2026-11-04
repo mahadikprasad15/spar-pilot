@@ -29,6 +29,8 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 
 - Ticket 08 software implementation resolved; see its evidence. Code review follow-up added a shared attempt lifecycle (`offline_grpo_support.py`) that adopts the Stage 0 rule for sealed units from killed or expired attempts, fails on re-saved checkpoint-0 bytes before training, binds pool sampling to the frozen online settings, states a missing online comparison in reports, records external export sources, and pairs checkpoint N with window N+1 in descriptive slopes.
 
+- Pool route selection added: `offline-pool-route` runs after pool preparation and seals a decision. It keeps the historical 128 groups and samples the remaining 384 only when the source audit, recorded runtime and exact two-group replay all agree; otherwise it records why and samples 512. CPU fixtures cover both routes; whether the historical raw groups exist and replay on a real GPU remains unverified.
+
 ## Open decisions
 
 - Fidelity tolerance: `offline-grpo-train-check-diagnostics` now requires an explicit `--fidelity-tolerance` in nats (template input `fidelity_tolerance_nats`). No value has been chosen; a reviewed number is required before a real run.

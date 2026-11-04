@@ -21,7 +21,7 @@ from pilot_eval.workflow import _hash, _save_frozen
 
 
 STAGES = {
-    'pool': ('offline-pool-inventory','offline-pool-prepare','offline-pool-fresh-prepare','offline-pool-fresh-run','offline-pool-import'),
+    'pool': ('offline-pool-inventory','offline-pool-prepare','offline-pool-route','offline-pool-fresh-prepare','offline-pool-fresh-run','offline-pool-import'),
     'dataset': ('offline-grpo-dataset-prepare','offline-grpo-dataset-run','offline-grpo-dataset-report'),
     'diagnostics': ('offline-grpo-train-prepare','offline-grpo-train-check-diagnostics'),
     'train': ('offline-grpo-train-run',),
@@ -212,7 +212,7 @@ class Dependencies:
 
     def invoke(self, arguments, *, reservation_provider=None):
         from pilot_eval.cli import main
-        model_commands={'offline-pool-fresh-run','offline-grpo-train-check-diagnostics','offline-grpo-train-run',
+        model_commands={'offline-pool-route','offline-pool-fresh-run','offline-grpo-train-check-diagnostics','offline-grpo-train-run',
                         'offline-grpo-behaviour-run','offline-grpo-dataset-run','offline-grpo-internals-collect',
                         'offline-grpo-cuts-agreement','offline-grpo-cuts-evaluate'}
         if arguments[0] in model_commands:
@@ -811,6 +811,7 @@ def template(inputs_path, output_root, name):
     commands={
         'pool':[cmd('offline-pool-inventory','--audit',need('audit'),'--baseline',need('historical_baseline'),'--name',f'{name}-pool'),
                 cmd('offline-pool-prepare','--source',need('frozen'),'--name',f'{name}-pool'),
+                cmd('offline-pool-route','--pool',pool,'--audit',need('audit'),'--baseline',need('historical_baseline'),'--weights-dir',need('weights_dir'),'--runtime',need('stage0_runtime_file')),
                 cmd('offline-pool-fresh-prepare','--pool',pool,'--audit',need('audit'),'--weights-dir',need('weights_dir'),'--runtime',need('stage0_runtime_file')),
                 cmd('offline-pool-fresh-run','--config',fresh),cmd('offline-pool-import','--config',pool,'--rollouts',fresh)],
         'dataset':[cmd('offline-grpo-dataset-prepare','--pool',pool,'--sft',need('dataset_source'),'--comparison-root',need('dataset_root'),'--sampler',fresh,'--runtime',need('stage0_runtime_file'),'--name',f'{name}-dataset'),
