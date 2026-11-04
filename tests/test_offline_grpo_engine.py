@@ -78,7 +78,10 @@ def test_interrupted_run_replays_only_after_checkpoint(tmp_path, monkeypatch):
             draws = [dict(draw_id=f"{r['id']}:draw:{d}", step=step, reward=d%2,
                           strict={'correct': bool(d%2)}, flexible={'correct': bool(d%2)},
                           capped=False, token_count=1, advantage=1.) for r in rows for d in range(8)]
-            return draws, {'loss': 0.0}
+            evidence = {'logratio': self.diagnostic_sink('logratio', step, {'fixture': True})}
+            if step == 1:
+                evidence['window1_push'] = self.diagnostic_sink('window1-push', step, {'passed': True, 'fixture': True})
+            return draws, {'loss': 0.0, 'diagnostic_evidence': evidence}
         def save_checkpoint(self, path, step):
             path.mkdir(parents=True)
             for f in ('adapter_config.json', 'adapter_model.safetensors', 'optimizer.pt',
@@ -99,6 +102,11 @@ def test_interrupted_run_replays_only_after_checkpoint(tmp_path, monkeypatch):
     assert len(records) == len({r['draw_id'] for r in records}) == 4096
     assert sorted(p.name for p in (directory/'checkpoints').glob('checkpoint-*')) == [f'checkpoint-{i}' for i in (0, 16, 32, 64, 8)]
     assert training.run(tmp_path/'unused', tmp_path, dependencies=Dependencies(True)) == result
+    diagnostic = next((directory/'attempts').glob('*/diagnostics/001-logratio.json'))
+    saved = diagnostic.read_bytes(); diagnostic.write_text('{}')
+    with pytest.raises(ValueError, match='diagnostic evidence changed'):
+        training.run(tmp_path/'unused', tmp_path, dependencies=Dependencies(True))
+    diagnostic.write_bytes(saved)
     (directory/'results/responses.jsonl').write_text('{}\n')
     with pytest.raises(ValueError, match='changed'):
         training.run(tmp_path/'unused', tmp_path, dependencies=Dependencies(True))

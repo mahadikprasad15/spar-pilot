@@ -15,10 +15,11 @@ from pilot_eval.workflow import _hash, _save_frozen
 
 
 def _identity():
-    from pilot_eval import offline_grpo_engine, grpo_algorithm, grpo_train_engine, scoring
+    from pilot_eval import offline_grpo_engine, offline_grpo_diagnostics, grpo_algorithm, grpo_train_engine, scoring
     return {k: file_hash(Path(v.__file__)) for k, v in {
         'workflow': __import__(__name__, fromlist=['']), 'offline_engine': offline_grpo_engine,
-        'online_engine': grpo_train_engine, 'window': grpo_algorithm, 'scorer': scoring}.items()}
+        'diagnostics': offline_grpo_diagnostics, 'online_engine': grpo_train_engine,
+        'window': grpo_algorithm, 'scorer': scoring}.items()}
 
 
 def prepare(frozen_path, pool_path, checkpoint_zero, output_root, name, *, runtime,
@@ -124,7 +125,7 @@ def _verify_complete(directory, root, config, groups, marker=None):
             raise ValueError('training result changed')
     checkpoints = _verified_checkpoints(directory)
     if sorted(checkpoints) != CHECKPOINTS: raise ValueError('scientific checkpoints incomplete')
-    history, records, logs = _history(root, checkpoints[64], groups)
+    history, records, logs = _accepted_history(root, checkpoints[64], groups)
     if len(records) != 4096 or len(logs) != 64 or len({r['draw_id'] for r in records}) != 4096:
         raise ValueError('training history incomplete')
     for filename, expected in [('responses.jsonl', records), ('steps.jsonl', logs)]:
@@ -138,6 +139,21 @@ def _verify_complete(directory, root, config, groups, marker=None):
     return result
 
 
+def _accepted_history(root, checkpoint, groups):
+    history, records, logs = _history(root, checkpoint, groups)
+    for step, log in enumerate(logs, 1):
+        evidence = log.get('diagnostic_evidence', {})
+        required = {'logratio', 'window1_push'} if step == 1 else {'logratio'}
+        if set(evidence) != required: raise ValueError('missing accepted diagnostic evidence')
+        for reference in evidence.values():
+            path = _within(root, reference['path'])
+            if file_hash(path) != reference['sha256']:
+                raise ValueError('accepted diagnostic evidence changed')
+        if step == 1 and not json.loads(_within(root, evidence['window1_push']['path']).read_text()).get('passed'):
+            raise ValueError('window-1 push gate not passed')
+    return history, records, logs
+
+
 def run(config_path, output_root, *, dependencies=None):
     root = Path(output_root).resolve()
     config, directory, frozen, plan, windows, zero = _load(config_path, root)
@@ -149,13 +165,14 @@ def run(config_path, output_root, *, dependencies=None):
         if any(step not in CHECKPOINTS for step in checkpoints): raise ValueError('unexpected checkpoint')
         last = max(checkpoints, default=0)
         sealed_step = last
-        history, records, logs = _history(root, checkpoints[last], groups) if checkpoints else ([], [], [])
+        history, records, logs = _accepted_history(root, checkpoints[last], groups) if checkpoints else ([], [], [])
         attempt_dir = directory/'attempts'; attempt_dir.mkdir(parents=True, exist_ok=True)
         attempt = attempt_dir/f'attempt-{len(list(attempt_dir.glob("attempt-*"))):04d}'
         attempt.mkdir(); _write_json(attempt/'meta.json', {'resumed_from': last})
         try:
             _write_state(directory, 'running', last, 64)
             if dependencies is None:
+                _verify_preflight(directory, config)
                 pool_config = json.loads((root/config['pool_path']).read_text())
                 receipt = json.loads((_within(root, pool_config['run_path'])/'handoff.json').read_text())
                 if receipt['metadata']['execution_kind'] != 'real-cuda':
@@ -173,7 +190,16 @@ def run(config_path, output_root, *, dependencies=None):
                 if not engine.check_integrity()['base_unchanged']: raise ValueError('base integrity failure')
                 _seal(directory, 0, engine, [], groups)
             for step in range(last+1, 65):
+                def diagnostic_sink(kind, diagnostic_step, value):
+                    if diagnostic_step != step: raise ValueError('diagnostic step mismatch')
+                    path = attempt/'diagnostics'/f'{step:03d}-{kind}.json'
+                    _save_frozen(path, value)
+                    return dict(path=str(path.relative_to(root)), sha256=file_hash(path))
+                engine.diagnostic_sink = diagnostic_sink
                 draws, details = engine.train_window(windows[step-1], step); _finite([draws, details])
+                required = {'logratio', 'window1_push'} if step == 1 else {'logratio'}
+                if set(details.get('diagnostic_evidence', {})) != required:
+                    raise ValueError('missing pre-update diagnostic evidence')
                 expected = [f'{q}:draw:{d}' for q in groups[step-1] for d in range(8)]
                 if [r['draw_id'] for r in draws] != expected or any(r['step'] != step for r in draws):
                     raise ValueError('consumed draw identity mismatch')
@@ -197,7 +223,7 @@ def run(config_path, output_root, *, dependencies=None):
                       f'status {directory / "meta/status.json"}', flush=True)
             integrity = engine.check_integrity()
             if not integrity['base_unchanged']: raise ValueError('base integrity failure')
-            _, records, logs = _history(root, directory/'checkpoints/checkpoint-64', groups)
+            _, records, logs = _accepted_history(root, directory/'checkpoints/checkpoint-64', groups)
             if len(records) != 4096 or len({r['draw_id'] for r in records}) != 4096:
                 raise ValueError('training history incomplete')
             result = dict(optimizer_steps=64, accepted_completions=len(records), base_integrity=integrity)
@@ -217,3 +243,107 @@ def run(config_path, output_root, *, dependencies=None):
             raise
         finally:
             if engine is not None: engine.close()
+
+
+def _verify_preflight(directory, config, *, marker=None):
+    path = directory/'diagnostics/preflight.json'
+    if marker is None:
+        marker = json.loads((directory/'diagnostics/preflight.complete.json').read_text())
+    if marker != {'config_sha256': _hash(config), 'sha256': file_hash(path)}:
+        raise ValueError('diagnostic preflight seal changed')
+    receipt = json.loads(path.read_text())
+    _finite(receipt)
+    if receipt.get('protocol') != 'offline-grpo-diagnostic-preflight-v1' or receipt.get('config_sha256') != _hash(config):
+        raise ValueError('diagnostic preflight is not bound to the training plan')
+    if receipt.get('runtime') != config['runtime'] or receipt.get('execution_kind') != 'real-cuda':
+        raise ValueError('diagnostic preflight runtime mismatch')
+    fidelity = receipt['fidelity']; observations = fidelity['observations']
+    if (type(fidelity.get('long_min_tokens')) is not int or type(fidelity.get('max_new_tokens')) is not int
+            or not 1 <= fidelity['long_min_tokens'] <= fidelity['max_new_tokens']
+            or type(receipt.get('prompt_count')) is not int or len(observations) != receipt['prompt_count']
+            or not 1 <= receipt['prompt_count'] <= 8):
+        raise ValueError('invalid bounded fidelity observation criteria')
+    if not observations or not any(x['eos'] for x in observations) or not any(
+            x['capped'] or len(x['generated_token_ids']) >= fidelity['long_min_tokens'] for x in observations):
+        raise ValueError('fidelity lacks EOS and long or capped observations')
+    for item in observations:
+        a=item['generation_log_probs']; b=item['teacher_forced_log_probs']; d=item['differences']
+        if not len(a)==len(b)==len(d)==len(item['generated_token_ids']) or not a:
+            raise ValueError('fidelity token alignment invalid')
+        if any(not __import__('math').isfinite(x) for x in a+b+d) or any(x-y!=z for x,y,z in zip(a,b,d)):
+            raise ValueError('fidelity differences invalid')
+        if item['eos'] != (item['generated_token_ids'][-1] == fidelity['eos_token_id']):
+            raise ValueError('fidelity EOS identity invalid')
+        if (len(item['generated_token_ids']) > fidelity['max_new_tokens']
+                or fidelity['eos_token_id'] in item['generated_token_ids'][:-1]
+                or item['capped'] != (not item['eos'] and len(item['generated_token_ids']) == fidelity['max_new_tokens'])
+                or (not item['eos'] and not item['capped'])):
+            raise ValueError('fidelity cap identity invalid')
+    if (receipt['smoke'].get('finite_gradients') is not True
+            or receipt['smoke'].get('same_input_gradient_match') is not True
+            or receipt['smoke'].get('optimizer_steps') != 0
+            or receipt['smoke'].get('adapter_unchanged') is not True
+            or receipt['smoke'].get('base_unchanged') is not True):
+        raise ValueError('same-input smoke has not passed')
+    return receipt
+
+
+def check_diagnostics(config_path, output_root, *, long_min_tokens, prompt_count):
+    """Explicit bounded real-GPU preflight; never steps the optimizer."""
+    import time
+    from pilot_eval.offline_grpo_engine import pool_window
+    from pilot_eval.offline_grpo_diagnostics import measure_generation_scores, independent_push
+    root=Path(output_root).resolve()
+    config,directory,_,plan,windows,zero=_load(config_path,root)
+    if type(prompt_count) is not int or not 1 <= prompt_count <= 8:
+        raise ValueError('explicit prompt count between 1 and 8 required')
+    with run_lock(directory):
+        if (directory/'diagnostics/preflight.complete.json').exists():
+            existing = _verify_preflight(directory,config)
+            if existing['prompt_count'] != prompt_count or existing['fidelity']['long_min_tokens'] != long_min_tokens:
+                raise ValueError('existing diagnostic preflight uses different bounds')
+            return existing
+        if _verified_checkpoints(directory):
+            raise ValueError('diagnostic preflight must run before training starts')
+        pool_config=json.loads((root/config['pool_path']).read_text())
+        receipt=json.loads((_within(root,pool_config['run_path'])/'handoff.json').read_text())
+        if receipt['metadata']['execution_kind'] != 'real-cuda':
+            raise ValueError('real diagnostic preflight requires a verified real-cuda pool')
+        engine=None
+        try:
+            engine=OfflineGRPOTrainingEngine(plan,config['settings'],directory,checkpoint_zero=zero,
+                weights_sha256=config['weights_sha256'],config_sha256=config['adapter_config_sha256'])
+            if engine.model.device.type != 'cuda' or engine.runtime()!=config['runtime']:
+                raise ValueError('real GPU runtime differs from reviewed plan')
+            if engine.initial_base != plan['source_evidence']['base_sha256']:
+                raise ValueError('base weights differ from verified reference')
+            t=engine.torch; t.cuda.reset_peak_memory_stats(); started=time.perf_counter()
+            adapter_before = {n:p.detach().clone() for n,p in engine.model.named_parameters() if p.requires_grad}
+            fidelity=measure_generation_scores(engine.model,[r['input_ids'] for r in windows[0][:prompt_count]],
+                eos_token_id=engine.tokenizer.eos_token_id, pad_token_id=engine.tokenizer.pad_token_id,
+                max_new_tokens=config['settings']['completion_limit'],long_min_tokens=long_min_tokens)
+            prompts,outputs=pool_window(windows[0]); rewards=[d['reward_v3'] for r in windows[0] for d in r['draws']]
+            capped=[d['capped'] for r in windows[0] for d in r['draws']]
+            engine.optimizer.zero_grad(set_to_none=True)
+            loss=engine.window.backward(prompts,[x['generated_token_ids'] for x in outputs],rewards,capped=capped)
+            gradient=engine.window.flat_gradient()
+            push=independent_push(engine.model,prompts,[x['generated_token_ids'] for x in outputs],
+                                  engine.window.advantages,engine.window.parameter_names)
+            t.testing.assert_close(gradient,-push,atol=1e-6,rtol=1e-4)
+            engine.optimizer.zero_grad(set_to_none=True); engine._sync()
+            if not engine.check_integrity()['base_unchanged']:raise ValueError('base changed during diagnostic preflight')
+            if any(not t.equal(p,adapter_before[n]) for n,p in engine.model.named_parameters() if p.requires_grad):
+                raise ValueError('adapter changed during diagnostic preflight')
+            proof=dict(protocol='offline-grpo-diagnostic-preflight-v1',config_sha256=_hash(config),
+                execution_kind='real-cuda',runtime=config['runtime'],prompt_count=prompt_count,fidelity=fidelity,
+                smoke=dict(finite_gradients=True,same_input_gradient_match=True,optimizer_steps=0,loss=loss,
+                    adapter_unchanged=True,base_unchanged=True,
+                    gradient_norm=float(gradient.norm()),seconds=time.perf_counter()-started,
+                    peak_memory_bytes=t.cuda.max_memory_allocated(),criterion=dict(atol=1e-6,rtol=1e-4)))
+            _finite(proof); _save_frozen(directory/'diagnostics/preflight.json',proof)
+            marker=dict(config_sha256=_hash(config),sha256=file_hash(directory/'diagnostics/preflight.json'))
+            _verify_preflight(directory,config,marker=marker)
+            _save_frozen(directory/'diagnostics/preflight.complete.json',marker)
+            return proof
+        finally:
+            if engine is not None:engine.close()

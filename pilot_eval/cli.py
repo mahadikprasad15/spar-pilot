@@ -15,7 +15,7 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
-    for operation in ['prepare','run']:
+    for operation in ['prepare','run','check-diagnostics']:
         train=commands.add_parser('offline-grpo-train-'+operation,help='fixed-pool GRPO training')
         train.add_argument('--output-root',type=Path,required=True)
         if operation=='prepare':
@@ -23,7 +23,11 @@ def main(argv=None, *, dependencies=None):
             train.add_argument('--checkpoint-zero',type=Path,required=True);train.add_argument('--name',required=True)
             train.add_argument('--runtime',type=Path,required=True)
             train.add_argument('--checkpoint-zero-sha256',required=True);train.add_argument('--checkpoint-zero-config-sha256',required=True)
-        else:train.add_argument('--config',type=Path,required=True)
+        else:
+            train.add_argument('--config',type=Path,required=True)
+            if operation=='check-diagnostics':
+                train.add_argument('--long-min-tokens',type=int,required=True)
+                train.add_argument('--prompt-count',type=int,required=True)
     for operation in ['prepare','run','verify']:
         fresh=commands.add_parser('offline-pool-fresh-'+operation,help='bounded fresh R0 pool collection')
         fresh.add_argument('--output-root',type=Path,required=True)
@@ -973,6 +977,7 @@ def main(argv=None, *, dependencies=None):
             from pilot_eval import offline_grpo_training as workflow
             operation=args.command.removeprefix('offline-grpo-train-')
             if operation=='prepare':result=workflow.prepare(args.frozen,args.pool,args.checkpoint_zero,args.output_root,args.name,runtime=json.loads(args.runtime.read_text()),weights_sha256=args.checkpoint_zero_sha256,config_sha256=args.checkpoint_zero_config_sha256)
+            elif operation=='check-diagnostics':result=workflow.check_diagnostics(args.config,args.output_root,long_min_tokens=args.long_min_tokens,prompt_count=args.prompt_count)
             else:result=workflow.run(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-pool-fresh-'):

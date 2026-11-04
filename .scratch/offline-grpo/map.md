@@ -14,3 +14,5 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 
 - Historical raw pool availability, release/runtime compatibility and real GPU smoke remain unverified.
 - Default local Torch fails to import and the alternate working CPU environment lacks pinned TRL.
+
+- Ticket 03 is implemented and claimed pending actual pinned-TRL and real-GPU evidence. Pre-update token diagnostics are linked to accepted history and window-one push agreement gates the optimizer step. Integrated CPU validation passed 17 tests with one skip.
