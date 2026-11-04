@@ -33,7 +33,7 @@ def build_inputs(root, *, name, tolerance, repo, plan, training, snapshot, cache
         dataset_source=DATASET, dataset_root=str(root), fixed_inputs=FIXED_INPUTS,
         qualification=f'plans/{name}-qualification/stage0.qualification.json',
         cut_reference=CUT_REFERENCE, cut_reference_root=str(root), long_min_tokens=long_min_tokens, prompt_count=prompt_count,
-        fidelity_tolerance_nats=tolerance, model_identity=json.loads((root/DATASET).read_text())['model_identity'],
+        fidelity_tolerance_nats=tolerance, model_identity=json.loads((root/f'plans/{name}-qualification/stage0.qualification.json').read_text())['model_identity'],
         eos_token_id=training['eos_token_id'], snapshot_hashes=snapshot, hf_cache_root=cache, minimum_cache_free_bytes=5*10**9,
         source_hashes={n: file_hash(root/n) for n in [AUDIT, BASELINE, FROZEN, DATASET, CUT_REFERENCE, FIXED_INPUTS]},
         software_versions=versions, minimum_free_bytes=50*10**9, hf_repo=repo,
@@ -48,7 +48,8 @@ def main():
     parser.add_argument('--fidelity-tolerance', type=float, required=True)
     parser.add_argument('--hf-repo', required=True)
     args = parser.parse_args()
-    os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+    # Stage 0 always records this value, while training records the environment's.
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
     os.environ.setdefault('HF_HUB_OFFLINE', '1')
     from huggingface_hub import try_to_load_from_cache
     from huggingface_hub.constants import HF_HUB_CACHE

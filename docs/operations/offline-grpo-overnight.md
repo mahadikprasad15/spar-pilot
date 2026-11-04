@@ -22,6 +22,7 @@ Hugging Face artifacts repo. Compare before overwriting anything that differs.
 
 ```bash
 python3 -m pip install -r requirements-pilot2.txt pyarrow
+export HF_HOME=/root/hf HF_HUB_CACHE=/root/hf/hub
 hf download Qwen/Qwen2.5-1.5B-Instruct --revision 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
 HF_HUB_OFFLINE=1 python3 -m pytest -q -rs tests/test_offline_grpo_engine.py::test_pinned_trl_online_and_offline_update_parity
 ```
@@ -65,8 +66,13 @@ the largest measured difference was 6.7e-5 nats, and `0.001` was chosen.
 
 ## 5. Plan and preflight
 
+The model cache must be on local disk, and these settings must stay in place through
+launch. Runpod's volume is a FUSE mount, which preflight rejects, and some images
+preset a different `CUBLAS_WORKSPACE_CONFIG`. Copy the Hugging Face token if you move
+`HF_HOME`.
+
 ```bash
-export HF_HUB_ENABLE_HF_TRANSFER=0
+export HF_HOME=/root/hf HF_HUB_CACHE=/root/hf/hub HF_HUB_ENABLE_HF_TRANSFER=0 CUBLAS_WORKSPACE_CONFIG=:4096:8
 python3 scripts/offline_grpo_prepare_inputs.py --root $A --name NAME --fidelity-tolerance <nats> --hf-repo <owner/private-repo>
 python3 -m pilot_eval offline-grpo-overnight-template --output-root $A --inputs notebook/NAME/inputs.json --name NAME
 python3 -m pilot_eval offline-grpo-overnight-prepare --output-root $A --spec plans/NAME/offline.overnight.input.json
