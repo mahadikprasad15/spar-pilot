@@ -261,6 +261,9 @@ def real_export_run(tmp_path,monkeypatch,*,tamper=False):
     (tmp_path/'rollout.json').write_text(json.dumps(dict(run_path='runs/child',parents={})))
     for stage in spec['stages']:
         (tmp_path/f"{stage['id']}.json").write_text(json.dumps(dict(run_path='runs/child')))
+    (tmp_path/'spectral.json').write_text(json.dumps(dict(run_path='runs/spectral')))
+    (tmp_path/'runs/spectral/units/L00.q_proj').mkdir(parents=True)
+    (tmp_path/'runs/spectral/units/L00.q_proj/basis.npz').write_bytes(b'large')
     (tmp_path/'dataset.json').write_text(json.dumps(dict(run_path='runs/child',sft_root='/elsewhere/sources',sft_path='sft.json',sft_sha256='a'*64)))
     (tmp_path/'cut_build.json').write_text(json.dumps(dict(run_path='runs/child',reference_root='.',reference_path='source.json',reference_sha256='b'*64)))
     for stage in spec['stages']:
@@ -329,6 +332,9 @@ def test_real_partial_export_lists_gaps_and_keeps_evidence(tmp_path,monkeypatch)
     snapshot=next(name.rsplit('/',1)[0] for name in files if name.endswith('final-report.md'))
     for name in ['meta/preflight.json','meta/authorization.json','config.json','logs/train.log','logs/events.jsonl']:
         assert snapshot+'/'+name in files
+    assert not any(name.startswith('runs/spectral') or name=='spectral.json' for name in files)
+    assert manifest['regenerated_on_resume']==['spectral']
+    assert not any('spectral' in item for item in manifest['missing'])
     assert manifest['external_sources']==[dict(stage='dataset',root='/elsewhere/sources',path='sft.json',sha256='a'*64)]
     report=(tmp_path/snapshot/'final-report.md').read_text()
     assert state['export']['external_sources']==1

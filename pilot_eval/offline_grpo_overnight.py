@@ -36,6 +36,8 @@ STAGES = {
     'cut_evaluation': ('offline-grpo-cuts-evaluate',),
     'cut_report': ('offline-grpo-cuts-report',),
 }
+# Cheap to rebuild from pinned inputs, so these stages are never exported.
+REGENERATED = {'spectral'}
 # The approval may set max_seconds; otherwise only this fault guard bounds the run.
 DEFAULT_MAX_SECONDS = 30*24*3600.
 DEPENDENCIES = {
@@ -519,7 +521,13 @@ def restore_wrapper(manifest_path, output_root):
 def _artifact_manifest(plan, root, directory, snapshot, *, partial):
     from pilot_eval.sampling_sft_exports import inventory
     report=json.loads((snapshot/'final-report.json').read_text())
-    paths=set();missing=['stage:'+name+':'+entry['state'] for name,entry in report['stages'].items() if entry['state']!='verified']
+    paths=set();missing=['stage:'+name+':'+entry['state'] for name,entry in report['stages'].items() if entry['state']!='verified' and name not in REGENERATED]
+    # Regenerated stages are never backed up, whichever export path would reach them.
+    skipped=[]
+    for stage in plan['spec']['stages']:
+        if stage['id'] in REGENERATED:
+            stage_plan=inside(root,stage['plan']);skipped.append(stage_plan)
+            if stage_plan.is_file():skipped.append(inside(root,json.loads(stage_plan.read_text())['run_path']))
     def add(target,label):
         target=inside(root,target)
         if not target.exists():
@@ -528,13 +536,14 @@ def _artifact_manifest(plan, root, directory, snapshot, *, partial):
         files=[target] if target.is_file() else target.rglob('*')
         for file in files:
             if file.is_symlink():raise ValueError('Export tree contains a symlink')
-            if not file.is_file():continue
+            if not file.is_file() or any(file==item or file.is_relative_to(item) for item in skipped):continue
             if file.is_relative_to(directory) and not file.is_relative_to(snapshot):continue
             if file.name in ['.lock','writer.json','bases.npz'] or file.name.endswith('.tmp'):continue
             if file.suffix=='.safetensors' and ('models/' in str(file.relative_to(root)) or 'weights/' in str(file.relative_to(root))):continue
             paths.add(str(file.relative_to(root)))
     for name in plan['spec']['export']['paths']:add(root/name,name)
     for stage in plan['spec']['stages']:
+        if stage['id'] in REGENERATED:continue
         stage_plan=inside(root,stage['plan']);add(stage_plan,stage['id']+':plan')
         if not stage_plan.is_file():continue
         config=json.loads(stage_plan.read_text())
@@ -571,8 +580,8 @@ def _artifact_manifest(plan, root, directory, snapshot, *, partial):
     if missing and not partial:raise ValueError('Required export products missing: '+', '.join(missing))
     value=dict(schema_version=1,job_sha256=_hash(plan),files=inventory(root,sorted(paths)),
                worker_host=platform.node(),simulation=False,partial=partial,missing=missing,
-               restore_requires_model_snapshot=True,wrapper_snapshot=str(snapshot.relative_to(root)),external_sources=_external_sources(plan,root),
-               scope='offline GRPO artifact snapshot; missing items are explicit; base model weights and external_sources are excluded and must be restored separately')
+               restore_requires_model_snapshot=True,wrapper_snapshot=str(snapshot.relative_to(root)),regenerated_on_resume=sorted(REGENERATED),external_sources=_external_sources(plan,root),
+               scope='offline GRPO artifact snapshot; missing items are explicit; base model weights and external_sources are excluded and must be restored separately; regenerated_on_resume stages are rebuilt by a resumed run')
     value['sha256']=_hash(value)
     target=directory/'exports'/value['sha256']/'manifest.json'
     _save_frozen(target,value)
