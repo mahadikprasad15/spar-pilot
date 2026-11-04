@@ -15,6 +15,11 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run','verify','report']:
+        behaviour=commands.add_parser('offline-grpo-behaviour-'+operation,help='verified offline behavior evaluation')
+        behaviour.add_argument('--output-root',type=Path,required=True);behaviour.add_argument('--config',type=Path,required=True)
+        if operation in ['prepare','report']:behaviour.add_argument('--name',required=True)
+        if operation=='report':behaviour.add_argument('--online',type=Path)
     for operation in ['prepare','run','check-diagnostics']:
         train=commands.add_parser('offline-grpo-train-'+operation,help='fixed-pool GRPO training')
         train.add_argument('--output-root',type=Path,required=True)
@@ -972,6 +977,16 @@ def main(argv=None, *, dependencies=None):
                 result=getattr(stage0_distance_report,operation)(args.config,args.output_root)
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-behaviour-'):
+            from pilot_eval import offline_grpo_behaviour as workflow
+            operation=args.command.removeprefix('offline-grpo-behaviour-')
+            if operation=='prepare':result=workflow.prepare(args.config,args.output_root,args.name)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies)
+            elif operation=='report':result=workflow.report(args.config,args.output_root,args.name,online_path=args.online)
+            else:
+                config,records=workflow.verify(args.config,args.output_root)
+                result=dict(complete=True,records=len(records),run_path=config['run_path'])
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-grpo-train-'):
             from pilot_eval import offline_grpo_training as workflow

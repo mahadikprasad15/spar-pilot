@@ -16,3 +16,5 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 - Default local Torch fails to import and the alternate working CPU environment lacks pinned TRL.
 
 - Ticket 03 is implemented and claimed pending actual pinned-TRL and real-GPU evidence. Pre-update token diagnostics are linked to accepted history and window-one push agreement gates the optimizer step. Integrated CPU validation passed 17 tests with one skip.
+
+- Ticket 04 behavioral source handoff and evaluation/report commands are implemented. Checkpoint-zero token comparison gates nonzero evaluation. Regression passed 11 tests with one skip, with 3 focused tests after final manifest addition. Actual GPU evaluation awaits verified real offline training and runtime evidence.
