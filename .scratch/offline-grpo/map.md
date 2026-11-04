@@ -22,3 +22,5 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 - Ticket 05 additive dataset scoring and reporting is implemented and claimed for review. Synthetic CPU fixtures validate resume, multiplicity and saved-score identity; the inspected historical product cannot be reused until its missing source plan is restored. No GPU scoring has run.
 
 - Ticket 05 implementation and CPU verification resolved. Public dataset scorer/report supports verified historical score reuse with exact token contracts, all pool memberships and derived paired cohorts. Combined regression 15 passed; final focused 4 passed. Actual historical source graph restoration and GPU scoring remain execution work.
+
+- Ticket 06 software implementation reviewed: additive offline source, geometry, initial-push and fixed-context drift collectors and report. Combined regression 34 passed, 3 skipped; final focused suite 8 passed. CPU fixtures do not establish actual GPU results; Gold and Sampling SFT internal-source comparisons remain explicitly unavailable.

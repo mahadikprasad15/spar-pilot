@@ -15,6 +15,18 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','geometry','collect','verify','report']:
+        internal=commands.add_parser('offline-grpo-internals-'+operation,help='offline internal measurements')
+        internal.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            internal.add_argument('--training',type=Path,required=True);internal.add_argument('--spectral',type=Path,required=True)
+            internal.add_argument('--inputs',type=Path,required=True);internal.add_argument('--runtime',type=Path,required=True)
+            internal.add_argument('--online',type=Path);internal.add_argument('--qualification',type=Path,required=True);internal.add_argument('--name',required=True)
+        else:
+            internal.add_argument('--config',type=Path,required=True)
+            if operation in ['geometry','collect']:internal.add_argument('--max-new-units',type=int)
+            if operation in ['collect','verify']:internal.add_argument('--kind',choices=['push','drift','geometry','report'] if operation=='verify' else ['push','drift'],required=True)
+            if operation=='collect':internal.add_argument('--approval',type=Path)
     for operation in ['prepare','run','verify','report']:
         dataset=commands.add_parser('offline-grpo-dataset-'+operation,help='untuned-model offline dataset scoring')
         dataset.add_argument('--output-root',type=Path,required=True)
@@ -986,6 +998,18 @@ def main(argv=None, *, dependencies=None):
                 result=getattr(stage0_distance_report,operation)(args.config,args.output_root)
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-internals-'):
+            from pilot_eval import offline_grpo_internals as workflow
+            operation=args.command.removeprefix('offline-grpo-internals-')
+            if operation=='prepare':result=workflow.prepare(args.training,args.spectral,args.inputs,args.runtime,args.output_root,args.name,qualification_path=args.qualification,online_path=args.online)
+            elif operation=='geometry':result=workflow.run_geometry(args.config,args.output_root,max_new_units=args.max_new_units)
+            elif operation=='collect':result=workflow.collect(args.config,args.output_root,args.kind,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies)
+            elif operation=='verify':
+                if args.kind=='geometry':result=workflow.verify_geometry(args.config,args.output_root)
+                elif args.kind=='report':result=workflow.verify_report(args.config,args.output_root)
+                else:result=workflow.verify_collection(args.config,args.output_root,args.kind)
+            else:result=workflow.report(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('offline-grpo-dataset-'):
             from pilot_eval import offline_grpo_dataset as workflow
