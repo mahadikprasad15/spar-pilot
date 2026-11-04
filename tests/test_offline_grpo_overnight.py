@@ -257,7 +257,7 @@ def real_export_run(tmp_path,monkeypatch,*,tamper=False):
     runs=tmp_path/'runs/child';(runs/'checkpoints/checkpoint-0064').mkdir(parents=True)
     (runs/'checkpoints/checkpoint-0064/adapter_model.safetensors').write_bytes(b'adapter')
     (tmp_path/'models/base').mkdir(parents=True);(tmp_path/'models/base/model.safetensors').write_bytes(b'base')
-    (runs/'handoff.json').write_text(json.dumps(dict(r0_path='rollout.json')))
+    (runs/'handoff.json').write_text(json.dumps(dict(r0_path='rollout.json',metadata=dict(route='reuse-historical-128'),origin_summary=dict(historical=dict(draws=1024)))))
     (tmp_path/'rollout.json').write_text(json.dumps(dict(run_path='runs/child',parents={})))
     for stage in spec['stages']:
         (tmp_path/f"{stage['id']}.json").write_text(json.dumps(dict(run_path='runs/child')))
@@ -368,6 +368,8 @@ def test_completed_run_is_not_exported_twice(tmp_path,monkeypatch):
     assert final['measurements']['behaviour']['summary']['online_comparison_status']==dict(state='not-selected')
     assert final['measurements']['internals_report']['summary']['push_alignment']==7
     assert final['omissions']==['Online behaviour comparison: not-selected']
+    assert final['measurements']['pool']['summary']['route']=='reuse-historical-128'
+    assert any('two sessions' in line for line in final['limitations'])
     report=next((directory/'results/snapshots').glob('*/final-report.md')).read_text()
     assert '## Omitted comparisons' in report and 'Online behaviour comparison: not-selected' in report
     second=workflow.run(path,tmp_path,auth,dependencies=deps)

@@ -441,6 +441,13 @@ def _snapshot_report(plan, directory, root, state, attempt=None, elapsed=0.):
         else:summary={k:value[k] for k in ['paired','summaries','note']}
         measured[name]=dict(plan=str(source_plan.relative_to(root)),plan_sha256=file_hash(source_plan),
                             result=str(result_path.relative_to(root)),result_sha256=file_hash(result_path),summary=summary)
+    pool=next(stage for stage in plan['spec']['stages'] if stage['id']=='pool')
+    if state['stages'].get('pool',{}).get('state')=='verified':
+        config=json.loads(inside(root,pool['plan']).read_text());handoff=inside(root,config['run_path'])/'handoff.json'
+        if handoff.is_file():
+            value=json.loads(handoff.read_text())
+            measured['pool']=dict(result=str(handoff.relative_to(root)),result_sha256=file_hash(handoff),
+                summary=dict(route=value['metadata'].get('route'),origin_summary=value.get('origin_summary')))
     result=dict(protocol='offline-grpo-overnight-report-v1',source_plan_sha256=_hash(plan),
         complete=all(state['stages'].get(name,{}).get('state')=='verified' for name in STAGES),
         stages=state['stages'],measurements=measured,
@@ -451,6 +458,8 @@ def _snapshot_report(plan, directory, root, state, attempt=None, elapsed=0.):
           'Geometry, overlap and layer-similarity results are descriptive, not causal or behavioral evidence.',
           'Matched-norm KL requires a separate scaled-adapter measurement.'])
     progress=directory/'checkpoints/progress.json'
+    if measured.get('pool',{}).get('summary',{}).get('route')=='reuse-historical-128':
+        result['limitations'].append('The pool mixes historical and newly sampled answers from two sessions; see the per-origin rates and the route decision.')
     result['progress_sha256']=file_hash(progress) if progress.exists() else None
     omissions=[]
     if 'behaviour' in measured and measured['behaviour']['summary']['online_comparison_status']['state']!='performed':

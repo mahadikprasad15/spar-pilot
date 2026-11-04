@@ -1,7 +1,9 @@
 """Evidence-selected pool route: extend verified historical answers or sample all 512.
 
-The historical 128 groups count only after the source audit, the recorded runtime and
-an exact two-group replay all agree. Any other outcome records why and samples 512.
+The historical 128 groups count when the source audit, model identity, decoding,
+seeds and sampling code agree. Hardware and library differences do not change the
+sampled distribution, so they and the two-group replay are recorded, not decisive.
+A failed base integrity check still stops selection. Otherwise this samples 512.
 """
 import json
 from pathlib import Path
@@ -20,6 +22,7 @@ from pilot_eval.workflow import _hash, _save_frozen
 
 FRESH = 'uniform-fresh-512'
 REUSE = 'reuse-historical-128'
+DECISIVE = ('historical seeds', 'historical decoding', 'recorded sampling implementation', 'historical numerical')
 
 
 def load_decision(directory, root):
@@ -55,7 +58,7 @@ def _verify_replay(folder, decision):
         ids = list(dict.fromkeys(row['group_id'] for row in current))
         historical = [json.loads(line) for line in (folder/'historical.jsonl').read_text().splitlines()]
         reference = [row for identifier in ids for row in historical if row['group_id'] == identifier]
-        if replay_comparison(reference, current) != decision['comparison'] or not decision['comparison']['exact']:
+        if replay_comparison(reference, current) != decision['comparison']:
             raise ValueError('Replay evidence changed')
 
 
@@ -117,7 +120,7 @@ def select(pool_path, audit_path, baseline_path, weights_dir, runtime_path, outp
     weights = inside(root, weights_dir)
     source = read_sources(audit_path, baseline_path, root)
     reasons = _source_reasons(source, pool)
-    comparison = None; policy = None; runtime = None; current = None
+    comparison = None; policy = None; runtime = None; current = None; recorded = []
     deps = dependencies or RolloutDependencies()
     with _writer(target):
         if not reasons:
@@ -127,7 +130,10 @@ def select(pool_path, audit_path, baseline_path, weights_dir, runtime_path, outp
             policy = replay_policy(dict(seeds_recovered=source['seeds_recovered'], policy_matches=source['policy_matches'],
                 historical_runtime=source['legacy_runtime'], legacy=source['legacy'],
                 historical_order=source['historical_order'], uniform_units=[]), runtime)
-            reasons.extend(policy['reasons'])
+            reasons.extend(r for r in policy['reasons'] if r.startswith(DECISIVE))
+            recorded = [r for r in policy['reasons'] if not r.startswith(DECISIVE)]
+            policy['units'] = [dict(key=f'profile-{n:04d}', id=i, seed=b['seed'], origin='profile')
+                               for n, (i, b) in enumerate(zip(source['historical_order'][:2], source['legacy']['batches'][:2]))]
         if not reasons:
             by_id = {r['id']: r for r in training}
             job = dict(protocol='offline-grpo-pool-route-v1', pool_sha256=file_hash(inside(root, pool_path)), units=policy['units'])
@@ -141,9 +147,9 @@ def select(pool_path, audit_path, baseline_path, weights_dir, runtime_path, outp
                 reference = [r for u in policy['units'] for r in source['historical'] if r['group_id'] == u['id']]
                 comparison = replay_comparison(reference, current)
                 if not comparison['exact']:
-                    reasons.append('Exact two-group replay differed from the recorded historical draws')
+                    recorded.append('Two-group replay differed from the recorded historical draws')
         chosen = FRESH if reasons else REUSE
-        decision = dict(protocol='offline-grpo-pool-route-v1', route=chosen, reasons=reasons, comparison=comparison,
+        decision = dict(protocol='offline-grpo-pool-route-v1', route=chosen, reasons=reasons, recorded_differences=recorded, comparison=comparison,
             runtime=runtime, pool_sha256=file_hash(inside(root, pool_path)), audit_path=str(audit_path.relative_to(root)),
             baseline_path=str(baseline_path.relative_to(root)), implementation_sha256=file_hash(Path(__file__)),
             verified_historical_groups=source['verified_historical_groups'], missing=source['missing'])

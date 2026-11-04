@@ -133,6 +133,16 @@ def _windows(plan, training, records, metadata):
     return windows,summaries
 
 
+def origin_summary(records):
+    """Descriptive per-origin rates, so a mixed pool's sources can be compared."""
+    summary={}
+    for origin in sorted({r['origin'] for r in records}):
+        rows=[r for r in records if r['origin']==origin]
+        summary[origin]=dict(draws=len(rows),questions=len({r['group_id'] for r in rows}),reward_rate=sum(r['reward_v3'] for r in rows)/len(rows),
+                             mean_tokens=sum(len(r['generated_token_ids']) for r in rows)/len(rows),cap_rate=sum(r['capped'] for r in rows)/len(rows))
+    return summary
+
+
 def import_rollouts(path,rollouts,output_root):
     root=Path(output_root).resolve();plan,directory,training=_plan(path,root);rollouts=inside(root,rollouts)
     records,metadata=_verified_r0(rollouts,root)
@@ -140,7 +150,7 @@ def import_rollouts(path,rollouts,output_root):
     payload=dict(protocol='offline-grpo-pool-handoff-v1',plan_sha256=_hash(plan),r0_path=str(rollouts.relative_to(root)),
                  r0_sha256=file_hash(rollouts),metadata=metadata,
                  pool_order=list(dict.fromkeys(record['group_id'] for record in records)),
-                 windows=windows,summaries=summaries)
+                 windows=windows,summaries=summaries,origin_summary=origin_summary(records))
     with _writer(directory):
         _plan(path, root)
         _save_frozen(directory/'windows.json',windows)
@@ -156,7 +166,7 @@ def load_pool(path,output_root):
         raise ValueError('Pool handoff identity changed')
     records,metadata=_verified_r0(rollouts,root);windows,summaries=_windows(plan,training,records,metadata)
     pool_order=list(dict.fromkeys(record['group_id'] for record in records))
-    if metadata!=receipt['metadata'] or pool_order!=receipt['pool_order'] or summaries!=receipt['summaries'] or windows!=json.loads((directory/'windows.json').read_text()):
+    if metadata!=receipt['metadata'] or pool_order!=receipt['pool_order'] or summaries!=receipt['summaries'] or origin_summary(records)!=receipt['origin_summary'] or windows!=json.loads((directory/'windows.json').read_text()):
         raise ValueError('Pool handoff differs from verified rollout evidence')
     return windows
 

@@ -37,6 +37,8 @@ Tickets 01 and 02 were implemented as additive public workflows. Synthetic valid
 
 - The overnight run now generates the spectral cache as a CPU stage with the existing `stage0-spectral-*` commands, so it is no longer a template input. Geometry and everything after it depend on that stage; pool, training and behaviour do not. The spectral plan and cache are never exported; a resumed run regenerates them from the same pinned inputs.
 
+- Route rule relaxed at the researcher's direction: the replay and hardware differences are recorded, not decisive, so an A100 can keep the 128 historical groups and sample 384. See the spec's decision update.
+
 ## Open decisions
 
 - Fidelity tolerance: `offline-grpo-train-check-diagnostics` now requires an explicit `--fidelity-tolerance` in nats (template input `fidelity_tolerance_nats`). No value has been chosen; a reviewed number is required before a real run.

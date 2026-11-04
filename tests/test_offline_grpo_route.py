@@ -71,17 +71,18 @@ def test_exact_replay_keeps_128_and_samples_only_the_remaining_384(world):
     assert [[q['id'] for q in w] for w in windows] == [world['order'][i:i+8] for i in range(0, 512, 8)]
     receipt = json.loads((world['root']/'runs/offline-grpo/example/pool/handoff.json').read_text())
     assert receipt['metadata']['route'] == 'reuse-historical-128'
+    summary = receipt['origin_summary']
+    assert summary['historical']['draws'] == 1024 and summary['new-extension']['draws'] == 3072
+    assert {'reward_rate', 'mean_tokens', 'cap_rate', 'questions'} <= set(summary['historical'])
 
 
-def test_replay_mismatch_falls_back_to_all_512_and_keeps_evidence(world):
+def test_replay_mismatch_is_recorded_but_keeps_the_verified_128(world):
     engine = Engine(mismatch=True)
     decision = choose(world, engine)
-    assert decision['route'] == 'uniform-fresh-512' and not decision['comparison']['exact']
-    assert decision['comparison']['differences']
+    assert decision['route'] == 'reuse-historical-128'
+    assert not decision['comparison']['exact'] and decision['comparison']['differences']
     assert (world['root']/'runs/offline-grpo/example/pool/route/replay.jsonl').exists()
-    config = json.loads(prepare_fresh(world, engine).read_text())
-    assert len(config['units']) == 512 and {u['origin'] for u in config['units']} == {'new-uniform'}
-    assert config['route']['route'] == 'uniform-fresh-512'
+    assert len(json.loads(prepare_fresh(world, engine).read_text())['units']) == 384
 
 
 def test_missing_raw_group_selects_fresh_without_loading_a_model(world):
@@ -92,14 +93,24 @@ def test_missing_raw_group_selects_fresh_without_loading_a_model(world):
     assert engine.loads == 0 and any('incomplete' in reason for reason in decision['reasons'])
 
 
-def test_different_runtime_selects_fresh_without_sampling(world):
+def test_different_gpu_is_recorded_and_replay_still_runs(world):
     world['runtime'].write_text(json.dumps(dict(execution_kind='synthetic-cpu-fixture', session_id='session-a', device='other GPU')))
     class Other(Engine):
         def runtime(self):return dict(execution_kind='synthetic-cpu-fixture', session_id='session-a', device='other GPU')
     engine = Other()
     decision = choose(world, engine)
+    assert decision['route'] == 'reuse-historical-128' and engine.loads == 1 and len(engine.calls) == 2
+    assert any('GPU type' in reason for reason in decision['recorded_differences'])
+    assert decision['reasons'] == []
+
+
+def test_changed_sampling_settings_still_select_fresh(world, monkeypatch):
+    original = route.read_sources
+    monkeypatch.setattr(route, 'read_sources', lambda *args: dict(original(*args), policy_matches=False))
+    engine = Engine()
+    decision = choose(world, engine)
     assert decision['route'] == 'uniform-fresh-512' and engine.loads == 0
-    assert any('GPU type' in reason for reason in decision['reasons'])
+    assert any('decoding' in reason for reason in decision['reasons'])
 
 
 def test_actual_runtime_must_match_the_approved_one(world):
