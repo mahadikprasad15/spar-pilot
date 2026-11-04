@@ -15,6 +15,33 @@ from pilot_eval.sft import prepare_sft
 def main(argv=None, *, dependencies=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['prepare','run']:
+        train=commands.add_parser('offline-grpo-train-'+operation,help='fixed-pool GRPO training')
+        train.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            train.add_argument('--frozen',type=Path,required=True);train.add_argument('--pool',type=Path,required=True)
+            train.add_argument('--checkpoint-zero',type=Path,required=True);train.add_argument('--name',required=True)
+            train.add_argument('--runtime',type=Path,required=True)
+            train.add_argument('--checkpoint-zero-sha256',required=True);train.add_argument('--checkpoint-zero-config-sha256',required=True)
+        else:train.add_argument('--config',type=Path,required=True)
+    for operation in ['prepare','run','verify']:
+        fresh=commands.add_parser('offline-pool-fresh-'+operation,help='bounded fresh R0 pool collection')
+        fresh.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            fresh.add_argument('--pool',type=Path,required=True);fresh.add_argument('--audit',type=Path,required=True)
+            fresh.add_argument('--weights-dir',type=Path,required=True);fresh.add_argument('--runtime',type=Path,required=True)
+        else:fresh.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            fresh.add_argument('--approval',type=Path);fresh.add_argument('--max-new-units',type=int)
+    for operation in ['prepare','import','verify','inventory']:
+        pool=commands.add_parser('offline-pool-'+operation,help='verified offline GRPO pool handoff')
+        pool.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            pool.add_argument('--source',type=Path,required=True);pool.add_argument('--name',required=True)
+        elif operation=='inventory':
+            pool.add_argument('--audit',type=Path,required=True);pool.add_argument('--baseline',type=Path,required=True);pool.add_argument('--name',required=True)
+        else:pool.add_argument('--config',type=Path,required=True)
+        if operation=='import':pool.add_argument('--rollouts',type=Path,required=True)
     for operation in ['prepare','build','verify','status','release']:
         handoff=commands.add_parser('sampling-sft-handoff-'+operation,help='CPU artifact inventory and honest research status')
         if operation=='release':handoff.add_argument('--commit',required=True)
@@ -941,6 +968,27 @@ def main(argv=None, *, dependencies=None):
                 result=getattr(stage0_distance_report,operation)(args.config,args.output_root)
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-train-'):
+            from pilot_eval import offline_grpo_training as workflow
+            operation=args.command.removeprefix('offline-grpo-train-')
+            if operation=='prepare':result=workflow.prepare(args.frozen,args.pool,args.checkpoint_zero,args.output_root,args.name,runtime=json.loads(args.runtime.read_text()),weights_sha256=args.checkpoint_zero_sha256,config_sha256=args.checkpoint_zero_config_sha256)
+            else:result=workflow.run(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-pool-fresh-'):
+            from pilot_eval import offline_grpo_fresh as fresh
+            operation=args.command.removeprefix('offline-pool-fresh-')
+            if operation=='prepare':result=fresh.prepare(args.pool,args.audit,args.weights_dir,args.runtime,args.output_root,dependencies=dependencies)
+            elif operation=='run':result=fresh.run(args.config,args.output_root,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies)
+            else:result=fresh.verify(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-pool-'):
+            from pilot_eval import offline_grpo_pool as pool
+            operation=args.command.removeprefix('offline-pool-')
+            if operation=='prepare':result=pool.prepare(args.source,args.output_root,args.name)
+            elif operation=='inventory':result=pool.inventory(args.audit,args.baseline,args.output_root,args.name)
+            elif operation=='import':result=pool.import_rollouts(args.config,args.rollouts,args.output_root)
+            else:result=pool.verify(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('stage0-rollouts-'):
             from pilot_eval import stage0_rollouts as workflow
