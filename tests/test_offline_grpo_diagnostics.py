@@ -73,3 +73,10 @@ def test_sealed_preflight_above_its_tolerance_is_rejected(tmp_path):
     path=folder/'preflight.json';path.write_text(json.dumps(receipt))
     (folder/'preflight.complete.json').write_text(json.dumps({'config_sha256':_hash(config),'sha256':file_hash(path)}))
     with pytest.raises(ValueError,match='exceeds'):_verify_preflight(tmp_path,config)
+
+
+def test_fidelity_sampling_overrides_the_model_generation_config():
+    import inspect
+    from pilot_eval.offline_grpo_diagnostics import measure_generation_scores
+    source = inspect.getsource(measure_generation_scores)
+    assert 'repetition_penalty=1.0' in source and 'no_repeat_ngram_size=0' in source

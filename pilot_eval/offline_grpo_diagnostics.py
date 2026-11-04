@@ -132,6 +132,7 @@ def measure_generation_scores(model, prompts, *, eos_token_id, pad_token_id, max
                 ids = torch.tensor([prompt], device=device)
                 result = model.generate(input_ids=ids, attention_mask=torch.ones_like(ids),
                     do_sample=True, temperature=1., top_p=1., top_k=0, num_beams=1,
+                    repetition_penalty=1.0, no_repeat_ngram_size=0,
                     max_new_tokens=max_new_tokens, pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id, return_dict_in_generate=True, output_scores=True)
                 tokens = result.sequences[0, len(prompt):].tolist()
