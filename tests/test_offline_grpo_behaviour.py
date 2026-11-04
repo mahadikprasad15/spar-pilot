@@ -62,16 +62,27 @@ def test_public_cpu_evaluation_and_source_tamper(tmp_path, monkeypatch):
     report=json.loads((tmp_path/'reports/report/results/results.json').read_text())
     assert report['anchor']['state']=='passed' and report['summaries']['sampled-64']['flexible_accuracy']==1
     assert report['online_comparison_status']['state']=='not-selected'
-    other=dict(json.loads(config.read_text()),runtime={'kind':'other'})
+    source=json.loads(config.read_text())
+    other=dict(source,runtime={'kind':'other'})
     (tmp_path/'online.json').write_text('{}')
-    monkeypatch.setattr(behavior.online,'verify_evaluation',lambda *args:(other,[]))
+    online_records=[dict(r,reward=0,generated_token_ids=[5,99]) if r['step']==0 and r['item_id']=='q0' else r for r in records]
+    monkeypatch.setattr(behavior.online,'verify_evaluation',lambda *args:(other,online_records))
     monkeypatch.chdir(tmp_path.parent)
     assert main(['offline-grpo-behaviour-report',*args,'--config',str(config.relative_to(tmp_path)),'--name','report2','--online','online.json'])==0
-    missing=json.loads((tmp_path/'reports/report2/results/results.json').read_text())
-    assert missing['online_comparison'] is None
-    assert missing['online_comparison_status']==dict(state='not-performed',differing_fields=['runtime'])
+    compared=json.loads((tmp_path/'reports/report2/results/results.json').read_text())
+    assert compared['online_comparison']['greedy-0']['reward']['estimate']>0
+    assert compared['online_comparison_status']==dict(state='performed',runtime_differences=['kind'])
+    assert compared['anchor']['online_token_agreement']==dict(compared=150,differing_items=1,exact=False)
     text=(tmp_path/'reports/report2/results/report.md').read_text()
-    assert 'Online comparison: NOT performed; differing fields: runtime' in text
+    assert 'Online comparison: performed; runtime differs in: kind' in text
+    monkeypatch.setattr(behavior.online,'verify_evaluation',lambda *args:(dict(source,settings=dict(source['settings'],top_k=9)),[]))
+    assert main(['offline-grpo-behaviour-report',*args,'--config',str(config.relative_to(tmp_path)),'--name','report3','--online','online.json'])==0
+    missing=json.loads((tmp_path/'reports/report3/results/results.json').read_text())
+    assert missing['online_comparison'] is None
+    assert missing['online_comparison_status']==dict(state='not-performed',differing_fields=['settings'])
+    assert 'NOT performed; differing fields: settings' in (tmp_path/'reports/report3/results/report.md').read_text()
+    monkeypatch.setattr(behavior.online,'verify_evaluation',lambda *args:(source,online_records))
+    assert main(['offline-grpo-behaviour-report',*args,'--config',str(config.relative_to(tmp_path)),'--name','report4','--online','online.json'])==1
     (checkpoints[8]/'adapter_model.safetensors').write_bytes(b'tampered')
     with pytest.raises(ValueError,match='source, plan or implementation changed'):
         behavior.verify(config,tmp_path)

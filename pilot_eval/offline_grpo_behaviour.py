@@ -253,14 +253,23 @@ def report(path, output_root, name, *, online_path=None):
     comparison_status=dict(state='not-selected')
     if online_path is not None:
         other,other_records=online.verify_evaluation(online_path,root)
-        if compatible(source,other):
+        differing=incompatible_fields(source,other)
+        runtime_differs='runtime' in differing
+        if not set(differing)-{'runtime'}:
             if source['checkpoints']['0']['adapter_sha256']!=other['checkpoints']['0']['adapter_sha256']:
                 raise ValueError('checkpoint-zero adapter identities differ')
             offline_zero={(r['item_id'],r['draw_index']):r['generated_token_ids'] for r in records if r['mode']=='greedy' and r['step']==0}
             online_zero={(r['item_id'],r['draw_index']):r['generated_token_ids'] for r in other_records if r['mode']=='greedy' and r['step']==0}
-            if offline_zero!=online_zero:raise ValueError('same-runtime checkpoint-zero token anchor failed')
-            anchor=dict(state='passed',source=str(online_path.relative_to(root)),source_sha256=file_hash(online_path))
-            comparison_status=dict(state='performed')
+            if runtime_differs:
+                # Different hardware may change tokens without changing the policy; record it.
+                changed=sum(online_zero.get(k)!=v for k,v in offline_zero.items())
+                anchor['online_token_agreement']=dict(compared=len(offline_zero),differing_items=changed,exact=not changed)
+                old,new=other['runtime'],source['runtime']
+                comparison_status=dict(state='performed',runtime_differences=sorted(k for k in set(old)|set(new) if old.get(k)!=new.get(k)))
+            else:
+                if offline_zero!=online_zero:raise ValueError('same-runtime checkpoint-zero token anchor failed')
+                anchor=dict(state='passed',source=str(online_path.relative_to(root)),source_sha256=file_hash(online_path))
+                comparison_status=dict(state='performed')
             comparison={}
             other_groups={}
             for row in other_records:
@@ -291,7 +300,7 @@ def report(path, output_root, name, *, online_path=None):
                             offline=grouped[(mode,step,identifier)][0]['reward']))
         else:
             anchor['historical_output_reuse']='incompatible runtime, cohort, decoder or batch contract; fresh anchor retained'
-            comparison_status=dict(state='not-performed',differing_fields=incompatible_fields(source,other))
+            comparison_status=dict(state='not-performed',differing_fields=differing)
     directory=root/'reports'/safe_name(name)
     config=dict(protocol='offline-grpo-behaviour-report-v1',source=str(_within(root,path).relative_to(root)),
                 source_sha256=file_hash(path),source_seal_sha256=file_hash(root/source['run_path']/'complete.json'),
@@ -312,7 +321,9 @@ def report(path, output_root, name, *, online_path=None):
         _save_frozen(directory/'results/cross-arm-transitions.json',cross_arm_transitions)
         report_path=directory/'results/report.md'
         content='# Offline GRPO behavior\n\n'+result['note']+'\n\nCheckpoint-zero anchor: '+anchor['state']+'\n\n'
-        content+='Online comparison: '+{'performed':'performed','not-selected':'not selected'}.get(comparison_status['state'],'NOT performed; differing fields: '+', '.join(comparison_status.get('differing_fields',[])))+'\n\n'
+        comparison_text={'performed':'performed','not-selected':'not selected'}.get(comparison_status['state'],'NOT performed; differing fields: '+', '.join(comparison_status.get('differing_fields',[])))
+        if comparison_status.get('runtime_differences'):comparison_text+='; runtime differs in: '+', '.join(comparison_status['runtime_differences'])
+        content+='Online comparison: '+comparison_text+'\n\n'
         content+='| Setting | Flexible accuracy | Strict accuracy | Mean tokens | Cap rate |\n|---|---:|---:|---:|---:|\n'
         for key,row in summaries.items():
             content+=f"| {key} | {row['flexible_accuracy']:.3f} | {row['strict_accuracy']:.3f} | {row['mean_tokens']:.2f} | {row['cap_rate']:.3f} |\n"
