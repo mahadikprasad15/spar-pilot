@@ -1,0 +1,203 @@
+"""Ticket 07 export/restore with a mocked Hub: partial/complete, readback, failures, Pod-stop gate."""
+import hashlib
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from pilot_eval import neuron_audit_export as ex
+from pilot_eval.neuron_audit_blocks import BlockStore
+
+REPO = 'owner/private-audit'
+
+
+class HTTPError(Exception):
+    def __init__(self, status):
+        super().__init__(f'HTTP {status}')
+        self.response = SimpleNamespace(status_code=status)
+
+
+class FakeHub:
+    cache_root = None
+
+    def __init__(self, private=True):
+        self.private, self.store, self.publishes, self.fail_publish, self.corrupt_fetch = private, {}, 0, [], False
+
+    def info(self, repo):
+        return SimpleNamespace(private=self.private)
+
+    def publish(self, repo, files):
+        if self.fail_publish:
+            raise self.fail_publish.pop(0)
+        self.publishes += 1
+        revision = hashlib.sha1(f'{self.publishes}'.encode()).hexdigest()
+        self.store[revision] = {n: Path(p).read_bytes() for n, p in files.items()}
+        return revision
+
+    def fetch_to(self, repo, name, revision, directory):
+        path = Path(directory) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = self.store[revision][name]
+        path.write_bytes(data[:-1] + bytes([data[-1] ^ 0xFF]) if self.corrupt_fetch else data)
+        return path
+
+
+def sealed_run(directory, files):
+    directory.mkdir(parents=True)
+    for name, text in files.items():
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(text)
+    seal = {n: hashlib.sha256((directory / n).read_bytes()).hexdigest() for n in files}
+    (directory / 'complete.json').write_text(json.dumps(dict(files=seal)))
+    (directory / 'meta').mkdir()
+    (directory / 'meta/status.json').write_text(json.dumps(dict(state='complete')))
+
+
+def unit(store, key):
+    rows = 2
+    store.write_unit(key, identity=dict(k=key), example_ids=['a', 'b'], counts={'response_content': [3, 3]},
+                     blocks={('response_content', 0, 'mean_z'): np.ones((rows, 4), np.float32)})
+
+
+@pytest.fixture
+def root(tmp_path):
+    r = tmp_path / 'artifacts'
+    base = r / 'runs/joint-neuron-adapter-audit'
+    sealed_run(base / 'sequences/s1', {'sequences.jsonl': '{}\n', 'manifest.json': '{}'})
+    store = BlockStore(base / 'collection/c1')
+    unit(store, 'gold-rows-0-1')
+    unit(store, 'untuned-rows-0-1')
+    (base / 'collection/c1/units/gold-rows-2-3').mkdir(parents=True)  # killed mid-unit
+    (base / 'collection/c1/units/gold-rows-2-3/blocks.f32').write_bytes(b'partial')
+    (base / 'collection/c1/logs').mkdir()
+    (base / 'collection/c1/logs/run.log').write_text('worker stopped\n')
+    return r
+
+
+INCLUDE = ['runs/joint-neuron-adapter-audit/sequences', 'runs/joint-neuron-adapter-audit/collection']
+OMITTED = [dict(item='Qwen/Qwen2.5-1.5B-Instruct', revision='989aa79', recovery='hf download at pinned revision')]
+
+
+def snap(root, **kw):
+    return ex.snapshot(root, INCLUDE, 'fixture', omitted=OMITTED, **kw)
+
+
+def test_partial_snapshot_lists_unsealed_and_archives_only_sealed(root):
+    s = snap(root, expected_units=['gold-rows-0-1', 'untuned-rows-0-1', 'gold-rows-2-3'])
+    assert s['completeness'] == 'partial'
+    kinds = {}
+    for name, rec in s['files'].items():
+        kinds.setdefault(rec['kind'], []).append(name)
+    assert any(n.endswith('gold-rows-0-1/seal.json') for n in kinds['sealed-unit'])
+    assert not any('gold-rows-2-3' in n for n in s['files'])
+    assert {u['state'] for u in s['unsealed']} == {'interrupted'}
+    assert s['missing_expected_units'] == ['gold-rows-2-3']
+    assert any(n.endswith('logs/run.log') for n in kinds['failure-evidence'])
+    assert any(n.endswith('meta/status.json') for n in kinds['status'])
+    assert s['omitted_reconstructible'] == OMITTED
+
+
+def test_complete_after_resume_seals_the_missing_unit(root):
+    store = BlockStore(root / 'runs/joint-neuron-adapter-audit/collection/c1')
+    unit(store, 'gold-rows-2-3')  # moves the interrupted attempt aside, then seals
+    s = snap(root, expected_units=['gold-rows-0-1', 'untuned-rows-0-1', 'gold-rows-2-3'])
+    assert s['completeness'] == 'complete' and s['interrupted_evidence']
+
+
+def test_upload_readback_restore_and_pod_stop_gate(root, tmp_path):
+    hub = FakeHub()
+    s = snap(root)
+    record = ex.upload(root / s['snapshot_path'], root, repo=REPO, client=hub, on_event=lambda e: None)
+    assert record['completeness'] == 'partial' and len(record['revision']) == 40
+    proof = ex.restore(root / Path(s['snapshot_path']).with_name(Path(s['snapshot_path']).stem + '.hf-upload.json'),
+                       tmp_path / 'clean', client=hub)
+    assert proof['verified_files'] == len(s['files']) and proof['verified_units'] == 2
+    assert proof['completeness'] == 'partial' and proof['missing']['unsealed']
+    assert ex.may_stop_pod(record, proof) is True
+    assert ex.may_stop_pod(record, proof, require_complete=True) is False  # partial is never complete
+    restored = (tmp_path / 'clean' / 'runs/joint-neuron-adapter-audit/sequences/s1/sequences.jsonl').read_text()
+    assert restored == '{}\n'
+    with pytest.raises(ValueError, match='empty, clean root'):
+        ex.restore(record, tmp_path / 'clean', client=hub)
+    # Resume: an existing receipt is returned without a second commit.
+    assert ex.upload(root / s['snapshot_path'], root, repo=REPO, client=hub) == record and hub.publishes == 1
+
+
+def test_public_repository_refused_before_any_transfer(root):
+    hub = FakeHub(private=False)
+    s = snap(root)
+    with pytest.raises(ValueError, match='private'):
+        ex.upload(root / s['snapshot_path'], root, repo=REPO, client=hub)
+    assert hub.publishes == 0
+
+
+def test_readback_mismatch_preserves_local_export_and_blocks_stop(root):
+    hub = FakeHub()
+    hub.corrupt_fetch = True
+    s = snap(root)
+    with pytest.raises(ValueError, match='readback'):
+        ex.upload(root / s['snapshot_path'], root, repo=REPO, client=hub, on_event=lambda e: None)
+    assert not list((root / 'exports').rglob('*.hf-upload.json'))
+    assert (root / s['snapshot_path']).exists()
+
+
+def test_auth_failure_is_fatal_and_transient_failure_retried(root):
+    s = snap(root)
+    hub = FakeHub()
+    hub.fail_publish = [HTTPError(401)]
+    with pytest.raises(PermissionError, match='authentication'):
+        ex.upload(root / s['snapshot_path'], root, repo=REPO, client=hub)
+    hub = FakeHub()
+    hub.fail_publish = [HTTPError(503)]
+    events = []
+    record = ex.upload(root / s['snapshot_path'], root, repo=REPO, client=hub, on_event=events.append,
+                       sleep=lambda seconds: None)
+    assert events[0]['kind'] == 'hf-retry' and events[0]['status'] == 503 and record['revision']
+
+
+def test_file_changed_after_snapshot_refused(root):
+    s = snap(root)
+    (root / 'runs/joint-neuron-adapter-audit/collection/c1/logs/run.log').write_text('changed\n')
+    with pytest.raises(ValueError, match='changed after snapshot'):
+        ex.upload(root / s['snapshot_path'], root, repo=REPO, client=FakeHub())
+
+
+def test_credential_in_status_file_refuses_snapshot(root):
+    (root / 'runs/joint-neuron-adapter-audit/collection/c1/logs/run.log').write_text('token hf_' + 'a' * 34 + '\n')
+    with pytest.raises(ValueError, match='credential'):
+        snap(root)
+
+
+def test_corrupt_sealed_unit_listed_and_not_archived(root):
+    path = root / 'runs/joint-neuron-adapter-audit/collection/c1/units/untuned-rows-0-1/blocks.f32'
+    path.write_bytes(b'\0' * path.stat().st_size)
+    s = snap(root)
+    assert s['completeness'] == 'partial' and s['corrupt'][0]['path'].endswith('untuned-rows-0-1')
+    assert not any('untuned-rows-0-1' in n for n in s['files'])
+
+
+def test_tampered_remote_archive_refused_at_restore(root, tmp_path):
+    hub = FakeHub()
+    s = snap(root)
+    record = ex.upload(root / s['snapshot_path'], root, repo=REPO, client=hub)
+    hub.corrupt_fetch = True
+    with pytest.raises(ValueError, match='archive hash'):
+        ex.restore(record, tmp_path / 'clean', client=hub)
+
+
+def test_archive_built_in_local_temp_not_beside_the_snapshot(root, tmp_path, monkeypatch):
+    seen = []
+    real = ex.tempfile.TemporaryDirectory
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get('dir'))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ex.tempfile, 'TemporaryDirectory', spy)
+    s = snap(root)
+    local = tmp_path / 'local-temp'
+    local.mkdir()
+    ex.upload(root / s['snapshot_path'], root, repo=REPO, client=FakeHub(), temp_dir=local)
+    assert seen and all(Path(d) == local for d in seen)

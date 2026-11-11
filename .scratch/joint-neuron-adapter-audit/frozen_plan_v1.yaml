@@ -1,0 +1,260 @@
+# Joint neuron/adapter audit — run plan read by ticket 03b (and later 04/05/06).
+# NOT APPROVED. 03b refuses to run until `status: approved`, approval fields are filled and
+# every field listed under `required_before` for that stage is non-null
+# (pilot_eval/neuron_audit_plan.py).
+# Provenance tags: [user] = decided by the user on 2026-11-10 (after Codex's ADR search);
+# [proposed] = Claude's proposed fill, accepted in principle by the user on 2026-11-10
+# ("proceed with these suggestions") but still subject to the final check before approval.
+
+schema: joint-neuron-adapter-audit/frozen-plan-v1
+status: unapproved
+approval:
+  approved_by: null
+  approved_on: null
+  notes: null
+derived_from:
+  candidate_plan: .scratch/joint-neuron-adapter-audit/candidate-plan-v1.yaml
+  decisions: 03b decision notes supplied by the user on 2026-11-10 (two messages)
+
+inputs:
+  artifact_root_note: paths are relative to the artifact root used on the worker
+  inventory_run: runs/joint-neuron-adapter-audit/inventory/inventory-v2
+  sequences_run: runs/joint-neuron-adapter-audit/sequences/sequences-v2
+  background_review_required: accept          # [user] 03b refuses while pending/rejected
+
+arms:                                           # [user] all seven; offline GRPO restored in inventory-v2
+  - untuned
+  - gold-sft
+  - online-grpo
+  - offline-grpo
+  - sampling-sft-k0
+  - sampling-sft-k2
+  - sampling-sft-k5
+partial_study:                                  # [user]
+  allowed_if_an_arm_fails_qualification: true
+  labelling: every output and the report title say "partial" and name each missing arm
+  never_present_as_seven_arm: true
+  arm_gate_failure: "[proposed] an arm-specific hard-gate failure marks that arm failed with evidence and the study partial; global gates (masks, logits batching, storage, untuned/reference arm) stop 03b"
+
+runtime:                                        # [user] copy of the offline-GRPO Stage 0 record
+  source_record: imports/offline-grpo-v1/notebook/offline-grpo-v1/stage0-runtime.json
+  expected_device: NVIDIA A100-SXM4-80GB        # verify and record the actual device on the Pod
+  python: "3.12"
+  packages: {torch: 2.9.0, transformers: 4.57.6, peft: 0.18.0}
+  deterministic: true
+  cublas_workspace_config: ":4096:8"
+  attention: eager                              # production, qualification and FP64 reference
+  package_change_policy: reviewed change recorded in this plan, otherwise identical
+  code_commit: null                             # REQUIRED: pushed commit the worker checks out
+
+precision:                                      # [user] + torch 2.9.0 API facts verified locally
+  parameters_forwards_reductions: float32
+  autocast: false
+  torch_compile: false
+  set_float32_matmul_precision: highest
+  # torch 2.9.0 (verified locally): set the new per-backend API explicitly. A global
+  # torch.backends.fp32_precision leaves cudnn.conv/rnn at "tf32"; mixing legacy allow_tf32
+  # with the new API warns and can raise on read-back. set/get_float32_matmul_precision are
+  # also legacy (warn-once notice) but stay consistent with the per-backend "ieee" values,
+  # so the "highest" call above is kept and only that notice is suppressed.
+  fp32_precision:
+    torch.backends.cuda.matmul.fp32_precision: ieee
+    torch.backends.cudnn.conv.fp32_precision: ieee
+    torch.backends.cudnn.rnn.fp32_precision: ieee
+    torch.backends.mkldnn.matmul.fp32_precision: ieee   # CPU paths (CPU tests, FP64-on-CPU fallback)
+    torch.backends.mkldnn.conv.fp32_precision: ieee
+    torch.backends.mkldnn.rnn.fp32_precision: ieee
+  legacy_allow_tf32_setters: forbidden
+  read_back_in_worker_and_record_in_manifest: true
+  precedent: docs/adr/0021-sampling-sft-ieee-runtime.md (principle only; Triton setting not reused)
+
+hard_gates:                                     # [user] 03b stops, saves evidence, fails
+  live_adapter:
+    live_equals_saved_bitwise: true             # torch.equal when dtype preserved
+    keys_shapes_rank_scale_match_inventory: true
+    fail_on: [missing_keys, unexpected_keys, dtype_cast, merged, disabled, inactive_routing]
+    active_branch_changes_module_output: true
+    active_branch_changes_logits_on_representative_examples: true
+    zero_b_at_audit_step: unresolved            # unless training evidence explains it (none found in inventory-v2)
+  identities:
+    source: docs/adr/0015-stage0-fp32-coefficient-reconstruction-bound.md
+    read_a_dot_z:      "|c_hook - c_peft| <= max(1e-6 + 1e-5*|c|, gamma_d * sum_j |a_j z_j|)"
+    adapter_branch:    "|branch - s*b_i*c| <= max(1e-6 + 1e-5*|s*b_i*c|, gamma_d * |s|*|b_i| * sum_j |a_j z_j|)"
+    adapter_branch_note: "[proposed] per output coordinate |b_i| instead of the decided |s|*||b||; never looser since |b_i| <= ||b||"
+    gamma_d: "d*u/(1-d*u), u = 2^-24, d = actual down_proj input width (about 5.3e-4 for d = 8960)"
+    z_reconstruction: "max|z - act(gate)*up| <= 1e-6 * max|z| per layer"
+    c_peft_capture: independent hook on PEFT lora_A output, never derived from the hooked z
+    zero_reference: exact equality, otherwise unresolved (stop)
+    numeric: {atol: 1.0e-6, rtol: 1.0e-5, z_relative_to_layer_max: 1.0e-6}
+    mutation_controls: [wrong_layer, mask_shift_by_one, flipped_sign_of_a]
+    mutation_judgement: each mutation must fail on a realistic batch (fail if any token exceeds the bound)
+  masks: decoded-mask test on frozen sequences must pass
+  nonfinite: any NaN/Inf in activations, reductions or logits stops
+  disabled_vs_fresh_base: exact logits equality (torch.equal), same batch, dtype and attention; never add a tolerance after a failure
+  batched_vs_singleton_logits:
+    bound: 1.0e-3                               # see spec_amendments[0]
+    metric: max |logit difference| over the union of masked positions and the full vocabulary  # [proposed]
+    applies_to: logits only; never a tolerance for neuron statistics
+
+review_flags:                                   # [user] 03b completes and records; 04 refuses without sign-off
+  comparison: each calibration example singleton vs inside its padded calibration batch (FP32, mean z and mean |z|)
+  calibration_batches: packed with the production token budget and packing rule frozen after the benchmark  # [proposed]
+  early_layer:
+    layers: [0, 1, 2]
+    metric: "|diff_j| / RMS over neurons of the singleton run's statistic vector (same example, group, layer)"  # [user] RMS; [proposed] exact vector
+    per_example_summary: 99th percentile over neurons
+    flag_if: any calibration example's p99 > 1.0e-4 for any statistic in response_content  # [user] 1e-4; [proposed] aggregation
+    threshold: 1.0e-4
+    other_groups: recorded, not flagged         # [proposed]
+  padding:
+    metric: same normalized per-example p99     # [proposed]
+    flag_if: "within a batch, median(padded) > 10 * max(max(unpadded), 1.0e-7)"  # [user] 10x; [proposed] zero handling
+    factor: 10
+    unpadded_floor: 1.0e-7
+  forbidden_rule: "10x the median over layers"  # [user] explicitly not used
+  plots: discrepancy vs layer (absolute values), padded and unpadded separately
+  signoff_record_required_before: '04'
+
+fp64_floor:                                     # [user]
+  purpose: D noise floor only (separate from batch agreement)
+  examples: 10
+  dtype: float64
+  attention: eager
+  device: gpu
+  fallback_chain:
+    - batch size 1, examples <= 512 tokens
+    - FP64 on CPU for 3 examples
+    - FP32 difference between two batch compositions, labelled "proxy floor" in every output that uses it
+  floor_definition: per arm and layer, 99th percentile over neurons of |D_FP32 - D_FP64|
+  also_report: [per_neuron_error, median, max, selected_neuron_errors]
+  zero_floor: unresolved                        # [user] never replaced by FP32 spacing
+  exploratory_flag: list entries with |D| < 5 x layer floor (fraction per layer); not a gate
+
+statistics:
+  primary_list_budget: 64
+  secondary_list_budget: 32
+  positions_primary: response_content
+  background_primary: disjoint_general
+  activity_bins:                                # [user]
+    method: rank-based per layer on base discovery math mean |z|, ties by neuron index
+    percentile_edges: [0, 50, 75, 90, 95, 99, 100]
+    underfilled: unavailable for that layer; never merge after seeing results
+  activity_floor: base mean |z| >= layer 50th percentile   # [user]
+  zero_median_or_zero_denominator: unresolved for that layer/statistic  # [proposed]
+  pooled_spread: "sqrt(((n1-1)*s1^2 + (n2-1)*s2^2)/(n1+n2-2)) over per-example values"  # [user]
+  low_spread_flag: pooled SD < 1e-6 * layer median of mean |z|   # [user]
+  bootstrap:                                    # [user] count/seed/interval; [proposed] stratification
+    resamples: 2000
+    seed: 1234
+    interval: percentile_95
+    unit: question or conversation
+    two_group_contrasts: resample math and background separately
+    paired_d: resample examples, keeping the arm pairing
+  overlap_null:                                 # [user]
+    draws: 1000
+    seeds: [10000, 10999]
+    stream_derivation: neuron_audit_math.derive_seed(base, comparison, layer, direction)
+    within_layer_without_replacement: true
+    matched_to: randomized list's bin counts
+  split_half:                                   # [user] math; [proposed] background
+    seed: 43
+    math: [100, 100]
+    general: [100, 100]
+    near_miss: [35, 35]
+  d_vs_d: fix the alphabetically first arm, randomize the other; report both directions for the primary family  # [user]
+
+calibration_allocation:                         # [proposed] from sequences-v2 calibration split (25 math + 25 general)
+  selection: deterministic by stable example ID order, seed 42
+  fp64_reference: {math: 5, general: 5}
+  adr0008_calibrate: 12                         # disjoint from validate and from FP64 examples
+  adr0008_validate: 13
+  benchmark: 20-50 examples, any of the 50 calibration rows
+
+benchmark:                                      # [user] unless tagged
+  configuration: production (FP32, IEEE/TF32 off, eager, same hooks); bf16 does not count
+  examples: [20, 50]
+  arms: [untuned, one adapter]
+  hooks: [1A, 1A+1B]
+  token_budgets_padded: [4096, 8192, 16384, 32768]   # [proposed]
+  stress_probe: one batch of the longest calibration sequences at the chosen budget  # [proposed]
+  select_budget: largest probed budget with peak VRAM <= 80% of the device
+  vram_fraction_max: 0.80
+  benchmark_adapter_arm: first qualified trained arm in plan order   # [proposed]
+  packing_rule: sort by (length desc, example id); greedy fill while batch_size * max_length <= budget  # [proposed]
+  phase_1b_scope:
+    all_layers_if: (1A+1B time) <= 1.5 * (1A time) AND projected disk <= 60% of usable capacity
+    else: layers 10-17, only after measuring that subset against the same time and disk rules  # [proposed] measurement
+    otherwise: omit 1B and state it in the report
+    time_ratio_max: 1.5
+    disk_fraction_max: 0.60
+    subset_layers: [10, 11, 12, 13, 14, 15, 16, 17]
+  outputs: throughput, batch and adapter-load timing, peak VRAM, projected bytes and wall-time projection
+
+operations:
+  qualification_max_gpu_hours: null             # REQUIRED before 03b (ceiling for 03b itself)
+  production_wall_time_cap_hours: null          # [user] set after the benchmark; 04 refuses until recorded
+  overrun_rule_04: check projected total after 10% of units and every further 10%; stop and report if two consecutive projections exceed 2x the benchmark projection or exceed the cap  # [user]
+  automatic_pod_stop_03b: disabled              # [user] so no RunPod CLI check
+  automatic_pod_stop_04: revisit; only after a verified export (neuron_audit_export.may_stop_pod)
+  single_pod_single_tmux_single_writer: true
+  advisory_marker_not_a_lock: true
+
+storage:                                        # [user]
+  network_volume_chmod: unsupported (docs/operations/offline-grpo-overnight.md)
+  local_disk: HF cache, temp and scratch files
+  network_volume: outputs only
+  copy_function: shutil.copyfile only (no copy2/copytree/copystat/chmod)
+  preflight_operations: [create, write, fsync, read_back, rename, copyfile, delete]  # on volume and local temp
+  provisioned_volume_bytes: null                # REQUIRED: from the RunPod console after expansion (target 120 GB)
+  usable_capacity: provisioned size minus current du -s, confirmed by a 5% probe file (write, fsync, read back, hash, delete)
+  proceed_if: projected need <= 60% of usable capacity
+
+preflight:                                      # [user]
+  in_actual_worker_process: true
+  assert: [sys.executable, sys.prefix, pinned package versions]
+  expected_sys_executable: null                 # REQUIRED: recorded from the Pod's venv
+  expected_sys_prefix: null                     # REQUIRED
+  hf_offline: set HF_HUB_OFFLINE=1 before importing Hub libraries; print resolved HF_HOME / hub cache; real offline model+tokenizer load
+  hf_transfer: assert importable if HF_HUB_ENABLE_HF_TRANSFER=1, else force 0
+  hf_export_check: separate online client; HF_TOKEN as a Pod secret; repo private; small upload, fresh pinned-revision download into an empty dir, compare hashes; never print the token
+  export_repo: Prasadmahadik/spar-sampling-sft-artifacts
+  logs: PYTHONUNBUFFERED=1; per-unit timestamped progress; run under tmux
+
+spec_amendments:
+  - id: reuse-adr-0014-logit-gate
+    spec_text: "Do not import the existing Stage 0 generation 1e-3 threshold or widen any agreed rule after failure."
+    decision: >-
+      Reuse ADR 0014's pre-registered 1e-3 bound as a hard gate on batched-vs-singleton logits only.
+      It is not a tolerance for neuron statistics, D values or any activation comparison.
+    rationale: >-
+      ADR 0014 measured FP32 batching/kernel rounding near 5e-4 on the same model in Stage 0; padding,
+      mask or position faults produce order-one logit errors. The bound is adopted before any audit
+      measurement and is not fitted to audit data.
+    decided_by: user
+    decided_on: 2026-11-10
+  - id: adopt-adr-0015-dot-product-bound
+    spec_text: candidate plan proposed 1e-5 x sum of |rank-one terms| for read and branch identities
+    decision: use ADR 0015's max(1e-6 + 1e-5*|c|, gamma_d * sum|a_j z_j|) for the read and branch checks
+    rationale: standard deterministic FP32 dot-product bound set by d and the number format; a wrong tensor errs by about 1e7 such units
+    decided_by: user
+    decided_on: 2026-11-10
+
+required_before:
+  03b:
+    - approval.approved_by
+    - approval.approved_on
+    - runtime.code_commit
+    - operations.qualification_max_gpu_hours
+    - storage.provisioned_volume_bytes
+    - preflight.expected_sys_executable
+    - preflight.expected_sys_prefix
+  '04':
+    - operations.production_wall_time_cap_hours
+
+open_items_before_approval:
+  - record the background review (sequences-v2) with the review command
+  - expand the network volume to the target and record its provisioned size
+  - commit and push the audit code; record the commit
+  - approve and run a live HF upload/restore test of the preparation snapshot
+  - choose the 03b GPU-hour ceiling
+  - final check of every [proposed] value in this file
