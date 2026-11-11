@@ -68,54 +68,55 @@ rows, 4/4 calibration rows, budgets 4096/8192, 1 h 03b ceiling), then:
 Outputs are labelled `rehearsal-pod-pod1` and can never feed production. It never stops the Pod.
 **Paste back** the `PASTE THIS BACK` line and `$WORK/pod-rehearsal-pod1.json`.
 
-## 5. Final plan and approval (user)
+## 5. Approved plan, review record and code commit
 
-The approved plan lives **outside the checkout** so recording `runtime.code_commit` never dirties it:
-
-```bash
-cp $REPO/.scratch/joint-neuron-adapter-audit/frozen_plan_v1.yaml $WORK/plan.yaml
-```
-
-Claude prepares `$WORK/plan.yaml` from the facts (device, interpreter, prefix, torch build, code commit); the
-user reviews it, then sets `status: approved`, `approval.approved_by`, `approval.approved_on`. The background
-review must already be recorded (`neuron_audit_sequences review`, by the user). Check what still blocks:
+The approved plan (`frozen_plan_v1.approved.yaml`) and the background review record (`sequences-v2-review.json`)
+are committed on the branch *after* the code commit they name. Fetch both from the branch tip, then check out
+the plan's `runtime.code_commit` (detached) so preflight sees exactly that HEAD with no tracked changes:
 
 ```bash
-$PY -m pilot_eval.neuron_audit_plan --plan $WORK/plan.yaml --stage 03b --artifact_root $WORK/prep
+B=origin/neuron-audit-phase1; S=.scratch/joint-neuron-adapter-audit
+git -C $REPO fetch -q origin && git -C $REPO show $B:$S/frozen_plan_v1.approved.yaml > $WORK/plan.yaml
+git -C $REPO show $B:$S/sequences-v2-review.json > $WORK/prep/runs/joint-neuron-adapter-audit/sequences/sequences-v2/review/review.json
+git -C $REPO checkout -q --detach $(grep -m1 'code_commit:' $WORK/plan.yaml | awk '{print $2}')
+$PY -m pilot_eval.neuron_audit_plan --plan $WORK/plan.yaml --stage 04 --artifact_root $WORK/prep
 ```
 
-## 6. 03b qualification (≤ 4 GPU hours, enforced across restarts)
+The last command must report no problems (it checks approval, every required field, the review decision and
+that the review record matches the sealed sample).
+
+## 6. 03b → 04 unattended (one command; ends with the Pod stopped)
 
 ```bash
-$PY -m pilot_eval.neuron_audit_pod configs --work $WORK --volume_dir $VOL --tag v1 --stop_pod
-$PY -m pilot_eval.neuron_audit_qualify run --plan $WORK/plan.yaml --config $WORK/qualify-v1.json
+$PY -m pilot_eval.neuron_audit_pod chain --work $WORK --volume_dir $VOL --tag v1 --plan $WORK/plan.yaml 2>&1 | tee $WORK/chain-v1.console.log | grep -E '"kind"|"stage"|CHAIN|Error|Traceback'
 ```
 
-Resume after any interruption by re-running the same command (sealed stages are reused; the clock continues).
-Then **paste back** `$WORK/out/runs/joint-neuron-adapter-audit/qualification/q-v1/qualification.json` and the
-raised review flags.
+Pre-registered rules (plan `review_flags.automatic_signoff`, `operations.*`, user 2026-11-12):
+- 03b runs under the 5 GPU-hour ceiling (cumulative across restarts).
+- 03b exits 0, status `qualified`, no review flag → a sign-off labelled `automatic-rule (...)` is recorded and
+  04 starts with the fixed 6 h cap. 04 stops the Pod after the verified final backup, or after a failure/overrun
+  once the partial backup verifies (`stop_after_verified_partial_backup`).
+- Anything else (failure, ceiling, `partial`, any review flag) → `CHAIN STOPPED BEFORE 04`: the 03b run dir is
+  copied to `$VOL/runs/joint-neuron-adapter-audit/qualification-stopped/q-v1` and re-verified by hash, uploaded
+  to HF when possible, and the Pod stops once the volume copy verified. A human then reviews; resume 03b/04 on a
+  new Pod with the same tag.
+- Report: `$WORK/chain-v1.json` (03b and 04 return codes, decision, sign-off, backups).
 
-## 7. Sign-off and the 04 cap (user)
+## 7. Resume on a new Pod
 
-- Review flags and the discrepancy plot, then record the sign-off yourself:
-  `$PY -m pilot_eval.neuron_audit_qualify signoff --run_dir $WORK/out/runs/joint-neuron-adapter-audit/qualification/q-v1 --reviewer <name> --decision accept --notes "<notes>"`
-- Choose `operations.production_wall_time_cap_hours` from the benchmark projection and set it in
-  `$WORK/plan.yaml` (only the cap and approval may change after 03b; the plan core hash is checked).
+Repeat steps 1–3 (step 3 finds the existing identity file), `prepare`, step 5, then step 6 with the same tag.
+Sealed 03b stages are reused and its clock continues; mirrored 04 units come back from the volume and verified
+arms are skipped. A foreign writer marker stops the run for investigation; `--resume_own` only after checking.
+After a chain stop before 04, a human records the 03b sign-off
+(`$PY -m pilot_eval.neuron_audit_qualify signoff --run_dir <q-v1 dir> --reviewer <name> --decision accept|reject`)
+and runs 04 directly:
+`$PY -m pilot_eval.neuron_audit_production --plan $WORK/plan.yaml --config $WORK/production-v1.json`.
 
-## 8. 04 production (same session)
-
-```bash
-$PY -m pilot_eval.neuron_audit_production --plan $WORK/plan.yaml --config $WORK/production-v1.json
-```
+## 8. What 04 does
 
 - Uploads the 03b outputs as a verified qualification package, then arm by arm: sealed units mirrored to `$VOL`,
   each arm packaged with exactly its frozen batch list and verified by fresh download, local units pruned.
 - On completion: reference-only final manifest read back, then the Pod stops (`runpodctl pod stop $RUNPOD_POD_ID`).
-- On failure or overrun: it stops the Pod only if every collected unit re-verifies on the volume and every
-  packaged arm plus this session's partial final manifest are verified on HF; otherwise it leaves the Pod running.
-- Resume on the same or a new Pod: repeat steps 1–3 (step 3 finds the existing identity file), `prepare`,
-  `configs` with the same tag, then the same 04 command. Mirrored units come back from the volume; verified
-  arms are skipped. A foreign writer marker stops the run for investigation; `--resume_own` only after checking.
 
 ## 9. Off the Pod: clean restore, 05 and 06 (CPU)
 

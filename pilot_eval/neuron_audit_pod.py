@@ -14,6 +14,8 @@ online). ``rehearsal`` runs a small, labelled rehearsal against the *real* volum
 reduced sizes, sign-off, 04 with two batches per arm interrupted after three units, deletion of the local
 working directory (a fresh container disk), resume from the volume, and a clean-root restore of the final
 manifest. It never stops the Pod. ``configs`` writes the production qualification/production configs.
+``chain`` runs 03b then 04 unattended under the plan's pre-registered automatic sign-off rule and ends with
+the Pod stopped once the evidence is safe (see ``chain``).
 Secrets come only from the environment (HF_TOKEN as a Pod secret) and are never written or printed.
 """
 import argparse
@@ -284,16 +286,133 @@ def rehearsal(work, volume_dir, *, tag, max_batches=2, interrupt_after=3):
     return report
 
 
+# --- unattended 03b -> 04 chain ----------------------------------------------------------------------
+
+AUTO_SIGNOFF_RULE = 'accept-if-qualified-and-no-flags'
+AUTO_REVIEWER = 'automatic-rule (plan review_flags.automatic_signoff, pre-registered by the user 2026-11-12)'
+
+
+def _copy_verified(source, destination):
+    """Copy every file of ``source`` to ``destination`` and re-read each copy by full hash; returns problems."""
+    source, destination = Path(source), Path(destination)
+    problems = []
+    for path in sorted(p for p in source.rglob('*') if p.is_file()):
+        target = destination / path.relative_to(source)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+        if _sha_file(path) != _sha_file(target):
+            problems.append(f'{path.relative_to(source)} differs on the volume')
+    return problems
+
+
+def _sha_file(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for block in iter(lambda: stream.read(1 << 24), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _upload_stopped(directory, plan, tag, work):
+    from pilot_eval import neuron_audit_export as ex
+    return ex.upload_directory_package(directory, repo=plan['preflight']['export_repo'], label=f'pod-{tag}',
+                                       kind='qualification-stopped', client=ex.OnlineHubProcess(),
+                                       temp_dir=str(Path(work) / 'tmp'))
+
+
+def chain(work, volume_dir, *, tag, plan_path, runner=_run, stop_runner=subprocess.run, uploader=None, pod_id=None):
+    """Run 03b then 04 unattended under the plan's pre-registered rules and always end with the Pod stopped
+    once the evidence is safe.
+
+    03b qualified with no review flags -> automatic sign-off (labelled as the rule, never as the user) -> 04,
+    which stops the Pod itself after the verified final backup (or a verified partial backup). Any other 03b
+    outcome (failure, ceiling, partial, any flag) -> the 03b run directory is copied to the volume and
+    re-verified by hash, uploaded to HF if possible, and the Pod stops when the volume copy verified."""
+    from pilot_eval import neuron_audit_plan as plan_mod
+    from pilot_eval import neuron_audit_qualify as q
+    work = Path(work)
+    plan = plan_mod.load(plan_path, '04')  # approved, and the 04 cap is fixed before anything runs
+    if plan['review_flags'].get('automatic_signoff') != AUTO_SIGNOFF_RULE:
+        raise SystemExit(f'plan review_flags.automatic_signoff must be {AUTO_SIGNOFF_RULE!r} for an unattended chain')
+    pod_id = pod_id or os.environ.get('RUNPOD_POD_ID')
+    if not pod_id:
+        raise SystemExit('RUNPOD_POD_ID is not set; the chain must be able to stop this Pod')
+    stop = ['runpodctl', 'pod', 'stop', pod_id]
+    inputs = json.loads((work / 'inputs.json').read_text())
+    q_path, p_path, qualify, production = write_configs(work, volume_dir, inputs=inputs, tag=tag, rehearsal=False,
+                                                        stop_command=stop)
+    log = work / f'chain-{tag}.log'
+    report_path = work / f'chain-{tag}.json'
+    report = dict(tag=tag, started_unix=time.time(), rule=AUTO_SIGNOFF_RULE)
+
+    def save():
+        report_path.write_text(json.dumps(report, indent=2, default=str) + '\n')
+
+    report['03b'] = runner(['pilot_eval.neuron_audit_qualify', 'run', '--plan', str(plan_path), '--config',
+                            str(q_path)], check=False, log=log)
+    qual_dir = work / 'out' / q.RUN_SUBDIR / qualify['run_id']
+    summary_path = qual_dir / 'qualification.json'
+    summary = json.loads(summary_path.read_text()) if summary_path.is_file() else {}
+    report['qualification'] = {k: summary.get(k) for k in ['status', 'arms_failed', 'review_flags_raised',
+                                                           'logits_max_abs', 'projection', 'selected_budget']}
+    reasons = []
+    if report['03b']['returncode'] != 0:
+        reasons.append(f"03b exited {report['03b']['returncode']}")
+    if summary.get('status') != 'qualified':
+        reasons.append(f"03b status is {summary.get('status')}")
+    if summary.get('review_flags_raised'):
+        reasons.append(f"review flags raised: {summary['review_flags_raised']}")
+    if reasons:
+        report['decision'] = dict(continue_to_04=False, reasons=reasons)
+        if qual_dir.is_dir():
+            backup = Path(volume_dir) / 'runs/joint-neuron-adapter-audit/qualification-stopped' / qualify['run_id']
+            report['volume_copy_problems'] = _copy_verified(qual_dir, backup)
+            report['volume_copy'] = str(backup)
+            try:
+                upload = uploader or (lambda d: _upload_stopped(d, plan, tag, work))
+                report['hf_package'] = upload(qual_dir)
+            except Exception as exc:  # the verified volume copy is the backup; HF is a second copy
+                report['hf_error'] = f'{type(exc).__name__}: {exc}'
+            safe = not report['volume_copy_problems']
+        else:
+            report['volume_copy'] = None
+            safe = True  # 03b never created its run directory: nothing exists only on this disk
+        report['finished_unix'] = time.time()
+        if safe:
+            report['pod_stop'] = 'requested after 03b stopped the chain'
+            save()
+            print('CHAIN STOPPED BEFORE 04:', json.dumps(dict(reasons=reasons, report=str(report_path))), flush=True)
+            stop_runner(stop, capture_output=True, text=True)
+        else:
+            report['pod_stop'] = 'left running: the volume copy did not verify'
+            save()
+            print('CHAIN STOPPED BEFORE 04 (POD LEFT RUNNING):', json.dumps(dict(reasons=reasons)), flush=True)
+        return report
+    report['signoff'] = q.signoff(qual_dir, reviewer=AUTO_REVIEWER, decision='accept',
+                                  notes='03b qualified with no review flags raised; recorded by the unattended chain')
+    report['decision'] = dict(continue_to_04=True)
+    save()
+    report['04'] = runner(['pilot_eval.neuron_audit_production', '--plan', str(plan_path), '--config', str(p_path)],
+                          check=False, log=log)  # 04 stops the Pod itself only after a verified (partial) backup
+    report['finished_unix'] = time.time()
+    save()
+    print('CHAIN FINISHED:', json.dumps(dict(returncode_04=report['04']['returncode'], report=str(report_path))),
+          flush=True)
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ['facts', 'prepare', 'rehearsal', 'configs']:
+    for name in ['facts', 'prepare', 'rehearsal', 'configs', 'chain']:
         p = sub.add_parser(name)
         p.add_argument('--work', required=True, help='a directory on the container (local) disk')
         if name != 'prepare':
             p.add_argument('--volume_dir', required=True, help='audit directory on the mounted sl-0 volume')
-        if name in ('rehearsal', 'configs'):
+        if name in ('rehearsal', 'configs', 'chain'):
             p.add_argument('--tag', required=True)
+        if name == 'chain':
+            p.add_argument('--plan', required=True, help='the approved plan (outside the checkout)')
         if name == 'configs':
             p.add_argument('--stop_pod', action='store_true', help='04 stops this Pod after the verified backup')
     d = sub.add_parser('_download_model')
@@ -308,6 +427,8 @@ def main(argv=None):
         print(json.dumps(prepare(args.work), indent=2))
     elif args.command == 'rehearsal':
         rehearsal(args.work, args.volume_dir, tag=args.tag)
+    elif args.command == 'chain':
+        chain(args.work, args.volume_dir, tag=args.tag, plan_path=args.plan)
     else:
         inputs = json.loads((Path(args.work) / 'inputs.json').read_text())
         pod = os.environ.get('RUNPOD_POD_ID')

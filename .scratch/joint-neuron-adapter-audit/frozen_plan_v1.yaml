@@ -100,6 +100,7 @@ hard_gates:                                     # [user] 03b stops, saves eviden
     applies_to: logits only; never a tolerance for neuron statistics
 
 review_flags:                                   # [user] 03b completes and records; 04 refuses without sign-off
+  automatic_signoff: accept-if-qualified-and-no-flags  # [user 2026-11-12] unattended chain (neuron_audit_pod chain): if 03b exits 0 with status qualified and no review flag raised, a sign-off labelled as this rule (not as the user) is recorded and 04 starts; any failure, ceiling, partial status or raised flag stops before 04 for human review
   comparison: each calibration example singleton vs inside its padded calibration batch (FP32, mean z and mean |z|)
   calibration_batches: packed with the production token budget and packing rule frozen after the benchmark  # [proposed]
   early_layer:
@@ -225,10 +226,10 @@ operations:
   qualification_max_gpu_hours: 5                # [user 2026-11-12; was 4 on 2026-11-11] ceiling for 03b itself; enforced as cumulative wall time across restarts, at every stage and model loop
   production_time_enforcement: cumulative wall time across restarts (persisted), checked after every unit and arm package  # [proposed]
   stop_after_verified_partial_backup: true      # [user 2026-11-11] after a failure/overrun, stop the Pod only if every collected unit re-verifies on the volume by full hash and every packaged arm plus a partial final manifest published this session are verified on HF; otherwise leave it running
-  production_wall_time_cap_hours: null          # [user] set after the benchmark; 04 refuses until recorded
+  production_wall_time_cap_hours: 6             # [user 2026-11-12] fixed before 03b for the unattended chain (was: set after the benchmark); collection is projected well under 1 h, uploads plus verification downloads of ~55 GB dominate; the overrun rule below still applies
   overrun_rule_04: check projected total after 10% of units and every further 10%; stop and report if two consecutive projections exceed 2x the benchmark projection or exceed the cap  # [user]
   overrun_forecast_basis: cumulative collection time only (what 03b benchmarked); mirror/export time counts toward the hard cap, checked at unit and arm boundaries  # [proposed]
-  automatic_pod_stop_03b: disabled              # [user] so no RunPod CLI check
+  automatic_pod_stop_03b: when the chain stops before 04, the 03b run directory is copied to the volume and re-verified by full hash (qualification-stopped/<run_id>), uploaded to HF as a verified package when possible, and the Pod stops once the volume copy verified; otherwise it is left running  # [user 2026-11-12]
   automatic_pod_stop_04: allowed only after the required final backup is verified (every qualified arm's package verified by fresh download and the reference-only final manifest read back; neuron_audit_export.may_stop_pod_final); after a failure/overrun see stop_after_verified_partial_backup; otherwise the Pod is left running  # [user 2026-11-11]
   production:                                   # [proposed] unless tagged
     work_order: arm by arm in plan order (untuned first); one sealed unit per (arm, frozen batch)

@@ -54,8 +54,9 @@ def test_checked_in_plan_records_user_decisions():
 def test_approved_complete_plan_loads_with_hash(tmp_path):
     loaded = plan_mod.load(approved(tmp_path), '03b')
     assert len(loaded['_plan_sha256']) == 64
+    assert plan_mod.load(approved(tmp_path), '04')['operations']['production_wall_time_cap_hours'] == 6
     with pytest.raises(plan_mod.PlanError, match='production_wall_time_cap_hours'):
-        plan_mod.load(approved(tmp_path), '04')
+        plan_mod.load(approved(tmp_path, **{'operations.production_wall_time_cap_hours': None}), '04')
 
 
 def test_missing_section_or_null_required_field_refused(tmp_path):
