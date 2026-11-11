@@ -42,3 +42,7 @@
   2. `python -m pilot_eval.neuron_audit_qualify run --rehearsal --plan rehearsal_plan.yaml --config <colab.json>`, with `run_id` `rehearsal-…`.
   3. `python -m pilot_eval.neuron_audit_qualify signoff …`.
   4. `python -m pilot_eval.neuron_audit_production --rehearsal --plan rehearsal_plan.yaml --config <colab.json>`, with `max_batches_per_arm` and `rehearsal_cap_hours` in the config.
+
+### 2026-11-11 — Colab rehearsal r1 findings (Claude)
+
+- Rehearsal 04 (1 batch/arm) completed: every arm and the 03b package verified on HF, final manifest complete. Rehearsals can now choose covering frozen batches (`rehearsal_batch_choice: cover`, `558e77e`). Details: `../rehearsal-log.md`.

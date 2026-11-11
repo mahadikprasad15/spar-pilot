@@ -28,3 +28,7 @@
 - Plan additions (`selection` section, `low_spread_factor`, `a_gate_fraction`) are tagged `[proposed]`.
 - Tests: 12 fixture tests (planted lists recovered independently, both D/D directions, pooled stats, determinism and no held-out influence, bin-matched controls, seal/corruption, refusals, ties, bins, unresolved, low spread). All 126 audit tests pass.
 - 04 must put `sequences_sha256` into each unit's identity, so production selection can bind units to the frozen sequences.
+
+### 2026-11-11 — Colab rehearsal r1 findings (Claude)
+
+- 05 crashed on a rehearsal with no math rows (first frozen batch only). Now refuses clearly when a group has < 2 rows; rehearsals collect covering batches (`558e77e`). Details: `../rehearsal-log.md`.

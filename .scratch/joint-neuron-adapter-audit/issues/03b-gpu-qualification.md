@@ -40,3 +40,7 @@
 - Tests: 114 audit tests pass in `.venv` (15 runner + 9 preflight new): full CPU run, resume, stop/resume, mask gate, tampered adapter → partial, logit gate, FP64 fallback to CPU and to proxy floor, signoff, pure rules.
 - **Not verified:** anything on a real GPU, the TransformersBackend loader against the real model, the live HF subprocess, and real timings/VRAM. Example worker config: `qualification.config.example.json`.
 - Pod launch (after approval): restore the preparation snapshot (ticket 07) and adapters onto the volume; pre-download the pinned model to local cache online; then in tmux with `PYTHONUNBUFFERED=1 CUBLAS_WORKSPACE_CONFIG=:4096:8 HF_TOKEN=<secret>`: `python -m pilot_eval.neuron_audit_qualify run --plan frozen_plan_v1.yaml --config <config.json>`.
+
+### 2026-11-11 — Colab rehearsal r1 findings (Claude)
+
+- Real-model run found: missing pad token in the Qwen config (fixed: explicit tokenizer pad id 151643, `c5d4f1a`) and stale per-stage code commits on reuse (fixed: commit in production stage identity, `2d53bb3`). After the fixes all 7 arms qualified, logits 3.6e-4–5.8e-4 (gate 1e-3), no flags, FP64 floor on GPU. Details: `../rehearsal-log.md`.
