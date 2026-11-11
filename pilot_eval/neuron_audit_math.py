@@ -147,13 +147,11 @@ def matched_null(observed, y_bin_counts, universe_bins, *, draws, seed):
     rng = np.random.Generator(np.random.PCG64(seed))
     overlaps = np.zeros(draws, dtype=np.int64)
     members = {k: np.isin(pools[k], list(observed)) for k in pools}
-    for d in range(draws):
-        total = 0
-        for name, count in sorted(y_bin_counts.items()):
-            if count:
-                picked = rng.choice(len(pools[name]), size=count, replace=False)
-                total += int(members[name][picked].sum())
-        overlaps[d] = total
+    for name, count in sorted(y_bin_counts.items()):
+        if count:
+            # One uniform random order per draw; its first `count` entries are a without-replacement sample.
+            order = np.argsort(rng.random((draws, len(pools[name]))), axis=1)[:, :count]
+            overlaps += members[name][order].sum(axis=1)
     return overlaps
 
 

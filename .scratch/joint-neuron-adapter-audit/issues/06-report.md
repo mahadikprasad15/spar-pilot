@@ -12,3 +12,9 @@
 - [ ] Report per-arm/layer FP32-vs-FP64 calibration floor, its sample and coverage, selected-neuron errors where available, and the fraction of each applicable list below 5× the floor; zero floor or missing calibration is unresolved, not an all-clear.
 - [ ] Show equal-example and token-weighted summaries, sample counts, truncation, leakage uncertainty, group overlap, missing arms and unsupported measurements.
 - [ ] Describe source confounds, numerical resolution, gauge ambiguity, multiple exploratory comparisons, one-seed limits and absence of causal/behavioral conclusions; cross-arm signed reads require explicit reliable orientation or physical vector writes. Figures and tables trace to sealed inputs.
+
+## Comments
+
+### 2026-11-11 — predictions optional (user decision)
+
+- Freezing predictions before examining discovery results is **optional**, not a gate (user, 2026-11-11). Nothing in 05/06 requires a prediction record. If one is made, it must be saved before discovery results are inspected, and 06 compares against it.

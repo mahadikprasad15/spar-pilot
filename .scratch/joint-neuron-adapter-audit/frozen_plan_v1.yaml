@@ -143,6 +143,8 @@ statistics:
   zero_median_or_zero_denominator: unresolved for that layer/statistic  # [proposed]
   pooled_spread: "sqrt(((n1-1)*s1^2 + (n2-1)*s2^2)/(n1+n2-2)) over per-example values"  # [user]
   low_spread_flag: pooled SD < 1e-6 * layer median of mean |z|   # [user]
+  low_spread_factor: 1.0e-6
+  a_gate_fraction: 0.10                          # top 10% by base discovery-math mean |z| (ceil of 10% of eligible) [proposed: ceil]
   bootstrap:                                    # [user] count/seed/interval; [proposed] stratification
     resamples: 2000
     seed: 1234
@@ -162,6 +164,31 @@ statistics:
     general: [100, 100]
     near_miss: [35, 35]
   d_vs_d: fix the alphabetically first arm, randomize the other; report both directions for the primary family  # [user]
+
+selection:                                      # ticket 05; [proposed] unless tagged
+  input_group: response_content
+  discovery_only: true                          # refuse held-out or calibration rows
+  lists:
+    A:      "gate: top 10% of the layer by base discovery-math mean |z|; rank by signed (mean_math - mean_general) / pooled SD of per-example mean |z|, descending"   # [user/spec] gate+standardized difference; [proposed] signed, descending
+    A-nb:   same as A with the number-containing near-miss group as background
+    B:      "per trained arm: rank mean over discovery-math examples of per-example mean |a_j z_j|, descending"
+    D:      "per trained arm: d_ij = arm - base per-example mean |z_j| on discovery math; primary score |mean_i d_ij|; signed mean and mean-z change kept"
+    D-relative: "|mean_i d_ij| / mean_i base mean |z_j| for neurons meeting the activity floor; others excluded (secondary)"
+  eligible_universe: neurons of the layer whose statistic is finite for every example used
+  low_spread_neurons: excluded from A/A-nb ranking and reported
+  ties: neuron index ascending
+  underfilled_list: report the actual size; never pad
+  overlap_fraction: "|X intersect Y| / |Y|, Y the randomized list"
+  null_universe: all eligible neurons of the layer (including X), stratified by base activity bin
+  primary_family:
+    comparisons: ["A vs B(arm)", "A vs D(arm)", "B(arm) vs D(arm)", "D(arm1) vs D(arm2), both directions"]
+    pooled: equal-layer average of per-layer overlap fraction over defined layers; pooled null from draws aligned by draw index
+  matched_controls:
+    per_list: 5
+    seed_base: 20000                            # derive_seed(20000, list, arm, layer, k)
+    rule: same layer, same bin counts as the list, without replacement, excluding the list's own members
+    underfilled: unavailable for that list/layer
+  predictions: optional (user decision 2026-11-11)
 
 calibration_allocation:                         # [proposed] from sequences-v2 calibration split (25 math + 25 general)
   selection: deterministic by stable example ID order, seed 42
