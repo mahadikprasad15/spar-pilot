@@ -220,7 +220,8 @@ class Production:
                     qualification_sha256=_file_sha(self.qual_dir / 'qualification.json'),
                     batch_manifest_sha256=self.manifest['sha256'], sequences_sha256=self.seq_sha, label=self.label,
                     repo=self.repo, rehearsal=self.rehearsal, arms=self.arms,
-                    max_batches_per_arm=self.config.get('max_batches_per_arm'))
+                    max_batches_per_arm=self.config.get('max_batches_per_arm'),
+                    rehearsal_batch_choice=self.config.get('rehearsal_batch_choice'))
 
     def _load_state(self):
         state = None
@@ -267,6 +268,39 @@ class Production:
         if present:
             mirror_store(self.volume_dir / 'blocks', self.local_dir / 'blocks', keys=present, source_listing=False)
         return present
+
+    def _rehearsal_batches(self):
+        """Rehearsal subset of the frozen batches (indices and contents unchanged).
+
+        ``first`` (default): the first ``max_batches_per_arm`` batches. ``cover``: greedily the batches that give
+        every (group, split) of the production rows at least ``rehearsal_min_rows`` rows, cheapest first, within
+        ``max_batches_per_arm``; longest-first packing puts short GSM8K rows only in the last batches, so the
+        first batches alone leave 05/06 without math rows."""
+        batches = self.manifest['batches']
+        limit = self.config.get('max_batches_per_arm') or len(batches)
+        if self.config.get('rehearsal_batch_choice', 'first') == 'first':
+            return batches[:limit]
+        need = int(self.config.get('rehearsal_min_rows', 2))
+        cells = {(r['group'], r['split']) for b in batches for r in (self.sequences[i] for i in b['ids'])}
+        deficit = {c: need for c in cells}
+        chosen = []
+        while len(chosen) < limit and any(deficit.values()):
+            def gain(b):
+                counts = {}
+                for i in b['ids']:
+                    cell = (self.sequences[i]['group'], self.sequences[i]['split'])
+                    counts[cell] = counts.get(cell, 0) + 1
+                return sum(min(n, deficit[c]) for c, n in counts.items()), counts
+            options = [b for b in batches if b not in chosen]
+            best = max(options, key=lambda b: (gain(b)[0], -len(b['ids']) * b['padded_width'], -b['index']))
+            value, counts = gain(best)
+            if value == 0:
+                break
+            chosen.append(best)
+            for c, n in counts.items():
+                deficit[c] = max(0, deficit[c] - n)
+        self.rehearsal_coverage = {f'{g}/{s}': need - d for (g, s), d in sorted(deficit.items())}
+        return sorted(chosen, key=lambda b: b['index'])
 
     def _keys(self, arm, batches):
         return [f'{arm}-batch-{b["index"]:05d}' for b in batches]
@@ -432,6 +466,7 @@ class Production:
             state.setdefault('preflights', []).append(self.preflight())
             self._save_state(state)
         state['label'], state['arms'] = self.label, self.arms
+        self.rehearsal_coverage = None
         caps = self.plan['operations']
         cap = caps.get('production_wall_time_cap_hours')
         if cap is None and self.rehearsal:
@@ -440,11 +475,14 @@ class Production:
             raise ProductionRefused('production wall-time cap is not recorded')
         self.cap_seconds = float(cap) * 3600
         self.projected_seconds = float(self.summary['projection']['total_hours']) * 3600
-        batches = self.manifest['batches'][: self.config.get('max_batches_per_arm') or None]
         if self.config.get('max_batches_per_arm') and not self.rehearsal:
             raise ProductionRefused('max_batches_per_arm is for rehearsals only')
+        batches = self._rehearsal_batches() if self.rehearsal else self.manifest['batches']
         total_units = len(batches) * len(self.arms)
         self.expected_units = {arm: self._keys(arm, batches) for arm in self.arms}
+        if self.rehearsal_coverage is not None:
+            self._event(state, 'rehearsal-batches', batches=[b['index'] for b in batches],
+                        rows_per_cell_capped=self.rehearsal_coverage)
         state['wall_seconds'] = state.get('wall_seconds_saved', state.get('wall_seconds', 0.0))
         history = dict(seen=set(state.get('overrun_seen', [])), consecutive=0, records=state.get('overrun', []))
         final_state = 'complete'

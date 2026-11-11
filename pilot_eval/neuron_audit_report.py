@@ -143,6 +143,9 @@ def build(plan, *, selection_dir, store_roots, sequences, qualification, output_
     held = HeldOut(store_roots, sequences, sequences_sha256=sequences_sha256, prototype=prototype,
                    expected_context=summary.get('unit_context'))
     ids = {g: held.ids(g) for g in ['math', 'general', 'near_miss']}
+    too_few = {g: len(v) for g, v in ids.items() if len(v) < 2}
+    if too_few:
+        raise SelectionRefused(f'too few held-out rows collected for {too_few} (need at least 2 per group)')
     boot = plan['statistics']['bootstrap']
     resamples, seed = int(boot['resamples']), int(boot['seed'])
     lists, controls = sel['lists']['primary'], sel['controls']

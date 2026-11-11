@@ -397,3 +397,23 @@ def test_pod_rehearsal_flow_interrupt_wipe_local_resume_and_clean_restore(world)
         prod_plan, prod_config = setup(world)
         prod.Production(prod_plan, dict(prod_config, run_id='p9', rehearsal_interrupt_after_units=1),
                         world['backend'], client=FakeHub())
+
+
+def test_rehearsal_cover_choice_reaches_every_group_and_split(world):
+    approved = world['tmp'] / 'approved.yaml'
+    approved.write_text(yaml.safe_dump(world['plan_value']))
+    plan = plan_mod.load(plan_mod.make_rehearsal_plan(approved, world['tmp'] / 'r.yaml'), '03b', rehearsal=True)
+    q.Qualification(plan, dict(world['config'], run_id='rehearsal-q'), world['backend'],
+                    preflight=world['preflight']).run()
+    q.signoff(Path(world['config']['output_root']) / q.RUN_SUBDIR / 'rehearsal-q', reviewer='t', decision='accept')
+    config = dict(world['config'], run_id='rehearsal-c', local_root=str(world['tmp'] / 'l'),
+                  volume_root=str(world['tmp'] / 'v'), qualification_root=world['config']['output_root'],
+                  qualification_run_id='rehearsal-q', label='c', repo='o/r', max_batches_per_arm=3,
+                  rehearsal_cap_hours=1, rehearsal_batch_choice='cover', rehearsal_min_rows=1)
+    production = prod.Production(plan, config, world['backend'], client=FakeHub(), now=FROZEN)
+    chosen = production._rehearsal_batches()
+    rows = [production.sequences[i] for b in chosen for i in b['ids']]
+    cells = {(r['group'], r['split']) for b in production.manifest['batches'] for r in
+             (production.sequences[i] for i in b['ids'])}
+    assert cells <= {(r['group'], r['split']) for r in rows} and len(chosen) <= 3
+    assert all(b in production.manifest['batches'] for b in chosen)  # frozen batches, unchanged

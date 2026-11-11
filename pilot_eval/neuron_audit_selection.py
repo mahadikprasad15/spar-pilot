@@ -252,6 +252,8 @@ class Discovery:
                                    'are never read by selection)')
         if arm not in self.where:
             raise SelectionRefused(f'arm {arm} has no sealed units')
+        if not ids:
+            raise SelectionRefused(f'no {self.split} rows requested for arm {arm}')
         missing = [i for i in ids if i not in self.where[arm]]
         if missing:
             raise SelectionRefused(f'arm {arm} lacks sealed rows for {len(missing)} discovery examples')
@@ -330,6 +332,10 @@ def select(plan, *, store_roots, sequences, output_root, run_id, layers, arms, s
     stats = plan['statistics']
     groups = ['math', 'general', 'near_miss']
     ids = {g: data.ids(g) for g in groups}
+    too_few = {g: len(v) for g, v in ids.items() if len(v) < 2}
+    if too_few:
+        raise SelectionRefused(f'too few discovery rows collected for {too_few} (need at least 2 per group); '
+                               'a rehearsal must collect batches that cover every group (rehearsal_batch_choice=cover)')
     edges = stats['activity_bins']['percentile_edges']
     null_cfg = stats['overlap_null']
     draws, null_base = int(null_cfg['draws']), int(null_cfg['seeds'][0])

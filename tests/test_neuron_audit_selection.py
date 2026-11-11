@@ -231,3 +231,11 @@ def test_partial_study_selects_only_qualified_arms_and_is_labelled(tmp_path):
                          layers=LAYERS, arms=['gold-sft'], prototype=True,
                          partial_label='partial study; missing arms: online-grpo')
     assert summary['arms'] == ['gold-sft'] and summary['partial_label'].startswith('partial study')
+
+
+def test_selection_refuses_clearly_when_a_group_has_no_rows(tmp_path):
+    rows = [r for r in sequences() if r['group'] != 'math']
+    stores = write_stores(tmp_path / 'blocks', rows)
+    with pytest.raises(sel.SelectionRefused, match='too few discovery rows'):
+        sel.select(plan(), store_roots=[stores], sequences=sequences(), output_root=tmp_path / 'out', run_id='x',
+                   layers=LAYERS, arms=ARMS, prototype=True, available_only=True)
