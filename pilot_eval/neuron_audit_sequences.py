@@ -89,6 +89,9 @@ class ChatTokenizer:
         self.tokenizer = tokenizers.Tokenizer.from_file(str(self.directory / 'tokenizer.json'))
         self.eos_token = config['eos_token']
         self.eos_token_id = self.tokenizer.token_to_id(self.eos_token)
+        # The pinned config.json has no pad_token_id; the tokenizer's pad token is what training padded with.
+        self.pad_token = config.get('pad_token')
+        self.pad_token_id = self.tokenizer.token_to_id(self.pad_token) if isinstance(self.pad_token, str) else None
 
     def render(self, messages, add_generation_prompt):
         return self.template.render(messages=messages, add_generation_prompt=add_generation_prompt, tools=None)

@@ -226,3 +226,14 @@ def test_float64_reference_collector_keeps_float64_means(adapted):
     assert out['arrays'][('response_content', 1, 'mean_abs_z')].dtype == np.float64
     with pytest.raises(nc.CollectorFailure, match='float32 parameters'):
         nc.NeuronCollector(model64, tolerances=TOL)
+
+
+def test_explicit_pad_token_is_used_when_the_model_config_has_none():
+    model = tiny()
+    model.config.pad_token_id = None  # like the pinned Qwen2.5 config.json
+    with pytest.raises(nc.CollectorFailure, match='explicit padding token required'):
+        nc.NeuronCollector(model, tolerances=TOL).collect(rows())
+    collector = nc.NeuronCollector(model, tolerances=TOL, pad_token_id=0)
+    out = collector.collect(rows())
+    assert collector.runtime()['pad_token_id'] == 0 and collector.runtime()['pad_source'] == 'explicit (tokenizer)'
+    assert out['arrays']

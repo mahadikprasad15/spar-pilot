@@ -46,6 +46,7 @@ runtime:                                        # [user] copy of the offline-GRP
   deterministic: true
   cublas_workspace_config: ":4096:8"
   attention: eager                              # production, qualification and FP64 reference
+  pad_token: "<|endoftext|> (id 151643) from the pinned tokenizer_config.json; the pinned config.json has no pad_token_id. Passed explicitly to the collector, recorded by 03b and re-checked by 04"  # [found in the Colab rehearsal 2026-11-11]
   package_change_policy: reviewed change recorded in this plan, otherwise identical
   code_commit: null                             # REQUIRED: pushed commit the worker checks out; preflight refuses another HEAD or tracked modifications
 

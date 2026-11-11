@@ -425,7 +425,13 @@ class Qualification:
         expected = self.inventory['base'].get('expected_base_parameter_sha256') if dtype == 'float32' else None
         if not self.config.get('check_base_hash', True):
             expected = None
-        return nc.NeuronCollector(model, tolerances=self.tolerances, expected_base_hash=expected, dtype=dtype)
+        return nc.NeuronCollector(model, tolerances=self.tolerances, expected_base_hash=expected, dtype=dtype,
+                                  pad_token_id=self._pad_token_id())
+
+    def _pad_token_id(self):
+        if not hasattr(self, '_pad'):
+            self._pad = getattr(self.backend.tokenizer(), 'pad_token_id', None)
+        return self._pad
 
     # stages
     def stage_preflight(self):
@@ -918,7 +924,7 @@ class Qualification:
             fp64_floor_methods={a: v['method'] for a, v in results['fp64_floor']['floors'].items()},
             unresolved_floor_layers={a: v['unresolved_layers'] for a, v in results['fp64_floor']['floors'].items()},
             batch_manifest_sha256=results['batch_freeze']['manifest_sha256'],
-            runtime_fingerprint=self.fingerprint,
+            runtime_fingerprint=self.fingerprint, pad_token_id=self._pad_token_id(),
             inputs=dict(sequences_sha256=_file_sha(self.root / self.plan['inputs']['sequences_run'] / 'sequences.jsonl'),
                         adapters={a: _file_sha(Path(self.config['adapter_dirs'][a]) / 'adapter_model.safetensors')
                                   for a in arms['qualified'] if a != 'untuned'},

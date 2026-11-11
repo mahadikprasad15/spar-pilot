@@ -103,7 +103,10 @@ def load_saved_factors(adapter_dir, layers, scale, projection='down_proj'):
 
 
 class NeuronCollector:
-    def __init__(self, model, *, tolerances, expected_base_hash=None, validation_examples=2, dtype='float32'):
+    def __init__(self, model, *, tolerances, expected_base_hash=None, validation_examples=2, dtype='float32',
+                 pad_token_id=None):
+        """``pad_token_id``: explicit right-padding id (from the pinned tokenizer); falls back to the model config,
+        and refuses to guess when neither has one."""
         import torch
         self.torch = torch
         self.model = model
@@ -112,6 +115,8 @@ class NeuronCollector:
             if not isinstance(self.tolerances.get(key), (int, float)):
                 raise CollectorFailure(f'tolerance {key} must be supplied from the plan')
         self.validation_examples = validation_examples
+        self.pad_token_id = pad_token_id if pad_token_id is not None else model.config.pad_token_id
+        self.pad_source = 'explicit (tokenizer)' if pad_token_id is not None else 'model config' 
         if dtype not in ('float32', 'float64', 'bfloat16'):
             raise CollectorFailure('collector dtype must be float32 (production), float64 (reference) or '
                                    'bfloat16 (labelled 03b diagnostic only)')
@@ -145,7 +150,8 @@ class NeuronCollector:
                     fp32_precision=precision_backends(), matmul_precision=_legacy_matmul_precision(),
                     attention=getattr(self.model.config, '_attn_implementation', None),
                     training=self.model.training, layers=len(self.layers), intermediate_size=self.width,
-                    num_attention_heads=self.model.config.num_attention_heads)
+                    num_attention_heads=self.model.config.num_attention_heads, pad_token_id=self.pad_token_id,
+                    pad_source=self.pad_source)
 
     def close(self):
         torch = self.torch
@@ -165,7 +171,7 @@ class NeuronCollector:
             if padded_width < width:
                 raise CollectorFailure('padded width below the longest sequence')
             width = padded_width
-        pad = self.model.config.pad_token_id
+        pad = self.pad_token_id
         if pad is None:
             raise CollectorFailure('explicit padding token required')
         tokens, attention = [], []

@@ -318,6 +318,7 @@ def test_corrupt_sealed_output_detected(world, tmp_path):
                     reason='local pinned tokenizer/Gold items not present')
 def test_real_tokenizer_reproduces_transformers_rendering_on_gold_items():
     tok = seq.ChatTokenizer(REAL_TOKENIZER)
+    assert (tok.pad_token, tok.pad_token_id, tok.eos_token_id) == ('<|endoftext|>', 151643, 151645)
     items = json.loads(GOLD_ITEMS.read_text())[:32]
     for item in items:
         messages = seq.math_messages(item['question'], item['gold'])

@@ -194,6 +194,10 @@ class Production:
         self.qual_dir = Path(config['qualification_root']) / QUAL_SUBDIR / config['qualification_run_id']
         self.summary, self.manifest = check_qualification(plan, self.qual_dir, rehearsal=self.rehearsal)
         self.seq_sha = check_inputs(plan, config, self.summary, rehearsal=self.rehearsal, backend=backend)
+        self.pad_token_id = getattr(backend.tokenizer(), 'pad_token_id', None)
+        if 'pad_token_id' in self.summary and self.pad_token_id != self.summary['pad_token_id']:
+            raise ProductionRefused(f"pad token {self.pad_token_id} differs from the one 03b qualified "
+                                    f"({self.summary['pad_token_id']})")
         self.sequences = {r['id']: r for r in read_sequences(Path(config['artifact_root']) / plan['inputs']['sequences_run'])}
         for batch in self.manifest['batches']:
             for i in batch['ids']:
@@ -281,7 +285,8 @@ class Production:
         model = self.backend.load(arm, 'float32')
         collector = nc.NeuronCollector(model, tolerances=self._tolerances(),
                                        expected_base_hash=self.inventory['base'].get('expected_base_parameter_sha256')
-                                       if self.config.get('check_base_hash', True) else None)
+                                       if self.config.get('check_base_hash', True) else None,
+                                       pad_token_id=self.pad_token_id)
         layers = list(range(len(collector.layers)))
         factors = None if arm == 'untuned' else nc.load_saved_factors(self.config['adapter_dirs'][arm], layers, self._scale(arm))
         head_factors = None if arm == 'untuned' or not heads else nc.load_saved_factors(
