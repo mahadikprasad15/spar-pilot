@@ -279,3 +279,29 @@ def test_mirror_copies_seal_last_verifies_without_listing_and_repairs_torn_copy(
     with pytest.raises(CorruptUnit, match='unreadable'):
         BlockStore(tmp_path / 'volume').verify_unit('gold-sft-rows-2', force=True, use_listing=False)
     assert mirror_store(tmp_path / 'local', tmp_path / 'volume')['gold-sft-rows-2'] == 'mirrored'
+
+
+def test_pinned_inputs_are_hash_checked_and_archived(root, tmp_path):
+    adapter = root / 'adapters/gold/adapter_model.safetensors'
+    adapter.parent.mkdir(parents=True)
+    adapter.write_bytes(b'weights')
+    digest = hashlib.sha256(b'weights').hexdigest()
+    s = ex.snapshot(root, INCLUDE, 'prep', pinned_inputs=[dict(path='adapters/gold/adapter_model.safetensors', sha256=digest)])
+    assert s['files']['adapters/gold/adapter_model.safetensors']['kind'] == 'pinned-input'
+    with pytest.raises(ValueError, match='differs from its recorded hash'):
+        ex.snapshot(root, INCLUDE, 'prep', pinned_inputs=[dict(path='adapters/gold/adapter_model.safetensors', sha256='0' * 64)])
+
+
+def test_stage_seals_and_optional_unsealed_evidence(root):
+    stage = root / 'runs/joint-neuron-adapter-audit/qualification/q/stages/masks'
+    stage.mkdir(parents=True)
+    (stage / 'result.json').write_text('{}')
+    (stage / 'complete.json').write_text(json.dumps(dict(identity={}, result_sha256=hashlib.sha256(b'{}').hexdigest())))
+    (stage.parent.parent / 'logs').mkdir()
+    (stage.parent.parent / 'logs/progress.jsonl').write_text('{}\n')
+    s = ex.snapshot(root, ['runs/joint-neuron-adapter-audit/qualification'], 'q')
+    assert s['files']['runs/joint-neuron-adapter-audit/qualification/q/stages/masks/result.json']['kind'] == 'sealed-run'
+    assert 'runs/joint-neuron-adapter-audit/qualification/q/logs/progress.jsonl' not in s['files']
+    s = ex.snapshot(root, ['runs/joint-neuron-adapter-audit/qualification'], 'q', include_unsealed_evidence=True)
+    assert s['files']['runs/joint-neuron-adapter-audit/qualification/q/logs/progress.jsonl']['kind'] == 'unsealed-evidence'
+    assert s['completeness'] == 'partial'

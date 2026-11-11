@@ -100,6 +100,8 @@ def _run_seal_files(directory):
     seal = json.loads((directory / 'complete.json').read_text())
     if 'files' in seal:
         listed = dict(seal['files'])
+    elif 'result_sha256' in seal:  # 03b stage seal
+        listed = {'result.json': seal['result_sha256']}
     else:  # inventory seal: inventory.json, sources.json and key lists
         listed = {'inventory.json': seal['inventory_sha256'], 'sources.json': seal['sources_sha256'],
                   **seal.get('key_lists', {})}
@@ -110,8 +112,13 @@ def _run_seal_files(directory):
     return sorted(listed) + ['complete.json']
 
 
-def snapshot(artifact_root, include, label, *, expected_units=None, omitted=None, stage=None):
-    """Build and save a stable snapshot manifest; returns the manifest dict."""
+def snapshot(artifact_root, include, label, *, expected_units=None, omitted=None, stage=None, pinned_inputs=None,
+             include_unsealed_evidence=False):
+    """Build and save a stable snapshot manifest; returns the manifest dict.
+
+    ``pinned_inputs``: explicit input files (e.g. adapters, tokenizer) as {path, sha256}; each must match its
+    recorded hash (from the sealed inventory) or the snapshot is refused.
+    """
     root = Path(artifact_root).resolve()
     files, unsealed, corrupt, evidence = {}, [], [], []
 
@@ -175,6 +182,13 @@ def snapshot(artifact_root, include, label, *, expected_units=None, omitted=None
                 add(path, 'failure-evidence')
             else:
                 unsealed.append(dict(path=_relative(root, path), state='unsealed-file'))
+                if include_unsealed_evidence:  # diagnosis only: archived but labelled; snapshot stays partial
+                    add(path, 'unsealed-evidence')
+    for item in pinned_inputs or []:
+        path = (root / item['path']).resolve()
+        if not path.is_file() or file_hash(path) != item['sha256']:
+            raise ValueError(f"pinned input {item['path']} is missing or differs from its recorded hash")
+        add(path, 'pinned-input')
     missing_units = sorted(set(expected_units or []) - sealed_units)
     complete = not unsealed and not corrupt and not missing_units
     body = dict(schema=SNAPSHOT_SCHEMA, label=label, stage=stage, created_unix=time.time(),
