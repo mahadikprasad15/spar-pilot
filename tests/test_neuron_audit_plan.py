@@ -31,9 +31,10 @@ def approved(tmp_path, **changes):
 def test_checked_in_plan_is_unapproved_and_lists_every_gap():
     problems = plan_mod.problems(plan_mod.read(REAL_PLAN), '03b')
     assert 'status is unapproved, not approved' in problems
-    for field in ['approval.approved_by', 'runtime.code_commit', 'preflight.expected_sys_executable']:
+    for field in ['approval.approved_by', 'runtime.code_commit']:
         assert f'{field} is null' in problems
-    assert 'operations.qualification_max_gpu_hours is null' not in problems  # user set 4 GPU hours
+    assert 'operations.qualification_max_gpu_hours is null' not in problems  # user set 5 GPU hours (2026-11-12)
+    assert 'preflight.expected_sys_executable is null' not in problems  # recorded from the Pod
     with pytest.raises(plan_mod.PlanError, match='unapproved'):
         plan_mod.load(REAL_PLAN, '03b')
 

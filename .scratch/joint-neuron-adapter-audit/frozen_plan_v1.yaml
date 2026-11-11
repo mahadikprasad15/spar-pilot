@@ -38,7 +38,7 @@ partial_study:                                  # [user]
 
 runtime:                                        # [user] copy of the offline-GRPO Stage 0 record
   source_record: imports/offline-grpo-v1/notebook/offline-grpo-v1/stage0-runtime.json
-  expected_device: NVIDIA A100-SXM4-80GB        # verify and record the actual device on the Pod
+  expected_device: NVIDIA A100-SXM4-80GB        # recorded on the Pod 2026-11-12 (driver 595.91.07; torch 2.9.0+cu128, CUDA 12.8, cuDNN 91002, Python 3.12.3)
   python: "3.12"
   packages: {torch: 2.9.0, transformers: 4.57.6, peft: 0.18.0}
   allowed_local_builds: {torch: [cu128]}         # [proposed 2026-11-11] public version must equal the pin; only these local build suffixes pass (earlier A100 reported 2.9.0+cu128); the full string is recorded
@@ -222,7 +222,7 @@ benchmark:                                      # [user] unless tagged
   outputs: throughput, batch and adapter-load timing, peak VRAM, projected bytes and wall-time projection
 
 operations:
-  qualification_max_gpu_hours: 4                # [user 2026-11-11] ceiling for 03b itself; enforced as cumulative wall time across restarts, at every stage and model loop
+  qualification_max_gpu_hours: 5                # [user 2026-11-12; was 4 on 2026-11-11] ceiling for 03b itself; enforced as cumulative wall time across restarts, at every stage and model loop
   production_time_enforcement: cumulative wall time across restarts (persisted), checked after every unit and arm package  # [proposed]
   stop_after_verified_partial_backup: true      # [user 2026-11-11] after a failure/overrun, stop the Pod only if every collected unit re-verifies on the volume by full hash and every packaged arm plus a partial final manifest published this session are verified on HF; otherwise leave it running
   production_wall_time_cap_hours: null          # [user] set after the benchmark; 04 refuses until recorded
@@ -284,8 +284,8 @@ storage:
 preflight:                                      # [user]
   in_actual_worker_process: true
   assert: [sys.executable, sys.prefix, pinned package versions]
-  expected_sys_executable: null                 # REQUIRED: recorded from the Pod's venv
-  expected_sys_prefix: null                     # REQUIRED
+  expected_sys_executable: /root/venv/bin/python  # recorded from the Pod's venv 2026-11-12 (runbook step 1)
+  expected_sys_prefix: /root/venv               # recorded from the Pod 2026-11-12
   hf_offline: set HF_HUB_OFFLINE=1 before importing Hub libraries; print resolved HF_HOME / hub cache; real offline model+tokenizer load
   hf_transfer: assert importable if HF_HUB_ENABLE_HF_TRANSFER=1, else force 0
   hf_export_check: separate online client; HF_TOKEN as a Pod secret; repo private; small upload, fresh pinned-revision download into an empty dir, compare hashes; never print the token
@@ -325,8 +325,6 @@ required_before:
 
 open_items_before_approval:
   - record the background review (sequences-v2) with the review command
-  - confirm the Pod's container disk size (local working set rule) and the Global Volume storage rate
+  - confirm the Pod's container disk size (local working set rule): 120 GB required (50 GB default too small, found 2026-11-12)
   - commit and push the audit code; record the commit
-  - approve and run a live HF upload/restore test of the preparation snapshot
-  - choose the 03b GPU-hour ceiling
   - final check of every [proposed] value in this file

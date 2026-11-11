@@ -386,13 +386,13 @@ def test_phase_1b_out_of_memory_keeps_the_1a_measurement(world, monkeypatch):
     assert bench['selected_budget'] in (200, 400) and any('oom_1B_all_layers' in p for p in bench['probes'])
 
 
-def test_four_hour_ceiling_survives_an_interruption(world, monkeypatch):
+def test_five_hour_ceiling_survives_an_interruption(world, monkeypatch):
     value = dict(world['plan_value'])
-    value['operations'] = dict(value['operations'], qualification_max_gpu_hours=4)  # the frozen plan's value
-    path = world['tmp'] / 'plan-4h.yaml'
+    value['operations'] = dict(value['operations'], qualification_max_gpu_hours=5)  # the frozen plan's value
+    path = world['tmp'] / 'plan-5h.yaml'
     path.write_text(yaml.safe_dump(value))
     plan = plan_mod.load(path, '03b')
-    assert plan['operations']['qualification_max_gpu_hours'] == 4
+    assert plan['operations']['qualification_max_gpu_hours'] == 5
     clock = dict(t=0.0, step=1.0)
 
     def now():
@@ -405,7 +405,7 @@ def test_four_hour_ceiling_survives_an_interruption(world, monkeypatch):
     original = q.Qualification.stage_benchmark
 
     def killed(self, *a, **k):
-        clock['t'] += 3 * 3600  # three hours pass inside the stage, then the worker dies
+        clock['t'] += 4 * 3600  # four hours pass inside the stage, then the worker dies
         raise RuntimeError('worker killed (simulated)')
 
     monkeypatch.setattr(q.Qualification, 'stage_benchmark', killed)
@@ -414,12 +414,12 @@ def test_four_hour_ceiling_survives_an_interruption(world, monkeypatch):
     monkeypatch.setattr(q.Qualification, 'stage_benchmark', original)
     run_dir = Path(world['config']['output_root']) / q.RUN_SUBDIR / 'q1'
     before = json.loads((run_dir / 'meta/clock.json').read_text())['seconds']
-    assert before < 4 * 3600  # with the fake clock only checkpoints record time; on the Pod a 60 s heartbeat does too
+    assert before < 5 * 3600  # with the fake clock only checkpoints record time; on the Pod a 60 s heartbeat does too
     clock.update(t=0.0, step=1800.0)  # new process: its own clock restarts at zero
     with pytest.raises(q.QualificationFailure, match='time ceiling') as info:
         make().run()
-    assert info.value.evidence['cap_seconds'] == 4 * 3600
-    assert info.value.evidence['elapsed_seconds'] > 4 * 3600
+    assert info.value.evidence['cap_seconds'] == 5 * 3600
+    assert info.value.evidence['elapsed_seconds'] > 5 * 3600
 
 
 def test_clock_heartbeat_records_time_between_checkpoints(world, monkeypatch):

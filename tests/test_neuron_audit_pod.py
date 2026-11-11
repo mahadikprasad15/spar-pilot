@@ -31,7 +31,7 @@ def test_small_rehearsal_plan_keeps_fixed_rules(tmp_path):
     assert value['benchmark']['token_budgets_padded'] == [4096, 8192]
     assert plan_mod.problems(value, '03b', rehearsal=True) == []
     real = yaml.safe_load(pod.PLAN.read_text())
-    assert real['operations']['qualification_max_gpu_hours'] == 4
+    assert real['operations']['qualification_max_gpu_hours'] == 5
     assert real['operations']['stop_after_verified_partial_backup'] is True
 
 
