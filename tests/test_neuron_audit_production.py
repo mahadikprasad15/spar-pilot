@@ -76,7 +76,8 @@ def test_full_production_packages_each_arm_and_publishes_reference_manifest(worl
     assert sorted(result['final_manifest']['arms']) == ['gold-sft', 'offline-grpo', 'untuned']
     assert calls == [['runpodctl', 'stop', 'pod', 'X']]
     paths = [n for rev in hub.store.values() for n in rev]
-    assert sum(n.endswith('package.tar') for n in paths) == 3
+    assert sum(n.endswith('package.tar') and '/arms/' in n for n in paths) == 3
+    assert sum('/qualification/' in n and n.endswith('package.tar') for n in paths) == 1  # 03b outputs too
     assert all(n.startswith('neuron-audit/prod/') for n in paths)
     final_name = result['final_manifest']['path']
     final_bytes = next(rev[final_name] for rev in hub.store.values() if final_name in rev)
@@ -293,21 +294,106 @@ def test_wall_cap_is_cumulative_across_restarts_and_checked_per_unit(world, monk
     assert any(e['kind'] == 'overrun-stop' and 'cumulative' in e['reason'] for e in events)
 
 
-def test_optional_stop_after_verified_partial_backup(world):
-    plan, config = setup(world, cap=1e-9)
+def test_stop_after_verified_partial_backup_on_overrun(world):
+    plan, config = setup(world, cap=1e-9)  # the real plan sets stop_after_verified_partial_backup: true
     calls = []
     runner = lambda cmd, **k: calls.append(cmd) or SimpleNamespace(returncode=0)  # noqa: E731
-    config['stop_command'] = ['runpodctl', 'stop', 'pod', 'X']
     ticks = iter(range(10 ** 6))
     clock = lambda: float(next(ticks))  # noqa: E731
+    config['stop_command'] = ['runpodctl', 'stop', 'pod', 'X']
+    off = dict(config, run_id='p0', stop_after_verified_partial_backup=False)  # a config may only turn it off
+    assert prod.Production(plan, off, world['backend'], client=FakeHub(), now=clock, stop_runner=runner).run()[
+        'state'] == 'stopped-overrun' and calls == []
     result = prod.Production(plan, config, world['backend'], client=FakeHub(), now=clock, stop_runner=runner).run()
-    assert result['state'] == 'stopped-overrun' and calls == []  # default: never stop without the final backup
-    config2 = dict(config, run_id='p2', stop_after_verified_partial_backup=True)
-    prod.Production(plan, config2, world['backend'], client=FakeHub(), now=clock, stop_runner=runner).run()
-    assert calls == [['runpodctl', 'stop', 'pod', 'X']]
+    assert result['state'] == 'stopped-overrun' and calls == [['runpodctl', 'stop', 'pod', 'X']]
+
+
+def test_partial_backup_stop_refuses_unverified_volume_or_stale_manifest(world, monkeypatch):
+    plan, config = setup(world)
+    config['stop_command'] = ['runpodctl', 'stop', 'pod', 'X']
+    calls = []
+    runner = lambda cmd, **k: calls.append(cmd) or SimpleNamespace(returncode=0)  # noqa: E731
+    original = nc.NeuronCollector.collect
+    counter = dict(n=0)
+
+    def flaky(self, rows, **kw):
+        counter['n'] += 1
+        if counter['n'] == 2:
+            raise RuntimeError('worker killed (simulated)')
+        return original(self, rows, **kw)
+
+    monkeypatch.setattr(nc.NeuronCollector, 'collect', flaky)
+    # corrupt the first mirrored unit on the volume right after it is mirrored
+    from pilot_eval import neuron_audit_blocks as blocks
+    mirror = prod.mirror_store
+
+    def corrupting_mirror(local, volume, **kw):
+        out = mirror(local, volume, **kw)
+        for key in out:
+            data = (Path(volume) / 'units' / key / 'blocks.f32')
+            raw = bytearray(data.read_bytes())
+            raw[0] ^= 1
+            data.write_bytes(bytes(raw))
+        return out
+
+    monkeypatch.setattr(prod, 'mirror_store', corrupting_mirror)
+    production = prod.Production(plan, config, world['backend'], client=FakeHub(), now=FROZEN, stop_runner=runner)
+    with pytest.raises(RuntimeError, match='killed'):
+        production.run()
+    assert calls == []
+    state = json.loads((Path(config['volume_root']) / prod.RUN_SUBDIR / 'p1/meta/progress.json').read_text())
+    assert any('not verified on the volume' in p for p in state['partial_backup_check']['problems'])
+    # a manifest left over from an earlier session never counts as this session's backup
+    fresh = prod.Production(plan, config, world['backend'], client=FakeHub(), now=FROZEN, stop_runner=runner)
+    assert any('this session' in p for p in fresh.partial_backup_problems(state))
 
 
 def test_worker_uses_an_online_child_process_for_hub_calls(world):
     plan, config = setup(world)
     production = prod.Production(plan, config, world['backend'])
     assert isinstance(production.client, prod.ex.OnlineHubProcess)
+
+
+def test_pod_rehearsal_flow_interrupt_wipe_local_resume_and_clean_restore(world):
+    """The CPU twin of `neuron_audit_pod rehearsal`: small rehearsal plan, interruption, empty local disk,
+    resume from the volume, then a clean-root restore of the final manifest."""
+    import shutil
+    from pilot_eval import neuron_audit_export as ex
+    approved = world['tmp'] / 'approved.yaml'
+    approved.write_text(yaml.safe_dump(world['plan_value']))
+    small = plan_mod.make_rehearsal_plan(approved, world['tmp'] / 'small.yaml', small=True)
+    plan = plan_mod.load(small, '03b', rehearsal=True)
+    assert plan['rehearsal']['small'] and plan['operations']['qualification_max_gpu_hours'] == 1
+    plan['calibration_allocation'].update(world['plan_value']['calibration_allocation'])  # tiny fixture sizes
+    plan['benchmark'].update(world['plan_value']['benchmark'])
+    q.Qualification(plan, dict(world['config'], run_id='rehearsal-q'), world['backend'],
+                    preflight=world['preflight']).run()
+    q.signoff(Path(world['config']['output_root']) / q.RUN_SUBDIR / 'rehearsal-q', reviewer='t', decision='accept')
+    hub = FakeHub()
+    config = dict(world['config'], run_id='rehearsal-p', local_root=str(world['tmp'] / 'local'),
+                  volume_root=str(world['tmp'] / 'vol'), qualification_root=world['config']['output_root'],
+                  qualification_run_id='rehearsal-q', label='pod', repo='owner/private-audit', max_batches_per_arm=2,
+                  rehearsal_cap_hours=1, rehearsal_interrupt_after_units=3)
+    with pytest.raises(prod.RehearsalInterruption):
+        prod.Production(plan, config, world['backend'], client=hub, now=FROZEN).run()
+    shutil.rmtree(world['tmp'] / 'local')
+    config.pop('rehearsal_interrupt_after_units')
+    result = prod.Production(plan, config, world['backend'], client=hub, now=FROZEN).run()
+    assert result['state'] == 'complete' and result['final_manifest']['completeness'] == 'complete'
+    progress = Path(config['volume_root']) / prod.RUN_SUBDIR / 'rehearsal-p/meta/progress.json'
+    events = json.loads(progress.read_text())['events']
+    assert any(e['kind'] == 'units-restored-from-volume' for e in events)
+    proof = ex.restore_final_cli(str(progress), None, world['tmp'] / 'clean', temp_dir=world['tmp'],
+                                 require_complete=True, client=hub)
+    batches = len(json.loads((Path(world['config']['output_root']) / q.RUN_SUBDIR /
+                              'rehearsal-q/stages/batch_freeze/batch_manifest.json').read_text())['batches'])
+    per_arm = min(2, batches)
+    assert proof['verified_units'] == {'gold-sft': per_arm, 'offline-grpo': per_arm, 'untuned': per_arm}
+    assert all(Path(r, 'units').is_dir() for r in proof['store_roots'])
+    restored_qual = Path(proof['restored_extras']['qualification_package'])
+    assert (restored_qual / 'qualification.json').is_file() and (restored_qual / 'review/signoff.json').is_file()
+    assert (restored_qual / 'stages/fp64_floor/result.json').is_file()
+    with pytest.raises(prod.ProductionRefused, match='rehearsals only'):
+        prod_plan, prod_config = setup(world)
+        prod.Production(prod_plan, dict(prod_config, run_id='p9', rehearsal_interrupt_after_units=1),
+                        world['backend'], client=FakeHub())

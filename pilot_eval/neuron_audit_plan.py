@@ -111,13 +111,30 @@ def core_sha256(plan):
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def make_rehearsal_plan(source, destination, *, note='Colab rehearsal: bug-finding only, never valid for production'):
-    """Copy the run plan as a rehearsal: status 'rehearsal', approval cleared, device unpinned."""
+SMALL_REHEARSAL = dict(fp64_reference=dict(math=2, general=2), adr0008_calibrate=4, adr0008_validate=4,
+                       benchmark_examples=[4, 12], token_budgets_padded=[4096, 8192], qualification_max_gpu_hours=1)
+
+
+def make_rehearsal_plan(source, destination, *, note='Colab rehearsal: bug-finding only, never valid for production',
+                        small=False):
+    """Copy the run plan as a rehearsal: status 'rehearsal', approval cleared, device unpinned.
+
+    ``small``: bounded bug-finding sizes (``SMALL_REHEARSAL``): fewer calibration/FP64 rows, two benchmark
+    budgets and a 1 h 03b ceiling. Every code path still runs; no number from it is evidence for production."""
     plan = read(source)
     plan['status'] = 'rehearsal'
     plan['approval'] = dict(approved_by=None, approved_on=None, notes=note)
     plan['runtime']['expected_device'] = None
     plan.setdefault('rehearsal', {})['source_plan_sha256'] = hashlib.sha256(Path(source).read_bytes()).hexdigest()
+    if small:
+        alloc = plan['calibration_allocation']
+        alloc.update(fp64_reference=dict(SMALL_REHEARSAL['fp64_reference']),
+                     adr0008_calibrate=SMALL_REHEARSAL['adr0008_calibrate'],
+                     adr0008_validate=SMALL_REHEARSAL['adr0008_validate'])
+        plan['benchmark'].update(examples=list(SMALL_REHEARSAL['benchmark_examples']),
+                                 token_budgets_padded=list(SMALL_REHEARSAL['token_budgets_padded']))
+        plan['operations']['qualification_max_gpu_hours'] = SMALL_REHEARSAL['qualification_max_gpu_hours']
+        plan['rehearsal']['small'] = dict(SMALL_REHEARSAL)
     Path(destination).write_text(yaml.safe_dump(plan, sort_keys=False))
     return destination
 

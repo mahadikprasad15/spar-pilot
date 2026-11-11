@@ -49,6 +49,10 @@ class OverrunStop(RuntimeError):
     pass
 
 
+class RehearsalInterruption(RuntimeError):
+    """Deliberate stop in a rehearsal, to test resume on an empty local disk."""
+
+
 def check_inputs(plan, config, summary, *, rehearsal, backend=None):
     """Re-establish in 04 that the files and runtime are the ones 03b qualified; returns the sequences sha."""
     root = Path(config['artifact_root'])
@@ -181,6 +185,10 @@ class Production:
             raise ProductionRefused('rehearsal runs (and only they) must use a run_id starting with rehearsal-')
         self.now, self.stop_runner = now, stop_runner
         self.session_started = now()
+        self._final_this_session = None
+        self._session_units = 0
+        if config.get('rehearsal_interrupt_after_units') and not self.rehearsal:
+            raise ProductionRefused('rehearsal_interrupt_after_units is for rehearsals only')
         self.local_dir = Path(config['local_root']) / RUN_SUBDIR / run_id
         self.volume_dir = Path(config['volume_root']) / RUN_SUBDIR / run_id
         self.qual_dir = Path(config['qualification_root']) / QUAL_SUBDIR / config['qualification_run_id']
@@ -293,6 +301,11 @@ class Production:
                 self._save_state(state)
                 self.marker.beat(arm=arm, unit=key)
                 self._check_cap(state, f'after unit {key}')
+                self._session_units += 1
+                limit = self.config.get('rehearsal_interrupt_after_units')
+                if limit and self.rehearsal and self._session_units >= int(limit):
+                    raise RehearsalInterruption(f'rehearsal interruption after {self._session_units} units '
+                                                '(tests fresh-local-disk recovery)')
                 done = sum(1 for v in state['units'].values() if v == 'mirrored') / total_units
                 # Forecast collection time only (what 03b benchmarked); export/mirror time counts toward the hard cap.
                 record = overrun_check(done, state['collect_seconds'], projected_seconds=self.projected_seconds,
@@ -347,26 +360,59 @@ class Production:
                         qualification_sha256=_file_sha(self.qual_dir / 'qualification.json'),
                         batch_manifest_sha256=self.manifest['sha256'], plan_core_sha256=self.plan['_plan_core_sha256'],
                         sequences_sha256=self.seq_sha, run_state=final_state, rehearsal=self.rehearsal,
+                        qualification_package=state.get('qualification_package'),
                         partial_label=self.summary.get('partial_label')))
         state['final_manifest'] = final
+        self._final_this_session = final
         state['safe_to_stop_pod'] = ex.may_stop_pod_final(final, records, required_arms=self.arms,
                                                           expected_units=self.expected_units)
         self._save_state(state)
         return final
 
-    def _maybe_stop_after_failure(self, state):
-        """Opt-in (config ``stop_after_verified_partial_backup``, default off): after a failure or overrun, stop
-        the Pod only if every unit collected so far is sealed on the volume and every packaged arm is verified on
-        HF; nothing then exists only on the container disk. Off by default: the user rule is to stop only after
-        the required final backup."""
-        if not (self.config.get('stop_after_verified_partial_backup') and self.config.get('stop_command')):
-            return False
+    def partial_backup_problems(self, state):
+        """Why a failed/overrun run may NOT stop the Pod yet (empty list = verified partial backup).
+
+        Volume: every unit sealed locally and every unit recorded as mirrored re-verifies on the volume by full
+        hash from explicit seal paths (no listings). HF: every packaged arm was verified by a fresh pinned-revision
+        download, and a partial final manifest referencing exactly those packages was published *in this session*
+        and read back (a stale manifest from an earlier session never counts)."""
+        problems = []
         volume = BlockStore(self.volume_dir / 'blocks')
         local = [k for k, s in self.local_store.status().items() if s == 'sealed']
-        unmirrored = [k for k in local if volume.state(k) != 'sealed']
-        final = state.get('final_manifest') or {}
-        if unmirrored or not final.get('revision'):
-            self._event(state, 'pod-left-running', reason='partial backup incomplete', unmirrored=unmirrored[:5])
+        recorded = [k for k, v in state['units'].items() if v == 'mirrored']
+        for key in sorted(set(local) | set(recorded)):
+            try:
+                volume.verify_unit(key, force=True, use_listing=False)
+            except Exception as exc:  # missing, interrupted or corrupt on the volume
+                problems.append(f'unit {key} not verified on the volume ({type(exc).__name__})')
+        records = state['arm_packages']
+        qual = state.get('qualification_package') or {}
+        if not str(qual.get('verified', '')).startswith('fresh pinned-revision download'):
+            problems.append('qualification package not verified on HF')
+        for arm, record in records.items():
+            if not str(record.get('verified', '')).startswith('fresh pinned-revision download'):
+                problems.append(f'arm {arm} package not verified by fresh download')
+        final = self._final_this_session
+        if final is None:
+            problems.append('no partial final manifest was published and read back in this session')
+        elif set(final.get('arms', [])) != set(records):
+            problems.append('partial final manifest does not reference exactly the verified arm packages')
+        return problems
+
+    def _maybe_stop_after_failure(self, state):
+        """Plan ``operations.stop_after_verified_partial_backup`` (user, 2026-11-11): after a failure or overrun,
+        stop the Pod only when ``partial_backup_problems`` is empty; nothing then exists only on the container
+        disk. A config can turn this off for a session, never on."""
+        enabled = bool(self.plan['operations'].get('stop_after_verified_partial_backup'))
+        if self.config.get('stop_after_verified_partial_backup') is False:
+            enabled = False
+        if not (enabled and self.config.get('stop_command')):
+            return False
+        problems = self.partial_backup_problems(state)
+        state['partial_backup_check'] = dict(problems=problems, checked_unix=time.time())
+        if problems:
+            self._event(state, 'pod-left-running', reason='partial backup not verified', problems=problems[:10])
+            self._save_state(state)
             return False
         result = self.stop_runner(self.config['stop_command'], capture_output=True, text=True)
         state['pod_stop_requested'] = True
@@ -398,6 +444,12 @@ class Production:
         history = dict(seen=set(state.get('overrun_seen', [])), consecutive=0, records=state.get('overrun', []))
         final_state = 'complete'
         try:
+            if not state.get('qualification_package'):  # 05/06 off the Pod need 03b's outputs, not just its hash
+                state['qualification_package'] = ex.upload_directory_package(
+                    self.qual_dir, repo=self.repo, label=self.label, kind='qualification', client=self.client,
+                    temp_dir=self.config['local_temp'])
+                self._save_state(state)
+                self._event(state, 'qualification-package-verified', bytes=state['qualification_package']['bytes'])
             self._check_cap(state, 'at start')
             for arm in self.arms:
                 if arm in state['arm_packages']:

@@ -300,7 +300,9 @@ class Qualification:
     def __init__(self, plan, config, backend, *, preflight=None, now=time.monotonic):
         from pilot_eval.neuron_audit_preflight import runtime_fingerprint
         self.plan, self.config, self.backend = plan, config, backend
+        import threading
         self.now, self.session_started = now, now()
+        self._clock_lock = threading.Lock()
         self.preflight_fn = preflight
         self.root = Path(config['artifact_root'])
         self.rehearsal = bool(plan.get('_rehearsal'))
@@ -356,11 +358,24 @@ class Qualification:
         self._status('failed', stage=name, error=message)
         raise QualificationFailure(name, message, evidence)
 
+    def _record_clock(self):
+        elapsed = self.prior_seconds + (self.now() - self.session_started)
+        with self._clock_lock:
+            _write_json(self.run_dir / 'meta/clock.json', dict(seconds=elapsed, cap_seconds=self.cap_seconds,
+                                                               updated_unix=time.time()))
+        return elapsed
+
+    def _heartbeat(self, stop, interval):
+        """Background clock record so a crash between checkpoints loses at most ``interval`` seconds."""
+        while not stop.wait(interval):
+            try:
+                self._record_clock()
+            except OSError:
+                pass
+
     def _tick(self, stage):
         """Cumulative elapsed time (all sessions of this run) against the plan's 03b ceiling."""
-        elapsed = self.prior_seconds + (self.now() - self.session_started)
-        _write_json(self.run_dir / 'meta/clock.json', dict(seconds=elapsed, cap_seconds=self.cap_seconds,
-                                                           updated_unix=time.time()))
+        elapsed = self._record_clock()
         if self.cap_seconds is not None and elapsed > self.cap_seconds:
             self._fail(stage, 'qualification time ceiling reached (operations.qualification_max_gpu_hours, '
                               'cumulative across restarts)', dict(elapsed_seconds=elapsed, cap_seconds=self.cap_seconds))
@@ -834,6 +849,18 @@ class Qualification:
                     examples=manifest['examples'], padded_tokens=manifest['padded_tokens'])
 
     def run(self, *, stop_after=None):
+        import threading
+        interval = float(self.config.get('clock_interval_seconds', 60))
+        stop = threading.Event()
+        beat = threading.Thread(target=self._heartbeat, args=(stop, interval), daemon=True)
+        beat.start()
+        try:
+            return self._run(stop_after=stop_after)
+        finally:
+            stop.set()
+            beat.join(timeout=5)
+
+    def _run(self, *, stop_after=None):
         self._status('running', stages=STAGES)
         results = {}
         for name in STAGES:

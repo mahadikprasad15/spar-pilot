@@ -521,6 +521,41 @@ def upload_package(package, manifest_path, manifest, *, repo, label, client=None
                 verified='fresh pinned-revision download, sha256 equal', seconds=time.monotonic() - started)
 
 
+def upload_directory_package(directory, *, repo, label, kind, client=None, temp_dir=None, attempts=3,
+                             on_event=print, sleep=time.sleep):
+    """Deterministic tar of every regular file under ``directory`` (e.g. the 03b qualification run), uploaded
+    under ``neuron-audit/<label>/<kind>/<sha256>/`` and verified by a fresh pinned-revision download."""
+    client = client or AuditHub()
+    private(client, repo)
+    directory = Path(directory).resolve()
+    files = sorted(p for p in directory.rglob('*') if p.is_file() and not p.name.endswith('.tmp'))
+    for path in files:
+        _scan_secret(path)
+    listing = {str(p.relative_to(directory)): dict(sha256=file_hash(p), bytes=p.stat().st_size) for p in files}
+    manifest = dict(schema=PACKAGE_SCHEMA, label=label, kind=kind, name=directory.name, files=listing)
+    manifest['sha256'] = _canonical_hash(manifest)
+    with tempfile.TemporaryDirectory(prefix=f'{kind}-', dir=temp_dir) as work:
+        manifest_path = Path(work) / 'package.json'
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
+        package = Path(work) / 'package.tar'
+        _deterministic_tar(package, [('package.json', manifest_path)] +
+                           [(f'files/{n}', directory / n) for n in listing])
+        digest = file_hash(package)
+        prefix = f'{EXPORT_PREFIX}/{label}/{kind}/{digest}'
+        revision = _with_retries(lambda: client.publish(repo, {prefix + '/package.tar': package,
+                                                               prefix + '/package.json': manifest_path}),
+                                 attempts=attempts, on_event=on_event, sleep=sleep)
+        with tempfile.TemporaryDirectory(prefix=f'{kind}-verify-', dir=temp_dir) as fresh:
+            fetched = _with_retries(lambda: client.fetch_to(repo, prefix + '/package.tar', revision, fresh),
+                                    attempts=attempts, on_event=on_event, sleep=sleep)
+            if file_hash(fetched) != digest:
+                raise ValueError(f'{kind} package readback differs; do not stop the Pod')
+        size = package.stat().st_size
+    return dict(kind=kind, name=directory.name, repo=repo, revision=revision, path=prefix + '/package.tar',
+                sha256=digest, bytes=size, package_manifest_sha256=manifest['sha256'], files=len(listing),
+                verified='fresh pinned-revision download, sha256 equal')
+
+
 def _short_arms(arm_records, expected_units):
     """Arms whose verified package does not hold exactly the expected unit keys."""
     if expected_units is None:
@@ -599,10 +634,57 @@ def restore_final(final_record, clean_root, *, client=None, temp_dir=None, attem
                 store.verify_unit(key, force=True)
             verified[arm] = len(ref['units'])
             Path(package).unlink()  # keep local temp to one package at a time
+        extra_packages = {}
+        for kind in ['qualification_package']:
+            ref = (body.get('extras') or {}).get(kind)
+            if not ref:
+                continue
+            package = _with_retries(lambda: client.fetch_to(ref['repo'], ref['path'], ref['revision'], fresh),
+                                    attempts=attempts, on_event=on_event, sleep=sleep)
+            if file_hash(package) != ref['sha256']:
+                raise ValueError(f'{kind} hash differs from the final manifest')
+            target_root = root / 'qualification' / ref['name']
+            with tarfile.open(package, 'r:') as tar:
+                members = tar.getmembers()
+                if any(not m.isfile() for m in members):
+                    raise ValueError(f'{kind} must contain regular files only')
+                listing = json.loads(tar.extractfile('package.json').read())['files']
+                for m in members:
+                    if m.name == 'package.json':
+                        continue
+                    rel = _checked_name(m.name)[len('files/'):]
+                    target = target_root / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    data = tar.extractfile(m).read()
+                    if hashlib.sha256(data).hexdigest() != listing[rel]['sha256']:
+                        raise ValueError(f'{kind} file {rel} failed its hash')
+                    target.write_bytes(data)
+            extra_packages[kind] = str(target_root)
+            Path(package).unlink()
     proof = dict(role='restored-final', repo=final_record['repo'], revision=final_record['revision'],
                  final_sha256=body['sha256'], completeness=body['completeness'], missing_arms=body['missing_arms'],
-                 verified_units=verified, clean_root=str(root))
+                 verified_units=verified, clean_root=str(root), restored_extras=extra_packages)
     proof['sha256'] = _canonical_hash(proof)
+    return proof
+
+
+def restore_final_cli(progress_path, final_record_path, clean_root, *, temp_dir=None, require_complete=False,
+                      client=None):
+    """Restore every arm package of a final manifest into an empty root, verify every unit, write a receipt.
+
+    Returns the proof plus ``store_roots`` (one per arm) to pass to 05 selection and 06 report as ``--stores``."""
+    if progress_path:
+        final = json.loads(Path(progress_path).read_text()).get('final_manifest')
+        if not final:
+            raise ValueError('progress record has no final manifest')
+    else:
+        final = json.loads(Path(final_record_path).read_text())
+    if require_complete and final.get('completeness') != 'complete':
+        raise ValueError(f"final manifest is {final.get('completeness')}; missing {final.get('missing_arms')}")
+    proof = restore_final(final, clean_root, client=client, temp_dir=temp_dir)
+    root = Path(proof['clean_root'])
+    proof['store_roots'] = [str(root / 'arms' / arm) for arm in sorted(proof['verified_units'])]
+    _write_json(root.parent / f'{root.name}.restore-final-receipt.json', proof)
     return proof
 
 
@@ -640,6 +722,13 @@ def main(argv=None):
     r = sub.add_parser('restore')
     r.add_argument('--upload_receipt', required=True)
     r.add_argument('--clean_root', required=True)
+    f = sub.add_parser('restore-final', help='clean-root restore of a final manifest (for 05/06 off the Pod)')
+    source = f.add_mutually_exclusive_group(required=True)
+    source.add_argument('--progress', help="production meta/progress.json (uses its 'final_manifest')")
+    source.add_argument('--final_record', help='JSON file with repo, revision, path and sha256 of the final manifest')
+    f.add_argument('--clean_root', required=True, help='empty directory; arm stores land in <clean_root>/arms/<arm>')
+    f.add_argument('--temp_dir', help='local temp for downloads (default: system temp)')
+    f.add_argument('--require_complete', action='store_true', help='refuse a partial final manifest')
     h = sub.add_parser('hub-op', help='internal: one online Hub call for OnlineHubProcess')
     h.add_argument('--request', required=True)
     args = parser.parse_args(argv)
@@ -652,6 +741,9 @@ def main(argv=None):
         result = snapshot(args.artifact_root, args.include, args.label, stage=args.stage,
                           expected_units=load(args.expected_units), omitted=load(args.omitted))
         result = {k: v for k, v in result.items() if k != 'files'} | dict(file_count=len(result['files']))
+    elif args.command == 'restore-final':
+        result = restore_final_cli(args.progress, args.final_record, args.clean_root, temp_dir=args.temp_dir,
+                                   require_complete=args.require_complete)
     elif args.command == 'upload':
         result = upload(args.snapshot, args.artifact_root, repo=args.repo, deadline_seconds=args.deadline_seconds)
     else:

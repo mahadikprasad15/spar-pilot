@@ -221,14 +221,14 @@ benchmark:                                      # [user] unless tagged
   outputs: throughput, batch and adapter-load timing, peak VRAM, projected bytes and wall-time projection
 
 operations:
-  qualification_max_gpu_hours: null             # REQUIRED before 03b (ceiling for 03b itself); enforced as cumulative wall time across restarts, at every stage and model loop
+  qualification_max_gpu_hours: 4                # [user 2026-11-11] ceiling for 03b itself; enforced as cumulative wall time across restarts, at every stage and model loop
   production_time_enforcement: cumulative wall time across restarts (persisted), checked after every unit and arm package  # [proposed]
-  stop_after_verified_partial_backup: false     # [user decision pending] true would stop the Pod after a failure/overrun only when every collected unit is on the volume and the partial manifest is verified
+  stop_after_verified_partial_backup: true      # [user 2026-11-11] after a failure/overrun, stop the Pod only if every collected unit re-verifies on the volume by full hash and every packaged arm plus a partial final manifest published this session are verified on HF; otherwise leave it running
   production_wall_time_cap_hours: null          # [user] set after the benchmark; 04 refuses until recorded
   overrun_rule_04: check projected total after 10% of units and every further 10%; stop and report if two consecutive projections exceed 2x the benchmark projection or exceed the cap  # [user]
   overrun_forecast_basis: cumulative collection time only (what 03b benchmarked); mirror/export time counts toward the hard cap, checked at unit and arm boundaries  # [proposed]
   automatic_pod_stop_03b: disabled              # [user] so no RunPod CLI check
-  automatic_pod_stop_04: allowed only after the required final backup is verified (every qualified arm's package verified by fresh download and the reference-only final manifest read back; neuron_audit_export.may_stop_pod_final); otherwise the Pod is left running  # [user 2026-11-11]
+  automatic_pod_stop_04: allowed only after the required final backup is verified (every qualified arm's package verified by fresh download and the reference-only final manifest read back; neuron_audit_export.may_stop_pod_final); after a failure/overrun see stop_after_verified_partial_backup; otherwise the Pod is left running  # [user 2026-11-11]
   production:                                   # [proposed] unless tagged
     work_order: arm by arm in plan order (untuned first); one sealed unit per (arm, frozen batch)
     validation: full independent identity checks on the first 2 batches of each arm; routing checks on every batch

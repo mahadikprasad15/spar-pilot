@@ -384,3 +384,70 @@ def test_phase_1b_out_of_memory_keeps_the_1a_measurement(world, monkeypatch):
     bench = results['benchmark']
     assert bench['phase_1b']['scope'] == 'omit' and bench['projection']['hooks'] == '1A'
     assert bench['selected_budget'] in (200, 400) and any('oom_1B_all_layers' in p for p in bench['probes'])
+
+
+def test_four_hour_ceiling_survives_an_interruption(world, monkeypatch):
+    value = dict(world['plan_value'])
+    value['operations'] = dict(value['operations'], qualification_max_gpu_hours=4)  # the frozen plan's value
+    path = world['tmp'] / 'plan-4h.yaml'
+    path.write_text(yaml.safe_dump(value))
+    plan = plan_mod.load(path, '03b')
+    assert plan['operations']['qualification_max_gpu_hours'] == 4
+    clock = dict(t=0.0, step=1.0)
+
+    def now():
+        clock['t'] += clock['step']
+        return clock['t']
+
+    def make():
+        return q.Qualification(plan, world['config'], world['backend'], preflight=world['preflight'], now=now)
+
+    original = q.Qualification.stage_benchmark
+
+    def killed(self, *a, **k):
+        clock['t'] += 3 * 3600  # three hours pass inside the stage, then the worker dies
+        raise RuntimeError('worker killed (simulated)')
+
+    monkeypatch.setattr(q.Qualification, 'stage_benchmark', killed)
+    with pytest.raises(RuntimeError, match='killed'):
+        make().run()
+    monkeypatch.setattr(q.Qualification, 'stage_benchmark', original)
+    run_dir = Path(world['config']['output_root']) / q.RUN_SUBDIR / 'q1'
+    before = json.loads((run_dir / 'meta/clock.json').read_text())['seconds']
+    assert before < 4 * 3600  # with the fake clock only checkpoints record time; on the Pod a 60 s heartbeat does too
+    clock.update(t=0.0, step=1800.0)  # new process: its own clock restarts at zero
+    with pytest.raises(q.QualificationFailure, match='time ceiling') as info:
+        make().run()
+    assert info.value.evidence['cap_seconds'] == 4 * 3600
+    assert info.value.evidence['elapsed_seconds'] > 4 * 3600
+
+
+def test_clock_heartbeat_records_time_between_checkpoints(world, monkeypatch):
+    import threading
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow(self, *a, **k):
+        started.set()
+        release.wait(5)
+        raise RuntimeError('worker killed (simulated)')
+
+    monkeypatch.setattr(q.Qualification, 'stage_benchmark', slow)
+    config = dict(world['config'], clock_interval_seconds=0.05)
+    clock = dict(t=0.0)
+
+    def now():
+        clock['t'] += 100.0
+        return clock['t']
+
+    qual = q.Qualification(world['plan'], config, world['backend'], preflight=world['preflight'], now=now)
+    runner = threading.Thread(target=lambda: pytest.raises(RuntimeError, qual.run))
+    runner.start()
+    started.wait(30)
+    path = Path(config['output_root']) / q.RUN_SUBDIR / 'q1/meta/clock.json'
+    first = json.loads(path.read_text())['seconds']
+    import time as _time
+    _time.sleep(0.3)
+    assert json.loads(path.read_text())['seconds'] > first  # advanced while no checkpoint ran
+    release.set()
+    runner.join(10)
