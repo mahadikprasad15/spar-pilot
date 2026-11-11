@@ -838,6 +838,10 @@ def main(argv=None):
     environment, env_problems = pf.prepare_environment()  # before any Hub import
     plan = plan_mod.load(args.plan, '03b', rehearsal=args.rehearsal)
     inputs = plan_mod.input_problems(plan, config['artifact_root'])
+    if args.rehearsal:  # bug-finding only: a pending background review is a warning, not a stop
+        for warning in [p for p in inputs if p.startswith('background review')]:
+            print(json.dumps(dict(kind='rehearsal-warning', warning=warning)), flush=True)
+        inputs = [p for p in inputs if not p.startswith('background review')]
     if inputs:
         raise SystemExit('inputs not ready: ' + '; '.join(inputs))
     backend = TransformersBackend(config['model_dir'], config['adapter_dirs'], config['tokenizer_dir'],

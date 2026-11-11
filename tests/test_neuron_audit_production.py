@@ -20,6 +20,9 @@ from pilot_eval import neuron_audit_qualify as q  # noqa: E402
 from pilot_eval.neuron_audit_blocks import BlockStore  # noqa: E402
 
 
+FROZEN = lambda: 0.0  # noqa: E731  timing-independent clock for tests not about the overrun rule
+
+
 class FakeHub:
     cache_root = None
 
@@ -69,7 +72,7 @@ def test_full_production_packages_each_arm_and_publishes_reference_manifest(worl
     hub = FakeHub()
     calls = []
     config['stop_command'] = ['runpodctl', 'stop', 'pod', 'X']
-    result = prod.Production(plan, config, world['backend'], client=hub,
+    result = prod.Production(plan, config, world['backend'], client=hub, now=FROZEN,
                              stop_runner=lambda cmd, **k: calls.append(cmd) or SimpleNamespace(returncode=0)).run()
     assert result['state'] == 'complete' and result['safe_to_stop_pod'] is True
     assert result['final_manifest']['completeness'] == 'complete'
@@ -109,12 +112,12 @@ def test_crash_then_resume_skips_verified_arms_and_mirrored_units(world, monkeyp
                               'q1/stages/batch_freeze/batch_manifest.json').read_text())['batches'])
     calls['fail_at'] = batches + 1  # first batch of the second arm
     with pytest.raises(RuntimeError, match='killed'):
-        prod.Production(plan, config, world['backend'], client=hub).run()
+        prod.Production(plan, config, world['backend'], client=hub, now=FROZEN).run()
     state = json.loads((Path(config['volume_root']) / prod.RUN_SUBDIR / 'p1/meta/progress.json').read_text())
     assert list(state['arm_packages']) == ['untuned'] and state['final_manifest']['completeness'] == 'partial'
     assert state['safe_to_stop_pod'] is False
     calls.update(n=0, fail_at=None)
-    result = prod.Production(plan, config, world['backend'], client=hub).run()
+    result = prod.Production(plan, config, world['backend'], client=hub, now=FROZEN).run()
     assert result['state'] == 'complete' and calls['n'] == 2 * batches  # untuned not recollected
 
 
@@ -189,7 +192,7 @@ def test_colab_rehearsal_flow_is_labelled_limited_and_refused_by_selection(world
                    volume_root=str(world['tmp'] / 'rv'), qualification_root=world['config']['output_root'],
                    qualification_run_id='rehearsal-q1', label='colab', repo='owner/private-audit',
                    max_batches_per_arm=1, rehearsal_cap_hours=1)
-    result = prod.Production(plan, pconfig, world['backend'], client=hub).run()
+    result = prod.Production(plan, pconfig, world['backend'], client=hub, now=FROZEN).run()
     assert result['rehearsal'] is True and result['label'] == 'rehearsal-colab'
     assert all(n.startswith('neuron-audit/rehearsal-colab/') for rev in hub.store.values() for n in rev)
     volume = Path(pconfig['volume_root']) / prod.RUN_SUBDIR / 'rehearsal-p1/blocks'

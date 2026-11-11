@@ -188,9 +188,11 @@ def pooled_overlap(per_layer):
 class Discovery:
     """Discovery-only matrices [examples, J] gathered from sealed block units, by example ID order."""
 
-    def __init__(self, store_roots, sequences, *, sequences_sha256=None, prototype=False):
+    def __init__(self, store_roots, sequences, *, sequences_sha256=None, prototype=False, available_only=False):
         self.rows = {r['id']: r for r in sequences}
-        self.prototype = prototype
+        self.prototype, self.available_only = prototype, available_only
+        if available_only and not prototype:
+            raise SelectionRefused('available_only (rehearsal subsets) requires prototype mode')
         self.where = {}
         for root in store_roots:
             store = BlockStore(root)
@@ -199,7 +201,7 @@ class Discovery:
                     continue
                 index = store.index(key)
                 ident = index['identity']
-                if not prototype and ident.get('rehearsal'):
+                if not prototype and ident.get('rehearsal'):  # rehearsal units only in prototype mode
                     raise SelectionRefused(f'unit {key} comes from a rehearsal run; not valid for selection')
                 if not prototype and ident.get('sequences_sha256') != sequences_sha256:
                     raise SelectionRefused(f'unit {key} was collected from a different frozen sequences manifest')
@@ -211,6 +213,8 @@ class Discovery:
         chosen = sorted(i for i, r in self.rows.items() if r['group'] == group and r['split'] == split)
         if split != 'discovery':
             raise SelectionRefused('selection reads discovery rows only')
+        if self.available_only:  # rehearsal: only rows every arm actually collected
+            chosen = [i for i in chosen if all(i in rows for rows in self.where.values())]
         return chosen
 
     def matrix(self, arm, layer, stat, ids):
@@ -284,14 +288,15 @@ def _comparisons(arms):
 
 
 def select(plan, *, store_roots, sequences, output_root, run_id, layers, arms, sequences_sha256=None,
-           prototype=False):
+           prototype=False, available_only=False):
     run_dir = Path(output_root) / RUN_SUBDIR / run_id
     if (run_dir / 'complete.json').exists():
         seal = json.loads((run_dir / 'complete.json').read_text())
         if any(_sha(run_dir / n) != h for n, h in seal['files'].items()):
             raise SelectionRefused('sealed selection failed its integrity check')
         return json.loads((run_dir / 'summary.json').read_text())
-    data = Discovery(store_roots, sequences, sequences_sha256=sequences_sha256, prototype=prototype)
+    data = Discovery(store_roots, sequences, sequences_sha256=sequences_sha256, prototype=prototype,
+                     available_only=available_only)
     stats = plan['statistics']
     groups = ['math', 'general', 'near_miss']
     ids = {g: data.ids(g) for g in groups}
@@ -368,8 +373,10 @@ def main(argv=None):
     parser.add_argument('--output_root', required=True)
     parser.add_argument('--run_id', required=True)
     parser.add_argument('--layers', required=True, help='e.g. 0-27')
+    parser.add_argument('--rehearsal', action='store_true',
+                        help='Colab rehearsal: prototype output over the discovery rows every arm collected')
     args = parser.parse_args(argv)
-    plan = plan_mod.load(args.plan, '04')
+    plan = plan_mod.load(args.plan, '03b' if args.rehearsal else '04', rehearsal=args.rehearsal)
     seq_dir = Path(args.sequences_run)
     sequences = [json.loads(l) for l in (seq_dir / 'sequences.jsonl').read_text().splitlines()]
     manifest = json.loads((seq_dir / 'manifest.json').read_text())
@@ -377,7 +384,8 @@ def main(argv=None):
     arms = [a for a in plan['arms'] if a != 'untuned']
     summary = select(plan, store_roots=args.stores, sequences=sequences, output_root=args.output_root,
                      run_id=args.run_id, layers=list(range(lo, hi + 1)), arms=arms,
-                     sequences_sha256=manifest['sequences_sha256'])
+                     sequences_sha256=manifest['sequences_sha256'], prototype=args.rehearsal,
+                     available_only=args.rehearsal)
     print(json.dumps(summary, indent=2, default=_json_default))
     return 0
 

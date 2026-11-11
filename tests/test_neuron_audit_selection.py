@@ -190,3 +190,13 @@ def test_pooled_overlap_excludes_undefined_layers():
                  1: dict(status='undefined'), 2: dict(status='ok', fraction=1.0, null_fraction=[0.5, 0.5])}
     pooled = sel.pooled_overlap(per_layer)
     assert pooled['observed'] == 0.75 and pooled['layers'] == 2 and pooled['excluded_layers'] == ['1']
+
+
+def test_rehearsal_subset_uses_only_rows_every_arm_collected(tmp_path):
+    rows = sequences()
+    stores = write_stores(tmp_path / 'blocks', rows)
+    with pytest.raises(sel.SelectionRefused, match='prototype'):
+        sel.Discovery([stores], rows, sequences_sha256='seq-sha', available_only=True)
+    data = sel.Discovery([stores], rows + [dict(id='math:999', group='math', split='discovery')],
+                         prototype=True, available_only=True)
+    assert 'math:999' not in data.ids('math') and len(data.ids('math')) == 20
