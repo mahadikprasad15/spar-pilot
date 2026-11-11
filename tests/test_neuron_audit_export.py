@@ -201,3 +201,81 @@ def test_archive_built_in_local_temp_not_beside_the_snapshot(root, tmp_path, mon
     local.mkdir()
     ex.upload(root / s['snapshot_path'], root, repo=REPO, client=FakeHub(), temp_dir=local)
     assert seen and all(Path(d) == local for d in seen)
+
+
+# --- per-arm packages, reference-only final manifest, Global-Volume mirror -----------------------
+
+from pilot_eval.neuron_audit_blocks import CorruptUnit, mirror_store  # noqa: E402
+
+
+def arm_store(root):
+    store = BlockStore(root)
+    for arm in ['untuned', 'gold-sft']:
+        for start in (0, 2):
+            store.write_unit(f'{arm}-rows-{start}', identity=dict(arm=arm, k=start), example_ids=[f'e{start}', f'e{start + 1}'],
+                             counts={'response_content': [3, 3]},
+                             blocks={('response_content', 0, 'mean_z'): np.full((2, 4), start + 1, np.float32)})
+    return store
+
+
+def test_arm_packages_are_deterministic_and_verified_by_download(tmp_path):
+    arm_store(tmp_path / 'local')
+    p1, m1, manifest = ex.package_arm(tmp_path / 'local', 'gold-sft', 'prod', tmp_path)
+    p2, _, _ = ex.package_arm(tmp_path / 'local', 'gold-sft', 'prod', tmp_path)
+    assert p1.read_bytes() == p2.read_bytes() and manifest['unit_count'] == 2
+    hub = FakeHub()
+    record = ex.upload_package(p1, m1, manifest, repo=REPO, label='prod', client=hub, temp_dir=tmp_path)
+    assert record['path'].startswith('neuron-audit/prod/arms/gold-sft/') and record['verified'].startswith('fresh')
+    hub.corrupt_fetch = True
+    with pytest.raises(ValueError, match='readback differs'):
+        ex.upload_package(p1, m1, manifest, repo=REPO, label='prod', client=hub, temp_dir=tmp_path)
+
+
+def test_final_manifest_references_packages_and_gates_pod_stop(tmp_path):
+    arm_store(tmp_path / 'local')
+    hub, records = FakeHub(), []
+    for arm in ['untuned', 'gold-sft']:
+        package, mpath, manifest = ex.package_arm(tmp_path / 'local', arm, 'prod', tmp_path)
+        records.append(ex.upload_package(package, mpath, manifest, repo=REPO, label='prod', client=hub, temp_dir=tmp_path))
+    partial = ex.publish_final_manifest(records[:1], repo=REPO, label='prod', required_arms=['untuned', 'gold-sft'],
+                                        client=hub, temp_dir=tmp_path)
+    assert partial['completeness'] == 'partial' and partial['missing_arms'] == ['gold-sft']
+    assert ex.may_stop_pod_final(partial, records[:1], required_arms=['untuned', 'gold-sft']) is False
+    final = ex.publish_final_manifest(records, repo=REPO, label='prod', required_arms=['untuned', 'gold-sft'],
+                                      client=hub, temp_dir=tmp_path, extras=dict(qualification='q-sha'))
+    stored = hub.store[final['revision']][final['path']]
+    assert b'package.tar' in stored and len(stored) < 10_000  # references only, no package bytes
+    assert ex.may_stop_pod_final(final, records, required_arms=['untuned', 'gold-sft']) is True
+    proof = ex.restore_final(final, tmp_path / 'clean', client=hub, temp_dir=tmp_path)
+    assert proof['verified_units'] == {'gold-sft': 2, 'untuned': 2} and proof['completeness'] == 'complete'
+    assert ex.may_stop_pod_final(final, records, required_arms=['untuned', 'gold-sft'], restore_proof=proof) is True
+    unverified = [dict(r, verified='not checked') for r in records]
+    assert ex.may_stop_pod_final(final, unverified, required_arms=['untuned', 'gold-sft']) is False
+
+
+def test_restore_final_refuses_tampered_package(tmp_path):
+    arm_store(tmp_path / 'local')
+    hub = FakeHub()
+    package, mpath, manifest = ex.package_arm(tmp_path / 'local', 'gold-sft', 'prod', tmp_path)
+    record = ex.upload_package(package, mpath, manifest, repo=REPO, label='prod', client=hub, temp_dir=tmp_path)
+    final = ex.publish_final_manifest([record], repo=REPO, label='prod', required_arms=['gold-sft'], client=hub,
+                                      temp_dir=tmp_path)
+    data = hub.store[record['revision']][record['path']]
+    hub.store[record['revision']][record['path']] = data[:-1] + bytes([data[-1] ^ 1])
+    with pytest.raises(ValueError, match='package hash differs'):
+        ex.restore_final(final, tmp_path / 'clean', client=hub, temp_dir=tmp_path)
+
+
+def test_mirror_copies_seal_last_verifies_without_listing_and_repairs_torn_copy(tmp_path):
+    arm_store(tmp_path / 'local')
+    assert set(mirror_store(tmp_path / 'local', tmp_path / 'volume').values()) == {'mirrored'}
+    assert set(mirror_store(tmp_path / 'local', tmp_path / 'volume').values()) == {'already-mirrored'}
+    torn = tmp_path / 'volume/units/gold-sft-rows-0/blocks.f32'
+    torn.write_bytes(torn.read_bytes()[:-4])  # truncated copy on the volume
+    with pytest.raises(CorruptUnit):
+        BlockStore(tmp_path / 'volume').verify_unit('gold-sft-rows-0', force=True, use_listing=False)
+    assert mirror_store(tmp_path / 'local', tmp_path / 'volume')['gold-sft-rows-0'] == 'mirrored'
+    (tmp_path / 'volume/units/gold-sft-rows-2/seal.json').write_text('{"files": ')  # torn seal
+    with pytest.raises(CorruptUnit, match='unreadable'):
+        BlockStore(tmp_path / 'volume').verify_unit('gold-sft-rows-2', force=True, use_listing=False)
+    assert mirror_store(tmp_path / 'local', tmp_path / 'volume')['gold-sft-rows-2'] == 'mirrored'

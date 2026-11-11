@@ -130,7 +130,6 @@ def world(tmp_path, monkeypatch):
     value['inputs'].update(inventory_run='inv', sequences_run='seq')
     value['runtime']['code_commit'] = 'c' * 40
     value['operations']['qualification_max_gpu_hours'] = 1
-    value['storage']['provisioned_volume_bytes'] = 10 ** 12
     value['preflight'].update(expected_sys_executable='x', expected_sys_prefix='y')
     value['calibration_allocation'].update(fp64_reference=dict(math=2, general=2), adr0008_calibrate=4,
                                            adr0008_validate=4)
@@ -150,7 +149,8 @@ def world(tmp_path, monkeypatch):
         return original(self, rows, **kw)
 
     monkeypatch.setattr(nc.NeuronCollector, 'collect', observed)
-    preflight = lambda: dict(capacity=dict(provisioned_bytes=10 ** 12, used_bytes=0, usable_bytes=10 ** 12),
+    preflight = lambda: dict(local_disk=dict(free_bytes=10 ** 12, total_bytes=10 ** 12),
+                             hf_online=dict(usage=dict(observed_private_bytes=0)),
                              precision_device=dict(device='fake-cpu'))
     return dict(plan=plan, config=config, backend=backend, preflight=preflight, root=root, plan_value=value,
                 tmp=tmp_path)
@@ -303,17 +303,18 @@ def test_floor_zero_is_unresolved_never_spacing():
 
 def test_scope_rule_all_subset_omit():
     fits = lambda layers: dict(time_ratio=1.2, projected_bytes=10)
+    small = lambda total: total <= 60
     assert q.choose_scope(fits, all_layers=list(range(28)), subset_layers=list(range(10, 18)), max_ratio=1.5,
-                          disk_fraction_max=0.6, usable_bytes=100)['scope'] == 'all'
+                          fits_storage=small)['scope'] == 'all'
     subset_only = lambda layers: dict(time_ratio=2.0 if len(layers) == 28 else 1.4, projected_bytes=10)
     assert q.choose_scope(subset_only, all_layers=list(range(28)), subset_layers=list(range(10, 18)), max_ratio=1.5,
-                          disk_fraction_max=0.6, usable_bytes=100)['scope'] == 'subset'
+                          fits_storage=small)['scope'] == 'subset'
     too_big = lambda layers: dict(time_ratio=1.0, projected_bytes=99)
     result = q.choose_scope(too_big, all_layers=list(range(28)), subset_layers=list(range(10, 18)), max_ratio=1.5,
-                            disk_fraction_max=0.6, usable_bytes=100)
+                            fits_storage=small)
     assert result['scope'] == 'omit' and len(result['tried']) == 2
     assert q.choose_scope(fits, all_layers=[0, 1], subset_layers=list(range(10, 18)), max_ratio=1.0,
-                          disk_fraction_max=0.6, usable_bytes=100)['tried'][1]['available'] is False
+                          fits_storage=small)['tried'][1]['available'] is False
 
 
 def test_projected_bytes_matches_spec_illustration():

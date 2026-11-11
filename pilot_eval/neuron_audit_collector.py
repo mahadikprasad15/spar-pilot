@@ -487,15 +487,16 @@ def adapter_effect(model, inputs, reference_logits=None):
 
 
 def collect_cohort(collector, store, rows, *, arm, batch_size, factors=None, identity, validate=True,
-                   heads=None, head_factors=None):
+                   heads=None, head_factors=None, key=None):
     """Collect frozen rows in order, one sealed block unit per batch; resume skips sealed units."""
     results = []
     for start in range(0, len(rows), batch_size):
         batch = rows[start:start + batch_size]
-        key = f'{arm}-rows-{start:06d}-{start + len(batch) - 1:06d}'
+        unit_key = key if key is not None and len(rows) <= batch_size else \
+            f'{arm}-rows-{start:06d}-{start + len(batch) - 1:06d}'
         unit_identity = dict(identity, arm=arm, rows=[r['id'] for r in batch])
-        if store.state(key) == 'sealed':
-            results.append((key, store.write_unit(key, identity=unit_identity, example_ids=[], counts={},
+        if store.state(unit_key) == 'sealed':
+            results.append((unit_key, store.write_unit(unit_key, identity=unit_identity, example_ids=[], counts={},
                                                   blocks={})))
             continue
         out = collector.collect(batch, factors=factors, validate=validate, heads=heads, head_factors=head_factors)
@@ -508,7 +509,7 @@ def collect_cohort(collector, store, rows, *, arm, batch_size, factors=None, ide
                     adapter=None if factors is None else dict(
                         scale=factors['scale'],
                         b_norm={str(l): float(np.linalg.norm(f['b'])) for l, f in factors['layers'].items()}))
-        results.append((key, store.write_unit(key, identity=unit_identity, example_ids=out['example_ids'],
+        results.append((unit_key, store.write_unit(unit_key, identity=unit_identity, example_ids=out['example_ids'],
                                               counts={g: v for g, v in out['counts'].items()}, blocks=blocks,
                                               tokens=out['tokens'], meta=meta)))
     return results

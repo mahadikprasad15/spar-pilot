@@ -221,20 +221,58 @@ operations:
   qualification_max_gpu_hours: null             # REQUIRED before 03b (ceiling for 03b itself)
   production_wall_time_cap_hours: null          # [user] set after the benchmark; 04 refuses until recorded
   overrun_rule_04: check projected total after 10% of units and every further 10%; stop and report if two consecutive projections exceed 2x the benchmark projection or exceed the cap  # [user]
+  overrun_forecast_basis: cumulative collection time only (what 03b benchmarked); mirror/export time counts toward the hard cap, checked at unit and arm boundaries  # [proposed]
   automatic_pod_stop_03b: disabled              # [user] so no RunPod CLI check
-  automatic_pod_stop_04: revisit; only after a verified export (neuron_audit_export.may_stop_pod)
+  automatic_pod_stop_04: allowed only after the required final backup is verified (every qualified arm's package verified by fresh download and the reference-only final manifest read back; neuron_audit_export.may_stop_pod_final); otherwise the Pod is left running  # [user 2026-11-11]
+  production:                                   # [proposed] unless tagged
+    work_order: arm by arm in plan order (untuned first); one sealed unit per (arm, frozen batch)
+    validation: full independent identity checks on the first 2 batches of each arm; routing checks on every batch
+    rows: discovery + held-out only (calibration rows are not collected)
+    unit_identity: [arm, batch, rows, sequences_sha256, batch_manifest_sha256, plan_core_sha256, qualification, rehearsal]
+    local_retention: prune an arm's local units after they are mirrored to the volume and its package is verified on HF
+    export:                                     # [user 2026-11-11] per-arm upload and verification, existing private dataset, neuron-audit/
+      repo: existing private dataset (preflight.export_repo)
+      arm_package: "neuron-audit/<label>/arms/<arm>/<sha256>/package.tar (deterministic uncompressed tar) + package.json"
+      arm_verification: fresh pinned-revision download into an empty local directory, sha256 equal
+      final_manifest: "neuron-audit/<label>/final/<sha256>.json, references the arm packages; never duplicates their data"
+  rehearsal:                                    # [user 2026-11-11] Colab for catching bugs, then the full run on the Pod
+    plan: neuron_audit_plan.make_rehearsal_plan -> status rehearsal (never valid for production)
+    run_ids: must start with rehearsal-
+    hf_label: rehearsal-<label> under neuron-audit/
+    production_limit: max_batches_per_arm (rehearsal only) and rehearsal_cap_hours from the config
+    selection: refuses rehearsal units
   single_pod_single_tmux_single_writer: true
   advisory_marker_not_a_lock: true
 
-storage:                                        # [user]
-  network_volume_chmod: unsupported (docs/operations/offline-grpo-overnight.md)
-  local_disk: HF cache, temp and scratch files
-  network_volume: outputs only
+storage:
+  # Revised 2026-11-11: sl-0 is a Runpod *Global Volume* (user-confirmed), not a fixed-size network volume.
+  # Runpod docs (storage/globalvolume/overview, read 2026-11-11): grows with data, no capacity to provision;
+  # billed for storage used plus requests (Class A writes $0.005/1k, Class B reads $0.0005/1k); beta;
+  # NO atomic rename, NO file locking, NO hard links, NO chmod; fsync not documented; directory listings
+  # cached ~1 minute; writes slower than a network volume; deleted 15 days after the account reaches $0.
+  global_volume:                                # [user] identity; [proposed] handling
+    id: sl-0
+    type: runpod-global-volume
+    observed_stored_bytes: 47700000000          # user, 2026-11-11 (console)
+    capacity_rule: none (no provisioned size); report projected growth and request counts instead
+    role: durable mirror of sealed work for resume across Pod stops (container disk is ephemeral)
+    write_protocol: write and seal on local disk first; mirror with shutil.copyfile, data files first and seal file last; re-read and verify every hash on the volume; a torn or mismatched mirror is re-copied, never trusted
+    never_rely_on: [atomic rename, file locks, hard links, chmod, fresh directory listings]
+    state_lookup: explicit paths from the run's progress record, not directory listings
+  local_disk:                                   # [proposed]
+    use: HF cache, working block store, package build, download verification, temp
+    capacity_rule: projected local working set <= 60% of free container disk (statvfs on local disk is trusted)
+    working_set: one arm's units + its package + its verification download + model cache
+    prune_local_arm_after: mirrored to the volume AND package verified on HF
   copy_function: shutil.copyfile only (no copy2/copytree/copystat/chmod)
-  preflight_operations: [create, write, fsync, read_back, rename, copyfile, delete]  # on volume and local temp
-  provisioned_volume_bytes: null                # REQUIRED: from the RunPod console after expansion (target 120 GB)
-  usable_capacity: provisioned size minus current du -s, confirmed by a 5% probe file (write, fsync, read back, hash, delete)
-  proceed_if: projected need <= 60% of usable capacity
+  preflight_operations: [create, write, fsync, read_back, rename, copyfile, delete]  # volume and local temp; success does not prove atomicity
+  hf_quota:                                     # [proposed] measured 2026-11-11 via the Hub API
+    account_tier: free
+    private_quota_bytes: 100000000000           # HF docs: free user 100GB private storage (current versions + history)
+    observed_private_bytes: 15840000000         # sum of current file sizes across private repos; history not visible
+    proceed_if: observed_private + projected_upload <= 85% of quota, re-measured in preflight
+    deterministic_packages: true                # fixed tar metadata, so an identical retry deduplicates on HF
+    note: about 55 GB of FP32 arm packages fits (about 71 GB total) but leaves little room for repeated runs; PRO (1TB) or pruning old private repos would be needed for a second full run
 
 preflight:                                      # [user]
   in_actual_worker_process: true
@@ -272,7 +310,6 @@ required_before:
     - approval.approved_on
     - runtime.code_commit
     - operations.qualification_max_gpu_hours
-    - storage.provisioned_volume_bytes
     - preflight.expected_sys_executable
     - preflight.expected_sys_prefix
   '04':
@@ -280,7 +317,7 @@ required_before:
 
 open_items_before_approval:
   - record the background review (sequences-v2) with the review command
-  - expand the network volume to the target and record its provisioned size
+  - confirm the Pod's container disk size (local working set rule) and the Global Volume storage rate
   - commit and push the audit code; record the commit
   - approve and run a live HF upload/restore test of the preparation snapshot
   - choose the 03b GPU-hour ceiling

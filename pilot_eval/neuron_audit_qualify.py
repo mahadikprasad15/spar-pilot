@@ -206,8 +206,11 @@ def projected_bytes(*, arms_trained, arms_total, examples, layers, width, groups
     return int(dense + tokens + head)
 
 
-def choose_scope(measure, *, all_layers, subset_layers, max_ratio, disk_fraction_max, usable_bytes):
-    """Plan 1B rule: all layers if time ratio and disk fit; else measured subset; else omit."""
+def choose_scope(measure, *, all_layers, subset_layers, max_ratio, fits_storage):
+    """Plan 1B rule: all layers if time ratio and storage fit; else measured subset; else omit.
+
+    ``fits_storage(total_bytes)`` applies the Global-Volume-era rules (local working set and HF quota).
+    """
     tried = []
     for scope, layers in [('all', all_layers), ('subset', [l for l in subset_layers if l in all_layers])]:
         if not layers:
@@ -215,7 +218,7 @@ def choose_scope(measure, *, all_layers, subset_layers, max_ratio, disk_fraction
             continue
         m = measure(layers)
         fits = (m['time_ratio'] is not None and m['time_ratio'] <= max_ratio
-                and m['projected_bytes'] <= disk_fraction_max * usable_bytes)
+                and fits_storage(m['projected_bytes']))
         tried.append(dict(scope=scope, layers=layers, fits=fits, **m))
         if fits:
             return dict(scope=scope, layers=layers, tried=tried)
@@ -292,6 +295,9 @@ class Qualification:
         self.plan, self.config, self.backend = plan, config, backend
         self.preflight_fn = preflight
         self.root = Path(config['artifact_root'])
+        self.rehearsal = bool(plan.get('_rehearsal'))
+        if self.rehearsal != config['run_id'].startswith('rehearsal-'):
+            raise QualificationFailure('setup', 'rehearsal runs (and only they) must use a run_id starting with rehearsal-')
         self.run_dir = Path(config['output_root']) / RUN_SUBDIR / config['run_id']
         self.identity = dict(plan_sha256=plan['_plan_sha256'], config=_sha({k: v for k, v in config.items()
                                                                              if k not in ('local_temp',)}))
@@ -491,7 +497,7 @@ class Qualification:
             collector.close()
             self.backend.release(model)
 
-    def stage_benchmark(self, arms_result, capacity):
+    def stage_benchmark(self, arms_result, storage_inputs):
         bench = self.plan['benchmark']
         examples = self._allocation()['all'][: bench['examples'][1]]
         if len(examples) < bench['examples'][0]:
@@ -532,7 +538,13 @@ class Qualification:
         common = dict(arms_trained=len(arms_result['qualified']) - ('untuned' in arms_result['qualified']),
                       arms_total=len(arms_result['qualified']), examples=len(production), layers=len(layers),
                       width=model_cfg['intermediate_size'], groups=3, union_tokens=union_tokens)
-        usable = capacity['usable_bytes']
+        n_arms = len(arms_result['qualified'])
+
+        def storage_check(total_bytes):
+            return self._confirm_storage(storage_inputs, total_bytes, n_arms)
+
+        def fits_storage(total_bytes):
+            return not storage_check(total_bytes)[1]
 
         def seconds_for(probe, hooks):
             rate = min(probe[f'{hooks}/{a}']['padded_tokens_per_second'] for a in ['untuned', arm])
@@ -557,24 +569,28 @@ class Qualification:
                                                                            heads=n_heads), budget=top_both['budget'])
 
         scope = choose_scope(measure, all_layers=layers, subset_layers=list(scope_rule['subset_layers']),
-                             max_ratio=float(scope_rule['time_ratio_max']),
-                             disk_fraction_max=float(scope_rule['disk_fraction_max']), usable_bytes=usable)
+                             max_ratio=float(scope_rule['time_ratio_max']), fits_storage=fits_storage)
         chosen = top_both if scope['scope'] != 'omit' else feasible_1a[-1]
         hooks = '1A+1B' if scope['scope'] != 'omit' else '1A'
         need = projected_bytes(**common, heads_layers=len(scope['layers']), heads=n_heads)
         per_arm = seconds_for(chosen, hooks)
         projection = dict(seconds_per_arm=per_arm, total_hours=per_arm * len(arms_result['qualified']) / 3600,
                           projected_bytes=need, budget=chosen['budget'], hooks=hooks)
-        storage, problems = self._confirm_capacity(capacity, need)
+        storage, problems = storage_check(need)
         if problems:
             self._fail('benchmark', 'storage capacity check failed', dict(storage=storage, problems=problems))
         return dict(device=device, vram_limit_bytes=limit, probes=probes, benchmark_arm=arm,
                     selected_budget=chosen['budget'], phase_1b=scope, projection=projection, storage=storage)
 
-    def _confirm_capacity(self, capacity, need):
-        from pilot_eval.neuron_audit_preflight import confirm_capacity
-        return confirm_capacity(self.config['volume_dir'], capacity, need,
-                                max_fraction=float(self.plan['benchmark']['phase_1b_scope']['disk_fraction_max']))
+    def _confirm_storage(self, inputs, total_bytes, n_arms):
+        from pilot_eval.neuron_audit_preflight import confirm_storage
+        quota = self.plan['storage']['hf_quota']
+        hf = dict(observed_private_bytes=inputs['hf_observed_private_bytes'], quota_bytes=quota['private_quota_bytes'])
+        per_arm = total_bytes / max(n_arms, 1)
+        return confirm_storage(inputs['local_disk'], hf, per_arm_bytes=per_arm, total_upload_bytes=total_bytes,
+                               model_cache_bytes=inputs.get('model_cache_bytes', 0),
+                               local_fraction=float(self.plan['benchmark']['phase_1b_scope']['disk_fraction_max']),
+                               hf_fraction=0.85)
 
     def stage_batch_agreement(self, arms_result, benchmark):
         alloc = self._allocation()
@@ -738,7 +754,11 @@ class Qualification:
                 elif name == 'arms':
                     value = self.stage_arms()
                 elif name == 'benchmark':
-                    value = self.stage_benchmark(results['arms'], results['preflight']['capacity'])
+                    pre = results['preflight']
+                    value = self.stage_benchmark(results['arms'], dict(
+                        local_disk=pre['local_disk'],
+                        hf_observed_private_bytes=(pre.get('hf_online', {}).get('usage') or {}).get('observed_private_bytes'),
+                        model_cache_bytes=self.config.get('model_cache_bytes', 0)))
                 elif name == 'batch_agreement':
                     value = self.stage_batch_agreement(results['arms'], results['benchmark'])
                 elif name == 'fp64_floor':
@@ -761,7 +781,9 @@ class Qualification:
                        'review-flag sign-off not recorded (required whether or not flags were raised)']
         return dict(
             status='partial' if arms['partial'] else 'qualified', partial_label=arms['partial_label'],
-            plan_sha256=self.plan['_plan_sha256'], run_id=self.config['run_id'],
+            rehearsal=self.rehearsal, label='REHEARSAL (not valid for production)' if self.rehearsal else None,
+            plan_sha256=self.plan['_plan_sha256'], plan_core_sha256=self.plan.get('_plan_core_sha256'),
+            run_id=self.config['run_id'],
             arms_qualified=arms['qualified'], arms_failed=arms['failed'],
             runtime=results['preflight'].get('precision_device'),
             selected_budget=results['benchmark']['selected_budget'], phase_1b=results['benchmark']['phase_1b'],
@@ -800,6 +822,7 @@ def main(argv=None):
     r.add_argument('--plan', required=True)
     r.add_argument('--config', required=True, help='runner config JSON (paths on the worker)')
     r.add_argument('--stop_after', choices=STAGES)
+    r.add_argument('--rehearsal', action='store_true', help='Colab bug-finding run with a rehearsal plan')
     s = sub.add_parser('signoff')
     s.add_argument('--run_dir', required=True)
     s.add_argument('--reviewer', required=True)
@@ -813,7 +836,7 @@ def main(argv=None):
     from pilot_eval import neuron_audit_preflight as pf
     config = json.loads(Path(args.config).read_text())
     environment, env_problems = pf.prepare_environment()  # before any Hub import
-    plan = plan_mod.load(args.plan, '03b')
+    plan = plan_mod.load(args.plan, '03b', rehearsal=args.rehearsal)
     inputs = plan_mod.input_problems(plan, config['artifact_root'])
     if inputs:
         raise SystemExit('inputs not ready: ' + '; '.join(inputs))
@@ -831,7 +854,8 @@ def main(argv=None):
     def preflight():
         record = pf.run(plan, volume_dir=config['volume_dir'], local_temp=config['local_temp'],
                         offline_load=offline_load,
-                        hf_check=lambda: pf.hf_online_subprocess(plan['preflight']['export_repo'], config['local_temp']))
+                        hf_check=lambda: pf.hf_online_subprocess(plan['preflight']['export_repo'], config['local_temp']),
+                        rehearsal=args.rehearsal)
         record['environment_first_call'] = dict(environment, problems=env_problems)
         if env_problems:
             raise pf.PreflightFailure(env_problems, record)

@@ -15,7 +15,6 @@ def approved(tmp_path, **changes):
     value['approval'] = dict(approved_by='reviewer', approved_on='2026-11-11', notes=None)
     value['runtime']['code_commit'] = 'a' * 40
     value['operations']['qualification_max_gpu_hours'] = 4
-    value['storage']['provisioned_volume_bytes'] = 120 * 10 ** 9
     value['preflight']['expected_sys_executable'] = '/workspace/venv/bin/python'
     value['preflight']['expected_sys_prefix'] = '/workspace/venv'
     for dotted, new in changes.items():
@@ -33,7 +32,7 @@ def test_checked_in_plan_is_unapproved_and_lists_every_gap():
     problems = plan_mod.problems(plan_mod.read(REAL_PLAN), '03b')
     assert 'status is unapproved, not approved' in problems
     for field in ['approval.approved_by', 'runtime.code_commit', 'operations.qualification_max_gpu_hours',
-                  'storage.provisioned_volume_bytes', 'preflight.expected_sys_executable']:
+                  'preflight.expected_sys_executable']:
         assert f'{field} is null' in problems
     with pytest.raises(plan_mod.PlanError, match='unapproved'):
         plan_mod.load(REAL_PLAN, '03b')

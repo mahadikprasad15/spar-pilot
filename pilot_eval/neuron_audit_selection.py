@@ -199,6 +199,8 @@ class Discovery:
                     continue
                 index = store.index(key)
                 ident = index['identity']
+                if not prototype and ident.get('rehearsal'):
+                    raise SelectionRefused(f'unit {key} comes from a rehearsal run; not valid for selection')
                 if not prototype and ident.get('sequences_sha256') != sequences_sha256:
                     raise SelectionRefused(f'unit {key} was collected from a different frozen sequences manifest')
                 for row, example in enumerate(index['example_ids']):

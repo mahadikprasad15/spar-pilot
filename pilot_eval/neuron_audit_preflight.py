@@ -130,28 +130,56 @@ def used_bytes(directory):
     return total
 
 
-def usable_capacity(volume_dir, provisioned_bytes):
-    """Provisioned size (from the console, recorded in the plan) minus current usage; FUSE df is not trusted."""
-    if not provisioned_bytes:
-        return dict(provisioned_bytes=provisioned_bytes, used_bytes=None, usable_bytes=None), \
-            ['storage.provisioned_volume_bytes is not recorded']
-    used = used_bytes(volume_dir)
-    return dict(provisioned_bytes=int(provisioned_bytes), used_bytes=used, usable_bytes=int(provisioned_bytes) - used,
-                df_free_bytes_untrusted=shutil.disk_usage(volume_dir).free), []
+def volume_record(volume_dir):
+    """Global Volume: no provisioned capacity exists, so only usage is recorded (billing is per GB used)."""
+    return dict(volume_dir=str(volume_dir), used_bytes=used_bytes(volume_dir), capacity_rule='none (global volume)')
 
 
-def confirm_capacity(volume_dir, capacity, projected_need, *, probe_fraction=0.05, max_fraction=0.60):
-    """Proceed only if need <= 60% of usable, confirmed by writing a probe of 5% of the need."""
+def local_disk(local_dir):
+    """Container disk free space; statvfs is trustworthy on the Pod's local overlay (unlike FUSE volumes)."""
+    usage = shutil.disk_usage(local_dir)
+    return dict(local_dir=str(local_dir), total_bytes=usage.total, free_bytes=usage.free)
+
+
+def local_working_set(per_arm_bytes, model_cache_bytes=0):
+    """One arm's units + its package + its verification download, plus the model cache."""
+    return int(3 * per_arm_bytes + model_cache_bytes)
+
+
+def confirm_storage(local, hf, *, per_arm_bytes, total_upload_bytes, model_cache_bytes=0,
+                    local_fraction=0.60, hf_fraction=0.85, local_dir=None, probe_fraction=0.05):
+    """Local working set <= 60% of free local disk; observed HF private + upload <= 85% of quota."""
     problems = []
-    if capacity.get('usable_bytes') is None:
-        return dict(capacity), ['usable capacity unknown']
-    probe_bytes = max(1, int(projected_need * probe_fraction))
-    probe, probe_problems = storage_probe(volume_dir, probe_bytes, label='volume-capacity-probe')
-    problems += probe_problems
-    allowed = max_fraction * capacity['usable_bytes']
-    if projected_need > allowed:
-        problems.append(f'projected need {projected_need} > {max_fraction:.0%} of usable {capacity["usable_bytes"]}')
-    return dict(capacity, projected_need_bytes=int(projected_need), allowed_bytes=int(allowed), probe=probe), problems
+    need_local = local_working_set(per_arm_bytes, model_cache_bytes)
+    record = dict(local_need_bytes=need_local, local_allowed_bytes=int(local_fraction * local['free_bytes']),
+                  hf_observed_private_bytes=hf.get('observed_private_bytes'), hf_quota_bytes=hf.get('quota_bytes'),
+                  upload_bytes=int(total_upload_bytes))
+    if need_local > local_fraction * local['free_bytes']:
+        problems.append(f"local working set {need_local} > {local_fraction:.0%} of free local disk {local['free_bytes']}")
+    if hf.get('observed_private_bytes') is None or not hf.get('quota_bytes'):
+        problems.append('HF private usage/quota not measured')
+    elif hf['observed_private_bytes'] + total_upload_bytes > hf_fraction * hf['quota_bytes']:
+        problems.append(f"HF private usage {hf['observed_private_bytes']} + upload {total_upload_bytes} > "
+                        f"{hf_fraction:.0%} of quota {hf['quota_bytes']}")
+    record['hf_allowed_bytes'] = int(hf_fraction * hf['quota_bytes']) if hf.get('quota_bytes') else None
+    if local_dir is not None and not problems:
+        record['probe'], probe_problems = storage_probe(local_dir, max(1, int(per_arm_bytes * probe_fraction)),
+                                                        label='local-capacity-probe')
+        problems += probe_problems
+    return record, problems
+
+
+def private_usage(api):
+    """Sum current file sizes over the account's private repos (history is not visible: a lower bound)."""
+    me = api.whoami()['name']
+    total, repos = 0, {}
+    for kind, lister, info in [('dataset', api.list_datasets, api.dataset_info), ('model', api.list_models, api.model_info)]:
+        for repo in lister(author=me):
+            if getattr(repo, 'private', False):
+                size = sum((s.size or 0) for s in info(repo.id, files_metadata=True).siblings or [])
+                repos[f'{kind}:{repo.id}'] = size
+                total += size
+    return dict(observed_private_bytes=total, repos=repos, scope='current revisions only (lower bound)')
 
 
 def hf_online_check(client, repo, temp_dir):
@@ -170,6 +198,8 @@ def hf_online_check(client, repo, temp_dir):
     fetched = client.fetch_to(repo, name, revision, fresh)
     same = hashlib.sha256(Path(fetched).read_bytes()).hexdigest() == hashlib.sha256(payload.read_bytes()).hexdigest()
     record.update(revision=revision, path=name, readback_matches=same)
+    if hasattr(client, 'api'):
+        record['usage'] = private_usage(client.api)
     if not same:
         problems.append('HF readback hash differs')
     return record, problems
@@ -204,7 +234,7 @@ def hf_online_subprocess(repo, temp_dir, *, runner=None):
     return out['record'], out['problems']
 
 
-def run(plan, *, volume_dir, local_temp, offline_load, hf_check=None, environ=None, interpreter=None):
+def run(plan, *, volume_dir, local_temp, offline_load, hf_check=None, environ=None, interpreter=None, rehearsal=False):
     """Full preflight; ``offline_load`` performs a real offline model+tokenizer load and returns a record."""
     record, problems = {}, []
     record['environment'], p = prepare_environment(environ)
@@ -212,6 +242,9 @@ def run(plan, *, volume_dir, local_temp, offline_load, hf_check=None, environ=No
     pre = plan['preflight']
     record['interpreter'], p = (interpreter or check_interpreter)(
         pre['expected_sys_executable'], pre['expected_sys_prefix'], plan['runtime']['packages'])
+    if rehearsal and pre['expected_sys_executable'] is None:
+        # Colab rehearsal: no pinned interpreter paths; record them, keep the package pins.
+        p = [x for x in p if not x.startswith(('sys.executable', 'sys.prefix', 'expected interpreter'))]
     problems += p
     record['precision_device'], p = precision_and_device()
     problems += p
@@ -221,8 +254,8 @@ def run(plan, *, volume_dir, local_temp, offline_load, hf_check=None, environ=No
     for label, directory in [('volume', volume_dir), ('local-temp', local_temp)]:
         record[f'storage_{label}'], p = storage_probe(directory, label=label)
         problems += p
-    record['capacity'], p = usable_capacity(volume_dir, plan['storage']['provisioned_volume_bytes'])
-    problems += p
+    record['volume'] = volume_record(volume_dir)
+    record['local_disk'] = local_disk(local_temp)
     try:
         record['offline_load'] = offline_load()
     except Exception as exc:  # report, never mask the failure type

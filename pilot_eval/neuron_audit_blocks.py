@@ -125,19 +125,25 @@ class BlockStore:
         self._verified.add(key)
         return 'written'
 
-    def verify_unit(self, key, *, force=False):
+    def verify_unit(self, key, *, force=False, use_listing=True):
+        """Verify every sealed file. ``use_listing=False`` checks only explicit seal paths: on a Runpod
+        Global Volume directory listings may be up to a minute stale, so extra-file detection is skipped there."""
         directory = self.unit_dir(key)
         if self.state(key) != 'sealed':
             raise FileNotFoundError(f'unit {key} is {self.state(key)}')
         if key in self._verified and not force:
             return True
-        seal = json.loads((directory / 'seal.json').read_text())
-        present = {p.name for p in directory.iterdir()} - {'seal.json'}
-        if present != set(seal['files']):
-            raise CorruptUnit(f'unit {key} file set differs from its seal')
+        try:
+            seal = json.loads((directory / 'seal.json').read_text())
+        except json.JSONDecodeError as exc:
+            raise CorruptUnit(f'unit {key} seal is unreadable (torn write?)') from exc
+        if use_listing:
+            present = {p.name for p in directory.iterdir()} - {'seal.json'}
+            if present != set(seal['files']):
+                raise CorruptUnit(f'unit {key} file set differs from its seal')
         for name, record in seal['files'].items():
             path = directory / name
-            if path.stat().st_size != record['size'] or _sha(path) != record['sha256']:
+            if not path.is_file() or path.stat().st_size != record['size'] or _sha(path) != record['sha256']:
                 raise CorruptUnit(f'unit {key} file {name} failed its hash')
         self._verified.add(key)
         return True
@@ -168,3 +174,45 @@ class BlockStore:
     def status(self):
         keys = sorted(p.name for p in self.units.iterdir()) if self.units.exists() else []
         return {k: self.state(k) for k in keys}
+
+
+def mirror_store(local_root, volume_root, *, keys=None, source_listing=True):
+    """Copy sealed local units to a Global-Volume store without relying on atomic rename or listings.
+
+    Data files are copied with shutil.copyfile, the seal file last; the copy is then verified from
+    explicit seal paths. A torn or mismatched copy is re-copied once, then reported as an error.
+    Returns {key: 'mirrored' | 'already-mirrored'}.
+    """
+    import shutil
+    local, volume = BlockStore(local_root), BlockStore(volume_root)
+    keys = keys if keys is not None else [k for k, s in local.status().items() if s == 'sealed']
+    out = {}
+    for key in keys:
+        local.verify_unit(key, force=True, use_listing=source_listing)
+        source, target = local.unit_dir(key), volume.unit_dir(key)
+        seal_bytes = (source / 'seal.json').read_bytes()
+        if (target / 'seal.json').is_file() and (target / 'seal.json').read_bytes() == seal_bytes:
+            try:
+                volume.verify_unit(key, force=True, use_listing=False)
+                out[key] = 'already-mirrored'
+                continue
+            except CorruptUnit:
+                pass
+        for attempt in range(2):
+            target.mkdir(parents=True, exist_ok=True)
+            if (target / 'seal.json').exists():
+                (target / 'seal.json').unlink()  # unseal before rewriting data
+            for name in json.loads(seal_bytes)['files']:
+                shutil.copyfile(source / name, target / name)
+            with (target / 'seal.json').open('wb') as stream:
+                stream.write(seal_bytes)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                volume.verify_unit(key, force=True, use_listing=False)
+                out[key] = 'mirrored'
+                break
+            except CorruptUnit:
+                if attempt == 1:
+                    raise
+    return out

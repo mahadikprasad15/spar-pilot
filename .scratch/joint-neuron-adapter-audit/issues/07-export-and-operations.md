@@ -21,3 +21,9 @@
 - Tests: 10 with a mocked Hub (no network): partial→complete after resume, round trip, resume without recommit, public repo refused, readback mismatch, auth vs transient errors, changed file, secret, corrupt unit, tampered archive.
 - Local real snapshot (no upload yet): `exports/joint-neuron-adapter-audit/prep-v2/snapshot-8bde88e707dab1bd.json`, 25 files, complete for its preparation scope only.
 - **Not done:** a live HF write/readback (needs your go-ahead); export timing in the overall budget is recorded per call but not yet wired into a runbook.
+
+### 2026-11-11 — per-arm packages and reference-only final manifest (Claude)
+
+- `package_arm` builds a deterministic uncompressed tar (fixed metadata, sorted), so an identical retry deduplicates on HF. `upload_package` verifies by fresh download. `publish_final_manifest` uploads a small JSON that references the arm packages. `restore_final` fetches each referenced package into an empty root one at a time and re-verifies every unit. `may_stop_pod_final` requires every required arm verified and a complete final manifest.
+- `neuron_audit_blocks.mirror_store` writes the Global Volume mirror without assuming atomic rename or fresh listings; `verify_unit(use_listing=False)` checks explicit seal paths and reports a torn seal as corrupt.
+- 4 new tests (determinism, readback failure, partial vs complete gate, tampered package, mirror repair).

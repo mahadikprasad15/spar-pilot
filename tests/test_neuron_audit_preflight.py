@@ -59,16 +59,25 @@ def test_storage_probe_reports_failure(tmp_path, monkeypatch):
     assert record['operations']['delete']['ok'] is True and not list(tmp_path.iterdir())
 
 
-def test_capacity_uses_provisioned_size_and_60_percent_rule(tmp_path):
-    (tmp_path / 'existing.bin').write_bytes(b'x' * 1000)
-    capacity, problems = pf.usable_capacity(tmp_path, 11_000)
-    assert problems == [] and capacity['usable_bytes'] == 10_000
-    ok, problems = pf.confirm_capacity(tmp_path, capacity, 5_000)
-    assert problems == [] and ok['probe']['bytes'] == 250
-    _, problems = pf.confirm_capacity(tmp_path, capacity, 7_000)
-    assert any('60%' in p for p in problems)
-    _, problems = pf.usable_capacity(tmp_path, None)
-    assert problems == ['storage.provisioned_volume_bytes is not recorded']
+def test_storage_rules_local_working_set_and_hf_quota(tmp_path):
+    local = dict(free_bytes=100_000, total_bytes=200_000)
+    hf = dict(observed_private_bytes=15_000, quota_bytes=100_000)
+    ok, problems = pf.confirm_storage(local, hf, per_arm_bytes=10_000, total_upload_bytes=60_000, local_dir=tmp_path)
+    assert problems == [] and ok['local_need_bytes'] == 30_000 and ok['probe']['bytes'] == 500
+    _, problems = pf.confirm_storage(local, hf, per_arm_bytes=25_000, total_upload_bytes=60_000)
+    assert any('local working set' in p for p in problems)
+    _, problems = pf.confirm_storage(local, hf, per_arm_bytes=1_000, total_upload_bytes=75_000)
+    assert any('85% of quota' in p for p in problems)
+    _, problems = pf.confirm_storage(local, dict(observed_private_bytes=None, quota_bytes=1), per_arm_bytes=1,
+                                     total_upload_bytes=1)
+    assert problems == ['HF private usage/quota not measured']
+
+
+def test_global_volume_has_no_capacity_rule_and_local_disk_is_measured(tmp_path):
+    (tmp_path / 'x.bin').write_bytes(b'x' * 1000)
+    assert pf.volume_record(tmp_path) == dict(volume_dir=str(tmp_path), used_bytes=1000,
+                                              capacity_rule='none (global volume)')
+    assert pf.local_disk(tmp_path)['free_bytes'] > 0
 
 
 class FakeHub:
@@ -114,11 +123,10 @@ def test_run_collects_every_problem_and_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(pf, 'precision_and_device', lambda: (dict(device='cpu'), []))
     plan = dict(preflight=dict(expected_sys_executable='a', expected_sys_prefix='b', export_repo='o/r'),
                 runtime=dict(packages={}, expected_device='NVIDIA A100-SXM4-80GB'),
-                storage=dict(provisioned_volume_bytes=None))
+                storage=dict())
     with pytest.raises(pf.PreflightFailure) as info:
         pf.run(plan, volume_dir=tmp_path, local_temp=tmp_path, offline_load=lambda: 1 / 0,
                environ=dict(GOOD_ENV), interpreter=lambda *a: ({}, []))
     problems = info.value.problems
     assert any('device cpu' in p for p in problems) and any('offline model' in p for p in problems)
-    assert 'storage.provisioned_volume_bytes is not recorded' in problems
     assert 'HF online export check was not run' in problems

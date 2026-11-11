@@ -50,12 +50,15 @@ def _get(plan, dotted):
     return node
 
 
-def problems(plan, stage):
+def problems(plan, stage, *, rehearsal=False):
+    """Rehearsal plans (Colab bug-finding) need status 'rehearsal' and keep every fixed rule, but skip the
+    Pod-specific required fields; their outputs can never feed a production stage."""
     found = []
     if plan.get('schema') != SCHEMA:
         found.append(f'schema is not {SCHEMA}')
-    if plan.get('status') != 'approved':
-        found.append(f"status is {plan.get('status')}, not approved")
+    wanted = 'rehearsal' if rehearsal else 'approved'
+    if plan.get('status') != wanted:
+        found.append(f"status is {plan.get('status')}, not {wanted}")
     for section in SECTIONS:
         if plan.get(section) in (None, {}, []):
             found.append(f'section {section} is missing or empty')
@@ -71,6 +74,8 @@ def problems(plan, stage):
         required = list((plan.get('required_before') or {}).get('03b') or []) + required
     if not required:
         found.append(f'no required_before list for stage {stage}')
+    if rehearsal:
+        required = []
     for dotted in required:
         value = _get(plan, dotted)
         if value is KeyError:
@@ -80,13 +85,41 @@ def problems(plan, stage):
     return found
 
 
-def load(path, stage):
+def load(path, stage, *, rehearsal=False):
     plan = read(path)
-    found = problems(plan, stage)
+    found = problems(plan, stage, rehearsal=rehearsal)
     if found:
         raise PlanError(f'plan not runnable for {stage}: ' + '; '.join(found))
     plan['_plan_sha256'] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    plan['_plan_core_sha256'] = core_sha256(plan)
+    plan['_rehearsal'] = bool(rehearsal)
     return plan
+
+
+VOLATILE = [('operations', 'production_wall_time_cap_hours'), ('approval',), ('status',)]
+
+
+def core_sha256(plan):
+    """Hash of the frozen content, ignoring fields legitimately filled after 03b (wall cap, approval)."""
+    import copy
+    body = copy.deepcopy({k: v for k, v in plan.items() if not k.startswith('_')})
+    for path in VOLATILE:
+        node = body
+        for key in path[:-1]:
+            node = node.get(key, {})
+        node.pop(path[-1], None)
+    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def make_rehearsal_plan(source, destination, *, note='Colab rehearsal: bug-finding only, never valid for production'):
+    """Copy the run plan as a rehearsal: status 'rehearsal', approval cleared, device unpinned."""
+    plan = read(source)
+    plan['status'] = 'rehearsal'
+    plan['approval'] = dict(approved_by=None, approved_on=None, notes=note)
+    plan['runtime']['expected_device'] = None
+    plan.setdefault('rehearsal', {})['source_plan_sha256'] = hashlib.sha256(Path(source).read_bytes()).hexdigest()
+    Path(destination).write_text(yaml.safe_dump(plan, sort_keys=False))
+    return destination
 
 
 def _sealed(directory, kind):
