@@ -20,6 +20,11 @@ The code is a measurement instrument: correctness of scoring matters more than s
 
 ## Agent skills
 
+### Experiment lessons
+
+- Before designing or building an experiment, evaluation, or remote runner, read `docs/agents/experiment-lessons.md` and apply the relevant lessons.
+- When review or investigation identifies a serious reusable bug or gap, add or update a concise, evidence-linked lesson in that file; distinguish confirmed behavior from an unverified risk, and record resolution only when verified. Track the specific fix in the issue tracker when appropriate.
+
 ### Issue tracker
 
 Issues and specs live as Markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
