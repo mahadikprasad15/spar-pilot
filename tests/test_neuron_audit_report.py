@@ -124,3 +124,17 @@ def test_d_magnitude_does_not_cancel_opposite_changes():
     base = np.zeros((2, 2))
     arm = np.array([[1.0, -1.0], [1.0, -1.0]])
     assert rep.d_change(base, arm, [0, 1]) == 0.0 and rep.d_magnitude(base, arm, [0, 1]) == 1.0
+
+
+def test_rehearsal_report_reads_only_held_out_rows_every_arm_collected(tmp_path):
+    rows = sequences()
+    kept = [r for r in rows if not r['id'].endswith(('024', '025'))]  # a partial rehearsal collection
+    stores = write_stores(tmp_path / 'blocks', kept)
+    sel.select(plan(), store_roots=[stores], sequences=rows, output_root=tmp_path / 'sel', run_id='s',
+               layers=LAYERS, arms=ARMS, prototype=True, available_only=True)
+    results = rep.build(plan(), selection_dir=tmp_path / 'sel' / sel.RUN_SUBDIR / 's', store_roots=[stores],
+                        sequences=rows, qualification=QUAL, output_root=tmp_path / 'out', run_id='r', layers=LAYERS,
+                        prototype=True)
+    assert results['coverage']['heldout_counts']['math'] == 4
+    with pytest.raises(sel.SelectionRefused, match='heldout examples'):
+        rep.HeldOut([stores], rows, prototype=True).matrix('untuned', 0, 'mean_abs_z', ['math:024'])

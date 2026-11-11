@@ -256,7 +256,7 @@ class Discovery:
             raise SelectionRefused(f'no {self.split} rows requested for arm {arm}')
         missing = [i for i in ids if i not in self.where[arm]]
         if missing:
-            raise SelectionRefused(f'arm {arm} lacks sealed rows for {len(missing)} discovery examples')
+            raise SelectionRefused(f'arm {arm} lacks sealed rows for {len(missing)} {self.split} examples')
         out = []
         for i in ids:
             store, key, row = self.where[arm][i]

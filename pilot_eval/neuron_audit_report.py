@@ -140,8 +140,9 @@ def build(plan, *, selection_dir, store_roots, sequences, qualification, output_
         raise SelectionRefused('selection is a prototype; a production report needs a production selection')
     arms = summary['arms']
     # Held-out units must come from the same collection context as the discovery units 05 used.
+    # A rehearsal (prototype) reads only the held-out rows every arm collected, as 05 did for discovery rows.
     held = HeldOut(store_roots, sequences, sequences_sha256=sequences_sha256, prototype=prototype,
-                   expected_context=summary.get('unit_context'))
+                   available_only=prototype, expected_context=summary.get('unit_context'))
     ids = {g: held.ids(g) for g in ['math', 'general', 'near_miss']}
     too_few = {g: len(v) for g, v in ids.items() if len(v) < 2}
     if too_few:
