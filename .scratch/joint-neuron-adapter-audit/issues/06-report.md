@@ -18,3 +18,17 @@
 ### 2026-11-11 — predictions optional (user decision)
 
 - Freezing predictions before examining discovery results is **optional**, not a gate (user, 2026-11-11). Nothing in 05/06 requires a prediction record. If one is made, it must be saved before discovery results are inspected, and 06 compares against it.
+
+### 2026-11-11 — first implementation on fixtures (Claude)
+
+- `pilot_eval/neuron_audit_report.py` reads a sealed 05 selection (it never rewrites or re-ranks it; a test checks file hashes before and after) and reads held-out rows through `HeldOut`, the sealed-unit reader limited to the held-out split.
+- Per layer:
+  - A held-out math-minus-general selectivity (equal-example and token-weighted);
+  - B held-out read sizes on math and background;
+  - D mean paired change with sign agreement against the discovery sign (zero/undefined counted separately).
+
+  Each comes with frozen matched controls (unavailable controls are reported as such) and a percentile bootstrap (2,000 resamples, seed 1234, groups resampled separately; D keeps the arm pairing).
+- Also: B∩D for both the primary and relative D rankings; the fraction of D entries below 5× the FP64 floor (an unresolved floor is shown as unresolved); the pooled overlap family with randomization references (labelled not a CI); split-half stability; coverage with partial label, counts and 03b flags; limitations.
+- Outputs `results.json`, `report.md` and `overlaps.png` (if matplotlib is installed), sealed under `runs/joint-neuron-adapter-audit/report/<run_id>/`. A production report refuses a prototype/rehearsal selection.
+- Tests: 8 fixture tests. 152 audit tests pass.
+- **Not done:** per-layer figures beyond the pooled overlap plot, and a published HTML version. The report has not been run on real data.

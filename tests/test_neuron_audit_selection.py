@@ -139,11 +139,11 @@ def test_refuses_mismatched_manifest_missing_arm_and_held_out_rows(tmp_path):
     with pytest.raises(sel.SelectionRefused, match='different frozen sequences'):
         sel.Discovery([stores], rows, sequences_sha256='seq-sha')
     data = sel.Discovery([stores], rows, prototype=True)
-    with pytest.raises(sel.SelectionRefused, match='held-out'):
+    with pytest.raises(sel.SelectionRefused, match='held-out or calibration rows are never read'):
         data.matrix('untuned', 0, 'mean_abs_z', ['math:025'])
     with pytest.raises(sel.SelectionRefused, match='no sealed units'):
         data.matrix('offline-grpo', 0, 'mean_abs_z', ['math:000'])
-    with pytest.raises(sel.SelectionRefused, match='discovery rows only'):
+    with pytest.raises(sel.SelectionRefused, match='limited to discovery rows'):
         data.ids('math', split='heldout')
 
 

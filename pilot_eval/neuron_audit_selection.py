@@ -188,6 +188,8 @@ def pooled_overlap(per_layer):
 class Discovery:
     """Discovery-only matrices [examples, J] gathered from sealed block units, by example ID order."""
 
+    split = 'discovery'  # selection is locked to discovery rows; the 06 report subclasses this for held-out
+
     def __init__(self, store_roots, sequences, *, sequences_sha256=None, prototype=False, available_only=False):
         self.rows = {r['id']: r for r in sequences}
         self.prototype, self.available_only = prototype, available_only
@@ -209,17 +211,27 @@ class Discovery:
                     self.where.setdefault(ident['arm'], {})[example] = (store, key, row)
         self._cache = {}
 
-    def ids(self, group, split='discovery'):
+    def ids(self, group, split=None):
+        split = split or self.split
         chosen = sorted(i for i, r in self.rows.items() if r['group'] == group and r['split'] == split)
-        if split != 'discovery':
-            raise SelectionRefused('selection reads discovery rows only')
+        if split != self.split:
+            raise SelectionRefused(f'this reader is limited to {self.split} rows')
         if self.available_only:  # rehearsal: only rows every arm actually collected
             chosen = [i for i in chosen if all(i in rows for rows in self.where.values())]
         return chosen
 
+    def counts(self, arm, ids, group=GROUP):
+        """Per-example counted tokens (for token-weighted summaries)."""
+        out = []
+        for i in ids:
+            store, key, row = self.where[arm][i]
+            out.append(store.index(key)['counts'][group][row])
+        return out
+
     def matrix(self, arm, layer, stat, ids):
-        if any(self.rows[i]['split'] != 'discovery' for i in ids):
-            raise SelectionRefused('held-out or calibration rows requested by selection')
+        if any(self.rows[i]['split'] != self.split for i in ids):
+            raise SelectionRefused(f'rows outside the {self.split} split requested (held-out or calibration rows '
+                                   'are never read by selection)')
         if arm not in self.where:
             raise SelectionRefused(f'arm {arm} has no sealed units')
         missing = [i for i in ids if i not in self.where[arm]]
