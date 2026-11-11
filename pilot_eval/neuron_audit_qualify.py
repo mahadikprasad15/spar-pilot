@@ -310,9 +310,13 @@ class Qualification:
             raise QualificationFailure('setup', 'rehearsal runs (and only they) must use a run_id starting with rehearsal-')
         self.run_dir = Path(config['output_root']) / RUN_SUBDIR / config['run_id']
         self.fingerprint = runtime_fingerprint(backend.device_info())
+        from pilot_eval.neuron_audit_preflight import check_code_commit
+        self.code_head = config.get('code_head_override') or check_code_commit(None)[0].get('head')
         self.identity = dict(plan_sha256=plan['_plan_sha256'], config=_sha({k: v for k, v in config.items()
-                                                                             if k not in ('local_temp',)}),
+                                                                             if k not in ('local_temp', 'code_head_override')}),
                              runtime=self.fingerprint)
+        if not self.rehearsal:  # production stages are never reused across a code change
+            self.identity['code_commit'] = self.code_head
         cap = plan['operations'].get('qualification_max_gpu_hours')
         if cap is None and self.rehearsal:
             cap = config.get('rehearsal_cap_hours')
@@ -347,7 +351,7 @@ class Qualification:
     def _seal(self, name, result):
         directory = self._stage_dir(name)
         _write_json(directory / 'result.json', result)
-        _write_json(directory / 'complete.json', dict(identity=self.identity,
+        _write_json(directory / 'complete.json', dict(identity=self.identity, code_commit=self.code_head,
                                                       result_sha256=_file_sha(directory / 'result.json')))
         self._progress(name, 'sealed')
         return result
@@ -925,6 +929,8 @@ class Qualification:
             unresolved_floor_layers={a: v['unresolved_layers'] for a, v in results['fp64_floor']['floors'].items()},
             batch_manifest_sha256=results['batch_freeze']['manifest_sha256'],
             runtime_fingerprint=self.fingerprint, pad_token_id=self._pad_token_id(),
+            stage_code_commits={s: json.loads((self._stage_dir(s) / 'complete.json').read_text()).get('code_commit')
+                                for s in STAGES},
             inputs=dict(sequences_sha256=_file_sha(self.root / self.plan['inputs']['sequences_run'] / 'sequences.jsonl'),
                         adapters={a: _file_sha(Path(self.config['adapter_dirs'][a]) / 'adapter_model.safetensors')
                                   for a in arms['qualified'] if a != 'untuned'},

@@ -451,3 +451,11 @@ def test_clock_heartbeat_records_time_between_checkpoints(world, monkeypatch):
     assert json.loads(path.read_text())['seconds'] > first  # advanced while no checkpoint ran
     release.set()
     runner.join(10)
+
+
+def test_production_stages_are_not_reused_across_a_code_change(world):
+    first = dict(world['config'], code_head_override='a' * 40)
+    q.Qualification(world['plan'], first, world['backend'], preflight=world['preflight']).run(stop_after='masks')
+    changed = dict(world['config'], code_head_override='b' * 40)
+    with pytest.raises(q.QualificationFailure, match='identity or integrity differs'):
+        q.Qualification(world['plan'], changed, world['backend'], preflight=world['preflight']).run()
