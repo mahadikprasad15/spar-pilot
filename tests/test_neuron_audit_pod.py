@@ -33,3 +33,8 @@ def test_small_rehearsal_plan_keeps_fixed_rules(tmp_path):
     real = yaml.safe_load(pod.PLAN.read_text())
     assert real['operations']['qualification_max_gpu_hours'] == 4
     assert real['operations']['stop_after_verified_partial_backup'] is True
+
+
+def test_disk_problems_flags_a_default_50_gb_container_disk():
+    assert pod.disk_problems(dict(total_bytes=50 * 10**9, free_bytes=43 * 10**9))
+    assert pod.disk_problems(dict(total_bytes=120 * 10**9, free_bytes=113 * 10**9)) == []

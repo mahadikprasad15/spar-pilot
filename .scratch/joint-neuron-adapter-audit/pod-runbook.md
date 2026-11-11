@@ -14,7 +14,7 @@ export PY=/root/venv/bin/python
 
 - GPU: 1x A100-SXM4-80GB (the plan's `runtime.expected_device`).
 - Attach Global Volume **sl-0**. Note its mount path; `VOL` must sit inside it.
-- Container disk: at least 100 GB (the full run needs about 50 GB free for the working set; venv, model
+- Container disk: **120 GB** (Runpod's default 50 GB is too small; `facts` reports `disk_problems` if so). At least 100 GB (the full run needs about 50 GB free for the working set; venv, model
   cache and packages add about 20 GB).
 - Pod secret: `HF_TOKEN` with write access to `Prasadmahadik/spar-sampling-sft-artifacts`. Never echo it.
 - `RUNPOD_POD_ID` is set by Runpod; `runpodctl` inside the Pod is used only by the final guarded stop.

@@ -101,6 +101,7 @@ def facts(volume_dir, work):
                                                                require_sentinel=False)
     out['volume']['identity_file_present'] = (Path(volume_dir) / pf.VOLUME_SENTINEL).is_file()
     out['local_disk'] = pf.local_disk(work)
+    out['disk_problems'] = disk_problems(out['local_disk'])
     out['code_commit'], out['commit_problems'] = pf.check_code_commit('unrecorded')
     torch_version = (out.get('torch_runtime') or {}).get('version') or out['packages'].get('torch') or ''
     local = torch_version.partition('+')[2]
@@ -118,6 +119,19 @@ def facts(volume_dir, work):
     path = work / 'pod-facts.json'
     path.write_text(json.dumps(out, indent=2, default=str) + '\n')
     return out
+
+
+# Before ``prepare``: the full run's local working set (~27 GB: one arm's units, package and verification
+# download plus the model cache) must stay <= 60% of free disk at 03b, after the model and prep are added.
+MIN_FREE_BYTES_AT_FACTS = 60 * 10**9
+
+
+def disk_problems(local, minimum=MIN_FREE_BYTES_AT_FACTS):
+    """Flag a container disk too small for the full run before anything is installed into it."""
+    if local['free_bytes'] >= minimum:
+        return []
+    return [f"container disk has {local['free_bytes'] / 1e9:.0f} GB free (total {local['total_bytes'] / 1e9:.0f} GB); "
+            f"the full run needs >= {minimum / 1e9:.0f} GB free here: recreate the Pod with a >= 120 GB container disk"]
 
 
 # --- inputs ----------------------------------------------------------------------------------------
