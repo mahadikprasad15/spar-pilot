@@ -251,14 +251,21 @@ def _lineage_file(path):
     ids = {'train': set(), 'test': set()}
     for split, index in ID_PATTERN.findall(text):
         ids[split].add(int(index))
-    questions = set()
-    try:
-        values = [json.loads(text)] if path.suffix == '.json' else [json.loads(l) for l in text.splitlines() if l.strip()]
-        for value in values:
-            questions.update(question_hash(q) for q in _strings_under(value, 'question'))
-    except json.JSONDecodeError:
-        pass
-    return ids, questions
+    questions, errors = set(), []
+    if path.suffix == '.json':
+        chunks = [(1, text)]
+    elif path.suffix == '.jsonl':
+        chunks = [(n, l) for n, l in enumerate(text.splitlines(), start=1) if l.strip()]
+    else:
+        chunks = []  # non-JSON sources contribute IDs only
+    for line_no, chunk in chunks:
+        try:
+            value = json.loads(chunk)
+        except json.JSONDecodeError as exc:  # never drop a line silently: the source becomes unparseable
+            errors.append(dict(line=line_no, error=str(exc)[:200]))
+            continue
+        questions.update(question_hash(q) for q in _strings_under(value, 'question'))
+    return ids, questions, errors
 
 
 # --- leakage --------------------------------------------------------------------------------
@@ -270,9 +277,9 @@ def _leakage(plan, root, arms, train_rows, test_rows):
         path = _inside(root, item['path'])
         entry = dict(arm=item['arm'], role=item['role'], path=item['path'], present=path.is_file())
         if entry['present']:
-            ids, questions = _lineage_file(path)
+            ids, questions, errors = _lineage_file(path)
             entry.update(sha256=file_hash(path), train_ids=len(ids['train']), test_ids=len(ids['test']),
-                         question_texts=len(questions))
+                         question_texts=len(questions), parse_errors=len(errors), parse_error_examples=errors[:5])
             train_ids |= ids['train']
             test_ids |= ids['test']
             hashes |= questions
@@ -282,13 +289,16 @@ def _leakage(plan, root, arms, train_rows, test_rows):
             continue
         mine = [s for s in report['sources'] if s['arm'] == name]
         missing = [s['path'] for s in mine if not s['present']]
+        unparseable = [s['path'] for s in mine if s.get('parse_errors')]
         if not mine:
             status = 'unknown-no-lineage-listed'
         elif missing:
             status = 'partial-some-sources-missing'
+        elif unparseable:
+            status = 'partial-some-sources-unparseable'
         else:
             status = 'available'
-        report['arms'][name] = dict(status=status, missing_sources=missing,
+        report['arms'][name] = dict(status=status, missing_sources=missing, unparseable_sources=unparseable,
                                     roles=sorted({s['role'] for s in mine if s['present']}))
     bad = sorted(f'train:{i}' for i in train_ids if i >= len(train_rows)) + \
         sorted(f'test:{i}' for i in test_ids if i >= len(test_rows))
@@ -302,8 +312,8 @@ def _leakage(plan, root, arms, train_rows, test_rows):
         protected_question_hashes=len(protected), referenced_test_question_hashes=len(test_hashes),
         arms_with_unknown_provenance=sorted(a for a, r in report['arms'].items() if r['status'] != 'available'),
         cleanliness='no-overlap-with-available-sources',
-        cleanliness_note='Only listed, present lineage files were checked; missing or unlisted sources mean '
-                         'cleanliness is unknown for those arms, not clean.')
+        cleanliness_note='Only listed, present, fully parsed lineage files were checked; missing, unparseable or '
+                         'unlisted sources mean cleanliness is unknown for those arms, not clean.')
     return report, train_ids, protected, test_hashes
 
 

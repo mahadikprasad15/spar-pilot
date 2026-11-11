@@ -190,12 +190,17 @@ class Discovery:
 
     split = 'discovery'  # selection is locked to discovery rows; the 06 report subclasses this for held-out
 
-    def __init__(self, store_roots, sequences, *, sequences_sha256=None, prototype=False, available_only=False):
+    CONTEXT = ['sequences_sha256', 'batch_manifest_sha256', 'plan_core_sha256', 'qualification', 'rehearsal']
+
+    def __init__(self, store_roots, sequences, *, sequences_sha256=None, prototype=False, available_only=False,
+                 expected_context=None):
+        """``expected_context`` (production): identity fields every unit must carry (e.g. plan core and
+        qualification). Units must also agree with each other on ``CONTEXT`` and never repeat an (arm, example)."""
         self.rows = {r['id']: r for r in sequences}
         self.prototype, self.available_only = prototype, available_only
         if available_only and not prototype:
             raise SelectionRefused('available_only (rehearsal subsets) requires prototype mode')
-        self.where = {}
+        self.where, self.context = {}, None
         for root in store_roots:
             store = BlockStore(root)
             for key, state in store.status().items():
@@ -207,8 +212,21 @@ class Discovery:
                     raise SelectionRefused(f'unit {key} comes from a rehearsal run; not valid for selection')
                 if not prototype and ident.get('sequences_sha256') != sequences_sha256:
                     raise SelectionRefused(f'unit {key} was collected from a different frozen sequences manifest')
+                context = {f: ident.get(f) for f in self.CONTEXT}
+                if self.context is None:
+                    self.context = context
+                elif context != self.context:
+                    raise SelectionRefused(f'unit {key} comes from a different run context ({context} vs '
+                                           f'{self.context}); never mix runs')
+                for field, value in (expected_context or {}).items():
+                    if ident.get(field) != value:
+                        raise SelectionRefused(f'unit {key}: {field} is {ident.get(field)}, expected {value}')
+                arm_rows = self.where.setdefault(ident['arm'], {})
                 for row, example in enumerate(index['example_ids']):
-                    self.where.setdefault(ident['arm'], {})[example] = (store, key, row)
+                    if example in arm_rows:
+                        raise SelectionRefused(f"arm {ident['arm']} example {example} appears in both "
+                                               f'{arm_rows[example][1]} and {key}; refusing duplicates')
+                    arm_rows[example] = (store, key, row)
         self._cache = {}
 
     def ids(self, group, split=None):
@@ -300,7 +318,7 @@ def _comparisons(arms):
 
 
 def select(plan, *, store_roots, sequences, output_root, run_id, layers, arms, sequences_sha256=None,
-           prototype=False, available_only=False):
+           prototype=False, available_only=False, expected_context=None, partial_label=None):
     run_dir = Path(output_root) / RUN_SUBDIR / run_id
     if (run_dir / 'complete.json').exists():
         seal = json.loads((run_dir / 'complete.json').read_text())
@@ -308,7 +326,7 @@ def select(plan, *, store_roots, sequences, output_root, run_id, layers, arms, s
             raise SelectionRefused('sealed selection failed its integrity check')
         return json.loads((run_dir / 'summary.json').read_text())
     data = Discovery(store_roots, sequences, sequences_sha256=sequences_sha256, prototype=prototype,
-                     available_only=available_only)
+                     available_only=available_only, expected_context=expected_context)
     stats = plan['statistics']
     groups = ['math', 'general', 'near_miss']
     ids = {g: data.ids(g) for g in groups}
@@ -366,6 +384,7 @@ def select(plan, *, store_roots, sequences, output_root, run_id, layers, arms, s
     summary = dict(run_id=run_id, prototype=prototype, plan_sha256=plan.get('_plan_sha256'),
                    sequences_sha256=sequences_sha256, arms=list(arms), layers=list(layers),
                    discovery_counts={g: len(v) for g, v in ids.items()}, comparisons=sorted(overlaps),
+                   unit_context=data.context, partial_label=partial_label,
                    primary_family={k: v['pooled'] for k, v in overlaps.items()},
                    note='Overlap intervals are bin-conditional randomization references, not confidence intervals. '
                         'All comparisons are exploratory with one training seed.',
@@ -387,17 +406,24 @@ def main(argv=None):
     parser.add_argument('--layers', required=True, help='e.g. 0-27')
     parser.add_argument('--rehearsal', action='store_true',
                         help='Colab rehearsal: prototype output over the discovery rows every arm collected')
+    parser.add_argument('--qualification_dir', required=True,
+                        help='03b run dir: its qualified arms define the (possibly partial) study')
     args = parser.parse_args(argv)
     plan = plan_mod.load(args.plan, '03b' if args.rehearsal else '04', rehearsal=args.rehearsal)
     seq_dir = Path(args.sequences_run)
     sequences = [json.loads(l) for l in (seq_dir / 'sequences.jsonl').read_text().splitlines()]
     manifest = json.loads((seq_dir / 'manifest.json').read_text())
     lo, hi = (int(x) for x in args.layers.split('-'))
-    arms = [a for a in plan['arms'] if a != 'untuned']
+    qualification = json.loads((Path(args.qualification_dir) / 'qualification.json').read_text())
+    arms = [a for a in plan['arms'] if a != 'untuned' and a in qualification['arms_qualified']]
+    expected = None if args.rehearsal else dict(plan_core_sha256=plan['_plan_core_sha256'],
+                                                batch_manifest_sha256=qualification['batch_manifest_sha256'],
+                                                qualification=qualification['run_id'], rehearsal=False)
     summary = select(plan, store_roots=args.stores, sequences=sequences, output_root=args.output_root,
                      run_id=args.run_id, layers=list(range(lo, hi + 1)), arms=arms,
                      sequences_sha256=manifest['sequences_sha256'], prototype=args.rehearsal,
-                     available_only=args.rehearsal)
+                     available_only=args.rehearsal, expected_context=expected,
+                     partial_label=qualification.get('partial_label'))
     print(json.dumps(summary, indent=2, default=_json_default))
     return 0
 

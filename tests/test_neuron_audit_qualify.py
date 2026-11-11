@@ -124,6 +124,15 @@ def world(tmp_path, monkeypatch):
     rows += [row(100 + i, 2 + i % 6, 'math' if i % 2 else 'general', 'discovery' if i < 8 else 'heldout')
              for i in range(12)]
     (seq / 'sequences.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()  # noqa: E731
+    (seq / 'manifest.json').write_text(json.dumps(dict(sequences_sha256=sha(seq / 'sequences.jsonl'))))
+    (seq / 'review').mkdir()
+    (seq / 'review/background_sample.jsonl').write_text('{}\n')
+    (seq / 'review/review.json').write_text(json.dumps(dict(
+        decision='accept', sample_sha256=sha(seq / 'review/background_sample.jsonl'))))
+    (seq / 'complete.json').write_text(json.dumps(dict(files={n: sha(seq / n) for n in ['sequences.jsonl',
+                                                                                          'manifest.json']})))
+    (inv / 'complete.json').write_text(json.dumps(dict(inventory_sha256=sha(inv / 'inventory.json'))))
     value = yaml.safe_load(REAL_PLAN.read_text())
     value.update(status='approved', approval=dict(approved_by='t', approved_on='2026-11-11', notes=None),
                  arms=['untuned', 'gold-sft', 'offline-grpo'])
@@ -322,3 +331,56 @@ def test_projected_bytes_matches_spec_illustration():
     dense_only = q.projected_bytes(arms_trained=0, arms_total=7, examples=700, layers=28, width=8960, groups=3,
                                    union_tokens=0)
     assert dense_only / 2 ** 30 == pytest.approx(27.5, abs=0.1)
+
+
+def test_summary_binds_inputs_runtime_and_runs_the_bf16_diagnostic(world):
+    summary = qualification(world).run()
+    assert summary['runtime_fingerprint']['device'] == 'fake-cpu' and summary['runtime_fingerprint']['torch']
+    seq_sha = hashlib.sha256((world['root'] / 'seq/sequences.jsonl').read_bytes()).hexdigest()
+    assert summary['inputs']['sequences_sha256'] == seq_sha and set(summary['inputs']['adapters']) == {'gold-sft',
+                                                                                                         'offline-grpo'}
+    run_dir = Path(world['config']['output_root']) / q.RUN_SUBDIR / 'q1'
+    bf16 = json.loads((run_dir / 'stages/bf16_diagnostic/result.json').read_text())
+    assert bf16['label'].startswith('DIAGNOSTIC ONLY') and bf16['arms']['gold-sft']['status'] == 'measured'
+    assert set(bf16['arms']['gold-sft']['layers']) == {'0', '1'}
+
+
+def test_sealed_stages_are_never_reused_on_a_different_runtime(world, monkeypatch):
+    qualification(world).run(stop_after='masks')
+    monkeypatch.setattr(FakeBackend, 'device_info', lambda self: dict(name='other-gpu', total_memory=10_000_000))
+    with pytest.raises(q.QualificationFailure, match='different runtime'):
+        qualification(world).run()
+
+
+def test_qualification_ceiling_is_enforced_cumulatively(world):
+    clock = dict(t=0.0)
+
+    def now():
+        clock['t'] += 500.0
+        return clock['t']
+
+    run = lambda: q.Qualification(world['plan'], world['config'], world['backend'], preflight=world['preflight'],  # noqa: E731
+                                  now=now).run()
+    with pytest.raises(q.QualificationFailure, match='time ceiling'):
+        run()  # plan ceiling 1 h; every tick advances 500 s
+    run_dir = Path(world['config']['output_root']) / q.RUN_SUBDIR / 'q1'
+    assert json.loads((run_dir / 'meta/clock.json').read_text())['seconds'] > 3600
+    clock['t'] = 0.0
+    with pytest.raises(q.QualificationFailure, match='time ceiling'):
+        run()  # a restart inherits the elapsed time instead of starting over
+
+
+def test_phase_1b_out_of_memory_keeps_the_1a_measurement(world, monkeypatch):
+    original = q.Qualification._time_run
+
+    def oom_for_heads(self, arm, batches, *, heads=None):  # only the benchmark's 1B timing runs out of memory
+        if heads:
+            raise RuntimeError('CUDA out of memory (simulated, 1B hooks)')
+        return original(self, arm, batches, heads=heads)
+
+    monkeypatch.setattr(q.Qualification, '_time_run', oom_for_heads)
+    qual = qualification(world)
+    results = qual.run(stop_after='benchmark')
+    bench = results['benchmark']
+    assert bench['phase_1b']['scope'] == 'omit' and bench['projection']['hooks'] == '1A'
+    assert bench['selected_budget'] in (200, 400) and any('oom_1B_all_layers' in p for p in bench['probes'])

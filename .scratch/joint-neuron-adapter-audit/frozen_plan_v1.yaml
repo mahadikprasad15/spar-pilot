@@ -41,11 +41,13 @@ runtime:                                        # [user] copy of the offline-GRP
   expected_device: NVIDIA A100-SXM4-80GB        # verify and record the actual device on the Pod
   python: "3.12"
   packages: {torch: 2.9.0, transformers: 4.57.6, peft: 0.18.0}
+  allowed_local_builds: {torch: [cu128]}         # [proposed 2026-11-11] public version must equal the pin; only these local build suffixes pass (earlier A100 reported 2.9.0+cu128); the full string is recorded
+  runtime_fingerprint: device name, total memory, torch/CUDA/cuDNN builds, Python; 03b stages and 04 must match it exactly (a different runtime requalifies under a new run_id)  # [proposed]
   deterministic: true
   cublas_workspace_config: ":4096:8"
   attention: eager                              # production, qualification and FP64 reference
   package_change_policy: reviewed change recorded in this plan, otherwise identical
-  code_commit: null                             # REQUIRED: pushed commit the worker checks out
+  code_commit: null                             # REQUIRED: pushed commit the worker checks out; preflight refuses another HEAD or tracked modifications
 
 precision:                                      # [user] + torch 2.9.0 API facts verified locally
   parameters_forwards_reductions: float32
@@ -117,6 +119,7 @@ review_flags:                                   # [user] 03b completes and recor
 
 fp64_floor:                                     # [user]
   purpose: D noise floor only (separate from batch agreement)
+  bf16_diagnostic: "[proposed] separate 03b stage on the same rows: per layer p99 |D_bf16 - D_fp32| / RMS(D_fp32) and top-k |D| overlap; labelled diagnostic, never a gate, never production"
   examples: 10
   dtype: float64
   attention: eager
@@ -218,7 +221,9 @@ benchmark:                                      # [user] unless tagged
   outputs: throughput, batch and adapter-load timing, peak VRAM, projected bytes and wall-time projection
 
 operations:
-  qualification_max_gpu_hours: null             # REQUIRED before 03b (ceiling for 03b itself)
+  qualification_max_gpu_hours: null             # REQUIRED before 03b (ceiling for 03b itself); enforced as cumulative wall time across restarts, at every stage and model loop
+  production_time_enforcement: cumulative wall time across restarts (persisted), checked after every unit and arm package  # [proposed]
+  stop_after_verified_partial_backup: false     # [user decision pending] true would stop the Pod after a failure/overrun only when every collected unit is on the volume and the partial manifest is verified
   production_wall_time_cap_hours: null          # [user] set after the benchmark; 04 refuses until recorded
   overrun_rule_04: check projected total after 10% of units and every further 10%; stop and report if two consecutive projections exceed 2x the benchmark projection or exceed the cap  # [user]
   overrun_forecast_basis: cumulative collection time only (what 03b benchmarked); mirror/export time counts toward the hard cap, checked at unit and arm boundaries  # [proposed]
@@ -258,6 +263,7 @@ storage:
     role: durable mirror of sealed work for resume across Pod stops (container disk is ephemeral)
     write_protocol: write and seal on local disk first; mirror with shutil.copyfile, data files first and seal file last; re-read and verify every hash on the volume; a torn or mismatched mirror is re-copied, never trusted
     never_rely_on: [atomic rename, file locks, hard links, chmod, fresh directory listings]
+    mount_check: the volume directory must already exist (never created by preflight), sit under a different mount point and device than the container disk, and hold .neuron-audit-volume.json naming sl-0 (written once by `neuron_audit_preflight init-volume` after the mount checks pass)  # [proposed]
     state_lookup: explicit paths from the run's progress record, not directory listings
   local_disk:                                   # [proposed]
     use: HF cache, working block store, package build, download verification, temp
@@ -282,6 +288,7 @@ preflight:                                      # [user]
   hf_offline: set HF_HUB_OFFLINE=1 before importing Hub libraries; print resolved HF_HOME / hub cache; real offline model+tokenizer load
   hf_transfer: assert importable if HF_HUB_ENABLE_HF_TRANSFER=1, else force 0
   hf_export_check: separate online client; HF_TOKEN as a Pod secret; repo private; small upload, fresh pinned-revision download into an empty dir, compare hashes; never print the token
+  production_hub_calls: every upload/readback runs in a separate online child process (OnlineHubProcess); the worker itself stays HF_HUB_OFFLINE=1
   export_repo: Prasadmahadik/spar-sampling-sft-artifacts
   logs: PYTHONUNBUFFERED=1; per-unit timestamped progress; run under tmux
 

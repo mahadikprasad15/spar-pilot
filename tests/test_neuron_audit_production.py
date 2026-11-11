@@ -46,9 +46,6 @@ class FakeHub:
 
 
 def setup(world, *, signoff='accept', cap=1.0, edit=None):
-    seq = world['root'] / 'seq'
-    (seq / 'manifest.json').write_text(json.dumps(dict(
-        sequences_sha256=hashlib.sha256((seq / 'sequences.jsonl').read_bytes()).hexdigest())))
     qualification(world).run()
     qual_dir = Path(world['config']['output_root']) / q.RUN_SUBDIR / 'q1'
     if signoff:
@@ -174,8 +171,6 @@ def test_overrun_check_rule():
 def test_colab_rehearsal_flow_is_labelled_limited_and_refused_by_selection(world):
     from pilot_eval import neuron_audit_selection as sel
     seq = world['root'] / 'seq'
-    (seq / 'manifest.json').write_text(json.dumps(dict(
-        sequences_sha256=hashlib.sha256((seq / 'sequences.jsonl').read_bytes()).hexdigest())))
     approved = world['tmp'] / 'approved.yaml'
     approved.write_text(yaml.safe_dump(world['plan_value']))
     rehearsal_path = plan_mod.make_rehearsal_plan(approved, world['tmp'] / 'rehearsal.yaml')
@@ -204,3 +199,115 @@ def test_colab_rehearsal_flow_is_labelled_limited_and_refused_by_selection(world
     with pytest.raises(prod.ProductionRefused, match='rehearsal'):
         prod.Production(prod_plan, dict(prod_config, qualification_run_id='rehearsal-q1'), world['backend'],
                         client=FakeHub())
+
+
+def test_resume_on_a_new_pod_restores_mirrored_units_before_packaging(world, monkeypatch):
+    plan, config = setup(world)
+    hub = FakeHub()
+    original = prod.Production._package_arm
+    state = dict(stop=True)
+
+    def crash_before_packaging(self, arm, st, keys):
+        if state['stop']:
+            raise RuntimeError('pod lost before packaging (simulated)')
+        return original(self, arm, st, keys)
+
+    monkeypatch.setattr(prod.Production, '_package_arm', crash_before_packaging)
+    with pytest.raises(RuntimeError, match='pod lost'):
+        prod.Production(plan, config, world['backend'], client=hub, now=FROZEN).run()
+    import shutil
+    shutil.rmtree(Path(config['local_root']))  # a new Pod: empty container disk, only the volume survives
+    state['stop'] = False
+    calls = dict(n=0)
+    collect = nc.NeuronCollector.collect
+
+    def counted(self, rows, **kw):
+        calls['n'] += 1
+        return collect(self, rows, **kw)
+
+    monkeypatch.setattr(nc.NeuronCollector, 'collect', counted)
+    result = prod.Production(plan, config, world['backend'], client=hub, now=FROZEN).run()
+    first_arm = result['arms'][0]
+    batches = len(json.loads((Path(world['config']['output_root']) / q.RUN_SUBDIR /
+                              'q1/stages/batch_freeze/batch_manifest.json').read_text())['batches'])
+    assert result['state'] == 'complete' and result['safe_to_stop_pod'] is True
+    assert calls['n'] == 2 * batches  # the first arm came back from the volume, not recollected
+    record = json.loads((Path(config['volume_root']) / prod.RUN_SUBDIR / 'p1/meta/progress.json').read_text())
+    assert len(record['arm_packages'][first_arm]['units']) == batches  # exact, never a smaller package
+
+
+def test_reused_run_id_with_a_different_context_is_refused(world):
+    plan, config = setup(world)
+    prod.Production(plan, config, world['backend'], client=FakeHub(), now=FROZEN).run()
+    with pytest.raises(prod.ProductionRefused, match='different context'):
+        prod.Production(plan, dict(config, label='other'), world['backend'], client=FakeHub(), now=FROZEN).run()
+
+
+def test_changed_inputs_or_runtime_after_qualification_are_refused(world, monkeypatch):
+    plan, config = setup(world)
+    adapter = Path(config['adapter_dirs']['gold-sft']) / 'adapter_model.safetensors'
+    original = adapter.read_bytes()
+    adapter.write_bytes(original + b'\0')
+    with pytest.raises(prod.ProductionRefused, match='adapter for gold-sft'):
+        prod.Production(plan, config, world['backend'], client=FakeHub())
+    adapter.write_bytes(original)
+    monkeypatch.setattr(type(world['backend']), 'device_info', lambda self: dict(name='other-gpu', total_memory=1))
+    with pytest.raises(prod.ProductionRefused, match='runtime differs'):
+        prod.Production(plan, config, world['backend'], client=FakeHub())
+
+
+def test_changed_sequences_bytes_are_refused(world):
+    plan, config = setup(world)
+    seq = world['root'] / 'seq' / 'sequences.jsonl'
+    seq.write_text(seq.read_text() + '\n')
+    with pytest.raises(prod.ProductionRefused, match='failed its seal|differs'):
+        prod.Production(plan, config, world['backend'], client=FakeHub())
+
+
+def test_wall_cap_is_cumulative_across_restarts_and_checked_per_unit(world, monkeypatch):
+    plan, config = setup(world, cap=1.0)  # 3600 s
+    clock = dict(t=0.0)
+    hub = FakeHub()
+
+    def now():
+        clock['t'] += 400.0
+        return clock['t']
+
+    original = nc.NeuronCollector.collect
+    calls = dict(n=0)
+
+    def flaky(self, rows, **kw):
+        calls['n'] += 1
+        if calls['n'] == 2:
+            raise RuntimeError('worker killed (simulated)')
+        return original(self, rows, **kw)
+
+    monkeypatch.setattr(nc.NeuronCollector, 'collect', flaky)
+    with pytest.raises(RuntimeError, match='killed'):
+        prod.Production(plan, config, world['backend'], client=hub, now=now).run()
+    saved = json.loads((Path(config['volume_root']) / prod.RUN_SUBDIR / 'p1/meta/progress.json').read_text())
+    assert saved['wall_seconds_saved'] > 0
+    result = prod.Production(plan, config, world['backend'], client=hub, now=now).run()
+    assert result['state'] == 'stopped-overrun'  # the second session inherits the first session's time
+    events = json.loads((Path(config['volume_root']) / prod.RUN_SUBDIR / 'p1/meta/progress.json').read_text())['events']
+    assert any(e['kind'] == 'overrun-stop' and 'cumulative' in e['reason'] for e in events)
+
+
+def test_optional_stop_after_verified_partial_backup(world):
+    plan, config = setup(world, cap=1e-9)
+    calls = []
+    runner = lambda cmd, **k: calls.append(cmd) or SimpleNamespace(returncode=0)  # noqa: E731
+    config['stop_command'] = ['runpodctl', 'stop', 'pod', 'X']
+    ticks = iter(range(10 ** 6))
+    clock = lambda: float(next(ticks))  # noqa: E731
+    result = prod.Production(plan, config, world['backend'], client=FakeHub(), now=clock, stop_runner=runner).run()
+    assert result['state'] == 'stopped-overrun' and calls == []  # default: never stop without the final backup
+    config2 = dict(config, run_id='p2', stop_after_verified_partial_backup=True)
+    prod.Production(plan, config2, world['backend'], client=FakeHub(), now=clock, stop_runner=runner).run()
+    assert calls == [['runpodctl', 'stop', 'pod', 'X']]
+
+
+def test_worker_uses_an_online_child_process_for_hub_calls(world):
+    plan, config = setup(world)
+    production = prod.Production(plan, config, world['backend'])
+    assert isinstance(production.client, prod.ex.OnlineHubProcess)

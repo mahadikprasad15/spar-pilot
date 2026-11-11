@@ -8,7 +8,8 @@ Held-out estimands per layer (equal-example weighted; token-weighted shown along
 - A: mean over list neurons of (held-out math - held-out general) base mean |z|;
 - B (per arm): mean over list neurons of held-out mean |a_j z_j| on math and on general background;
 - D (per arm): mean over list neurons of the held-out paired change (arm - base) mean |z| on math,
-  and directional agreement with each neuron's signed discovery change (zero/undefined marked).
+  shown with the mean *magnitude* of the per-neuron changes (signed averages can cancel), and
+  directional agreement with each neuron's signed discovery change (zero/undefined marked).
 Each is compared with the same estimand on the list's frozen matched controls. Intervals are
 percentile bootstraps over held-out questions/conversations (groups resampled separately; D keeps
 the arm pairing). Overlap intervals from 05 are randomization references, not confidence intervals.
@@ -91,6 +92,11 @@ def d_change(base, arm, neurons):
     return float((arm[:, neurons] - base[:, neurons]).mean()) if neurons else float('nan')
 
 
+def d_magnitude(base, arm, neurons):
+    """Mean over neurons of |per-neuron mean held-out change|: large opposite-signed changes do not cancel."""
+    return float(np.abs((arm[:, neurons] - base[:, neurons]).mean(axis=0)).mean()) if neurons else float('nan')
+
+
 def sign_agreement(base, arm, neurons, discovery_signed):
     """Fraction of list neurons whose held-out signed change has the discovery sign; zeros reported separately."""
     held = (arm[:, neurons] - base[:, neurons]).mean(axis=0)
@@ -106,12 +112,16 @@ def control_values(controls, fn):
             else dict(index=c['index'], value=None, status=c['status']) for c in controls]
 
 
-def floor_fraction(d_scores, floor, multiple=5.0):
+def floor_fraction(d_scores, floor, multiple=5.0, kind=None):
     if floor is None:
-        return dict(status='unresolved', reason='floor unavailable or zero (never treated as zero)')
+        return dict(status='unresolved', reason='floor unavailable or zero (never treated as zero)', kind=kind)
     scores = np.asarray(d_scores, float)
-    return dict(status='ok', floor=floor, fraction_below=float((scores < multiple * floor).mean()) if scores.size else None,
-                multiple=multiple, note='exploratory flag, not a gate')
+    out = dict(status='ok', floor=floor, kind=kind,
+               fraction_below=float((scores < multiple * floor).mean()) if scores.size else None,
+               multiple=multiple, note='exploratory flag, not a gate')
+    if kind == 'proxy floor':
+        out['note'] += '; PROXY floor (FP32 batched vs singleton), not an FP64 reference'
+    return out
 
 
 # --- report -------------------------------------------------------------------------------------
@@ -129,7 +139,9 @@ def build(plan, *, selection_dir, store_roots, sequences, qualification, output_
     if summary.get('prototype') and not prototype:
         raise SelectionRefused('selection is a prototype; a production report needs a production selection')
     arms = summary['arms']
-    held = HeldOut(store_roots, sequences, sequences_sha256=sequences_sha256, prototype=prototype)
+    # Held-out units must come from the same collection context as the discovery units 05 used.
+    held = HeldOut(store_roots, sequences, sequences_sha256=sequences_sha256, prototype=prototype,
+                   expected_context=summary.get('unit_context'))
     ids = {g: held.ids(g) for g in ['math', 'general', 'near_miss']}
     boot = plan['statistics']['bootstrap']
     resamples, seed = int(boot['resamples']), int(boot['seed'])
@@ -173,6 +185,9 @@ def build(plan, *, selection_dir, store_roots, sequences, qualification, output_
                 n = d['indices']
                 out[f'D/{arm}'] = dict(
                     mean_change=d_change(base_math, arm_math, n),
+                    mean_abs_change=d_magnitude(base_math, arm_math, n),
+                    interval_abs=bootstrap(lambda s: d_magnitude(base_math[s['math']], arm_math[s['math']], n),
+                                           dict(math=len(ids['math'])), resamples=resamples, seed=seed),
                     interval=bootstrap(lambda s: d_change(base_math[s['math']], arm_math[s['math']], n),
                                        dict(math=len(ids['math'])), resamples=resamples, seed=seed),
                     sign_agreement=sign_agreement(base_math, arm_math, n, d['signed']),
@@ -189,14 +204,15 @@ def build(plan, *, selection_dir, store_roots, sequences, qualification, output_
             out[f'B_intersect_D/{arm}'] = bd
             floors = (qualification.get('fp64_floors') or {}).get(arm, {}).get('layers', {}).get(L, {})
             out[f'D_floor/{arm}'] = floor_fraction(d.get('scores', []), floors.get('p99') if floors.get('status') ==
-                                                   'measured' else None)
+                                                   'measured' else None, kind=floors.get('kind'))
         results['layers'][L] = out
-    results['overlaps'] = {k: dict(pooled=v['pooled']) for k, v in sel['overlaps'].items()}
+    results['overlaps'] = {k: dict(pooled=v['pooled'], layers=v.get('layers', {})) for k, v in sel['overlaps'].items()}
     results['split_half'] = sel['split_half']['stability']
     results['coverage'] = dict(
         arms=arms, partial_label=qualification.get('partial_label'),
         heldout_counts={g: len(v) for g, v in ids.items()}, discovery_counts=summary['discovery_counts'],
         unresolved_floor_layers=qualification.get('unresolved_floor_layers'),
+        fp64_floor_methods=qualification.get('fp64_floor_methods'),
         review_flags_raised=qualification.get('review_flags_raised'))
     results['label'] = 'PROTOTYPE / REHEARSAL — not a result' if prototype else None
     results['limitations'] = LIMITATIONS
@@ -228,6 +244,12 @@ def _fmt(x):
     return 'n/a' if x is None or (isinstance(x, float) and not np.isfinite(x)) else f'{x:.4g}'
 
 
+def _controls(controls):
+    values = [_fmt(c['value']) for c in controls if c.get('value') is not None]
+    unavailable = sum(1 for c in controls if c.get('value') is None)
+    return (', '.join(values) or 'none') + (f' ({unavailable} unavailable)' if unavailable else '')
+
+
 def render(results):
     lines = ['# Joint neuron/adapter audit — Phase 1 report', '']
     if results.get('label'):
@@ -246,6 +268,16 @@ def render(results):
             lines.append(f"| {name} | {_fmt(p['observed'])} | {_fmt(r['median'])} | {_fmt(r['p2_5'])}–{_fmt(r['p97_5'])} | {p['layers']} |")
         else:
             lines.append(f'| {name} | undefined | | | 0 |')
+    lines += ['', '### Per-layer overlaps (randomization reference, not a CI)', '',
+              '| comparison | layer | observed | null 2.5–97.5% | status |', '|---|---|---|---|---|']
+    for name, v in sorted(results['overlaps'].items()):
+        for layer, r in sorted(v.get('layers', {}).items(), key=lambda kv: int(kv[0])):
+            ref = r.get('reference') or {}
+            lines.append(f"| {name} | {layer} | {_fmt(r.get('fraction'))} | "
+                         f"{_fmt(ref.get('p2_5'))}–{_fmt(ref.get('p97_5'))} | {r.get('status')} |")
+    methods = cov.get('fp64_floor_methods') or {}
+    if methods:
+        lines += ['', f'FP64 floor method per arm: {methods} ("proxy floor" = FP32 batched vs singleton, not FP64).']
     lines += ['', '## Held-out estimates by layer (frozen lists vs frozen matched controls)', '']
     for layer, out in results['layers'].items():
         lines += [f'### Layer {layer}', '']
@@ -261,15 +293,20 @@ def render(results):
             if key.startswith('D/'):
                 agree = v['sign_agreement']
                 lines.append(f"- {key}: mean held-out change {_fmt(v['mean_change'])} "
-                             f"({_fmt(v['interval'].get('low'))}–{_fmt(v['interval'].get('high'))}); sign agreement "
-                             f"{agree['agree']}/{agree['defined']} (zero/undefined {agree['zero_or_undefined']})")
+                             f"({_fmt(v['interval'].get('low'))}–{_fmt(v['interval'].get('high'))}), mean |change| "
+                             f"{_fmt(v.get('mean_abs_change'))} ({_fmt((v.get('interval_abs') or {}).get('low'))}–"
+                             f"{_fmt((v.get('interval_abs') or {}).get('high'))}); sign agreement "
+                             f"{agree['agree']}/{agree['defined']} (zero/undefined {agree['zero_or_undefined']}); "
+                             f"controls |mean change| {_controls(v['controls'])}")
             elif key.startswith('B/'):
-                lines.append(f"- {key}: held-out math {_fmt(v['math'])}, background {_fmt(v['general'])}")
+                lines.append(f"- {key}: held-out math {_fmt(v['math'])}, background {_fmt(v['general'])}; "
+                             f"controls (math) {_controls(v['controls'])}")
             elif key.startswith('B_intersect_D/'):
                 lines.append(f"- {key}: primary {v['primary']}, relative {v['relative']}")
             elif key.startswith('D_floor/'):
-                lines.append(f"- {key}: {v['status']}" + (f", fraction below 5x floor {_fmt(v['fraction_below'])}"
-                                                           if v['status'] == 'ok' else ''))
+                kind = f" [{v['kind']}]" if v.get('kind') else ''
+                lines.append(f"- {key}: {v['status']}{kind}" + (f", fraction below 5x floor {_fmt(v['fraction_below'])}"
+                                                                 if v['status'] == 'ok' else ''))
         lines.append('')
     lines += ['## Split-half stability (overlap of half-lists)', '']
     for name, per_layer in sorted(results['split_half'].items()):

@@ -126,7 +126,66 @@ def test_run_collects_every_problem_and_raises(tmp_path, monkeypatch):
                 storage=dict())
     with pytest.raises(pf.PreflightFailure) as info:
         pf.run(plan, volume_dir=tmp_path, local_temp=tmp_path, offline_load=lambda: 1 / 0,
-               environ=dict(GOOD_ENV), interpreter=lambda *a: ({}, []))
+               environ=dict(GOOD_ENV), interpreter=lambda *a, **k: ({}, []),
+               commit_check=lambda expected: ({}, ['running commit x != plan']))
     problems = info.value.problems
     assert any('device cpu' in p for p in problems) and any('offline model' in p for p in problems)
     assert 'HF online export check was not run' in problems
+    assert any('global_volume.id is not recorded' in p for p in problems)  # no volume identity: refused
+    assert any('running commit' in p for p in problems)
+
+
+def test_rehearsal_records_volume_and_commit_problems_as_warnings(tmp_path, monkeypatch):
+    monkeypatch.setattr(pf, 'precision_and_device', lambda: (dict(device='cpu'), []))
+    plan = dict(preflight=dict(expected_sys_executable=None, expected_sys_prefix=None, export_repo='o/r'),
+                runtime=dict(packages={}, expected_device=None), storage=dict(global_volume=dict(id='sl-0')))
+    volume = tmp_path / 'not-yet'
+    record = pf.run(plan, volume_dir=volume, local_temp=tmp_path, offline_load=lambda: {},
+                    environ=dict(GOOD_ENV, HF_HUB_OFFLINE='1'),
+                    interpreter=lambda *a, **k: ({}, []), hf_check=lambda: ({}, []), rehearsal=True,
+                    commit_check=lambda expected: ({}, ['runtime.code_commit is not recorded in the plan']))
+    assert any('does not exist' in w for w in record['warnings']) and any('code_commit' in w for w in record['warnings'])
+
+
+def test_cuda_build_suffix_policy():
+    assert pf.version_matches('2.9.0+cu128', '2.9.0', ['cu128'])
+    assert not pf.version_matches('2.9.0+cu128', '2.9.0')  # suffix must be listed in the plan
+    assert not pf.version_matches('2.9.1+cu128', '2.9.0', ['cu128'])
+    assert pf.version_matches('2.9.0', '2.9.0') and not pf.version_matches(None, '2.9.0')
+    assert pf.version_matches('2.9.0+cu128', '2.9.0+cu128') and not pf.version_matches('2.9.0+cu126', '2.9.0+cu128')
+    record, problems = pf.check_interpreter('/v/bin/python', '/v', {'torch': '2.9.0'}, executable='/v/bin/python',
+                                            prefix='/v', version=lambda n: '2.9.0+cu128',
+                                            allowed_local={'torch': ['cu128']})
+    assert problems == [] and record['packages'] == {'torch': '2.9.0+cu128'}  # full string recorded
+
+
+def test_volume_identity_requires_existing_separate_mount_and_identity_file(tmp_path):
+    local, volume = tmp_path / 'local', tmp_path / 'vol'
+    local.mkdir()
+    record, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local)
+    assert 'does not exist' in problems[0] and not volume.exists()  # never created by the check
+    volume.mkdir()
+    _, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local)
+    assert any('same filesystem' in p for p in problems)
+    mounted = dict(mount_of=lambda p: '/vol' if Path(p).name == 'vol' else '/',
+                   device_of=lambda p: 2 if Path(p).name == 'vol' else 1)
+    _, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local, **mounted)
+    assert problems == [next(p for p in problems if 'identity file' in p)]
+    with pytest.raises(pf.PreflightFailure):
+        pf.init_volume(volume, volume_id='sl-0', local_dir=local)  # same filesystem: refused, nothing written
+    assert not (volume / pf.VOLUME_SENTINEL).exists()
+    pf.init_volume(volume, volume_id='sl-0', local_dir=local, **mounted)
+    record, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local, **mounted)
+    assert problems == [] and record['identity']['volume_id'] == 'sl-0'
+    _, problems = pf.volume_identity(volume, expected_id='sl-9', local_dir=local, **mounted)
+    assert any('names sl-0' in p for p in problems)
+
+
+def test_code_commit_must_match_and_be_clean():
+    def runner(out):
+        return lambda cmd, **k: SimpleNamespace(stdout=out if 'rev-parse' in cmd else '', returncode=0)
+    assert pf.check_code_commit('a' * 40, runner=runner('a' * 40 + '\n'))[1] == []
+    assert 'running commit' in pf.check_code_commit('a' * 40, runner=runner('b' * 40))[1][0]
+    assert 'not recorded' in pf.check_code_commit(None, runner=runner('b' * 40))[1][0]
+    dirty = lambda cmd, **k: SimpleNamespace(stdout='a' * 40 if 'rev-parse' in cmd else ' M pilot_eval/x.py\n')
+    assert 'tracked files differ' in pf.check_code_commit('a' * 40, runner=dirty)[1][0]

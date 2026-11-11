@@ -112,8 +112,9 @@ class NeuronCollector:
             if not isinstance(self.tolerances.get(key), (int, float)):
                 raise CollectorFailure(f'tolerance {key} must be supplied from the plan')
         self.validation_examples = validation_examples
-        if dtype not in ('float32', 'float64'):
-            raise CollectorFailure('collector dtype must be float32 (production) or float64 (reference)')
+        if dtype not in ('float32', 'float64', 'bfloat16'):
+            raise CollectorFailure('collector dtype must be float32 (production), float64 (reference) or '
+                                   'bfloat16 (labelled 03b diagnostic only)')
         self.dtype_name, self.dtype = dtype, getattr(torch, dtype)
         if any(p.dtype != self.dtype for p in model.parameters()):
             raise CollectorFailure(f'collector requires {dtype} parameters')

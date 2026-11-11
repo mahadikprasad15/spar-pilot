@@ -4,7 +4,12 @@ Reads the approved run plan (``neuron_audit_plan.load(plan, '03b')``), the seale
 inventory and ticket-02 sequences, and a small runner config with the worker's paths. It runs
 sealed, resumable stages under ``<output_root>/runs/joint-neuron-adapter-audit/qualification/<run_id>/``:
 
-    preflight -> masks -> arms -> benchmark -> batch_agreement -> fp64_floor -> batch_freeze
+    preflight -> masks -> arms -> benchmark -> batch_agreement -> fp64_floor -> bf16_diagnostic -> batch_freeze
+
+Sealed stages are bound to the plan, the config and the runtime fingerprint (device, memory,
+torch/CUDA/cuDNN builds): a different runtime never reuses them. Elapsed time is cumulative
+across restarts and checked against ``operations.qualification_max_gpu_hours`` at every stage
+and inside every model loop.
 
 Hard gates (plan ``hard_gates``) stop 03b with saved evidence. An arm-specific gate failure
 marks that arm failed (evidence kept) and the study partial (plan ``partial_study``); global
@@ -27,7 +32,8 @@ from pilot_eval import neuron_audit_collector as nc
 from pilot_eval import neuron_audit_plan as plan_mod
 
 RUN_SUBDIR = 'runs/joint-neuron-adapter-audit/qualification'
-STAGES = ['preflight', 'masks', 'arms', 'benchmark', 'batch_agreement', 'fp64_floor', 'batch_freeze']
+STAGES = ['preflight', 'masks', 'arms', 'benchmark', 'batch_agreement', 'fp64_floor', 'bf16_diagnostic',
+          'batch_freeze']
 PRIMARY = 'response_content'
 FLAG_STATS = ['mean_z', 'mean_abs_z']
 
@@ -291,16 +297,26 @@ class TransformersBackend:
 # --- runner -------------------------------------------------------------------------------------
 
 class Qualification:
-    def __init__(self, plan, config, backend, *, preflight=None):
+    def __init__(self, plan, config, backend, *, preflight=None, now=time.monotonic):
+        from pilot_eval.neuron_audit_preflight import runtime_fingerprint
         self.plan, self.config, self.backend = plan, config, backend
+        self.now, self.session_started = now, now()
         self.preflight_fn = preflight
         self.root = Path(config['artifact_root'])
         self.rehearsal = bool(plan.get('_rehearsal'))
         if self.rehearsal != config['run_id'].startswith('rehearsal-'):
             raise QualificationFailure('setup', 'rehearsal runs (and only they) must use a run_id starting with rehearsal-')
         self.run_dir = Path(config['output_root']) / RUN_SUBDIR / config['run_id']
+        self.fingerprint = runtime_fingerprint(backend.device_info())
         self.identity = dict(plan_sha256=plan['_plan_sha256'], config=_sha({k: v for k, v in config.items()
-                                                                             if k not in ('local_temp',)}))
+                                                                             if k not in ('local_temp',)}),
+                             runtime=self.fingerprint)
+        cap = plan['operations'].get('qualification_max_gpu_hours')
+        if cap is None and self.rehearsal:
+            cap = config.get('rehearsal_cap_hours')
+        self.cap_seconds = None if cap is None else float(cap) * 3600
+        clock = self.run_dir / 'meta/clock.json'
+        self.prior_seconds = json.loads(clock.read_text())['seconds'] if clock.is_file() else 0.0
         self.inventory = json.loads((self.root / plan['inputs']['inventory_run'] / 'inventory.json').read_text())
         self.sequences = read_sequences(self.root / plan['inputs']['sequences_run'])
         numeric = plan['hard_gates']['identities']['numeric']
@@ -319,6 +335,9 @@ class Qualification:
         if not seal.is_file():
             return None
         record = json.loads(seal.read_text())
+        if record['identity'].get('runtime') != self.identity['runtime']:
+            raise QualificationFailure(name, 'sealed stage was qualified on a different runtime '
+                                             f"({record['identity'].get('runtime')}); requalify under a new run_id")
         if record['identity'] != self.identity or _file_sha(directory / 'result.json') != record['result_sha256']:
             raise QualificationFailure(name, 'sealed stage identity or integrity differs; investigate')
         return json.loads((directory / 'result.json').read_text())
@@ -336,6 +355,15 @@ class Qualification:
                     dict(stage=name, message=message, evidence=evidence))
         self._status('failed', stage=name, error=message)
         raise QualificationFailure(name, message, evidence)
+
+    def _tick(self, stage):
+        """Cumulative elapsed time (all sessions of this run) against the plan's 03b ceiling."""
+        elapsed = self.prior_seconds + (self.now() - self.session_started)
+        _write_json(self.run_dir / 'meta/clock.json', dict(seconds=elapsed, cap_seconds=self.cap_seconds,
+                                                           updated_unix=time.time()))
+        if self.cap_seconds is not None and elapsed > self.cap_seconds:
+            self._fail(stage, 'qualification time ceiling reached (operations.qualification_max_gpu_hours, '
+                              'cumulative across restarts)', dict(elapsed_seconds=elapsed, cap_seconds=self.cap_seconds))
 
     def _status(self, state, **extra):
         _write_json(self.run_dir / 'meta/status.json', dict(state=state, updated_unix=time.time(),
@@ -411,6 +439,7 @@ class Qualification:
         reference = self.backend.fresh_base('float32')
         layers = None
         for arm in self.arms:
+            self._tick('arms')
             self._progress('arms', 'start', arm=arm)
             collector, problems = None, []
             if arm != 'untuned':
@@ -508,14 +537,14 @@ class Qualification:
         layers = arms_result['layers']
         device = self.backend.device_info()
         limit = float(bench['vram_fraction_max']) * device['total_memory']
-        probes = []
+        probes, try_1b = [], True
         for budget in bench['token_budgets_padded']:
+            self._tick('benchmark')
             batches = pack(examples, budget)
             entry = dict(budget=budget, batches=len(batches))
-            try:
-                for hooks, heads in [('1A', None), ('1A+1B', layers)]:
-                    for a in ['untuned', arm]:
-                        entry[f'{hooks}/{a}'] = self._time_run(a, batches, heads=heads)
+            try:  # 1A (the primary audit) is measured on its own; an optional-1B failure never removes it
+                for a in ['untuned', arm]:
+                    entry[f'1A/{a}'] = self._time_run(a, batches)
             except Exception as exc:
                 if not self.backend.is_oom(exc):
                     raise
@@ -523,7 +552,16 @@ class Qualification:
                 probes.append(entry)
                 break
             entry['peak_1A'] = max(entry[f'1A/{a}']['peak_bytes'] for a in ['untuned', arm])
-            entry['peak_1A+1B'] = max(entry[f'1A+1B/{a}']['peak_bytes'] for a in ['untuned', arm])
+            if try_1b:
+                try:
+                    for a in ['untuned', arm]:
+                        entry[f'1A+1B/{a}'] = self._time_run(a, batches, heads=layers)
+                    entry['peak_1A+1B'] = max(entry[f'1A+1B/{a}']['peak_bytes'] for a in ['untuned', arm])
+                except Exception as exc:
+                    if not self.backend.is_oom(exc):
+                        raise
+                    entry['oom_1B_all_layers'] = f'{type(exc).__name__}'
+                    try_1b = False  # larger budgets cannot fit all-layer 1B either
             probes.append(entry)
             if entry['peak_1A'] > limit:
                 break
@@ -546,41 +584,65 @@ class Qualification:
         def fits_storage(total_bytes):
             return not storage_check(total_bytes)[1]
 
-        def seconds_for(probe, hooks):
-            rate = min(probe[f'{hooks}/{a}']['padded_tokens_per_second'] for a in ['untuned', arm])
-            padded = batch_manifest(pack(production, probe['budget']), probe['budget'])['padded_tokens']
+        def seconds_for(budget, rate):
+            padded = batch_manifest(pack(production, budget), budget)['padded_tokens']
             return padded / rate
 
-        feasible_both = [p for p in feasible_1a if p['peak_1A+1B'] <= limit]
+        def rate(timings):
+            return min(t['padded_tokens_per_second'] for t in timings)
+
+        feasible_both = [p for p in feasible_1a if p.get('peak_1A+1B') is not None and p['peak_1A+1B'] <= limit]
         scope_rule = bench['phase_1b_scope']
         top_both = feasible_both[-1] if feasible_both else None
 
         def measure(selected):
-            if top_both is None:
-                return dict(time_ratio=None, projected_bytes=float('inf'))
+            bytes_needed = projected_bytes(**common, heads_layers=len(selected), heads=n_heads)
             if selected == layers:
-                ratio = sum(top_both[f'1A+1B/{a}']['seconds'] for a in ['untuned', arm]) / \
-                    sum(top_both[f'1A/{a}']['seconds'] for a in ['untuned', arm])
-            else:
-                batches = pack(examples, top_both['budget'])
-                ratio = sum(self._time_run(a, batches, heads=selected)['seconds'] for a in ['untuned', arm]) / \
-                    sum(top_both[f'1A/{a}']['seconds'] for a in ['untuned', arm])
-            return dict(time_ratio=ratio, projected_bytes=projected_bytes(**common, heads_layers=len(selected),
-                                                                           heads=n_heads), budget=top_both['budget'])
+                if top_both is None:
+                    return dict(time_ratio=None, projected_bytes=bytes_needed,
+                                reason='all-layer 1B does not fit at any probed budget')
+                both = [top_both[f'1A+1B/{a}'] for a in ['untuned', arm]]
+                return dict(time_ratio=sum(t['seconds'] for t in both) /
+                            sum(top_both[f'1A/{a}']['seconds'] for a in ['untuned', arm]),
+                            projected_bytes=bytes_needed, budget=top_both['budget'], rate=rate(both))
+            failures = []
+            for probe in reversed(feasible_1a):  # largest 1A-feasible budget first, smaller ones on OOM
+                self._tick('benchmark')
+                batches = pack(examples, probe['budget'])
+                try:
+                    timings = [self._time_run(a, batches, heads=selected) for a in ['untuned', arm]]
+                except Exception as exc:
+                    if not self.backend.is_oom(exc):
+                        raise
+                    failures.append(dict(budget=probe['budget'], oom=type(exc).__name__))
+                    continue
+                if max(t['peak_bytes'] for t in timings) > limit:
+                    failures.append(dict(budget=probe['budget'], over_vram_limit=True))
+                    continue
+                return dict(time_ratio=sum(t['seconds'] for t in timings) /
+                            sum(probe[f'1A/{a}']['seconds'] for a in ['untuned', arm]),
+                            projected_bytes=bytes_needed, budget=probe['budget'], rate=rate(timings),
+                            failures=failures)
+            return dict(time_ratio=None, projected_bytes=bytes_needed, failures=failures,
+                        reason='subset 1B does not fit at any 1A-feasible budget')
 
         scope = choose_scope(measure, all_layers=layers, subset_layers=list(scope_rule['subset_layers']),
                              max_ratio=float(scope_rule['time_ratio_max']), fits_storage=fits_storage)
-        chosen = top_both if scope['scope'] != 'omit' else feasible_1a[-1]
-        hooks = '1A+1B' if scope['scope'] != 'omit' else '1A'
+        if scope['scope'] == 'omit':
+            chosen_budget, hooks = feasible_1a[-1]['budget'], '1A'
+            chosen_rate = rate([feasible_1a[-1][f'1A/{a}'] for a in ['untuned', arm]])
+        else:
+            measured = next(t for t in scope['tried'] if t.get('scope') == scope['scope'])
+            chosen_budget, hooks, chosen_rate = measured['budget'], f"1A+1B({scope['scope']})", measured['rate']
         need = projected_bytes(**common, heads_layers=len(scope['layers']), heads=n_heads)
-        per_arm = seconds_for(chosen, hooks)
+        per_arm = seconds_for(chosen_budget, chosen_rate)
         projection = dict(seconds_per_arm=per_arm, total_hours=per_arm * len(arms_result['qualified']) / 3600,
-                          projected_bytes=need, budget=chosen['budget'], hooks=hooks)
+                          projected_bytes=need, budget=chosen_budget, hooks=hooks)
         storage, problems = storage_check(need)
         if problems:
             self._fail('benchmark', 'storage capacity check failed', dict(storage=storage, problems=problems))
         return dict(device=device, vram_limit_bytes=limit, probes=probes, benchmark_arm=arm,
-                    selected_budget=chosen['budget'], phase_1b=scope, projection=projection, storage=storage)
+                    selected_budget=chosen_budget, phase_1b=scope, projection=projection, storage=storage)
 
     def _confirm_storage(self, inputs, total_bytes, n_arms):
         from pilot_eval.neuron_audit_preflight import confirm_storage
@@ -609,6 +671,7 @@ class Qualification:
             try:
                 for set_name, rows in sets.items():
                     for b_index, batch in enumerate(pack(rows, budget)):
+                        self._tick('batch_agreement')
                         width = max(len(r['input_ids']) for r in batch)
                         out = collector.collect(batch, factors=factors, validate=False, heads=heads,
                                                 head_factors=head_factors)
@@ -693,6 +756,7 @@ class Qualification:
         chain = self.plan['fp64_floor']['fallback_chain']
         floors = {}
         for arm in [a for a in arms_result['qualified'] if a != 'untuned']:
+            self._tick('fp64_floor')
             d32 = self._d_matrix(arm, rows, 'float32')
             attempt, d64, label, used_rows = None, None, 'fp64-gpu', rows
             for step, (kind, kwargs) in enumerate([
@@ -730,6 +794,38 @@ class Qualification:
         return dict(floors=floors, fallback_chain=chain, exploratory_flag='|D| < 5 x layer floor (not a gate)',
                     zero_floor='unresolved')
 
+    def stage_bf16_diagnostic(self, arms_result):
+        """Labelled diagnostic, never a gate and never production: D under BF16 forwards vs FP32 on the FP64
+        reference rows, per layer (p99 |diff| / RMS of FP32 D, and top-k overlap of |D|)."""
+        rows = self._allocation()['fp64']
+        out = {}
+        for arm in [a for a in arms_result['qualified'] if a != 'untuned']:
+            self._tick('bf16_diagnostic')
+            try:
+                d16 = self._d_matrix(arm, rows, 'bfloat16')
+            except Exception as exc:
+                if not self.backend.is_oom(exc) and not isinstance(exc, (TypeError, RuntimeError)):
+                    raise
+                out[arm] = dict(status='unavailable', reason=f'{type(exc).__name__}: {exc}'[:300])
+                continue
+            d32 = self._d_matrix(arm, rows, 'float32')
+            layers = {}
+            for l in d32:
+                a, b = np.asarray(d32[l], dtype=np.float64), np.asarray(d16[l], dtype=np.float64)
+                ok = np.isfinite(a) & np.isfinite(b)
+                rms = float(np.sqrt(np.mean(a[ok] ** 2))) if ok.any() else 0.0
+                diff = np.abs(a[ok] - b[ok])
+                k = max(1, min(64, int(ok.sum()) // 10))
+                top32 = set(np.argsort(-np.abs(np.where(ok, a, 0)))[:k].tolist())
+                top16 = set(np.argsort(-np.abs(np.where(ok, b, 0)))[:k].tolist())
+                layers[str(l)] = dict(p99_abs_diff=float(np.quantile(diff, 0.99)) if diff.size else None,
+                                      p99_relative_to_rms=(float(np.quantile(diff, 0.99)) / rms) if rms > 0 and diff.size
+                                      else None, top_k=k, top_k_overlap=len(top32 & top16) / k)
+            out[arm] = dict(status='measured', examples=[r['id'] for r in rows], layers=layers)
+            self._progress('bf16_diagnostic', 'arm', arm=arm)
+        return dict(label='DIAGNOSTIC ONLY: BF16 vs FP32 D on the FP64 reference rows; not a gate, not production',
+                    arms=out)
+
     def stage_batch_freeze(self, benchmark):
         production = self._rows('discovery') + self._rows('heldout')
         manifest = batch_manifest(pack(production, benchmark['selected_budget']), benchmark['selected_budget'])
@@ -741,6 +837,7 @@ class Qualification:
         self._status('running', stages=STAGES)
         results = {}
         for name in STAGES:
+            self._tick(name)
             sealed = self._sealed(name)
             if sealed is not None:
                 results[name] = sealed
@@ -763,6 +860,8 @@ class Qualification:
                     value = self.stage_batch_agreement(results['arms'], results['benchmark'])
                 elif name == 'fp64_floor':
                     value = self.stage_fp64_floor(results['arms'])
+                elif name == 'bf16_diagnostic':
+                    value = self.stage_bf16_diagnostic(results['arms'])
                 else:
                     value = self.stage_batch_freeze(results['benchmark'])
                 results[name] = self._seal(name, value)
@@ -792,6 +891,14 @@ class Qualification:
             fp64_floor_methods={a: v['method'] for a, v in results['fp64_floor']['floors'].items()},
             unresolved_floor_layers={a: v['unresolved_layers'] for a, v in results['fp64_floor']['floors'].items()},
             batch_manifest_sha256=results['batch_freeze']['manifest_sha256'],
+            runtime_fingerprint=self.fingerprint,
+            inputs=dict(sequences_sha256=_file_sha(self.root / self.plan['inputs']['sequences_run'] / 'sequences.jsonl'),
+                        adapters={a: _file_sha(Path(self.config['adapter_dirs'][a]) / 'adapter_model.safetensors')
+                                  for a in arms['qualified'] if a != 'untuned'},
+                        code_commit=(results['preflight'].get('code_commit') or {}).get('head')),
+            fp64_floor_kinds={a: sorted({v['kind'] for v in f['layers'].values()})
+                              for a, f in results['fp64_floor']['floors'].items()},
+            bf16_diagnostic=results['bf16_diagnostic']['label'],
             ready_for_04=False, blockers_for_04=blockers_04,
             note='Passing this small qualification is evidence within its coverage, not a guarantee for all neurons.')
 

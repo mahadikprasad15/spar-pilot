@@ -104,3 +104,23 @@ def test_sign_agreement_marks_zero_and_undefined():
     arm = np.array([[1.0, -1.0, 0.0, 2.0]] * 3)
     out = rep.sign_agreement(base, arm, [0, 1, 2, 3], [1.0, 1.0, 1.0, 0.0])
     assert out == dict(agree=1, defined=2, zero_or_undefined=2, fraction=0.5)
+
+
+def test_report_keeps_interpretation_evidence(tmp_path):
+    qual = dict(QUAL, fp64_floor_methods={'gold-sft': 'proxy floor'},
+                fp64_floors={'gold-sft': dict(layers={'0': dict(status='measured', p99=0.5, kind='proxy floor')})})
+    results, run_dir = build(tmp_path, qualification=qual, name='e')
+    floor = results['layers']['0']['D_floor/gold-sft']
+    assert floor['kind'] == 'proxy floor' and 'PROXY' in floor['note']
+    d = results['layers']['0']['D/gold-sft']
+    assert d['mean_abs_change'] >= abs(d['mean_change']) - 1e-9 and d['interval_abs']['status'] == 'ok'
+    assert all(v['layers'] for v in results['overlaps'].values())  # per-layer overlaps are kept
+    text = (run_dir / 'report.md').read_text()
+    assert '### Per-layer overlaps' in text and '[proxy floor]' in text and 'mean |change|' in text
+    assert 'controls |mean change|' in text and 'controls (math)' in text
+
+
+def test_d_magnitude_does_not_cancel_opposite_changes():
+    base = np.zeros((2, 2))
+    arm = np.array([[1.0, -1.0], [1.0, -1.0]])
+    assert rep.d_change(base, arm, [0, 1]) == 0.0 and rep.d_magnitude(base, arm, [0, 1]) == 1.0

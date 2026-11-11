@@ -327,3 +327,20 @@ def test_real_tokenizer_reproduces_transformers_rendering_on_gold_items():
         ex = seq.build_example(tok, item['id'], messages, max_tokens=4096, overlength='exclude')
         assert ex['status'] == 'ok'
         assert tok.token_text(ex['input_ids'][ex['masks']['reply_start'][0]]) == '\n'
+
+
+def test_malformed_lineage_line_is_reported_never_dropped(tmp_path):
+    source = tmp_path / 'rollout.jsonl'
+    source.write_text(json.dumps(dict(question='What is two plus two?')) + '\n{not json\n')
+    ids, questions, errors = seq._lineage_file(source)
+    assert len(questions) == 1 and errors and errors[0]['line'] == 2  # the valid line still counts
+
+
+def test_unparseable_lineage_marks_the_arm_unknown(world, tmp_path):
+    (world / 'lineage/grpo.jsonl').write_text(json.dumps(dict(item='gsm8k:train:5')) + '\n{broken\n')
+    (world / 'lineage/missing.json').write_text('{}')
+    prepare(world, tmp_path)
+    report = load(tmp_path / 'out' / seq.RUN_SUBDIR / 'fixture-v1', 'leakage_report.json')
+    assert report['arms']['grpo']['status'] == 'partial-some-sources-unparseable'
+    assert report['arms']['grpo']['unparseable_sources'] == ['lineage/grpo.jsonl']
+    assert 'grpo' in report['arms_with_unknown_provenance']

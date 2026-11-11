@@ -31,6 +31,7 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from pilot_eval.neuron_audit_blocks import BlockStore, CorruptUnit
 from pilot_eval.sampling_sft_hf import Hub, private, require_space, retryable, transfer_deadline
@@ -45,7 +46,16 @@ EVIDENCE_NAMES = {'status.json', 'run.log', 'error.json', 'progress.json'}
 
 
 class AuditHub(Hub):
-    """Sampling SFT Hub client with an audit commit message and fetch into an independent dir."""
+    """Sampling SFT Hub client with an audit commit message and fetch into an independent dir.
+
+    Never construct it in the offline worker (``HF_HUB_OFFLINE=1``); use ``OnlineHubProcess`` there."""
+
+    def __init__(self):
+        from huggingface_hub import constants
+        if constants.HF_HUB_OFFLINE:
+            raise RuntimeError('AuditHub created in an offline process (HF_HUB_OFFLINE=1); the worker must use '
+                               'OnlineHubProcess, which runs every Hub call in a separate online process')
+        super().__init__()
 
     def publish(self, repo, files, message='Archive joint neuron/adapter audit snapshot'):
         from huggingface_hub import CommitOperationAdd
@@ -56,6 +66,77 @@ class AuditHub(Hub):
     def fetch_to(self, repo, name, revision, directory):
         from huggingface_hub import hf_hub_download
         return Path(hf_hub_download(repo, name, repo_type='dataset', revision=revision, local_dir=str(directory)))
+
+
+class HubProcessError(RuntimeError):
+    """A Hub call that failed in the online child process; carries its status for retry classification."""
+
+    def __init__(self, message, *, status=None, transport=False):
+        super().__init__(message)
+        self.response = SimpleNamespace(status_code=status) if status is not None else None
+        self.transport = transport
+
+
+class HubTransportError(HubProcessError, ConnectionError):
+    pass
+
+
+class OnlineHubProcess:
+    """Hub client for the offline worker: each call runs ``hub-op`` in a child process with the Hub online.
+
+    The worker keeps ``HF_HUB_OFFLINE=1`` for model loading; uploads and pinned-revision readbacks happen in
+    the same kind of online process that preflight's export check exercised. The token comes from the
+    environment / credential store of the child and is never passed on the command line."""
+
+    cache_root = None
+
+    def __init__(self, *, runner=None, timeout=None):
+        import subprocess
+        self.runner, self.timeout = runner or subprocess.run, timeout
+
+    def _call(self, op, **arguments):
+        import sys
+        env = dict(os.environ, HF_HUB_OFFLINE='0', TRANSFORMERS_OFFLINE='0')
+        command = [sys.executable, '-m', 'pilot_eval.neuron_audit_export', 'hub-op', '--request',
+                   json.dumps(dict(op=op, **arguments))]
+        result = self.runner(command, env=env, capture_output=True, text=True, timeout=self.timeout)
+        lines = [l for l in (result.stdout or '').splitlines() if l.startswith('{')]
+        reply = json.loads(lines[-1]) if lines else None
+        if result.returncode != 0 or not reply or not reply.get('ok'):
+            reply = reply or {}
+            message = SECRET.sub('[redacted]', reply.get('message') or (result.stderr or '')[-1000:])
+            kind = HubTransportError if reply.get('retryable') else HubProcessError
+            raise kind(f"online Hub {op} failed: {reply.get('error_type')}: {message}", status=reply.get('status'),
+                       transport=bool(reply.get('retryable')))
+        return reply
+
+    def info(self, repo):
+        return SimpleNamespace(private=self._call('info', repo=repo)['private'])
+
+    def publish(self, repo, files):
+        return self._call('publish', repo=repo, files={n: str(p) for n, p in files.items()})['revision']
+
+    def fetch_to(self, repo, name, revision, directory):
+        return Path(self._call('fetch_to', repo=repo, name=name, revision=revision, directory=str(directory))['path'])
+
+
+def hub_op(request):
+    """Child side of ``OnlineHubProcess``; prints one JSON reply line."""
+    try:
+        client = AuditHub()
+        if request['op'] == 'info':
+            reply = dict(private=client.info(request['repo']).private is True)
+        elif request['op'] == 'publish':
+            reply = dict(revision=client.publish(request['repo'], {n: Path(p) for n, p in request['files'].items()}))
+        elif request['op'] == 'fetch_to':
+            reply = dict(path=str(client.fetch_to(request['repo'], request['name'], request['revision'],
+                                                  request['directory'])))
+        else:
+            raise ValueError(f"unknown hub op {request['op']}")
+        return dict(ok=True, **reply)
+    except Exception as exc:  # reported to the parent, classified there
+        return dict(ok=False, error_type=type(exc).__name__, message=SECRET.sub('[redacted]', str(exc))[-1000:],
+                    status=getattr(getattr(exc, 'response', None), 'status_code', None), retryable=retryable(exc))
 
 
 def _canonical_hash(value):
@@ -233,7 +314,7 @@ def _with_retries(action, *, attempts, on_event, sleep=time.sleep):
             status = getattr(getattr(exc, 'response', None), 'status_code', None)
             if status in (401, 403):
                 raise PermissionError(f'HF authentication/authorization failed ({status}); local export preserved.') from exc
-            if not retryable(exc) or attempt == attempts:
+            if not (retryable(exc) or getattr(exc, 'transport', False)) or attempt == attempts:
                 raise
             on_event(dict(kind='hf-retry', attempt=attempt, error_type=type(exc).__name__, status=status))
             sleep(min(30, 2 ** attempt))
@@ -374,21 +455,34 @@ def _deterministic_tar(path, members):
                 tar.addfile(info, stream)
 
 
-def package_arm(store_root, arm, label, temp_dir):
-    """Package every sealed, verified unit of one arm with its own manifest (package.json inside and beside)."""
+def package_arm(store_root, arm, label, temp_dir, *, expected_keys=None):
+    """Package one arm's sealed, verified units with its own manifest (package.json inside and beside).
+
+    ``expected_keys`` (production): exactly these units, each sealed locally and belonging to ``arm``; a missing
+    or foreign unit refuses the package, so a package can never be smaller than the arm's frozen batch list.
+    """
     store = BlockStore(store_root)
+    if expected_keys is None:
+        keys = [k for k, s in store.status().items() if s == 'sealed']
+    else:
+        keys = sorted(expected_keys)
+        missing = [k for k in keys if store.state(k) != 'sealed']
+        if missing:
+            raise ValueError(f'arm {arm}: {len(missing)} expected units are not sealed locally (e.g. {missing[:3]}); '
+                             'restore them from the volume before packaging')
     units = {}
-    for key, state in store.status().items():
-        if state != 'sealed':
-            continue
+    for key in keys:
         store.verify_unit(key, force=True)
         if store.index(key)['identity'].get('arm') != arm:
+            if expected_keys is not None:
+                raise ValueError(f'unit {key} belongs to another arm')
             continue
         seal = json.loads((store.unit_dir(key) / 'seal.json').read_text())
         units[key] = dict(seal=seal['files'], seal_sha256=file_hash(store.unit_dir(key) / 'seal.json'))
     if not units:
         raise ValueError(f'no sealed units for arm {arm}')
     manifest = dict(schema=PACKAGE_SCHEMA, label=label, arm=arm, units=units, unit_count=len(units),
+                    expected_units=sorted(expected_keys) if expected_keys is not None else None,
                     data_bytes=sum(r['size'] for u in units.values() for r in u['seal'].values()))
     manifest['sha256'] = _canonical_hash(manifest)
     work = Path(tempfile.mkdtemp(prefix=f'arm-{arm}-', dir=temp_dir))
@@ -427,14 +521,27 @@ def upload_package(package, manifest_path, manifest, *, repo, label, client=None
                 verified='fresh pinned-revision download, sha256 equal', seconds=time.monotonic() - started)
 
 
+def _short_arms(arm_records, expected_units):
+    """Arms whose verified package does not hold exactly the expected unit keys."""
+    if expected_units is None:
+        return {}
+    by_arm = {r['arm']: set(r['units']) for r in arm_records}
+    return {arm: sorted(set(keys) - by_arm[arm]) for arm, keys in expected_units.items()
+            if arm in by_arm and by_arm[arm] != set(keys)}
+
+
 def publish_final_manifest(arm_records, *, repo, label, required_arms, extras=None, client=None, temp_dir=None,
-                           attempts=3, on_event=print, sleep=time.sleep):
-    """Reference-only final manifest: points at verified arm packages; never re-uploads their data."""
+                           attempts=3, on_event=print, sleep=time.sleep, expected_units=None):
+    """Reference-only final manifest: points at verified arm packages; never re-uploads their data.
+
+    ``expected_units`` ({arm: [unit keys]}): completeness also requires every package to hold exactly those."""
     client = client or AuditHub()
     private(client, repo)
     missing = sorted(set(required_arms) - {r['arm'] for r in arm_records})
-    body = dict(schema=FINAL_SCHEMA, label=label, completeness='complete' if not missing else 'partial',
-                required_arms=sorted(required_arms), missing_arms=missing,
+    short = _short_arms(arm_records, expected_units)
+    body = dict(schema=FINAL_SCHEMA, label=label, completeness='complete' if not missing and not short else 'partial',
+                required_arms=sorted(required_arms), missing_arms=missing, incomplete_arms=short,
+                expected_unit_counts={a: len(k) for a, k in (expected_units or {}).items()},
                 arms={r['arm']: {k: r[k] for k in ['repo', 'revision', 'path', 'manifest_path', 'sha256', 'bytes',
                                                    'package_manifest_sha256', 'units']} for r in arm_records},
                 extras=extras or {}, note='References only; each arm package is stored once.')
@@ -451,7 +558,8 @@ def publish_final_manifest(arm_records, *, repo, label, required_arms, extras=No
             if file_hash(fetched) != file_hash(path):
                 raise ValueError('final manifest readback differs; do not stop the Pod')
     return dict(repo=repo, revision=revision, path=name, sha256=body['sha256'], completeness=body['completeness'],
-                missing_arms=missing, arms=sorted(body['arms']))
+                missing_arms=missing, incomplete_arms=short, arms=sorted(body['arms']),
+                expected_unit_counts=body['expected_unit_counts'])
 
 
 def restore_final(final_record, clean_root, *, client=None, temp_dir=None, attempts=3, on_event=print,
@@ -498,7 +606,7 @@ def restore_final(final_record, clean_root, *, client=None, temp_dir=None, attem
     return proof
 
 
-def may_stop_pod_final(final_record, arm_records, *, required_arms, restore_proof=None):
+def may_stop_pod_final(final_record, arm_records, *, required_arms, restore_proof=None, expected_units=None):
     """Stop only when every required arm package is verified and the final manifest was read back.
 
     ``restore_proof`` (a full clean-root restore) is optional extra evidence: packages are already
@@ -506,7 +614,8 @@ def may_stop_pod_final(final_record, arm_records, *, required_arms, restore_proo
     """
     verified = {r['arm'] for r in arm_records if r.get('verified', '').startswith('fresh pinned-revision download')}
     ok = (final_record.get('completeness') == 'complete' and set(required_arms) <= verified
-          and set(final_record.get('arms', [])) >= set(required_arms))
+          and set(final_record.get('arms', [])) >= set(required_arms)
+          and not final_record.get('incomplete_arms') and not _short_arms(arm_records, expected_units))
     if restore_proof is not None:
         ok = ok and restore_proof.get('final_sha256') == final_record['sha256'] and \
             set(restore_proof.get('verified_units', {})) >= set(required_arms)
@@ -531,7 +640,13 @@ def main(argv=None):
     r = sub.add_parser('restore')
     r.add_argument('--upload_receipt', required=True)
     r.add_argument('--clean_root', required=True)
+    h = sub.add_parser('hub-op', help='internal: one online Hub call for OnlineHubProcess')
+    h.add_argument('--request', required=True)
     args = parser.parse_args(argv)
+    if args.command == 'hub-op':
+        reply = hub_op(json.loads(args.request))
+        print(json.dumps(reply))
+        return 0 if reply['ok'] else 1
     if args.command == 'snapshot':
         load = (lambda p: json.loads(Path(p).read_text()) if p else None)
         result = snapshot(args.artifact_root, args.include, args.label, stage=args.stage,

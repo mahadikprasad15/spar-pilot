@@ -305,3 +305,55 @@ def test_stage_seals_and_optional_unsealed_evidence(root):
     s = ex.snapshot(root, ['runs/joint-neuron-adapter-audit/qualification'], 'q', include_unsealed_evidence=True)
     assert s['files']['runs/joint-neuron-adapter-audit/qualification/q/logs/progress.jsonl']['kind'] == 'unsealed-evidence'
     assert s['completeness'] == 'partial'
+
+
+def test_production_package_must_hold_exactly_the_expected_units(tmp_path):
+    arm_store(tmp_path / 'local')
+    with pytest.raises(ValueError, match='not sealed locally'):
+        ex.package_arm(tmp_path / 'local', 'gold-sft', 'prod', tmp_path,
+                       expected_keys=['gold-sft-rows-0', 'gold-sft-rows-2', 'gold-sft-rows-4'])
+    with pytest.raises(ValueError, match='another arm'):
+        ex.package_arm(tmp_path / 'local', 'gold-sft', 'prod', tmp_path, expected_keys=['untuned-rows-0'])
+    hub = FakeHub()
+    package, mpath, manifest = ex.package_arm(tmp_path / 'local', 'gold-sft', 'prod', tmp_path,
+                                              expected_keys=['gold-sft-rows-0'])  # a short package, built on purpose
+    record = ex.upload_package(package, mpath, manifest, repo=REPO, label='prod', client=hub, temp_dir=tmp_path)
+    expected = {'gold-sft': ['gold-sft-rows-0', 'gold-sft-rows-2']}
+    final = ex.publish_final_manifest([record], repo=REPO, label='prod', required_arms=['gold-sft'], client=hub,
+                                      temp_dir=tmp_path, expected_units=expected)
+    assert final['completeness'] == 'partial' and final['incomplete_arms'] == {'gold-sft': ['gold-sft-rows-2']}
+    assert ex.may_stop_pod_final(final, [record], required_arms=['gold-sft'], expected_units=expected) is False
+
+
+def test_online_hub_process_runs_hub_calls_online_and_classifies_failures(tmp_path):
+    calls = []
+
+    def runner(command, env, **kw):
+        request = json.loads(command[command.index('--request') + 1])
+        calls.append((request, env))
+        if request['op'] == 'publish':
+            return SimpleNamespace(returncode=0, stdout=json.dumps(dict(ok=True, revision='a' * 40)), stderr='')
+        if request['op'] == 'info':
+            return SimpleNamespace(returncode=0, stdout=json.dumps(dict(ok=True, private=True)), stderr='')
+        reply = dict(ok=False, error_type='HfHubHTTPError', message='503 hf_' + 'x' * 34, status=503, retryable=True)
+        return SimpleNamespace(returncode=1, stdout=json.dumps(reply), stderr='')
+
+    client = ex.OnlineHubProcess(runner=runner)
+    assert client.info('o/r').private is True and client.publish('o/r', {'a.txt': tmp_path / 'a'}) == 'a' * 40
+    assert all(env['HF_HUB_OFFLINE'] == '0' for _, env in calls)
+    assert all('hf_' not in json.dumps(req) for req, _ in calls)  # no token on the command line
+    with pytest.raises(ex.HubProcessError) as info:
+        client.fetch_to('o/r', 'x', 'a' * 40, tmp_path)
+    assert info.value.response.status_code == 503 and 'hf_x' not in str(info.value)
+    events = []
+    with pytest.raises(ex.HubProcessError):
+        ex._with_retries(lambda: client.fetch_to('o/r', 'x', 'a' * 40, tmp_path), attempts=2,
+                         on_event=events.append, sleep=lambda s: None)
+    assert events and events[0]['kind'] == 'hf-retry'
+
+
+def test_audit_hub_refuses_to_start_in_an_offline_process(monkeypatch):
+    from huggingface_hub import constants
+    monkeypatch.setattr(constants, 'HF_HUB_OFFLINE', True)
+    with pytest.raises(RuntimeError, match='OnlineHubProcess'):
+        ex.AuditHub()

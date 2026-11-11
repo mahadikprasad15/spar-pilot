@@ -16,6 +16,12 @@ references the arm packages and is itself read back. The Pod may stop only after
 
 The advisory writer marker (host, PID, heartbeat) is evidence, not a lock: an existing marker from
 another writer, live or stale, stops the run for manual investigation.
+
+Before any collection the run re-establishes its inputs: sequences bytes, adapter files and the runtime
+fingerprint must equal what 03b qualified, and the progress record's context (plan core, qualification,
+batch manifest, sequences, label, repo) must equal the current one, so a reused run_id cannot mix contexts.
+Wall time is cumulative across restarts (persisted) and checked after every unit; Hub calls run in a
+separate online process (``OnlineHubProcess``) because the worker itself stays offline.
 """
 import argparse
 import json
@@ -41,6 +47,41 @@ class ProductionRefused(RuntimeError):
 
 class OverrunStop(RuntimeError):
     pass
+
+
+def check_inputs(plan, config, summary, *, rehearsal, backend=None):
+    """Re-establish in 04 that the files and runtime are the ones 03b qualified; returns the sequences sha."""
+    root = Path(config['artifact_root'])
+    seq_dir = root / plan['inputs']['sequences_run']
+    problems = plan_mod.input_problems(plan, root)
+    if rehearsal:  # bug-finding only, as in 03b: a pending background review is a warning
+        problems = [p for p in problems if not p.startswith('background review')]
+    if problems:
+        raise ProductionRefused('inputs not ready: ' + '; '.join(problems))
+    actual = _file_sha(seq_dir / 'sequences.jsonl')
+    manifest = json.loads((seq_dir / 'manifest.json').read_text())['sequences_sha256']
+    qualified = (summary.get('inputs') or {}).get('sequences_sha256')
+    if actual != manifest or actual != qualified:
+        raise ProductionRefused(f'sequences.jsonl ({actual[:12]}) differs from its manifest ({manifest[:12]}) or from '
+                                f'what 03b qualified ({str(qualified)[:12]})')
+    inventory = json.loads((root / plan['inputs']['inventory_run'] / 'inventory.json').read_text())
+    step = str(inventory['audit_step'])
+    recorded_adapters = (summary.get('inputs') or {}).get('adapters') or {}
+    for arm in summary['arms_qualified']:
+        if arm == 'untuned':
+            continue
+        path = Path(config['adapter_dirs'][arm]) / 'adapter_model.safetensors'
+        expected = inventory['arms'][arm]['checkpoints'][step]['files']['adapter_model.safetensors']['sha256']
+        got = _file_sha(path) if path.is_file() else None
+        if got != expected or got != recorded_adapters.get(arm):
+            raise ProductionRefused(f'adapter for {arm} at {path} differs from the sealed inventory or from 03b')
+    if backend is not None:
+        from pilot_eval.neuron_audit_preflight import runtime_fingerprint
+        current = runtime_fingerprint(backend.device_info())
+        if current != summary.get('runtime_fingerprint'):
+            raise ProductionRefused(f'runtime differs from the qualified one: {current} vs '
+                                    f"{summary.get('runtime_fingerprint')}; requalify (03b) on this runtime")
+    return actual
 
 
 # --- preconditions --------------------------------------------------------------------------------
@@ -139,13 +180,13 @@ class Production:
         if self.rehearsal != run_id.startswith('rehearsal-'):
             raise ProductionRefused('rehearsal runs (and only they) must use a run_id starting with rehearsal-')
         self.now, self.stop_runner = now, stop_runner
+        self.session_started = now()
         self.local_dir = Path(config['local_root']) / RUN_SUBDIR / run_id
         self.volume_dir = Path(config['volume_root']) / RUN_SUBDIR / run_id
         self.qual_dir = Path(config['qualification_root']) / QUAL_SUBDIR / config['qualification_run_id']
         self.summary, self.manifest = check_qualification(plan, self.qual_dir, rehearsal=self.rehearsal)
+        self.seq_sha = check_inputs(plan, config, self.summary, rehearsal=self.rehearsal, backend=backend)
         self.sequences = {r['id']: r for r in read_sequences(Path(config['artifact_root']) / plan['inputs']['sequences_run'])}
-        self.seq_sha = json.loads((Path(config['artifact_root']) / plan['inputs']['sequences_run'] /
-                                   'manifest.json').read_text())['sequences_sha256']
         for batch in self.manifest['batches']:
             for i in batch['ids']:
                 if self.sequences[i]['split'] not in ('discovery', 'heldout'):
@@ -153,6 +194,8 @@ class Production:
         self.arms = [a for a in plan['arms'] if a in self.summary['arms_qualified']]
         self.label = config['label'] if not self.rehearsal else f"rehearsal-{config['label']}"
         self.repo = config.get('repo') or plan['preflight']['export_repo']
+        if self.client is None:
+            self.client = ex.OnlineHubProcess()
         self.inventory = json.loads((Path(config['artifact_root']) / plan['inputs']['inventory_run'] /
                                      'inventory.json').read_text())
         self.local_store = BlockStore(self.local_dir / 'blocks')
@@ -160,13 +203,32 @@ class Production:
         self.state_paths = [self.local_dir / 'meta/progress.json', self.volume_dir / 'meta/progress.json']
 
     # state
+    def _context(self):
+        return dict(plan_core_sha256=self.plan['_plan_core_sha256'], qualification_run_id=self.config['qualification_run_id'],
+                    qualification_sha256=_file_sha(self.qual_dir / 'qualification.json'),
+                    batch_manifest_sha256=self.manifest['sha256'], sequences_sha256=self.seq_sha, label=self.label,
+                    repo=self.repo, rehearsal=self.rehearsal, arms=self.arms,
+                    max_batches_per_arm=self.config.get('max_batches_per_arm'))
+
     def _load_state(self):
+        state = None
         for path in self.state_paths[::-1]:  # the volume copy survives a Pod change
             if path.is_file():
-                return json.loads(path.read_text())
-        return dict(units={}, arm_packages={}, overrun=[], events=[])
+                state = json.loads(path.read_text())
+                break
+        if state is None:
+            return dict(context=self._context(), units={}, arm_packages={}, overrun=[], overrun_seen=[], events=[],
+                        wall_seconds=0.0, collect_seconds=0.0)
+        if state.get('context') != self._context():
+            raise ProductionRefused('this run_id already holds progress from a different context '
+                                    f"({state.get('context')}); use a new run_id or investigate")
+        return state
+
+    def _wall(self, state):
+        return state.get('wall_seconds', 0.0) + (self.now() - self.session_started)
 
     def _save_state(self, state):
+        state['wall_seconds_saved'] = self._wall(state)
         for path in self.state_paths:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open('w') as stream:
@@ -194,9 +256,16 @@ class Production:
             mirror_store(self.volume_dir / 'blocks', self.local_dir / 'blocks', keys=present, source_listing=False)
         return present
 
-    def _collect_arm(self, arm, state, *, batches, history, started, total_units):
+    def _keys(self, arm, batches):
+        return [f'{arm}-batch-{b["index"]:05d}' for b in batches]
+
+    def _check_cap(self, state, where):
+        if self._wall(state) > self.cap_seconds:
+            raise OverrunStop(f'hard wall-time cap reached ({where}; cumulative across restarts)')
+
+    def _collect_arm(self, arm, state, *, batches, history, total_units):
         heads = self.summary['phase_1b']['layers'] or None
-        keys = [f'{arm}-batch-{b["index"]:05d}' for b in batches]
+        keys = self._keys(arm, batches)
         todo = [(k, b) for k, b in zip(keys, batches) if state['units'].get(k) != 'mirrored']
         if not todo:
             return keys
@@ -223,12 +292,14 @@ class Production:
                 state['units'][key] = 'mirrored'
                 self._save_state(state)
                 self.marker.beat(arm=arm, unit=key)
+                self._check_cap(state, f'after unit {key}')
                 done = sum(1 for v in state['units'].values() if v == 'mirrored') / total_units
                 # Forecast collection time only (what 03b benchmarked); export/mirror time counts toward the hard cap.
                 record = overrun_check(done, state['collect_seconds'], projected_seconds=self.projected_seconds,
                                        cap_seconds=self.cap_seconds, history=history)
                 if record:
                     state['overrun'].append(record)
+                    state['overrun_seen'] = sorted(history['seen'])
                     self._save_state(state)
         finally:
             collector.close()
@@ -240,11 +311,20 @@ class Production:
         return dict(z_reconstruction_relative_to_layer_max=float(numeric['z_relative_to_layer_max']),
                     identity_atol=float(numeric['atol']), identity_rtol=float(numeric['rtol']))
 
-    def _package_arm(self, arm, state):
+    def _package_arm(self, arm, state, keys):
         if arm in state['arm_packages']:
             return state['arm_packages'][arm]
+        # A new Pod has none of the earlier units locally: bring back every mirrored one, then package exactly
+        # the arm's frozen unit list (a missing unit refuses the package; it is never silently smaller).
+        missing_local = [k for k in keys if self.local_store.state(k) != 'sealed']
+        restored = self._restore_from_volume(missing_local)
+        if set(missing_local) - set(restored):
+            raise RuntimeError(f'arm {arm}: units neither local nor sealed on the volume: '
+                               f'{sorted(set(missing_local) - set(restored))[:5]}')
+        if restored:
+            self._event(state, 'units-restored-from-volume', arm=arm, count=len(restored))
         package, manifest_path, manifest = ex.package_arm(self.local_dir / 'blocks', arm, self.label,
-                                                          self.config['local_temp'])
+                                                          self.config['local_temp'], expected_keys=keys)
         try:
             record = ex.upload_package(package, manifest_path, manifest, repo=self.repo, label=self.label,
                                        client=self.client, temp_dir=self.config['local_temp'])
@@ -262,16 +342,37 @@ class Production:
         records = list(state['arm_packages'].values())
         final = ex.publish_final_manifest(
             records, repo=self.repo, label=self.label, required_arms=self.arms, client=self.client,
-            temp_dir=self.config['local_temp'],
+            temp_dir=self.config['local_temp'], expected_units=self.expected_units,
             extras=dict(qualification_run_id=self.config['qualification_run_id'],
                         qualification_sha256=_file_sha(self.qual_dir / 'qualification.json'),
                         batch_manifest_sha256=self.manifest['sha256'], plan_core_sha256=self.plan['_plan_core_sha256'],
                         sequences_sha256=self.seq_sha, run_state=final_state, rehearsal=self.rehearsal,
                         partial_label=self.summary.get('partial_label')))
         state['final_manifest'] = final
-        state['safe_to_stop_pod'] = ex.may_stop_pod_final(final, records, required_arms=self.arms)
+        state['safe_to_stop_pod'] = ex.may_stop_pod_final(final, records, required_arms=self.arms,
+                                                          expected_units=self.expected_units)
         self._save_state(state)
         return final
+
+    def _maybe_stop_after_failure(self, state):
+        """Opt-in (config ``stop_after_verified_partial_backup``, default off): after a failure or overrun, stop
+        the Pod only if every unit collected so far is sealed on the volume and every packaged arm is verified on
+        HF; nothing then exists only on the container disk. Off by default: the user rule is to stop only after
+        the required final backup."""
+        if not (self.config.get('stop_after_verified_partial_backup') and self.config.get('stop_command')):
+            return False
+        volume = BlockStore(self.volume_dir / 'blocks')
+        local = [k for k, s in self.local_store.status().items() if s == 'sealed']
+        unmirrored = [k for k in local if volume.state(k) != 'sealed']
+        final = state.get('final_manifest') or {}
+        if unmirrored or not final.get('revision'):
+            self._event(state, 'pod-left-running', reason='partial backup incomplete', unmirrored=unmirrored[:5])
+            return False
+        result = self.stop_runner(self.config['stop_command'], capture_output=True, text=True)
+        state['pod_stop_requested'] = True
+        self._event(state, 'pod-stop-requested-after-partial-backup', returncode=result.returncode)
+        self._save_state(state)
+        return True
 
     def run(self, *, resume_own=False):
         self.marker.acquire(resume_own=resume_own)
@@ -292,20 +393,20 @@ class Production:
         if self.config.get('max_batches_per_arm') and not self.rehearsal:
             raise ProductionRefused('max_batches_per_arm is for rehearsals only')
         total_units = len(batches) * len(self.arms)
-        history = dict(seen=set(), consecutive=0, records=state.get('overrun', []))
-        started = self.now()
+        self.expected_units = {arm: self._keys(arm, batches) for arm in self.arms}
+        state['wall_seconds'] = state.get('wall_seconds_saved', state.get('wall_seconds', 0.0))
+        history = dict(seen=set(state.get('overrun_seen', [])), consecutive=0, records=state.get('overrun', []))
         final_state = 'complete'
         try:
+            self._check_cap(state, 'at start')
             for arm in self.arms:
                 if arm in state['arm_packages']:
                     self._event(state, 'arm-already-verified', arm=arm)
                     continue
                 self._event(state, 'arm-start', arm=arm)
-                self._collect_arm(arm, state, batches=batches, history=history, started=started,
-                                  total_units=total_units)
-                self._package_arm(arm, state)
-                if self.now() - started > self.cap_seconds:
-                    raise OverrunStop('hard wall-time cap reached at an arm boundary')
+                self._collect_arm(arm, state, batches=batches, history=history, total_units=total_units)
+                self._package_arm(arm, state, self.expected_units[arm])
+                self._check_cap(state, f'after packaging {arm}')
         except OverrunStop as exc:
             final_state = 'stopped-overrun'
             self._event(state, 'overrun-stop', reason=str(exc))
@@ -316,11 +417,16 @@ class Production:
                 self._finish(state, final_state='failed')
             except Exception as export_exc:  # never stop the Pod without a verified backup
                 self._event(state, 'partial-export-failed', error=f'{type(export_exc).__name__}: {export_exc}')
+            self._maybe_stop_after_failure(state)
             self.marker.release('failed')
             raise
         final = self._finish(state, final_state=final_state)
-        if state['safe_to_stop_pod'] and self.config.get('stop_command') and final_state == 'complete':
+        if final_state != 'complete':
+            if not self._maybe_stop_after_failure(state):
+                self._event(state, 'pod-left-running', reason=f'run ended {final_state}; billing continues')
+        elif state['safe_to_stop_pod'] and self.config.get('stop_command'):
             result = self.stop_runner(self.config['stop_command'], capture_output=True, text=True)
+            state['pod_stop_requested'] = True
             self._event(state, 'pod-stop-requested', returncode=result.returncode)
         elif self.config.get('stop_command'):
             self._event(state, 'pod-left-running', reason='final backup not verified complete; billing continues')
@@ -356,8 +462,9 @@ def main(argv=None):
                       hf_check=lambda: pf.hf_online_subprocess(config.get('repo') or plan['preflight']['export_repo'],
                                                                config['local_temp']), rehearsal=args.rehearsal)
 
-    print(json.dumps(Production(plan, config, backend, preflight=preflight).run(resume_own=args.resume_own),
-                     indent=2, default=str))
+    client = ex.OnlineHubProcess()  # the worker stays offline; every Hub call runs in an online child process
+    print(json.dumps(Production(plan, config, backend, client=client, preflight=preflight).run(
+        resume_own=args.resume_own), indent=2, default=str))
     return 0
 
 

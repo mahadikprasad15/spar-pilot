@@ -200,3 +200,34 @@ def test_rehearsal_subset_uses_only_rows_every_arm_collected(tmp_path):
     data = sel.Discovery([stores], rows + [dict(id='math:999', group='math', split='discovery')],
                          prototype=True, available_only=True)
     assert 'math:999' not in data.ids('math') and len(data.ids('math')) == 20
+
+
+def test_duplicate_rows_and_mixed_run_contexts_are_refused(tmp_path):
+    rows = sequences()
+    one = write_stores(tmp_path / 'a', rows)
+    two = write_stores(tmp_path / 'b', rows)
+    with pytest.raises(sel.SelectionRefused, match='appears in both'):
+        sel.Discovery([one, two], rows, prototype=True)  # the later block never silently replaces the earlier
+    store = BlockStore(tmp_path / 'mixed')
+    for arm, qual in [('untuned', 'q1'), ('gold-sft', 'q2')]:
+        store.write_unit(f'{arm}-u', identity=dict(arm=arm, sequences_sha256='seq-sha', qualification=qual),
+                         example_ids=['math:000'], counts={'response_content': [1]},
+                         blocks={('response_content', 0, 'mean_z'): np.ones((1, J), np.float32)})
+    with pytest.raises(sel.SelectionRefused, match='different run context'):
+        sel.Discovery([tmp_path / 'mixed'], rows, sequences_sha256='seq-sha')
+
+
+def test_expected_context_binds_units_to_the_plan_and_qualification(tmp_path):
+    rows = sequences()
+    stores = write_stores(tmp_path / 'a', rows)
+    with pytest.raises(sel.SelectionRefused, match='plan_core_sha256 is None, expected core'):
+        sel.Discovery([stores], rows, sequences_sha256='seq-sha', expected_context=dict(plan_core_sha256='core'))
+
+
+def test_partial_study_selects_only_qualified_arms_and_is_labelled(tmp_path):
+    rows = sequences()
+    stores = write_stores(tmp_path / 'blocks', rows)
+    summary = sel.select(plan(), store_roots=[stores], sequences=rows, output_root=tmp_path / 'out', run_id='p',
+                         layers=LAYERS, arms=['gold-sft'], prototype=True,
+                         partial_label='partial study; missing arms: online-grpo')
+    assert summary['arms'] == ['gold-sft'] and summary['partial_label'].startswith('partial study')
