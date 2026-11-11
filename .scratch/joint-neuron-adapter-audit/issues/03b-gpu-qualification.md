@@ -43,4 +43,4 @@
 
 ### 2026-11-11 — Colab rehearsal r1 findings (Claude)
 
-- Real-model run found: missing pad token in the Qwen config (fixed: explicit tokenizer pad id 151643, `c5d4f1a`) and stale per-stage code commits on reuse (fixed: commit in production stage identity, `2d53bb3`). After the fixes all 7 arms qualified, logits 3.6e-4–5.8e-4 (gate 1e-3), no flags, FP64 floor on GPU. Details: `../rehearsal-log.md`.
+- Real-model run found: missing pad token in the Qwen config (fixed: explicit tokenizer pad id 151643, `c5d4f1a`) and stale per-stage code commits on reuse (fixed: commit in production stage identity, `2d53bb3`). After the fixes all 7 arms qualified, logits 3.6e-4–5.8e-4 (gate 1e-3), no flags, FP64 floor on GPU. Lessons: `docs/agents/experiment-lessons.md`.

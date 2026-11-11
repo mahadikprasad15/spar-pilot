@@ -45,4 +45,4 @@
 
 ### 2026-11-11 — Colab rehearsal r1 findings (Claude)
 
-- Rehearsal 04 (1 batch/arm) completed: every arm and the 03b package verified on HF, final manifest complete. Rehearsals can now choose covering frozen batches (`rehearsal_batch_choice: cover`, `558e77e`). Details: `../rehearsal-log.md`.
+- Rehearsal 04 (1 batch/arm) completed: every arm and the 03b package verified on HF, final manifest complete. Rehearsals can now choose covering frozen batches (`rehearsal_batch_choice: cover`, `558e77e`). Lessons: `docs/agents/experiment-lessons.md`.

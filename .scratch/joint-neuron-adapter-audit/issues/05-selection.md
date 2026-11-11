@@ -31,4 +31,4 @@
 
 ### 2026-11-11 — Colab rehearsal r1 findings (Claude)
 
-- 05 crashed on a rehearsal with no math rows (first frozen batch only). Now refuses clearly when a group has < 2 rows; rehearsals collect covering batches (`558e77e`). Details: `../rehearsal-log.md`.
+- 05 crashed on a rehearsal with no math rows (first frozen batch only). Now refuses clearly when a group has < 2 rows; rehearsals collect covering batches (`558e77e`). Lessons: `docs/agents/experiment-lessons.md`.
