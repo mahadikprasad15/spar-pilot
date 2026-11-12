@@ -116,7 +116,7 @@ and runs 04 directly:
 
 - Uploads the 03b outputs as a verified qualification package, then arm by arm: sealed units mirrored to `$VOL`,
   each arm packaged with exactly its frozen batch list and verified by fresh download, local units pruned.
-- On completion: reference-only final manifest read back, then the Pod stops (`runpodctl pod stop $RUNPOD_POD_ID`).
+- On completion: reference-only final manifest read back, then the Pod stops (`runpodctl stop pod $RUNPOD_POD_ID`, falling back to `runpodctl pod stop`). If it is still running afterwards, run `runpodctl stop pod $RUNPOD_POD_ID` yourself or stop it in the console.
 
 ## 9. Off the Pod: clean restore, 05 and 06 (CPU)
 

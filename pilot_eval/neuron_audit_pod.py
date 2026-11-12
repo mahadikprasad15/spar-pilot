@@ -313,6 +313,14 @@ def _sha_file(path):
     return digest.hexdigest()
 
 
+def stop_command(pod_id):
+    """Stop this Pod with either runpodctl syntax: the Pod image's runpodctl accepts ``stop pod <id>`` (found
+    2026-11-12, when ``pod stop <id>`` exited 1 after the v1 run); newer releases document ``pod stop <id>``."""
+    if not pod_id or not str(pod_id).replace('-', '').isalnum():
+        raise ValueError(f'unexpected Pod id {pod_id!r}')
+    return ['sh', '-c', f'runpodctl stop pod {pod_id} || runpodctl pod stop {pod_id}']
+
+
 def _upload_stopped(directory, plan, tag, work):
     from pilot_eval import neuron_audit_export as ex
     return ex.upload_directory_package(directory, repo=plan['preflight']['export_repo'], label=f'pod-{tag}',
@@ -337,7 +345,7 @@ def chain(work, volume_dir, *, tag, plan_path, runner=_run, stop_runner=subproce
     pod_id = pod_id or os.environ.get('RUNPOD_POD_ID')
     if not pod_id:
         raise SystemExit('RUNPOD_POD_ID is not set; the chain must be able to stop this Pod')
-    stop = ['runpodctl', 'pod', 'stop', pod_id]
+    stop = stop_command(pod_id)
     inputs = json.loads((work / 'inputs.json').read_text())
     q_path, p_path, qualify, production = write_configs(work, volume_dir, inputs=inputs, tag=tag, rehearsal=False,
                                                         stop_command=stop)
@@ -434,7 +442,7 @@ def main(argv=None):
         pod = os.environ.get('RUNPOD_POD_ID')
         if args.stop_pod and not pod:
             raise SystemExit('RUNPOD_POD_ID is not set; cannot build the stop command')
-        stop = ['runpodctl', 'pod', 'stop', pod] if args.stop_pod else None
+        stop = stop_command(pod) if args.stop_pod else None
         q_path, p_path, _, _ = write_configs(args.work, args.volume_dir, inputs=inputs, tag=args.tag, rehearsal=False,
                                              stop_command=stop)
         print(json.dumps(dict(qualify_config=str(q_path), production_config=str(p_path), stop_command=stop), indent=2))

@@ -19,8 +19,8 @@ def test_rehearsal_and_production_configs(tmp_path):
     assert production['max_batches_per_arm'] == 2 and production['rehearsal_interrupt_after_units'] == 3
     assert 'stop_command' not in production and production['volume_root'] == qualify['volume_dir'] == '/vol/audit'
     _, _, _, real = pod.write_configs(tmp_path, '/vol/audit', inputs=INPUTS, tag='v1', rehearsal=False,
-                                      stop_command=['runpodctl', 'pod', 'stop', 'abc'])
-    assert real['run_id'] == 'p-v1' and real['stop_command'][-1] == 'abc' and 'max_batches_per_arm' not in real
+                                      stop_command=pod.stop_command('abc'))
+    assert real['run_id'] == 'p-v1' and 'runpodctl stop pod abc' in real['stop_command'][-1] and 'max_batches_per_arm' not in real
     assert json.loads(Path(p_path).read_text())['label'] == 'pod-t'
 
 
@@ -78,7 +78,7 @@ def test_chain_stops_before_04_on_flags_and_stops_pod_after_verified_volume_copy
     run, calls, stops, signoffs, vol = _chain_world(tmp_path, monkeypatch, flags=['early_layer'])
     report = run(uploader=lambda d: dict(revision='r'))
     assert calls == ['pilot_eval.neuron_audit_qualify'] and signoffs == []
-    assert stops == [['runpodctl', 'pod', 'stop', 'pod123']]
+    assert stops == [pod.stop_command('pod123')]
     assert (vol / 'runs/joint-neuron-adapter-audit/qualification-stopped/q-t/qualification.json').is_file()
     assert report['volume_copy_problems'] == [] and report['hf_package'] == dict(revision='r')
 
@@ -102,3 +102,10 @@ def test_chain_refuses_partial_qualification_and_plan_without_rule(tmp_path, mon
                    **{'review_flags.automatic_signoff': None})
     with pytest.raises(SystemExit, match='automatic_signoff'):
         pod.chain(tmp_path / 'work', tmp_path / 'vol', tag='t', plan_path=bad, pod_id='p')
+
+
+def test_stop_command_tries_the_syntax_that_worked_on_the_pod_first():
+    assert pod.stop_command('h97utghb7tl3gr') == ['sh', '-c', 'runpodctl stop pod h97utghb7tl3gr || runpodctl pod stop h97utghb7tl3gr']
+    import pytest
+    with pytest.raises(ValueError):
+        pod.stop_command('x; rm -rf /')

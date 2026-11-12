@@ -455,7 +455,8 @@ class Production:
             return False
         result = self.stop_runner(self.config['stop_command'], capture_output=True, text=True)
         state['pod_stop_requested'] = True
-        self._event(state, 'pod-stop-requested-after-partial-backup', returncode=result.returncode)
+        self._event(state, 'pod-stop-requested-after-partial-backup', returncode=result.returncode,
+                    output=((getattr(result, 'stdout', '') or '') + (getattr(result, 'stderr', '') or ''))[-1000:])
         self._save_state(state)
         return True
 
@@ -522,7 +523,8 @@ class Production:
         elif state['safe_to_stop_pod'] and self.config.get('stop_command'):
             result = self.stop_runner(self.config['stop_command'], capture_output=True, text=True)
             state['pod_stop_requested'] = True
-            self._event(state, 'pod-stop-requested', returncode=result.returncode)
+            self._event(state, 'pod-stop-requested', returncode=result.returncode,
+                        output=((getattr(result, 'stdout', '') or '') + (getattr(result, 'stderr', '') or ''))[-1000:])
         elif self.config.get('stop_command'):
             self._event(state, 'pod-left-running', reason='final backup not verified complete; billing continues')
         self._save_state(state)
