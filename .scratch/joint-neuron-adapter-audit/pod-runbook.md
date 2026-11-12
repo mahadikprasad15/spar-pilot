@@ -130,10 +130,12 @@ $PY -m pilot_eval.neuron_audit_export restore-final --final_record $REPO/.scratc
 STORE=$VOL/runs/joint-neuron-adapter-audit/production/p-v1/blocks
 SEQ=$WORK/prep/runs/joint-neuron-adapter-audit/sequences/sequences-v2; QUAL=$WORK/restored-v1/qualification/q-v1
 $PY -m pilot_eval.neuron_audit_selection --plan $WORK/plan.yaml --stores $STORE --sequences_run $SEQ \
-    --qualification_dir $QUAL --output_root $VOL/analysis-v1 --run_id s-v1 --layers 0-27
+    --qualification_dir $QUAL --output_root $WORK/analysis-v1 --run_id s-v1 --layers 0-27
 $PY -m pilot_eval.neuron_audit_report --plan $WORK/plan.yaml --stores $STORE --sequences_run $SEQ \
-    --selection_dir $VOL/analysis-v1/runs/joint-neuron-adapter-audit/selection/s-v1 --qualification_dir $QUAL \
-    --output_root $VOL/analysis-v1 --run_id report-v1 --layers 0-27
+    --selection_dir $WORK/analysis-v1/runs/joint-neuron-adapter-audit/selection/s-v1 --qualification_dir $QUAL \
+    --output_root $WORK/analysis-v1 --run_id report-v1 --layers 0-27
+
+cp -r $WORK/analysis-v1 $VOL/analysis-v1   # outputs are written locally (atomic renames), then kept on sl-0
 ```
 
 Without the volume, `restore-final` without `--qualification_only` downloads all arm packages (~55 GB, needs
