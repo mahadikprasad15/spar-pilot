@@ -598,8 +598,11 @@ def publish_final_manifest(arm_records, *, repo, label, required_arms, extras=No
 
 
 def restore_final(final_record, clean_root, *, client=None, temp_dir=None, attempts=3, on_event=print,
-                  sleep=time.sleep):
-    """Clean-root restore from the final manifest: fetch each referenced package, verify, extract, re-verify units."""
+                  sleep=time.sleep, arms=True):
+    """Clean-root restore from the final manifest: fetch each referenced package, verify, extract, re-verify units.
+
+    ``arms=False`` restores only the extras (the 03b qualification package), e.g. when 05/06 read the arm units
+    from the Global Volume copy instead of downloading ~55 GB."""
     client = client or AuditHub()
     private(client, final_record['repo'])
     root = Path(clean_root).resolve()
@@ -615,7 +618,7 @@ def restore_final(final_record, clean_root, *, client=None, temp_dir=None, attem
                 or body['sha256'] != final_record['sha256']:
             raise ValueError('final manifest identity differs')
         verified = {}
-        for arm, ref in sorted(body['arms'].items()):
+        for arm, ref in sorted(body['arms'].items() if arms else []):
             package = _with_retries(lambda: client.fetch_to(ref['repo'], ref['path'], ref['revision'], fresh),
                                     attempts=attempts, on_event=on_event, sleep=sleep)
             if file_hash(package) != ref['sha256']:
@@ -669,7 +672,7 @@ def restore_final(final_record, clean_root, *, client=None, temp_dir=None, attem
 
 
 def restore_final_cli(progress_path, final_record_path, clean_root, *, temp_dir=None, require_complete=False,
-                      client=None):
+                      client=None, arms=True):
     """Restore every arm package of a final manifest into an empty root, verify every unit, write a receipt.
 
     Returns the proof plus ``store_roots`` (one per arm) to pass to 05 selection and 06 report as ``--stores``."""
@@ -681,7 +684,8 @@ def restore_final_cli(progress_path, final_record_path, clean_root, *, temp_dir=
         final = json.loads(Path(final_record_path).read_text())
     if require_complete and final.get('completeness') != 'complete':
         raise ValueError(f"final manifest is {final.get('completeness')}; missing {final.get('missing_arms')}")
-    proof = restore_final(final, clean_root, client=client, temp_dir=temp_dir)
+    proof = restore_final(final, clean_root, client=client, temp_dir=temp_dir, arms=arms)
+    proof['arms_restored'] = arms
     root = Path(proof['clean_root'])
     proof['store_roots'] = [str(root / 'arms' / arm) for arm in sorted(proof['verified_units'])]
     _write_json(root.parent / f'{root.name}.restore-final-receipt.json', proof)
@@ -729,6 +733,8 @@ def main(argv=None):
     f.add_argument('--clean_root', required=True, help='empty directory; arm stores land in <clean_root>/arms/<arm>')
     f.add_argument('--temp_dir', help='local temp for downloads (default: system temp)')
     f.add_argument('--require_complete', action='store_true', help='refuse a partial final manifest')
+    f.add_argument('--qualification_only', action='store_true',
+                   help='restore only the 03b qualification package (arm units read from the volume copy)')
     h = sub.add_parser('hub-op', help='internal: one online Hub call for OnlineHubProcess')
     h.add_argument('--request', required=True)
     args = parser.parse_args(argv)
@@ -743,7 +749,7 @@ def main(argv=None):
         result = {k: v for k, v in result.items() if k != 'files'} | dict(file_count=len(result['files']))
     elif args.command == 'restore-final':
         result = restore_final_cli(args.progress, args.final_record, args.clean_root, temp_dir=args.temp_dir,
-                                   require_complete=args.require_complete)
+                                   require_complete=args.require_complete, arms=not args.qualification_only)
     elif args.command == 'upload':
         result = upload(args.snapshot, args.artifact_root, repo=args.repo, deadline_seconds=args.deadline_seconds)
     else:

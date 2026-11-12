@@ -118,25 +118,23 @@ and runs 04 directly:
   each arm packaged with exactly its frozen batch list and verified by fresh download, local units pruned.
 - On completion: reference-only final manifest read back, then the Pod stops (`runpodctl stop pod $RUNPOD_POD_ID`, falling back to `runpodctl pod stop`). If it is still running afterwards, run `runpodctl stop pod $RUNPOD_POD_ID` yourself or stop it in the console.
 
-## 9. Off the Pod: clean restore, 05 and 06 (CPU)
+## 9. Off the GPU: 05 and 06 on a CPU Pod attached to sl-0
+
+The volume already holds every mirrored unit (`$VOL/runs/joint-neuron-adapter-audit/production/p-v1/blocks`),
+so a CPU Pod in sl-0's datacenter (>= 32 GB RAM, 40 GB container disk) reads them in place. Only the small 03b
+package comes from HF. 05/06 hold one layer's blocks in memory at a time.
 
 ```bash
-python -m pilot_eval.neuron_audit_export restore-final --progress $VOL/runs/joint-neuron-adapter-audit/production/p-v1/meta/progress.json \
-    --clean_root ./restored-v1 --require_complete
+$PY -m pilot_eval.neuron_audit_export restore-final --final_record $REPO/.scratch/joint-neuron-adapter-audit/final-record-v1.json \
+    --clean_root $WORK/restored-v1 --temp_dir $WORK/tmp --require_complete --qualification_only
+STORE=$VOL/runs/joint-neuron-adapter-audit/production/p-v1/blocks
+SEQ=$WORK/prep/runs/joint-neuron-adapter-audit/sequences/sequences-v2; QUAL=$WORK/restored-v1/qualification/q-v1
+$PY -m pilot_eval.neuron_audit_selection --plan $WORK/plan.yaml --stores $STORE --sequences_run $SEQ \
+    --qualification_dir $QUAL --output_root $VOL/analysis-v1 --run_id s-v1 --layers 0-27
+$PY -m pilot_eval.neuron_audit_report --plan $WORK/plan.yaml --stores $STORE --sequences_run $SEQ \
+    --selection_dir $VOL/analysis-v1/runs/joint-neuron-adapter-audit/selection/s-v1 --qualification_dir $QUAL \
+    --output_root $VOL/analysis-v1 --run_id report-v1 --layers 0-27
 ```
 
-Without the volume, write `{"repo":…, "revision":…, "path":…, "sha256":…}` from the final manifest record to
-a file and pass `--final_record <file>`. The receipt lists `store_roots` (one per arm) and
-`restored_extras.qualification_package` (the 03b run directory). Then:
-
-```bash
-python -m pilot_eval.neuron_audit_selection --plan plan.yaml --stores <store_roots…> \
-    --sequences_run prep/runs/joint-neuron-adapter-audit/sequences/sequences-v2 \
-    --qualification_dir restored-v1/qualification/q-v1 --output_root out --run_id s-v1 --layers 0-27
-python -m pilot_eval.neuron_audit_report --plan plan.yaml --selection_dir out/runs/joint-neuron-adapter-audit/selection/s-v1 \
-    --stores <store_roots…> --sequences_run prep/runs/joint-neuron-adapter-audit/sequences/sequences-v2 \
-    --qualification_dir restored-v1/qualification/q-v1 --output_root out --run_id report-v1 --layers 0-27
-```
-
-Finally commit the approved `plan.yaml` (as `.scratch/joint-neuron-adapter-audit/frozen_plan_v1.approved.yaml`)
-with the run receipts.
+Without the volume, `restore-final` without `--qualification_only` downloads all arm packages (~55 GB, needs
+~60 GB free) and its receipt lists `store_roots` to pass as `--stores`.

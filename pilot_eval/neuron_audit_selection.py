@@ -227,7 +227,7 @@ class Discovery:
                         raise SelectionRefused(f"arm {ident['arm']} example {example} appears in both "
                                                f'{arm_rows[example][1]} and {key}; refusing duplicates')
                     arm_rows[example] = (store, key, row)
-        self._cache = {}
+        self._cache, self._cache_layer = {}, None  # one layer's blocks at a time: memory ~ 1/28 of the run
 
     def ids(self, group, split=None):
         split = split or self.split
@@ -257,6 +257,9 @@ class Discovery:
         missing = [i for i in ids if i not in self.where[arm]]
         if missing:
             raise SelectionRefused(f'arm {arm} lacks sealed rows for {len(missing)} {self.split} examples')
+        if layer != self._cache_layer:  # 05/06 loop layer by layer; never hold the whole run in memory
+            self._cache.clear()
+            self._cache_layer = layer
         out = []
         for i in ids:
             store, key, row = self.where[arm][i]

@@ -357,3 +357,23 @@ def test_audit_hub_refuses_to_start_in_an_offline_process(monkeypatch):
     monkeypatch.setattr(constants, 'HF_HUB_OFFLINE', True)
     with pytest.raises(RuntimeError, match='OnlineHubProcess'):
         ex.AuditHub()
+
+
+def test_restore_final_qualification_only_skips_arm_downloads(tmp_path):
+    arm_store(tmp_path / 'local')
+    hub = FakeHub()
+    package, mpath, manifest = ex.package_arm(tmp_path / 'local', 'gold-sft', 'prod', tmp_path)
+    record = ex.upload_package(package, mpath, manifest, repo=REPO, label='prod', client=hub, temp_dir=tmp_path)
+    qual = tmp_path / 'q-v1'
+    (qual / 'stages').mkdir(parents=True)
+    (qual / 'qualification.json').write_text('{"status": "qualified"}')
+    (qual / 'stages/x.json').write_text('{}')
+    qpack = ex.upload_directory_package(qual, repo=REPO, label='prod', kind='qualification', client=hub,
+                                        temp_dir=tmp_path)
+    final = ex.publish_final_manifest([record], repo=REPO, label='prod', required_arms=['gold-sft'], client=hub,
+                                      temp_dir=tmp_path, extras=dict(qualification_package=qpack))
+    proof = ex.restore_final(final, tmp_path / 'clean', client=hub, temp_dir=tmp_path, arms=False)
+    assert proof['verified_units'] == {} and not (tmp_path / 'clean/arms').exists()
+    restored = Path(proof['restored_extras']['qualification_package'])
+    assert restored == (tmp_path / 'clean/qualification/q-v1').resolve()
+    assert (restored / 'qualification.json').read_text() == '{"status": "qualified"}'

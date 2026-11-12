@@ -239,3 +239,13 @@ def test_selection_refuses_clearly_when_a_group_has_no_rows(tmp_path):
     with pytest.raises(sel.SelectionRefused, match='too few discovery rows'):
         sel.select(plan(), store_roots=[stores], sequences=sequences(), output_root=tmp_path / 'out', run_id='x',
                    layers=LAYERS, arms=ARMS, prototype=True, available_only=True)
+
+
+def test_discovery_cache_holds_one_layer_at_a_time(tmp_path):
+    rows = sequences()
+    data = sel.Discovery([write_stores(tmp_path / 'blocks', rows)], rows, prototype=True)
+    ids = data.ids('math')
+    data.matrix('untuned', LAYERS[0], 'mean_abs_z', ids)
+    assert {k[2] for k in data._cache} == {LAYERS[0]}
+    data.matrix('untuned', LAYERS[1], 'mean_abs_z', ids)
+    assert {k[2] for k in data._cache} == {LAYERS[1]}
