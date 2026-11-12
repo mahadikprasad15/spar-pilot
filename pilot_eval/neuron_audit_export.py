@@ -682,9 +682,11 @@ def restore_final_cli(progress_path, final_record_path, clean_root, *, temp_dir=
             raise ValueError('progress record has no final manifest')
     else:
         final = json.loads(Path(final_record_path).read_text())
-    if require_complete and final.get('completeness') != 'complete':
+    if require_complete and final.get('completeness') not in (None, 'complete'):
         raise ValueError(f"final manifest is {final.get('completeness')}; missing {final.get('missing_arms')}")
     proof = restore_final(final, clean_root, client=client, temp_dir=temp_dir, arms=arms)
+    if require_complete and proof['completeness'] != 'complete':  # a bare record has no completeness: check the body
+        raise ValueError(f"final manifest is {proof['completeness']}; missing {proof['missing_arms']}")
     proof['arms_restored'] = arms
     root = Path(proof['clean_root'])
     proof['store_roots'] = [str(root / 'arms' / arm) for arm in sorted(proof['verified_units'])]
