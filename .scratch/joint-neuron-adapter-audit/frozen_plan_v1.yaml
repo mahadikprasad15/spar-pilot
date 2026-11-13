@@ -1,0 +1,331 @@
+# Joint neuron/adapter audit — run plan read by ticket 03b (and later 04/05/06).
+# NOT APPROVED. 03b refuses to run until `status: approved`, approval fields are filled and
+# every field listed under `required_before` for that stage is non-null
+# (pilot_eval/neuron_audit_plan.py).
+# Provenance tags: [user] = decided by the user on 2026-11-10 (after Codex's ADR search);
+# [proposed] = Claude's proposed fill, accepted in principle by the user on 2026-11-10
+# ("proceed with these suggestions") but still subject to the final check before approval.
+
+schema: joint-neuron-adapter-audit/frozen-plan-v1
+status: unapproved
+approval:
+  approved_by: null
+  approved_on: null
+  notes: null
+derived_from:
+  candidate_plan: .scratch/joint-neuron-adapter-audit/candidate-plan-v1.yaml
+  decisions: 03b decision notes supplied by the user on 2026-11-10 (two messages)
+
+inputs:
+  artifact_root_note: paths are relative to the artifact root used on the worker
+  inventory_run: runs/joint-neuron-adapter-audit/inventory/inventory-v2
+  sequences_run: runs/joint-neuron-adapter-audit/sequences/sequences-v2
+  background_review_required: accept          # [user] 03b refuses while pending/rejected
+
+arms:                                           # [user] all seven; offline GRPO restored in inventory-v2
+  - untuned
+  - gold-sft
+  - online-grpo
+  - offline-grpo
+  - sampling-sft-k0
+  - sampling-sft-k2
+  - sampling-sft-k5
+partial_study:                                  # [user]
+  allowed_if_an_arm_fails_qualification: true
+  labelling: every output and the report title say "partial" and name each missing arm
+  never_present_as_seven_arm: true
+  arm_gate_failure: "[proposed] an arm-specific hard-gate failure marks that arm failed with evidence and the study partial; global gates (masks, logits batching, storage, untuned/reference arm) stop 03b"
+
+runtime:                                        # [user] copy of the offline-GRPO Stage 0 record
+  source_record: imports/offline-grpo-v1/notebook/offline-grpo-v1/stage0-runtime.json
+  expected_device: NVIDIA A100-SXM4-80GB        # recorded on the Pod 2026-11-12 (driver 595.91.07; torch 2.9.0+cu128, CUDA 12.8, cuDNN 91002, Python 3.12.3)
+  python: "3.12"
+  packages: {torch: 2.9.0, transformers: 4.57.6, peft: 0.18.0}
+  allowed_local_builds: {torch: [cu128]}         # [proposed 2026-11-11] public version must equal the pin; only these local build suffixes pass (earlier A100 reported 2.9.0+cu128); the full string is recorded
+  runtime_fingerprint: device name, total memory, torch/CUDA/cuDNN builds, Python; 03b stages and 04 must match it exactly (a different runtime requalifies under a new run_id)  # [proposed]
+  deterministic: true
+  cublas_workspace_config: ":4096:8"
+  attention: eager                              # production, qualification and FP64 reference
+  pad_token: "<|endoftext|> (id 151643) from the pinned tokenizer_config.json; the pinned config.json has no pad_token_id. Passed explicitly to the collector, recorded by 03b and re-checked by 04"  # [found in the Colab rehearsal 2026-11-11]
+  package_change_policy: reviewed change recorded in this plan, otherwise identical
+  code_commit: null                             # REQUIRED: pushed commit the worker checks out; preflight refuses another HEAD or tracked modifications
+
+precision:                                      # [user] + torch 2.9.0 API facts verified locally
+  parameters_forwards_reductions: float32
+  autocast: false
+  torch_compile: false
+  set_float32_matmul_precision: highest
+  # torch 2.9.0 (verified locally): set the new per-backend API explicitly. A global
+  # torch.backends.fp32_precision leaves cudnn.conv/rnn at "tf32"; mixing legacy allow_tf32
+  # with the new API warns and can raise on read-back. set/get_float32_matmul_precision are
+  # also legacy (warn-once notice) but stay consistent with the per-backend "ieee" values,
+  # so the "highest" call above is kept and only that notice is suppressed.
+  fp32_precision:
+    torch.backends.cuda.matmul.fp32_precision: ieee
+    torch.backends.cudnn.conv.fp32_precision: ieee
+    torch.backends.cudnn.rnn.fp32_precision: ieee
+    torch.backends.mkldnn.matmul.fp32_precision: ieee   # CPU paths (CPU tests, FP64-on-CPU fallback)
+    torch.backends.mkldnn.conv.fp32_precision: ieee
+    torch.backends.mkldnn.rnn.fp32_precision: ieee
+  legacy_allow_tf32_setters: forbidden
+  read_back_in_worker_and_record_in_manifest: true
+  precedent: docs/adr/0021-sampling-sft-ieee-runtime.md (principle only; Triton setting not reused)
+
+hard_gates:                                     # [user] 03b stops, saves evidence, fails
+  live_adapter:
+    live_equals_saved_bitwise: true             # torch.equal when dtype preserved
+    keys_shapes_rank_scale_match_inventory: true
+    fail_on: [missing_keys, unexpected_keys, dtype_cast, merged, disabled, inactive_routing]
+    active_branch_changes_module_output: true
+    active_branch_changes_logits_on_representative_examples: true
+    zero_b_at_audit_step: unresolved            # unless training evidence explains it (none found in inventory-v2)
+  identities:
+    source: docs/adr/0015-stage0-fp32-coefficient-reconstruction-bound.md
+    read_a_dot_z:      "|c_hook - c_peft| <= max(1e-6 + 1e-5*|c|, gamma_d * sum_j |a_j z_j|)"
+    adapter_branch:    "|branch - s*b_i*c| <= max(1e-6 + 1e-5*|s*b_i*c|, gamma_d * |s|*|b_i| * sum_j |a_j z_j|)"
+    adapter_branch_note: "[proposed] per output coordinate |b_i| instead of the decided |s|*||b||; never looser since |b_i| <= ||b||"
+    gamma_d: "d*u/(1-d*u), u = 2^-24, d = actual down_proj input width (about 5.3e-4 for d = 8960)"
+    z_reconstruction: "max|z - act(gate)*up| <= 1e-6 * max|z| per layer"
+    c_peft_capture: independent hook on PEFT lora_A output, never derived from the hooked z
+    zero_reference: exact equality, otherwise unresolved (stop)
+    numeric: {atol: 1.0e-6, rtol: 1.0e-5, z_relative_to_layer_max: 1.0e-6}
+    mutation_controls: [wrong_layer, mask_shift_by_one, flipped_sign_of_a]
+    mutation_judgement: each mutation must fail on a realistic batch (fail if any token exceeds the bound)
+  masks: decoded-mask test on frozen sequences must pass
+  nonfinite: any NaN/Inf in activations, reductions or logits stops
+  disabled_vs_fresh_base: exact logits equality (torch.equal), same batch, dtype and attention; never add a tolerance after a failure
+  batched_vs_singleton_logits:
+    bound: 1.0e-3                               # see spec_amendments[0]
+    metric: max |logit difference| over the union of masked positions and the full vocabulary  # [proposed]
+    applies_to: logits only; never a tolerance for neuron statistics
+
+review_flags:                                   # [user] 03b completes and records; 04 refuses without sign-off
+  automatic_signoff: accept-if-qualified-and-no-flags  # [user 2026-11-12] unattended chain (neuron_audit_pod chain): if 03b exits 0 with status qualified and no review flag raised, a sign-off labelled as this rule (not as the user) is recorded and 04 starts; any failure, ceiling, partial status or raised flag stops before 04 for human review
+  comparison: each calibration example singleton vs inside its padded calibration batch (FP32, mean z and mean |z|)
+  calibration_batches: packed with the production token budget and packing rule frozen after the benchmark  # [proposed]
+  early_layer:
+    layers: [0, 1, 2]
+    metric: "|diff_j| / RMS over neurons of the singleton run's statistic vector (same example, group, layer)"  # [user] RMS; [proposed] exact vector
+    per_example_summary: 99th percentile over neurons
+    flag_if: any calibration example's p99 > 1.0e-4 for any statistic in response_content  # [user] 1e-4; [proposed] aggregation
+    threshold: 1.0e-4
+    other_groups: recorded, not flagged         # [proposed]
+  padding:
+    metric: same normalized per-example p99     # [proposed]
+    flag_if: "within a batch, median(padded) > 10 * max(max(unpadded), 1.0e-7)"  # [user] 10x; [proposed] zero handling
+    factor: 10
+    unpadded_floor: 1.0e-7
+  forbidden_rule: "10x the median over layers"  # [user] explicitly not used
+  plots: discrepancy vs layer (absolute values), padded and unpadded separately
+  signoff_record_required_before: '04'
+
+fp64_floor:                                     # [user]
+  purpose: D noise floor only (separate from batch agreement)
+  bf16_diagnostic: "[proposed] separate 03b stage on the same rows: per layer p99 |D_bf16 - D_fp32| / RMS(D_fp32) and top-k |D| overlap; labelled diagnostic, never a gate, never production"
+  examples: 10
+  dtype: float64
+  attention: eager
+  device: gpu
+  fallback_chain:
+    - batch size 1, examples <= 512 tokens
+    - FP64 on CPU for 3 examples
+    - FP32 difference between two batch compositions, labelled "proxy floor" in every output that uses it
+  floor_definition: per arm and layer, 99th percentile over neurons of |D_FP32 - D_FP64|
+  also_report: [per_neuron_error, median, max, selected_neuron_errors]
+  zero_floor: unresolved                        # [user] never replaced by FP32 spacing
+  exploratory_flag: list entries with |D| < 5 x layer floor (fraction per layer); not a gate
+
+statistics:
+  primary_list_budget: 64
+  secondary_list_budget: 32
+  positions_primary: response_content
+  background_primary: disjoint_general
+  activity_bins:                                # [user]
+    method: rank-based per layer on base discovery math mean |z|, ties by neuron index
+    percentile_edges: [0, 50, 75, 90, 95, 99, 100]
+    underfilled: unavailable for that layer; never merge after seeing results
+  activity_floor: base mean |z| >= layer 50th percentile   # [user]
+  zero_median_or_zero_denominator: unresolved for that layer/statistic  # [proposed]
+  pooled_spread: "sqrt(((n1-1)*s1^2 + (n2-1)*s2^2)/(n1+n2-2)) over per-example values"  # [user]
+  low_spread_flag: pooled SD < 1e-6 * layer median of mean |z|   # [user]
+  low_spread_factor: 1.0e-6
+  a_gate_fraction: 0.10                          # top 10% by base discovery-math mean |z| (ceil of 10% of eligible) [proposed: ceil]
+  bootstrap:                                    # [user] count/seed/interval; [proposed] stratification
+    resamples: 2000
+    seed: 1234
+    interval: percentile_95
+    unit: question or conversation
+    two_group_contrasts: resample math and background separately
+    paired_d: resample examples, keeping the arm pairing
+  overlap_null:                                 # [user]
+    draws: 1000
+    seeds: [10000, 10999]
+    stream_derivation: neuron_audit_math.derive_seed(base, comparison, layer, direction)
+    within_layer_without_replacement: true
+    matched_to: randomized list's bin counts
+  split_half:                                   # [user] math; [proposed] background
+    seed: 43
+    math: [100, 100]
+    general: [100, 100]
+    near_miss: [35, 35]
+  d_vs_d: fix the alphabetically first arm, randomize the other; report both directions for the primary family  # [user]
+
+selection:                                      # ticket 05; [proposed] unless tagged
+  input_group: response_content
+  discovery_only: true                          # refuse held-out or calibration rows
+  lists:
+    A:      "gate: top 10% of the layer by base discovery-math mean |z|; rank by signed (mean_math - mean_general) / pooled SD of per-example mean |z|, descending"   # [user/spec] gate+standardized difference; [proposed] signed, descending
+    A-nb:   same as A with the number-containing near-miss group as background
+    B:      "per trained arm: rank mean over discovery-math examples of per-example mean |a_j z_j|, descending"
+    D:      "per trained arm: d_ij = arm - base per-example mean |z_j| on discovery math; primary score |mean_i d_ij|; signed mean and mean-z change kept"
+    D-relative: "|mean_i d_ij| / mean_i base mean |z_j| for neurons meeting the activity floor; others excluded (secondary)"
+  eligible_universe: neurons of the layer whose statistic is finite for every example used
+  low_spread_neurons: excluded from A/A-nb ranking and reported
+  ties: neuron index ascending
+  underfilled_list: report the actual size; never pad
+  overlap_fraction: "|X intersect Y| / |Y|, Y the randomized list"
+  null_universe: all eligible neurons of the layer (including X), stratified by base activity bin
+  primary_family:
+    comparisons: ["A vs B(arm)", "A vs D(arm)", "B(arm) vs D(arm)", "D(arm1) vs D(arm2), both directions"]
+    pooled: equal-layer average of per-layer overlap fraction over defined layers; pooled null from draws aligned by draw index
+  matched_controls:
+    per_list: 5
+    seed_base: 20000                            # derive_seed(20000, list, arm, layer, k)
+    rule: same layer, same bin counts as the list, without replacement, excluding the list's own members
+    underfilled: unavailable for that list/layer
+  predictions: optional (user decision 2026-11-11)
+
+calibration_allocation:                         # [proposed] from sequences-v2 calibration split (25 math + 25 general)
+  selection: deterministic by stable example ID order, seed 42
+  fp64_reference: {math: 5, general: 5}
+  adr0008_calibrate: 12                         # disjoint from validate and from FP64 examples
+  adr0008_validate: 13
+  benchmark: 20-50 examples, any of the 50 calibration rows
+
+benchmark:                                      # [user] unless tagged
+  configuration: production (FP32, IEEE/TF32 off, eager, same hooks); bf16 does not count
+  examples: [20, 50]
+  arms: [untuned, one adapter]
+  hooks: [1A, 1A+1B]
+  token_budgets_padded: [4096, 8192, 16384, 32768]   # [proposed]
+  stress_probe: one batch of the longest calibration sequences at the chosen budget  # [proposed]
+  select_budget: largest probed budget with peak VRAM <= 80% of the device
+  vram_fraction_max: 0.80
+  benchmark_adapter_arm: first qualified trained arm in plan order   # [proposed]
+  packing_rule: sort by (length desc, example id); greedy fill while batch_size * max_length <= budget  # [proposed]
+  phase_1b_scope:
+    all_layers_if: (1A+1B time) <= 1.5 * (1A time) AND projected disk <= 60% of usable capacity
+    else: layers 10-17, only after measuring that subset against the same time and disk rules  # [proposed] measurement
+    otherwise: omit 1B and state it in the report
+    time_ratio_max: 1.5
+    disk_fraction_max: 0.60
+    subset_layers: [10, 11, 12, 13, 14, 15, 16, 17]
+  outputs: throughput, batch and adapter-load timing, peak VRAM, projected bytes and wall-time projection
+
+operations:
+  qualification_max_gpu_hours: 5                # [user 2026-11-12; was 4 on 2026-11-11] ceiling for 03b itself; enforced as cumulative wall time across restarts, at every stage and model loop
+  production_time_enforcement: cumulative wall time across restarts (persisted), checked after every unit and arm package  # [proposed]
+  stop_after_verified_partial_backup: true      # [user 2026-11-11] after a failure/overrun, stop the Pod only if every collected unit re-verifies on the volume by full hash and every packaged arm plus a partial final manifest published this session are verified on HF; otherwise leave it running
+  production_wall_time_cap_hours: 6             # [user 2026-11-12] fixed before 03b for the unattended chain (was: set after the benchmark); collection is projected well under 1 h, uploads plus verification downloads of ~55 GB dominate; the overrun rule below still applies
+  overrun_rule_04: check projected total after 10% of units and every further 10%; stop and report if two consecutive projections exceed 2x the benchmark projection or exceed the cap  # [user]
+  overrun_forecast_basis: cumulative collection time only (what 03b benchmarked); mirror/export time counts toward the hard cap, checked at unit and arm boundaries  # [proposed]
+  automatic_pod_stop_03b: when the chain stops before 04, the 03b run directory is copied to the volume and re-verified by full hash (qualification-stopped/<run_id>), uploaded to HF as a verified package when possible, and the Pod stops once the volume copy verified; otherwise it is left running  # [user 2026-11-12]
+  automatic_pod_stop_04: allowed only after the required final backup is verified (every qualified arm's package verified by fresh download and the reference-only final manifest read back; neuron_audit_export.may_stop_pod_final); after a failure/overrun see stop_after_verified_partial_backup; otherwise the Pod is left running  # [user 2026-11-11]
+  production:                                   # [proposed] unless tagged
+    work_order: arm by arm in plan order (untuned first); one sealed unit per (arm, frozen batch)
+    validation: full independent identity checks on the first 2 batches of each arm; routing checks on every batch
+    rows: discovery + held-out only (calibration rows are not collected)
+    unit_identity: [arm, batch, rows, sequences_sha256, batch_manifest_sha256, plan_core_sha256, qualification, rehearsal]
+    local_retention: prune an arm's local units after they are mirrored to the volume and its package is verified on HF
+    export:                                     # [user 2026-11-11] per-arm upload and verification, existing private dataset, neuron-audit/
+      repo: existing private dataset (preflight.export_repo)
+      arm_package: "neuron-audit/<label>/arms/<arm>/<sha256>/package.tar (deterministic uncompressed tar) + package.json"
+      arm_verification: fresh pinned-revision download into an empty local directory, sha256 equal
+      final_manifest: "neuron-audit/<label>/final/<sha256>.json, references the arm packages; never duplicates their data"
+  rehearsal:                                    # [user 2026-11-11] Colab for catching bugs, then the full run on the Pod
+    plan: neuron_audit_plan.make_rehearsal_plan -> status rehearsal (never valid for production)
+    run_ids: must start with rehearsal-
+    hf_label: rehearsal-<label> under neuron-audit/
+    production_limit: max_batches_per_arm (rehearsal only) and rehearsal_cap_hours from the config
+    selection: refuses rehearsal units
+  single_pod_single_tmux_single_writer: true
+  advisory_marker_not_a_lock: true
+
+storage:
+  # Revised 2026-11-11: sl-0 is a Runpod *Global Volume* (user-confirmed), not a fixed-size network volume.
+  # Runpod docs (storage/globalvolume/overview, read 2026-11-11): grows with data, no capacity to provision;
+  # billed for storage used plus requests (Class A writes $0.005/1k, Class B reads $0.0005/1k); beta;
+  # NO atomic rename, NO file locking, NO hard links, NO chmod; fsync not documented; directory listings
+  # cached ~1 minute; writes slower than a network volume; deleted 15 days after the account reaches $0.
+  global_volume:                                # [user] identity; [proposed] handling
+    id: sl-0
+    type: runpod-global-volume
+    observed_stored_bytes: 47700000000          # user, 2026-11-11 (console)
+    capacity_rule: none (no provisioned size); report projected growth and request counts instead
+    role: durable mirror of sealed work for resume across Pod stops (container disk is ephemeral)
+    write_protocol: write and seal on local disk first; mirror with shutil.copyfile, data files first and seal file last; re-read and verify every hash on the volume; a torn or mismatched mirror is re-copied, never trusted
+    never_rely_on: [atomic rename, file locks, hard links, chmod, fresh directory listings]
+    mount_check: the volume directory must already exist (never created by preflight), sit under a different mount point and device than the container disk, and hold .neuron-audit-volume.json naming sl-0 (written once by `neuron_audit_preflight init-volume` after the mount checks pass)  # [proposed]
+    state_lookup: explicit paths from the run's progress record, not directory listings
+  local_disk:                                   # [proposed]
+    use: HF cache, working block store, package build, download verification, temp
+    capacity_rule: projected local working set <= 60% of free container disk (statvfs on local disk is trusted)
+    working_set: one arm's units + its package + its verification download + model cache
+    prune_local_arm_after: mirrored to the volume AND package verified on HF
+  copy_function: shutil.copyfile only (no copy2/copytree/copystat/chmod)
+  preflight_operations: [create, write, fsync, read_back, rename, copyfile, delete]  # volume and local temp; success does not prove atomicity
+  hf_quota:                                     # [proposed] measured 2026-11-11 via the Hub API
+    account_tier: free
+    private_quota_bytes: 100000000000           # HF docs: free user 100GB private storage (current versions + history)
+    observed_private_bytes: 15840000000         # sum of current file sizes across private repos; history not visible
+    proceed_if: observed_private + projected_upload <= 85% of quota, re-measured in preflight
+    deterministic_packages: true                # fixed tar metadata, so an identical retry deduplicates on HF
+    note: about 55 GB of FP32 arm packages fits (about 71 GB total) but leaves little room for repeated runs; PRO (1TB) or pruning old private repos would be needed for a second full run
+
+preflight:                                      # [user]
+  in_actual_worker_process: true
+  assert: [sys.executable, sys.prefix, pinned package versions]
+  expected_sys_executable: /root/venv/bin/python  # recorded from the Pod's venv 2026-11-12 (runbook step 1)
+  expected_sys_prefix: /root/venv               # recorded from the Pod 2026-11-12
+  hf_offline: set HF_HUB_OFFLINE=1 before importing Hub libraries; print resolved HF_HOME / hub cache; real offline model+tokenizer load
+  hf_transfer: assert importable if HF_HUB_ENABLE_HF_TRANSFER=1, else force 0
+  hf_export_check: separate online client; HF_TOKEN as a Pod secret; repo private; small upload, fresh pinned-revision download into an empty dir, compare hashes; never print the token
+  production_hub_calls: every upload/readback runs in a separate online child process (OnlineHubProcess); the worker itself stays HF_HUB_OFFLINE=1
+  export_repo: Prasadmahadik/spar-sampling-sft-artifacts
+  logs: PYTHONUNBUFFERED=1; per-unit timestamped progress; run under tmux
+
+spec_amendments:
+  - id: reuse-adr-0014-logit-gate
+    spec_text: "Do not import the existing Stage 0 generation 1e-3 threshold or widen any agreed rule after failure."
+    decision: >-
+      Reuse ADR 0014's pre-registered 1e-3 bound as a hard gate on batched-vs-singleton logits only.
+      It is not a tolerance for neuron statistics, D values or any activation comparison.
+    rationale: >-
+      ADR 0014 measured FP32 batching/kernel rounding near 5e-4 on the same model in Stage 0; padding,
+      mask or position faults produce order-one logit errors. The bound is adopted before any audit
+      measurement and is not fitted to audit data.
+    decided_by: user
+    decided_on: 2026-11-10
+  - id: adopt-adr-0015-dot-product-bound
+    spec_text: candidate plan proposed 1e-5 x sum of |rank-one terms| for read and branch identities
+    decision: use ADR 0015's max(1e-6 + 1e-5*|c|, gamma_d * sum|a_j z_j|) for the read and branch checks
+    rationale: standard deterministic FP32 dot-product bound set by d and the number format; a wrong tensor errs by about 1e7 such units
+    decided_by: user
+    decided_on: 2026-11-10
+
+required_before:
+  03b:
+    - approval.approved_by
+    - approval.approved_on
+    - runtime.code_commit
+    - operations.qualification_max_gpu_hours
+    - preflight.expected_sys_executable
+    - preflight.expected_sys_prefix
+  '04':
+    - operations.production_wall_time_cap_hours
+
+open_items_before_approval:
+  - record the background review (sequences-v2) with the review command
+  - confirm the Pod's container disk size (local working set rule): 120 GB required (50 GB default too small, found 2026-11-12)
+  - commit and push the audit code; record the commit
+  - final check of every [proposed] value in this file

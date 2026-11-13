@@ -1,0 +1,82 @@
+# REVIEW DRAFT ONLY. No user approval or execution authorization is implied.
+# Values below are proposals; resolve every null and approve before freezing.
+status: proposed-not-approved
+purpose: descriptive-forward-pass-joint-neuron-adapter-audit
+
+identity_checks:
+  saved_live_factors: exact_if_dtype_preserved
+  undeclared_dtype_cast: fail
+  z_reconstruction_relative_to_layer_max: 1.0e-6
+  lora_a_relative_to_sum_abs_terms: 1.0e-5
+  adapter_branch_relative_to_sum_abs_terms: 1.0e-5
+  zero_reference_scale: exact_zero_or_unresolved
+  disabled_base_logit_tolerance: null  # Must be explicitly reviewed.
+  batch_equivalence_acceptance: null   # Diagnostic vs hard-gate policy still needs a decision.
+  finite_values_required: true
+
+calibration:
+  disjoint_from_discovery_and_holdout: true
+  math_examples_target: 25
+  general_background_examples_target: 25
+  fp64_reference_examples_target: 10
+  fp64_reference_attention_backend: eager
+  compare_equivalent_fp32_and_fp64_attention_backends: true
+  production_fp32_tf32_off: true
+  fp64_diagnostic:
+    layers: all
+    per_arm_neuron_error: abs(mean_paired_delta_fp32_minus_fp64)
+    per_layer_reference_percentile: 99
+    secondary_error_statistics: [median, max, selected_neuron_errors]
+    exploratory_flag_multiple: 5
+    zero_floor: resolution_unresolved
+    note: not_a_guaranteed_bound_or_significance_test
+  batch_composition: separate_robustness_diagnostic
+  numeric_fallback_if_fp64_unavailable: null
+
+statistics:
+  primary_list_budget: 64
+  secondary_list_budget: 32
+  positions: response_content
+  background_primary: disjoint_general
+  relative_activity_floor_percentile: 50
+  pooled_spread: sqrt_pooled_sample_variance_weighted_by_degrees_of_freedom
+  low_spread_relative_to_layer_median_activity: 1.0e-6
+  activity_quantile_boundaries_percent: [0, 50, 75, 90, 95, 99, 100]
+  tied_quantile_handling: null # Fix deterministic implementation before run.
+  underfilled_bin: unavailable_no_posthoc_merging
+  bootstrap_resamples: 2000
+  bootstrap_seed: 1234
+  bootstrap_interval: percentile_95
+  null_draws: 1000
+  null_draw_seeds: [10000, 10999] # Inclusive range; derive separate layer/comparison streams.
+  discovery_split_half:
+    math_counts_if_discovery_is_200: [100, 100]
+    seed: 43
+    background_partition_rule: null
+  d_vs_d: report_both_randomization_directions
+
+benchmark:
+  examples_min: 20
+  examples_max: 50
+  same_dtype_backend_and_hooks_as_production: true
+  test_head_hooks: true
+  all_layer_head_overhead_max_ratio: 1.5
+  head_projected_disk_fraction_max: 0.60
+  fallback_layers_if_fully_qualified: [10, 11, 12, 13, 14, 15, 16, 17]
+  fallback_if_subset_does_not_fit: omit
+  device_vram_peak_fraction_max: 0.80
+  max_initial_padded_tokens_to_probe: 32000
+  production_attention_backend: eager # Proposed to match the FP64 reference path.
+  trustworthy_writable_capacity_measurement: null
+
+operations:
+  single_pod_single_tmux_single_writer: true
+  lock_file_is_advisory_not_cross_host_lease: true
+  stale_lock_recovery: manual_investigation
+  projection_overrun_ratio: 2.0
+  projection_minimum_observation_window: null
+  hard_wall_time_policy: user_selects_after_benchmark_before_production
+  hard_wall_time_hours: null # Set after benchmark, before production launch.
+  incomplete_arms: explicitly_partial_never_seven_arm_complete
+  private_hf_dataset_repo: Prasadmahadik/spar-sampling-sft-artifacts
+  independent_readback_required_before_automatic_pod_stop: true

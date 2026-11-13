@@ -1,0 +1,79 @@
+# Candidate plan (draft v3, after review rounds 1 and 2) — PROPOSED, not approved or frozen.
+status: proposed
+inputs:
+  inventory: runs/joint-neuron-adapter-audit/inventory/inventory-v2
+  sequences: sequences-v2
+  generation_cohort: adr-0001-gsm8k-test-150-seed42
+  rehearsal_generation: {source: gsm8k-test, exclude: adr-0001-cohort, count: 20, seed: 42}
+arms: [gold-sft, online-grpo, offline-grpo, sampling-sft-k0, sampling-sft-k2, sampling-sft-k5]
+splits:
+  calibration: sequences-v2 calibration math (25)     # visible: rehearsal, sweeps, tolerances
+  discovery: sequences-v2 discovery math (200)        # visible: attribution only
+  confirmation: sequences-v2 held_out math (100)      # traced blind; no outputs before freeze
+traces:
+  source: untuned greedy generation, generated IDs kept, no re-tokenization
+  base_correct_min_after_masks: {discovery: 120, confirmation: 60}
+metrics:
+  trace_loglik: {targets: response_content tokens incl. first, excl. im_end/newline/prompt/header/padding}
+  stop_pull: {stop_ids: sealed_from_decoder_config, expected_pilot: [151645], positions: next target before last non-empty content line, empty: exclude_with_reason}
+  kl: full_vs_condition_over_trace_positions
+precision: {dtype: fp32, tf32: false, autocast: false, attention: eager, accumulate: fp64}
+attribution:
+  read: lora_A output c_t (rank 1) for all 196 adapters; attr_i = -sum_t c_t * dM/dc_t (no full-width branch gradients)
+  oracle: branch-output gate on fixtures (all module types, s != 1, both metrics)
+  graph: requires_grad on embedding output; weights frozen; one torch.autograd.grad call per metric
+  pass1_extra_outputs: [per-adapter sum_abs_c and token count, per-down_proj signed sum_c]
+  positions: all unpadded
+  pass1: forward + backward(trace_loglik) + backward(stop_pull); store per-token dM/dc for down_proj
+  pass2: forward-only recompute of z per layer; attr_j = -a_j * sum_t z_jt * g_t
+selection:
+  top_k_group: 10
+  top_k_singles: 5
+  matched_controls: {module: same, write_tolerance: 0.20, exclude: both metrics' top-10 sets, replacement: false, seed: 20000}
+  neuron_read_size: 64
+  neuron_orders: [signed_attribution, term_size, random_x3]
+  constant_read: {cbar: signed token-weighted mean over unpadded discovery positions}
+stage_c_per_arm_metric_max: 19
+stage_d:
+  runs:
+    gold-sft: [full, top10_trace_removed, matched_trace, top10_stop_removed, matched_stop]
+    online-grpo: [full, top10_trace_removed, matched_trace]
+    untuned: [reference]
+  decoding: {mode: greedy, max_new_tokens: 1024, path: hf, precision: fp32}
+  scorer: gsm8k_flexible_v3
+statistics:
+  bootstrap: {resamples: 10000, seed: 1234, unit: question, interval: percentile}
+  gate_per_arm_metric: {top_singles_sign_min: 4, of: 5, top10_group_sign: required}
+  primary1: {ratio: abs(D_L)/abs(D_A), joint_bootstrap: true, reference_required: D_A interval excludes 0, equivalence: one-sided 95% upper bound of ratio < 0.25}
+  primary2: {contrasts: [online_offline_minus_gold_online, online_offline_minus_gold_offline, k0_minus_k2_vs_gold, k2_minus_k5_vs_gold]}
+  primary3: {tests: [R_attr_minus_R_termsize, R_attr_minus_mean_R_random], classification: descriptive, sparse: lower 95% bound of R >= 0.70, dense: upper 95% bound < 0.30 in every arm, random_order_null_draws: 1000}
+  family: {per_metric: [primary1_x1, primary2_x4, primary3_x2_per_arm], method: holm, alpha: 0.05, p_values: paired bootstrap two-sided percentile}
+gpu:
+  sampler_hz: 1
+  min_sample_seconds: 30
+  flop_model: {forward: 2N, backward_activation_only: 2N, excludes: [attention_scores, padding]}
+  token_budget_sweep_padded: [2048, 4096, 8192, 16384, 32768, 65536]
+  select_budget: largest with measured peak memory <= 0.80 of device; stop 06b if none
+  generation_batch_candidates: [1, 8, 16, 32, 64]
+  generation_batch_rule: {items: 20, max_correctness_flips: 1, max_stop_reason_changes: 1}
+  investigation_targets: {median_busy: 0.85, peak_memory_range: [0.50, 0.80]}   # not gates
+tolerances:   # fixed in the launch record before an unattended run
+  finite_difference: {method: central on g, epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20}
+  neuron_sum_identity: {rel_to_sum_abs: 1.0e-4}
+  batch_invariance: {abs_diff_max_fraction_of_max_abs: 1.0e-4}
+  resolution_floor: 10x measured batch-invariance discrepancy
+caps_hours: {colab_06a: null, overnight_total: null, per_stage: {qualification: null, traces: null, attribution: null, stage_c: null, stage_d: null, report_export: null}}   # set in the launch record
+unattended:
+  chain: [preflight, qualification, base_traces, attribution_and_freeze, stage_c, stage_d, report, volume_copy, hf_export, pod_stop]
+  automatic_signoff: all qualification checks pass against fixed tolerances and no review flag
+  stop_before_production_on: [qualification_failure, review_flag, missing_arm, minimum_unmet, no_feasible_budget]
+  never_stops_run: [validity_gate_failure, unavailable_controls, inconclusive_primaries]
+  caps: hard, at unit boundaries, elapsed budget persisted across restarts
+  projections: advisory only, never stop a stage
+  end_of_run: [stop_join_writers, volume_copy_sealed_only_timeout, hf_export_3_attempts_timeout, finalize_sealed_summary, pod_stop_requested_timeout]
+  stop_record: [requested, externally_verified]
+  resume: previous worker verifiably gone and volume identity + sealed units match; else stop for investigation
+  hf_export_failure_keeps_pod: false
+  pod_stop_commands: ["runpodctl stop pod {id}", "runpodctl pod stop {id}"]
+  watchdog: {independent_process: true, fires_at: persisted remaining total cap + 0.5h, actions: [signal_writer, bounded_wait, copy_sealed_units_only, watchdog_summary, pod_stop_requested]}
+  pod_rehearsal_before_first_launch: true   # user may waive

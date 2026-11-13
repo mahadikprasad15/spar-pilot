@@ -1,0 +1,19 @@
+{
+  "_note": "Example only: every path is on the Pod. adapter_dirs must hold the same adapter_model.safetensors bytes the sealed inventory recorded (checked before loading).",
+  "artifact_root": "/workspace/volume/artifacts",
+  "output_root": "/workspace/volume/artifacts",
+  "run_id": "qualification-v1",
+  "volume_dir": "/workspace/volume",
+  "local_temp": "/root/tmp/neuron-audit",
+  "model_dir": "/root/hf/hub/models--Qwen--Qwen2.5-1.5B-Instruct/snapshots/989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+  "tokenizer_dir": "/workspace/volume/artifacts/inputs/models/989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+  "reference_arm": "gold-sft",
+  "adapter_dirs": {
+    "gold-sft": "/workspace/volume/artifacts/runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/checkpoints/checkpoint-64",
+    "online-grpo": "/workspace/volume/artifacts/runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints/checkpoint-64",
+    "offline-grpo": "/workspace/volume/artifacts/imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/checkpoints/checkpoint-64",
+    "sampling-sft-k0": "/workspace/volume/artifacts/runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k0/checkpoints/checkpoint-64",
+    "sampling-sft-k2": "/workspace/volume/artifacts/runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k2/checkpoints/checkpoint-64",
+    "sampling-sft-k5": "/workspace/volume/artifacts/runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k5/checkpoints/checkpoint-64"
+  }
+}

@@ -12,9 +12,92 @@ from pilot_eval.rescoring import rescore_gsm8k
 from pilot_eval.sft import prepare_sft
 
 
-def main(argv=None, *, dependencies=None):
+def main(argv=None, *, dependencies=None, reservation_provider=None):
     parser = argparse.ArgumentParser(description="Pilot 1 frozen benchmark evaluation")
     commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ['template','prepare','preflight','run','status','verify','restore']:
+        overnight=commands.add_parser('offline-grpo-overnight-'+operation,help='resumable offline experiment orchestration')
+        overnight.add_argument('--output-root',type=Path,required=True)
+        if operation=='template':
+            overnight.add_argument('--inputs',type=Path,required=True);overnight.add_argument('--name',required=True)
+        elif operation=='prepare':overnight.add_argument('--spec',type=Path,required=True)
+        elif operation=='restore':overnight.add_argument('--manifest',type=Path,required=True)
+        else:overnight.add_argument('--config',type=Path,required=True)
+        if operation=='run':overnight.add_argument('--authorization',type=Path,required=True)
+    for operation in ['prepare','build','agreement','evaluate','verify','report']:
+        cuts=commands.add_parser('offline-grpo-cuts-'+operation,help='offline principal cuts and paired evaluation')
+        cuts.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            cuts.add_argument('--internals',type=Path,required=True);cuts.add_argument('--behaviour',type=Path,required=True)
+            cuts.add_argument('--reference',type=Path,required=True);cuts.add_argument('--reference-root',type=Path,required=True);cuts.add_argument('--name',required=True)
+        else:cuts.add_argument('--config',type=Path,required=True)
+        if operation in ['build','agreement','evaluate']:cuts.add_argument('--max-new-units',type=int)
+        if operation in ['agreement','evaluate']:cuts.add_argument('--approval',type=Path)
+        if operation=='verify':
+            cuts.add_argument('--stage',choices=['build','agreement','evaluation','report'],required=True)
+            cuts.add_argument('--deep',action='store_true',help='recompute numerical construction for build verification')
+    for operation in ['prepare','geometry','collect','verify','report']:
+        internal=commands.add_parser('offline-grpo-internals-'+operation,help='offline internal measurements')
+        internal.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            internal.add_argument('--training',type=Path,required=True);internal.add_argument('--spectral',type=Path,required=True)
+            internal.add_argument('--inputs',type=Path,required=True);internal.add_argument('--runtime',type=Path,required=True)
+            internal.add_argument('--online',type=Path);internal.add_argument('--qualification',type=Path,required=True);internal.add_argument('--name',required=True)
+        else:
+            internal.add_argument('--config',type=Path,required=True)
+            if operation in ['geometry','collect']:internal.add_argument('--max-new-units',type=int)
+            if operation in ['collect','verify']:internal.add_argument('--kind',choices=['push','drift','geometry','report'] if operation=='verify' else ['push','drift'],required=True)
+            if operation=='collect':internal.add_argument('--approval',type=Path)
+    for operation in ['prepare','run','verify','report']:
+        dataset=commands.add_parser('offline-grpo-dataset-'+operation,help='untuned-model offline dataset scoring')
+        dataset.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            dataset.add_argument('--pool',type=Path,required=True);dataset.add_argument('--sft',type=Path,required=True)
+            dataset.add_argument('--sampler',type=Path,required=True);dataset.add_argument('--runtime',type=Path,required=True);dataset.add_argument('--name',required=True)
+            dataset.add_argument('--comparison-root',type=Path);dataset.add_argument('--context-chunk',type=int,default=16);dataset.add_argument('--workspace-bytes',type=int,default=536870912)
+        else:dataset.add_argument('--config',type=Path,required=True)
+        if operation=='run':dataset.add_argument('--approval',type=Path);dataset.add_argument('--max-new-units',type=int)
+    for operation in ['prepare','run','verify','report']:
+        behaviour=commands.add_parser('offline-grpo-behaviour-'+operation,help='verified offline behavior evaluation')
+        behaviour.add_argument('--output-root',type=Path,required=True);behaviour.add_argument('--config',type=Path,required=True)
+        if operation in ['prepare','report']:behaviour.add_argument('--name',required=True)
+        if operation=='report':behaviour.add_argument('--online',type=Path)
+    for operation in ['prepare','run','check-diagnostics']:
+        train=commands.add_parser('offline-grpo-train-'+operation,help='fixed-pool GRPO training')
+        train.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            train.add_argument('--frozen',type=Path,required=True);train.add_argument('--pool',type=Path,required=True)
+            train.add_argument('--checkpoint-zero',type=Path,required=True);train.add_argument('--name',required=True)
+            train.add_argument('--runtime',type=Path,required=True)
+            train.add_argument('--checkpoint-zero-sha256',required=True);train.add_argument('--checkpoint-zero-config-sha256',required=True)
+        else:
+            train.add_argument('--config',type=Path,required=True)
+            if operation=='check-diagnostics':
+                train.add_argument('--long-min-tokens',type=int,required=True);train.add_argument('--fidelity-tolerance',type=float,required=True)
+                train.add_argument('--prompt-count',type=int,required=True)
+    for operation in ['prepare','run','verify']:
+        fresh=commands.add_parser('offline-pool-fresh-'+operation,help='bounded fresh R0 pool collection')
+        fresh.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            fresh.add_argument('--pool',type=Path,required=True);fresh.add_argument('--audit',type=Path,required=True)
+            fresh.add_argument('--weights-dir',type=Path,required=True);fresh.add_argument('--runtime',type=Path,required=True)
+        else:fresh.add_argument('--config',type=Path,required=True)
+        if operation=='run':
+            fresh.add_argument('--approval',type=Path);fresh.add_argument('--max-new-units',type=int)
+    pool_route=commands.add_parser('offline-pool-route',help='choose 128-plus-384 or fresh-512 from recorded evidence')
+    pool_route.add_argument('--output-root',type=Path,required=True);pool_route.add_argument('--pool',type=Path,required=True)
+    pool_route.add_argument('--audit',type=Path,required=True);pool_route.add_argument('--baseline',type=Path,required=True)
+    pool_route.add_argument('--weights-dir',type=Path,required=True);pool_route.add_argument('--runtime',type=Path,required=True)
+    pool_route.add_argument('--approval',type=Path)
+    for operation in ['prepare','import','verify','inventory']:
+        pool=commands.add_parser('offline-pool-'+operation,help='verified offline GRPO pool handoff')
+        pool.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            pool.add_argument('--source',type=Path,required=True);pool.add_argument('--name',required=True)
+        elif operation=='inventory':
+            pool.add_argument('--audit',type=Path,required=True);pool.add_argument('--baseline',type=Path,required=True);pool.add_argument('--name',required=True)
+        else:pool.add_argument('--config',type=Path,required=True)
+        if operation=='import':pool.add_argument('--rollouts',type=Path,required=True)
     for operation in ['prepare','build','verify','status','release']:
         handoff=commands.add_parser('sampling-sft-handoff-'+operation,help='CPU artifact inventory and honest research status')
         if operation=='release':handoff.add_argument('--commit',required=True)
@@ -25,6 +108,14 @@ def main(argv=None, *, dependencies=None):
                 handoff.add_argument('--name',required=True)
                 handoff.add_argument('--release-commit')
             else:handoff.add_argument('--config',type=Path,required=True)
+    mixed_handoff=commands.add_parser('sampling-sft-mixed-handoff-build',help='save conservative mixed evidence assessment')
+    mixed_handoff.add_argument('--selection',type=Path,required=True);mixed_handoff.add_argument('--output-root',type=Path,required=True)
+    mixed_handoff.add_argument('--name',required=True)
+    mixed_handoff_verify=commands.add_parser('sampling-sft-mixed-handoff-verify',help='verify mixed evidence assessment')
+    mixed_handoff_verify.add_argument('--report',type=Path,required=True);mixed_handoff_verify.add_argument('--output-root',type=Path,required=True)
+    mixed_gen=commands.add_parser('sampling-sft-mixed-generation-prepare',help='bind independently verified mixed arms')
+    mixed_gen.add_argument('--legacy',type=Path,required=True);mixed_gen.add_argument('--buffered',type=Path,required=True)
+    mixed_gen.add_argument('--output-root',type=Path,required=True);mixed_gen.add_argument('--name',required=True)
     for operation in ['prepare','run','verify','status','job-request','recover-writer']:
         train=commands.add_parser('sampling-sft-train-'+operation,help='post-gate gold-matched endpoint training and recovery')
         train.add_argument('--output-root',type=Path,required=True)
@@ -42,12 +133,45 @@ def main(argv=None, *, dependencies=None):
         if operation=='recover-writer':
             train.add_argument('--owner-token',required=True)
             train.add_argument('--review-notes',required=True)
+    for operation in ['prepare','run','verify','status','job-request','recover-writer']:
+        train=commands.add_parser('sampling-sft-mixed-training-'+operation,help='post-gate gold-matched endpoint training and recovery')
+        train.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            train.add_argument('--data',type=Path,required=True)
+            train.add_argument('--selection',type=Path,required=True)
+            train.add_argument('--name',required=True)
+            train.add_argument('--k',type=int,required=True)
+            train.add_argument('--no-recovery',action='store_true')
+            train.add_argument('--resume-from',type=Path)
+            train.add_argument('--restart-of',type=Path)
+        else:train.add_argument('--config',type=Path,required=True)
+        if operation=='run':train.add_argument('--job',type=Path)
+        if operation=='job-request':train.add_argument('--template',type=Path,required=True)
+        if operation=='recover-writer':
+            train.add_argument('--owner-token',required=True)
+            train.add_argument('--review-notes',required=True)
+    for operation in ['prepare','export','verify','check','status']:
+        data=commands.add_parser('sampling-sft-mixed-data-'+operation,help='stored-ID training export and independent T15/T16 readiness')
+        data.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':data.add_argument('--review',type=Path,required=True);data.add_argument('--name',required=True)
+        else:data.add_argument('--config',type=Path,required=True)
+        if operation=='check':data.add_argument('--python',type=Path);data.add_argument('--mode',choices=['full','kernel'],default='full')
     for operation in ['prepare','export','verify','check','status']:
         data=commands.add_parser('sampling-sft-training-data-'+operation,help='stored-ID training export and independent T15/T16 readiness')
         data.add_argument('--output-root',type=Path,required=True)
         if operation=='prepare':data.add_argument('--review',type=Path,required=True);data.add_argument('--name',required=True)
         else:data.add_argument('--config',type=Path,required=True)
         if operation=='check':data.add_argument('--python',type=Path);data.add_argument('--mode',choices=['full','kernel'],default='full')
+    for operation in ['prepare','score','report','verify','status','request','approve','recover-writer']:
+        gate=commands.add_parser('sampling-sft-mixed-gate-'+operation,help='HF gate scores, CPU descriptive report and explicit training selection')
+        gate.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            gate.add_argument('--review',type=Path,required=True);gate.add_argument('--word-policy',type=Path,required=True);gate.add_argument('--name',required=True)
+        else:gate.add_argument('--config',type=Path,required=True)
+        if operation=='score':gate.add_argument('--job',type=Path);gate.add_argument('--max-new-units',type=int)
+        if operation=='request':gate.add_argument('--forecast',type=Path,required=True)
+        if operation=='approve':gate.add_argument('--approval',type=Path,required=True)
+        if operation=='recover-writer':gate.add_argument('--owner-token',required=True);gate.add_argument('--review-notes',required=True)
     for operation in ['prepare','score','report','verify','status','request','approve','recover-writer']:
         gate=commands.add_parser('sampling-sft-gate-'+operation,help='HF gate scores, CPU descriptive report and explicit training selection')
         gate.add_argument('--output-root',type=Path,required=True)
@@ -59,6 +183,16 @@ def main(argv=None, *, dependencies=None):
         if operation=='request':gate.add_argument('--forecast',type=Path,required=True)
         if operation=='approve':gate.add_argument('--approval',type=Path,required=True)
         if operation=='recover-writer':gate.add_argument('--owner-token',required=True);gate.add_argument('--review-notes',required=True)
+    for operation in ['prepare','export','import','status','freeze','verify']:
+        review=commands.add_parser('sampling-sft-mixed-review-'+operation,help='separate human eligibility and reviewed coverage; CPU only')
+        review.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            review.add_argument('--generation',type=Path,required=True);review.add_argument('--name',required=True)
+        else:review.add_argument('--config',type=Path,required=True)
+        if operation=='export':review.add_argument('--destination',type=Path,required=True)
+        if operation in ['export','import']:review.add_argument('--origin',choices=['human','agent'],default='human')
+        if operation=='import':
+            review.add_argument('--labels',type=Path,required=True);review.add_argument('--confirm-human',action='store_true')
     for operation in ['prepare','export','import','status','freeze','verify']:
         review=commands.add_parser('sampling-sft-review-'+operation,help='separate human eligibility and reviewed coverage; CPU only')
         review.add_argument('--output-root',type=Path,required=True)
@@ -82,6 +216,28 @@ def main(argv=None, *, dependencies=None):
             generation.add_argument('--job',type=Path);generation.add_argument('--stop-after-blocks',type=int)
         if operation=='recover-writer':
             generation.add_argument('--owner-token',required=True);generation.add_argument('--review-notes',required=True)
+    for operation in ['prepare','freeze','run','status','verify','recover-writer']:
+        generation=commands.add_parser('sampling-sft-buffered-generation-'+operation,help='three full512 arms with sealed attempts and bounded retries')
+        generation.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            generation.add_argument('--pilot',type=Path,required=True);generation.add_argument('--name',required=True);generation.add_argument('--writer-pilot',type=Path)
+        else:generation.add_argument('--config',type=Path,required=True)
+        if operation in ['run','recover-writer','verify']:
+            generation.add_argument('--k',type=int,choices=[0,2,5],required=operation!='verify')
+        if operation=='freeze':generation.add_argument('--review',type=Path,required=True)
+        if operation=='run':
+            generation.add_argument('--job',type=Path);generation.add_argument('--stop-after-blocks',type=int)
+        if operation=='recover-writer':
+            generation.add_argument('--owner-token',required=True);generation.add_argument('--review-notes',required=True)
+    for operation in ['prepare','run']:
+        buffered=commands.add_parser('sampling-sft-buffered-job-'+operation,help='prepare or run one v2 lifecycle job')
+        buffered.add_argument('--config',type=Path,required=True);buffered.add_argument('--output-root',type=Path,required=True)
+        buffered.add_argument('--operation',choices=['pilot-reference','pilot-kill','pilot-resume','generation-k5'],required=True)
+        if operation=='prepare':
+            for field in ['name','volume-id','rate','hours']:buffered.add_argument('--'+field,required=True)
+        else:
+            buffered.add_argument('--job',type=Path,required=True);buffered.add_argument('--reviewer',required=True)
+            buffered.add_argument('--kill-job',type=Path)
     for operation in ['prepare','run','stage','report']:
         diag=commands.add_parser('sampling-sft-deterministic-score-'+operation,help='bounded deterministic scheduling score diagnostic')
         diag.add_argument('--output-root',type=Path,required=True)
@@ -162,6 +318,21 @@ def main(argv=None, *, dependencies=None):
         if operation=='recover-writer':
             pilot.add_argument('--owner-token',required=True);pilot.add_argument('--review-notes',required=True)
         if operation=='report':pilot.add_argument('--forecast',type=Path,required=True)
+    for operation in ['prepare','run','status','compare','report','recover-writer']:
+        pilot=commands.add_parser('sampling-sft-buffered-pilot-'+operation,help='fixed32 k5 pilot, sealed recovery and exact replay')
+        pilot.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            pilot.add_argument('--instrument',type=Path,required=True)
+            pilot.add_argument('--name',required=True)
+        else:pilot.add_argument('--config',type=Path,required=True)
+        if operation in ['run','recover-writer']:pilot.add_argument('--lane',choices=['uninterrupted','resumed'],required=True)
+        if operation=='run':
+            pilot.add_argument('--job',type=Path)
+            pilot.add_argument('--stop-after-blocks',type=int)
+            pilot.add_argument('--interrupt-after-block',type=int)
+        if operation=='recover-writer':
+            pilot.add_argument('--owner-token',required=True);pilot.add_argument('--review-notes',required=True)
+        if operation=='report':pilot.add_argument('--forecast',type=Path,required=True)
     for operation in ['prepare','run','status','verify','compare','select']:
         instrument=commands.add_parser('sampling-sft-instrument-'+operation,help='bounded sampler, T3 and engine throughput evidence')
         instrument.add_argument('--output-root',type=Path,required=True)
@@ -196,6 +367,18 @@ def main(argv=None, *, dependencies=None):
             job.add_argument('--network-root', type=Path, required=True)
             job.add_argument('--max-wait-seconds', type=float, default=0)
             job.add_argument('--hf-repo', help='Private HF dataset repository for sealed export and external acknowledgement')
+    for operation in ['prepare','run','status','export','close']:
+        mixed_job=commands.add_parser('sampling-sft-mixed-job-'+operation,help='versioned mixed-training job lifecycle')
+        mixed_job.add_argument('--output-root',type=Path,required=True)
+        if operation=='prepare':
+            mixed_job.add_argument('--config',type=Path,required=True);mixed_job.add_argument('--request',type=Path,required=True)
+        else:mixed_job.add_argument('--job',type=Path,required=True)
+        if operation=='run':mixed_job.add_argument('--approval',type=Path)
+        if operation=='export':
+            mixed_job.add_argument('--copy-root',type=Path,required=True);mixed_job.add_argument('--role',choices=['network','downloaded'],required=True)
+            mixed_job.add_argument('--receipt',type=Path,required=True)
+        if operation=='close':
+            mixed_job.add_argument('--network-receipt',type=Path,required=True);mixed_job.add_argument('--download-receipt',type=Path,required=True)
     for operation in ['init', 'status', 'reserve', 'settle', 'extend', 'observe']:
         budget = commands.add_parser('sampling-sft-budget-' + operation, help='shared USD ledger; reservations do not launch paid work')
         budget.add_argument('--output-root', type=Path, required=True)
@@ -844,6 +1027,82 @@ def main(argv=None, *, dependencies=None):
             else:result=getattr(workflow,operation.replace('-','_'))(args.config,args.output_root)
             if isinstance(result,dict):result={k:v for k,v in result.items() if k not in ['per_problem','top_gold_tokens']}
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-overnight-'):
+            from pilot_eval import offline_grpo_overnight as workflow
+            operation=args.command.removeprefix('offline-grpo-overnight-')
+            if operation=='template':result=workflow.template(args.inputs,args.output_root,args.name)
+            elif operation=='prepare':result=workflow.prepare(args.spec,args.output_root)
+            elif operation=='restore':result=workflow.restore_wrapper(args.manifest,args.output_root)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,args.authorization,dependencies=dependencies)
+            elif operation in ['preflight','verify']:result=getattr(workflow,operation)(args.config,args.output_root,dependencies=dependencies)
+            else:result=workflow.status(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-cuts-'):
+            from pilot_eval import offline_grpo_cuts as workflow
+            operation=args.command.removeprefix('offline-grpo-cuts-')
+            if operation=='prepare':result=workflow.prepare(args.internals,args.behaviour,args.reference,args.reference_root,args.output_root,args.name)
+            elif operation=='build':result=workflow.build(args.config,args.output_root,max_new_units=args.max_new_units)
+            elif operation in ['agreement','evaluate']:result=getattr(workflow,operation)(args.config,args.output_root,approval_path=args.approval,dependencies=dependencies,max_new_units=args.max_new_units,reservation_provider=reservation_provider)
+            elif operation=='verify':
+                if args.stage=='build':result=workflow.verify_build(args.config,args.output_root,deep=args.deep)
+                elif args.stage=='report':result=workflow.verify_report(args.config,args.output_root)
+                else:result=workflow.verify_stage(args.config,args.output_root,args.stage)
+            else:result=workflow.report(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-internals-'):
+            from pilot_eval import offline_grpo_internals as workflow
+            operation=args.command.removeprefix('offline-grpo-internals-')
+            if operation=='prepare':result=workflow.prepare(args.training,args.spectral,args.inputs,args.runtime,args.output_root,args.name,qualification_path=args.qualification,online_path=args.online)
+            elif operation=='geometry':result=workflow.run_geometry(args.config,args.output_root,max_new_units=args.max_new_units)
+            elif operation=='collect':result=workflow.collect(args.config,args.output_root,args.kind,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies,reservation_provider=reservation_provider)
+            elif operation=='verify':
+                if args.kind=='geometry':result=workflow.verify_geometry(args.config,args.output_root)
+                elif args.kind=='report':result=workflow.verify_report(args.config,args.output_root)
+                else:result=workflow.verify_collection(args.config,args.output_root,args.kind)
+            else:result=workflow.report(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-dataset-'):
+            from pilot_eval import offline_grpo_dataset as workflow
+            operation=args.command.removeprefix('offline-grpo-dataset-')
+            if operation=='prepare':result=workflow.prepare(args.pool,args.sft,args.sampler,args.runtime,args.output_root,args.name,comparison_root=args.comparison_root,context_chunk=args.context_chunk,workspace_bytes=args.workspace_bytes)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies,approval_path=args.approval,max_new_units=args.max_new_units,reservation_provider=reservation_provider)
+            else:result=getattr(workflow,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-behaviour-'):
+            from pilot_eval import offline_grpo_behaviour as workflow
+            operation=args.command.removeprefix('offline-grpo-behaviour-')
+            if operation=='prepare':result=workflow.prepare(args.config,args.output_root,args.name)
+            elif operation=='run':result=workflow.run(args.config,args.output_root,dependencies=dependencies)
+            elif operation=='report':result=workflow.report(args.config,args.output_root,args.name,online_path=args.online)
+            else:
+                config,records=workflow.verify(args.config,args.output_root)
+                result=dict(complete=True,records=len(records),run_path=config['run_path'])
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-grpo-train-'):
+            from pilot_eval import offline_grpo_training as workflow
+            operation=args.command.removeprefix('offline-grpo-train-')
+            if operation=='prepare':result=workflow.prepare(args.frozen,args.pool,args.checkpoint_zero,args.output_root,args.name,runtime=json.loads((args.output_root.resolve()/args.runtime).read_text()),weights_sha256=args.checkpoint_zero_sha256,config_sha256=args.checkpoint_zero_config_sha256)
+            elif operation=='check-diagnostics':result=workflow.check_diagnostics(args.config,args.output_root,long_min_tokens=args.long_min_tokens,prompt_count=args.prompt_count,fidelity_tolerance=args.fidelity_tolerance)
+            else:result=workflow.run(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command=='offline-pool-route':
+            from pilot_eval import offline_grpo_route as route
+            print(json.dumps(route.select(args.pool,args.audit,args.baseline,args.weights_dir,args.runtime,args.output_root,dependencies=dependencies,approval_path=args.approval,reservation_provider=reservation_provider),indent=2))
+        elif args.command.startswith('offline-pool-fresh-'):
+            from pilot_eval import offline_grpo_fresh as fresh
+            operation=args.command.removeprefix('offline-pool-fresh-')
+            if operation=='prepare':result=fresh.prepare(args.pool,args.audit,args.weights_dir,args.runtime,args.output_root,dependencies=dependencies)
+            elif operation=='run':result=fresh.run(args.config,args.output_root,approval_path=args.approval,max_new_units=args.max_new_units,dependencies=dependencies,reservation_provider=reservation_provider)
+            else:result=fresh.verify(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('offline-pool-'):
+            from pilot_eval import offline_grpo_pool as pool
+            operation=args.command.removeprefix('offline-pool-')
+            if operation=='prepare':result=pool.prepare(args.source,args.output_root,args.name)
+            elif operation=='inventory':result=pool.inventory(args.audit,args.baseline,args.output_root,args.name)
+            elif operation=='import':result=pool.import_rollouts(args.config,args.rollouts,args.output_root)
+            else:result=pool.verify(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('stage0-rollouts-'):
             from pilot_eval import stage0_rollouts as workflow
             operation=args.command.removeprefix('stage0-rollouts-')
@@ -893,6 +1152,15 @@ def main(argv=None, *, dependencies=None):
                 result={k:v for k,v in result.items() if k!='contrasts'}
                 result['detail']='All contrast tables, raw pairs and plots are saved in the findings directory.'
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-mixed-job-'):
+            from pilot_eval import sampling_sft_mixed_jobs as jobs
+            operation=args.command.removeprefix('sampling-sft-mixed-job-')
+            if operation=='prepare':result=jobs.prepare(args.config,args.output_root,args.request)
+            elif operation=='run':result=jobs.run(args.job,args.output_root,args.approval,provider=dependencies)
+            elif operation=='export':result=jobs.export(args.job,args.output_root,args.copy_root,args.role,args.receipt,provider=dependencies)
+            elif operation=='close':result=jobs.close(args.job,args.output_root,args.network_receipt,args.download_receipt)
+            else:result=jobs.status(args.job,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-job-'):
             from pilot_eval import sampling_sft_jobs as jobs
             operation = args.command.removeprefix('sampling-sft-job-')
@@ -914,6 +1182,23 @@ def main(argv=None, *, dependencies=None):
             elif operation=='prepare':result=handoff.prepare(args.selection,args.output_root,args.name,args.release_commit)
             else:result=getattr(handoff,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(handoff.console(result) if operation!='release' else result,indent=2))
+        elif args.command.startswith('sampling-sft-mixed-handoff-'):
+            from pilot_eval import sampling_sft_mixed_handoff as handoff
+            result=handoff.build(args.selection,args.output_root,args.name) if args.command.endswith('-build') else handoff.verify(args.report,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command=='sampling-sft-mixed-generation-prepare':
+            from pilot_eval import sampling_sft_mixed_generation as mixed_generation
+            print(mixed_generation.prepare(args.legacy,args.buffered,args.output_root,args.name))
+        elif args.command.startswith('sampling-sft-mixed-training-'):
+            from pilot_eval import sampling_sft_mixed_training as train
+            operation=args.command.removeprefix('sampling-sft-mixed-training-')
+            if operation=='prepare':result=train.prepare(args.data,args.selection,args.output_root,args.name,args.k,
+                not args.no_recovery,args.resume_from,args.restart_of)
+            elif operation=='run':result=train.run(args.config,args.output_root,args.job,dependencies=dependencies)
+            elif operation=='job-request':result=train.job_request(args.config,args.output_root,args.template)
+            elif operation=='recover-writer':result=train.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:result=getattr(train,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-train-'):
             from pilot_eval import sampling_sft_training as train
             operation=args.command.removeprefix('sampling-sft-train-')
@@ -924,6 +1209,14 @@ def main(argv=None, *, dependencies=None):
             elif operation=='recover-writer':result=train.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
             else:result=getattr(train,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-mixed-data-'):
+            from pilot_eval import sampling_sft_mixed_training_data as data
+            operation=args.command.removeprefix('sampling-sft-mixed-data-')
+            if operation=='prepare':result=data.prepare(args.review,args.output_root,args.name)
+            elif operation=='check':result=data.check(args.config,args.output_root,args.python,args.mode)
+            else:result=getattr(data,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(data.console(result),indent=2))
+            if operation=='check' and not (result['t16_passed'] or result['kernel_passed']):return 1
         elif args.command.startswith('sampling-sft-training-data-'):
             from pilot_eval import sampling_sft_training_data as data
             operation=args.command.removeprefix('sampling-sft-training-data-')
@@ -932,6 +1225,16 @@ def main(argv=None, *, dependencies=None):
             else:result=getattr(data,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(data.console(result),indent=2))
             if operation=='check' and not (result['t16_passed'] or result['kernel_passed']):return 1
+        elif args.command.startswith('sampling-sft-mixed-gate-'):
+            from pilot_eval import sampling_sft_mixed_gate as gate
+            operation=args.command.removeprefix('sampling-sft-mixed-gate-')
+            if operation=='prepare':result=gate.prepare(args.review,args.output_root,args.word_policy,args.name)
+            elif operation=='score':result=gate.score(args.config,args.output_root,args.job,max_new_units=args.max_new_units,dependencies=dependencies)
+            elif operation=='request':result=gate.request(args.config,args.output_root,args.forecast)
+            elif operation=='approve':result=gate.approve(args.config,args.output_root,args.approval)
+            elif operation=='recover-writer':result=gate.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
+            else:result=getattr(gate,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(gate.console(result),indent=2))
         elif args.command.startswith('sampling-sft-gate-'):
             from pilot_eval import sampling_sft_gate as gate
             operation=args.command.removeprefix('sampling-sft-gate-')
@@ -942,6 +1245,14 @@ def main(argv=None, *, dependencies=None):
             elif operation=='recover-writer':result=gate.recover_writer(args.config,args.output_root,args.owner_token,args.review_notes)
             else:result=getattr(gate,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(gate.console(result),indent=2))
+        elif args.command.startswith('sampling-sft-mixed-review-'):
+            from pilot_eval import sampling_sft_mixed_review as review
+            operation=args.command.removeprefix('sampling-sft-mixed-review-')
+            if operation=='prepare':result=review.prepare(args.generation,args.output_root,args.name)
+            elif operation=='export':result=review.export(args.config,args.output_root,args.destination,args.origin)
+            elif operation=='import':result=review.import_labels(args.config,args.output_root,args.labels,args.origin,args.confirm_human)
+            else:result=getattr(review,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(review.console(result),indent=2))
         elif args.command.startswith('sampling-sft-review-'):
             from pilot_eval import sampling_sft_review as review
             operation=args.command.removeprefix('sampling-sft-review-')
@@ -950,6 +1261,17 @@ def main(argv=None, *, dependencies=None):
             elif operation=='import':result=review.import_labels(args.config,args.output_root,args.labels,args.origin,args.confirm_human)
             else:result=getattr(review,operation)(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(review.console(result),indent=2))
+        elif args.command.startswith('sampling-sft-buffered-generation-'):
+            from pilot_eval import sampling_sft_generation_v2 as generation
+            operation=args.command.removeprefix('sampling-sft-buffered-generation-')
+            if operation=='prepare':result=generation.prepare(args.pilot,args.output_root,args.name,writer_pilot=args.writer_pilot)
+            elif operation=='freeze':result=generation.freeze(args.config,args.output_root,args.review)
+            elif operation=='run':result=generation.run(args.config,args.output_root,args.k,args.job,
+                stop_after_blocks=args.stop_after_blocks,dependencies=dependencies)
+            elif operation=='verify':result=generation.verify(args.config,args.output_root,args.k)
+            elif operation=='recover-writer':result=generation.recover_writer(args.config,args.output_root,args.k,args.owner_token,args.review_notes)
+            else:result=generation.status(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-generation-'):
             from pilot_eval import sampling_sft_generation as generation
             operation=args.command.removeprefix('sampling-sft-generation-')
@@ -961,6 +1283,13 @@ def main(argv=None, *, dependencies=None):
             elif operation=='recover-writer':result=generation.recover_writer(args.config,args.output_root,args.k,args.owner_token,args.review_notes)
             else:result=generation.status(args.config,args.output_root)
             print(str(result) if isinstance(result,Path) else json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-buffered-job-'):
+            from pilot_eval import sampling_sft_buffered_lifecycle as lifecycle
+            if args.command.endswith('-prepare'):
+                result=lifecycle.prepare(args.config,args.output_root,args.operation,args.name,args.volume_id,args.rate,args.hours)
+            else:
+                result=lifecycle.execute(args.config,args.output_root,args.operation,args.job,args.reviewer,kill_job=args.kill_job)
+            print(json.dumps(result,indent=2))
         elif args.command.startswith('sampling-sft-deterministic-score-'):
             from pilot_eval import sampling_sft_deterministic_score as diag
             operation=args.command.removeprefix('sampling-sft-deterministic-score-')
@@ -1018,6 +1347,16 @@ def main(argv=None, *, dependencies=None):
             result=stage(args.config,args.output_root,args.settings,args.name,args.stage,args.reviewer,
                 args.volume_id,args.rate,execute=args.run,estimated_hours=args.estimated_hours,fixture_source=args.fixture_source)
             print(json.dumps(result,indent=2))
+        elif args.command.startswith('sampling-sft-buffered-pilot-'):
+            from pilot_eval import sampling_sft_pilot_v2 as pilot
+            operation=args.command.removeprefix('sampling-sft-buffered-pilot-')
+            if operation=='prepare':result=pilot.prepare(args.instrument,args.output_root,args.name)
+            elif operation=='run':result=pilot.run(args.config,args.output_root,args.lane,args.job,
+                stop_after_blocks=args.stop_after_blocks,interrupt_after_block=args.interrupt_after_block,dependencies=dependencies)
+            elif operation=='report':result=pilot.report(args.config,args.output_root,args.forecast)
+            elif operation=='recover-writer':result=pilot.recover_writer(args.config,args.output_root,args.lane,args.owner_token,args.review_notes)
+            else:result=getattr(pilot,operation)(args.config,args.output_root)
+            print(str(result) if isinstance(result,Path) else json.dumps(pilot.console(result),indent=2))
         elif args.command.startswith('sampling-sft-pilot-'):
             from pilot_eval import sampling_sft_pilot as pilot
             operation=args.command.removeprefix('sampling-sft-pilot-')
