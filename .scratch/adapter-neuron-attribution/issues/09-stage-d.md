@@ -1,6 +1,6 @@
 # 09: Stage D generation
 
-**Status:** needs-triage — draft v2
+**Status:** needs-triage — draft v3
 **Type:** task
 **Blocked by:** 07 (can run alongside 08)
 

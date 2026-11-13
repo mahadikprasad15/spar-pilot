@@ -1,6 +1,6 @@
 # Adapter and neuron attribution — review draft v2 (first pass)
 
-**Status:** needs-triage. Draft v2 after review round 1 (`review-round-1.md`, dispositions in `review-response.md`). Nothing here approves a GPU run, a threshold or a budget. Proposed values are marked **[proposed]** and collected in `candidate-plan-v1.yaml`.
+**Status:** needs-triage for execution; CPU implementation of tickets 01–05 approved by the user (2026-11-13). Draft v3 after review rounds 1 and 2 (`review-round-1.md`, `review-round-2.md`; dispositions in `review-response.md`, `review-response-round-2.md`). Nothing here approves a GPU run, a threshold or a budget. Proposed values are marked **[proposed]** and collected in `candidate-plan-v1.yaml`.
 
 Human-readable companion: Claude Doc "D10 · Audit · Adapter and neuron attribution". This file is the review baseline; where they differ, this file wins.
 
@@ -25,7 +25,7 @@ Scope of every teacher-forced claim: questions the untuned model solves under fl
 - Arms: step-64 `gold-sft`, `online-grpo`, `offline-grpo`, `sampling-sft-k0`, `sampling-sft-k2`, `sampling-sft-k5`; untuned reference.
 - Sources: the joint audit's sealed `inventory-v2`, reused unchanged. Unresolved arms or modules are reported missing, never zero.
 - 196 rank-1 adapters per arm (7 projections × 28 layers; rank 1, alpha 1, dropout 0), dimensions from sealed metadata.
-- Neuron attribution uses each checkpoint's current saved `a`; it does not depend on whether `a` moved in training. How much of `a` is inherited from initialization is reported separately from the post hoc Stage 0 init check, with that script's sign-alignment convention.
+- Neuron attribution uses each checkpoint's current saved `a`; it does not depend on whether `a` moved in training. The post hoc Stage 0 init check's raw saved-factor cosine and drift (no sign alignment) may be quoted as a historical description only, labelled gauge-dependent: it is meaningful because a₀ and the trained `a` share one training parameterization, not because it is invariant.
 
 ## Data and provenance
 
@@ -49,7 +49,7 @@ Behaviour (Stage D only): v3 accuracy, response tokens, capped rate, early-stop 
 
     L_e = (1/|T_e|) Σ_{t ∈ T_e} log p_θ(x_t | x_<t)     (logits read at position t−1)
 
-**Stop pull.** With S the generation stop IDs used by the pilot decoder (recorded in 01; at least `<|im_end|>` and `<|endoftext|>`) and P_e the prefix positions t whose next target token x_{t+1} is a content token before the start of the response's last non-empty line (token offsets; a token crossing that newline belongs to the last line):
+**Stop pull.** With S the exact stop IDs passed to the generation decoder used in this study (sealed in 01 from the decoder config; for the pilot backend `eos_token_id` only, i.e. S = {`<|im_end|>` = 151645}; `<|endoftext|>` = 151643 is padding and is not a stop event) and P_e the prefix positions t whose next target token x_{t+1} is a content token before the start of the response's last non-empty line (token offsets; a token crossing that newline belongs to the last line):
 
     S_e = (1/|P_e|) Σ_{t ∈ P_e} log Σ_{s ∈ S} p_θ(s | x_≤t)
 
@@ -63,13 +63,17 @@ Equal weight per example. Attribution = predicted change in the metric when the 
 
 ### Stage A+B — attribution (discovery)
 
-**Gate.** Every `lora_B` module gets a forward hook returning g · out, g = 1 (in the graph). In pinned `peft==0.18.0` the branch is Δy = s · lora_B(lora_A(drop(x))) inline, so ⟨∂M/∂Δy, Δy⟩ = ⟨∂M/∂out, out⟩ and the scale cancels.
+**Gate.** Every `lora_B` module gets a forward hook returning g · out with g = 1. In pinned `peft==0.18.0` the branch is Δy = s · lora_B(lora_A(drop(x))) inline, so ⟨∂M/∂Δy, Δy⟩ = ⟨∂M/∂out, out⟩ and the scale cancels.
+
+**Differentiable path.** All model and adapter weights stay frozen. The graph comes from `requires_grad_(True)` on the embedding output (an activation; nothing is trained). The captured `lora_B` outputs and `lora_A` outputs (c_t) are graph tensors. Each metric's gradients are taken with a separate `torch.autograd.grad(Σ_e M(e), captured_tensors, retain_graph=…)` call that returns fresh tensors; `.grad` accumulation is never used.
 
 **Pass 1 (forward + 2 backwards).** One forward over a batch; backward of Σ_e L_e, then of Σ_e S_e (graph retained once). Per example, over every unpadded position (prompt, header, response):
 
     attr_i(e) = − Σ_t ⟨ ∂M(e)/∂out⁽ⁱ⁾_t , out⁽ⁱ⁾_t ⟩
 
 and for each `down_proj` adapter the scalar g_{t} = ∂M(e)/∂c_t at every unpadded position (c_t = `lora_A` output), stored per metric.
+
+Pass 1 also saves, per example, every adapter's Σ_t |c_t| and token count (for the discovery write ‖s b‖ · mean |c_t| used by matching) and every `down_proj` adapter's signed Σ_t c_t (for c̄), so selection needs no extra run.
 
 **Pass 2 (forward only).** Recompute z_t at each `down_proj` input, one layer at a time, and contract:
 
@@ -120,20 +124,21 @@ Retained effect for the 64-term reads: R = (M_sparse − M_removed) / (M_full �
 
 Unit: question. Paired bootstrap, the same resampled questions across arms and conditions within a cohort, 10,000 resamples, seed 1234, percentile intervals **[proposed]**.
 
-**Validity gate, per arm × metric** (prediction = fixed discovery mean attribution; group prediction = sum of members, labelled first-order): report Spearman, sign agreement, median absolute error and real-on-predicted slope over the top-5 and matched singles, with paired intervals; pooled values are summaries only. Pass: real effect has the predicted sign for ≥ 4 of 5 top singles and for the top-10 group **[proposed]**. Finite differences (06b) check wiring; zeroing checks the nonlocal approximation; both are reported.
+**Validity gate, per arm × metric** (prediction = fixed discovery mean attribution; group prediction = sum of members, labelled first-order): report Spearman, sign agreement, median absolute error and real-on-predicted slope over the top-5 and matched singles, with paired intervals; pooled values are summaries only. Pass: real effect has the predicted sign for ≥ 4 of 5 top singles and for the top-10 group **[proposed]**. This is a limited check on selected removals: a pass does not establish the ordering or magnitudes of all 196 causal effects, and the report says so. Finite differences (06b) check wiring; zeroing checks the nonlocal approximation; both are reported.
 
 **If a gate fails** for an arm × metric: primary 2 comparisons involving it are reported as unvalidated, exploratory; primary 1 rests only on its directly measured contrasts; primary 3 always rests only on the measured 64-term intervention, and attribution concentration is described as attribution, not causal sparsity.
 
-**Primary 1 (gold-sft, confirmation).** For the stop-pull set L and trace set A with matched groups:
-- (i) ΔS(L) − ΔS(match_L) < 0 with interval excluding 0;
-- (ii) |ΔL(L) − ΔL(match_L)| ≤ 0.25 · |ΔL(A) − ΔL(match_A)| **[proposed margin]**, with the whole interval of ΔL(L) − ΔL(match_L) inside ± that margin.
-Supported if (i) and (ii); contradicted if (i) and the trace effect's interval lies outside the margin; otherwise inconclusive. Stage D for gold-sft (length and early-stop change for L vs match_L, accuracy change) can confirm or fail to confirm; it cannot rescue a failed teacher-forced result. ρ(attr_L, attr_S) and top-10 overlap are descriptive.
+**Primary 1 (gold-sft, confirmation).** For the stop-pull set L and trace set A with matched groups, define per bootstrap resample D_S = ΔS(L) − ΔS(match_L), D_L = ΔL(L) − ΔL(match_L), D_A = ΔL(A) − ΔL(match_A), and r = |D_L| / |D_A|, all from the same resampled questions.
+- (i) D_S < 0: its 95% interval excludes 0.
+- (ii) The reference exists: the 95% interval of D_A excludes 0. Otherwise primary 1 is inconclusive.
+- (iii) Equivalence: the one-sided 95% upper bound of r (95th percentile of the joint bootstrap) is < 0.25 **[proposed margin]**.
+Supported if (i), (ii) and (iii). Contradicted if (i) and (ii) hold and the one-sided 95% lower bound of r is ≥ 0.25. Otherwise inconclusive. Stage D for gold-sft (length and early-stop change for L vs match_L, accuracy change) can confirm or fail to confirm; it cannot rescue a failed teacher-forced result. ρ(attr_L, attr_S) and top-10 overlap are descriptive.
 
 **Primary 2.** Spearman on signed 196-vectors (average ranks for ties); arms with an unresolved module excluded and listed. Paired bootstrap of differences: (a) ρ(online, offline) − ρ(gold, online), (b) ρ(online, offline) − ρ(gold, offline); support needs both > 0. (c) ρ(k0, gold) − ρ(k2, gold), (d) ρ(k2, gold) − ρ(k5, gold); ordering needs both > 0. Per metric.
 
-**Primary 3.** Per arm and metric: R for the attribution read minus R for the term-size read, and minus the mean R of the random reads. Sparse at this adapter if R(attribution) ≥ 0.70 **[proposed]** and both differences > 0; dense if R(attribution) < 0.30 in every arm. Descriptive alongside: neurons reaching 50% and 90% of Σ|attr_j| vs a random-order accumulation null (1,000 seeded orders), and cancellation Σ|attr_j| / |Σ attr_j|; both unavailable below a resolution floor set in 06b.
+**Primary 3.** Per arm and metric: the paired contrasts R(attribution) − R(term size) and R(attribution) − mean R(random), each with a bootstrap interval; these two contrasts are the tests. Classification is descriptive and uses intervals, never point estimates: sparse at this adapter if the 95% lower bound of R(attribution) ≥ 0.70 **[proposed]**; dense if the 95% upper bound of R(attribution) < 0.30 in every arm; otherwise inconclusive; unavailable R stays unavailable. Descriptive alongside: neurons reaching 50% and 90% of Σ|attr_j| vs a random-order accumulation null (1,000 seeded orders), and cancellation Σ|attr_j| / |Σ attr_j|; both unavailable below a resolution floor set in 06b.
 
-**Families.** Primary family per metric = primary 1's two contrasts + primary 2's four differences + primary 3's two differences per arm; Holm at α = 0.05. Everything else exploratory.
+**Families.** Primary family per metric = primary 1's decision (one test: the conjunction above, with its own intervals) + primary 2's four differences + primary 3's two paired contrasts per arm; Holm at α = 0.05 over the family's p-values from the paired bootstrap (two-sided, percentile; for primary 1, the larger of the component p-values). Holm adjusts the tests; the threshold classifications in primary 3 and the margin rule's intervals are reported as computed. Everything else exploratory.
 
 **Concordance (predeclared, exploratory).** For the 6 Stage D removal conditions: sign and magnitude agreement between confirmation ΔL, ΔS and generation Δaccuracy, Δlength, with intervals; disagreements listed. Behavioural claims are limited to generated arms and conditions.
 
@@ -169,6 +174,8 @@ Measured in every GPU unit by `pilot_eval/attribution_gpu.py`: NVML busy %, memo
 
 CPU, tiny random Qwen2 + PEFT 0.18.0, no downloads, red/green TDD:
 - Gate hooks at g = 1 leave logits identical; g = 0 equals an edited checkpoint; hook gate equals an explicit scaled-branch gate with s ≠ 1.
+- With every weight frozen, backward succeeds only via the embedding-output graph (a test asserts the frozen model without it has no graph); both metrics' gradients from separate `autograd.grad` calls each match their own finite differences, and running them in either order gives identical results.
+- Stop pull with a single stop ID (151645) only; a two-ID configuration is refused unless labelled as a decoding change.
 - Untuned (adapters disabled) → all attributions exactly 0; a zero-b adapter → 0.
 - Finite differences for 5 adapters and 3 neurons, independent of the hook path.
 - A fixture where an adapter affects the loss only through an earlier prompt token: attribution matches its finite difference.
@@ -184,7 +191,7 @@ CPU, tiny random Qwen2 + PEFT 0.18.0, no downloads, red/green TDD:
 
 Gold-trace robustness; TF32; rescaled 64-term reads; cumulative top-1..10 curves; layer bands; other read sizes and drop-top-m; more layers per arm; per-example spot checks; generation for the other four arms and for neuron or constant-read conditions; drift on non-math text; head-level `o_proj` attribution.
 
-## Open decisions
+## Open decisions (execution only; CPU implementation may proceed)
 
 1. Approve [proposed] values (minimums, tolerance, gate rule, margin, thresholds, sweeps, batch rule).
 2. Approve the Colab rehearsal (06a) and a 06b budget.

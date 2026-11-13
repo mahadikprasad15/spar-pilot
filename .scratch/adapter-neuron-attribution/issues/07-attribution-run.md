@@ -1,6 +1,6 @@
 # 07: Attribution run and freeze
 
-**Status:** needs-triage — draft v2
+**Status:** needs-triage — draft v3
 **Type:** task
 **Blocked by:** 06b
 **Authorization:** approved production cap.

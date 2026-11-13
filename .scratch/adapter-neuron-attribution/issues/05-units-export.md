@@ -1,6 +1,6 @@
 # 05: Units, manifests, export and restore
 
-**Status:** needs-triage — draft v2
+**Status:** ready-for-agent — CPU implementation approved by the user 2026-11-13 (spec draft v3). No GPU run, value or budget is approved by this status.
 **Type:** task
 **Blocked by:** none
 

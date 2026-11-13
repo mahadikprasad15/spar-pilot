@@ -1,6 +1,6 @@
 # 06a: Colab rehearsal
 
-**Status:** needs-triage — draft v2
+**Status:** needs-triage — draft v3
 **Type:** task
 **Blocked by:** 01–05
 **Authorization:** user go-ahead and a Colab cap. Outputs labelled `rehearsal-colab`; never feed production.

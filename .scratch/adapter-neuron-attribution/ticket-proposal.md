@@ -1,6 +1,6 @@
-# Adapter and neuron attribution — ticket proposal (draft v2)
+# Adapter and neuron attribution — ticket proposal (draft v3)
 
-Status: needs-triage. Not approved. Implementation tickets authorize no GPU spend; each execution ticket names the authorization it needs.
+Status: tickets 01–05 ready-for-agent (CPU implementation, user 2026-11-13); 06a–10 needs-triage. No GPU spend, value or budget approved. Implementation tickets authorize no GPU spend; each execution ticket names the authorization it needs.
 
 ## Implementation (CPU, fixture-tested)
 

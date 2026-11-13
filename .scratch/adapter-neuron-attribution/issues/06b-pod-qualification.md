@@ -1,6 +1,6 @@
 # 06b: Pod qualification and preparation
 
-**Status:** needs-triage — draft v2
+**Status:** needs-triage — draft v3
 **Type:** task
 **Blocked by:** 06a
 **Authorization:** an approved 06b budget. Pod stop needs separate authorization and a verified backup.

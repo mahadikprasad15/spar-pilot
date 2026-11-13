@@ -14,6 +14,8 @@
 
 - 2026-11-13: review round 1 (Codex) answered in `review-response.md`; draft v2 of spec, plan and tickets (rehearsals on calibration rows only; z recomputed in a forward-only pass; trace log-likelihood and stop pull replace M_acc/M_len; per-arm gates, equivalence margin, Holm families; FP32 throughout; tickets renumbered 01–10).
 
+- 2026-11-13: review round 2 (Codex) recommends CPU implementation without another design cycle; three corrections (frozen-model gradient path, exact stop IDs, uncertainty in primary decisions) made in draft v3. User approved CPU implementation of 01–05.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

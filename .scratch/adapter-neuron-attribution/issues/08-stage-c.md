@@ -1,6 +1,6 @@
 # 08: Stage C on confirmation
 
-**Status:** needs-triage — draft v2
+**Status:** needs-triage — draft v3
 **Type:** task
 **Blocked by:** 07
 

@@ -1,4 +1,4 @@
-# Candidate plan (draft v2, after review round 1) — PROPOSED, not approved or frozen.
+# Candidate plan (draft v3, after review rounds 1 and 2) — PROPOSED, not approved or frozen.
 status: proposed
 inputs:
   inventory: runs/joint-neuron-adapter-audit/inventory/inventory-v2
@@ -15,11 +15,13 @@ traces:
   base_correct_min_after_masks: {discovery: 120, confirmation: 60}
 metrics:
   trace_loglik: {targets: response_content tokens incl. first, excl. im_end/newline/prompt/header/padding}
-  stop_pull: {stop_ids: recorded_in_01, positions: next target before last non-empty content line, empty: exclude_with_reason}
+  stop_pull: {stop_ids: sealed_from_decoder_config, expected_pilot: [151645], positions: next target before last non-empty content line, empty: exclude_with_reason}
   kl: full_vs_condition_over_trace_positions
 precision: {dtype: fp32, tf32: false, autocast: false, attention: eager, accumulate: fp64}
 attribution:
   gate: forward hook on lora_B output (peft 0.18.0)
+  graph: requires_grad on embedding output; weights frozen; one torch.autograd.grad call per metric
+  pass1_extra_outputs: [per-adapter sum_abs_c and token count, per-down_proj signed sum_c]
   positions: all unpadded
   pass1: forward + backward(trace_loglik) + backward(stop_pull); store per-token dM/dc for down_proj
   pass2: forward-only recompute of z per layer; attr_j = -a_j * sum_t z_jt * g_t
@@ -41,10 +43,10 @@ stage_d:
 statistics:
   bootstrap: {resamples: 10000, seed: 1234, unit: question, interval: percentile}
   gate_per_arm_metric: {top_singles_sign_min: 4, of: 5, top10_group_sign: required}
-  primary1: {equivalence_margin_fraction_of_trace_set_effect: 0.25}
+  primary1: {ratio: abs(D_L)/abs(D_A), joint_bootstrap: true, reference_required: D_A interval excludes 0, equivalence: one-sided 95% upper bound of ratio < 0.25}
   primary2: {contrasts: [online_offline_minus_gold_online, online_offline_minus_gold_offline, k0_minus_k2_vs_gold, k2_minus_k5_vs_gold]}
-  primary3: {sparse_R_min: 0.70, dense_R_max: 0.30, random_order_null_draws: 1000}
-  family: {per_metric: [primary1_x2, primary2_x4, primary3_x2_per_arm], method: holm, alpha: 0.05}
+  primary3: {tests: [R_attr_minus_R_termsize, R_attr_minus_mean_R_random], classification: descriptive, sparse: lower 95% bound of R >= 0.70, dense: upper 95% bound < 0.30 in every arm, random_order_null_draws: 1000}
+  family: {per_metric: [primary1_x1, primary2_x4, primary3_x2_per_arm], method: holm, alpha: 0.05, p_values: paired bootstrap two-sided percentile}
 gpu:
   sampler_hz: 1
   min_sample_seconds: 30
