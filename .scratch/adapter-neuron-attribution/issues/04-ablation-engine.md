@@ -1,17 +1,16 @@
-# 04: Ablation engine and condition builder (CPU)
+# 04: Ablation engine and condition builder
 
 **Status:** needs-triage — draft for adversarial review
 **Type:** task
+**Blocked by:** 02
 
-**What to build:** `pilot_eval/attribution_ablation.py`: in-memory ablation hooks and a condition builder that reads only a sealed selection.
+**What to build:** `pilot_eval/attribution_ablation.py`: in-memory removal hooks, the 64-neuron read, the constant read, the write-matched sampler, edited checkpoints, and a builder that reads only a sealed selection.
 
-**Blocked by:** 02.
-
-- [ ] Adapter removal (s·b → 0) for any set; band necessity and band-only sufficiency on the untuned model.
-- [ ] Masked read at a `down_proj` adapter: drop-top-m, keep-top-m with rescaling to the discovery mean |c_t|, constant c̄.
-- [ ] Write-matched random control sampler (same module type, ±tolerance, seeded); returns unavailable rather than loosening.
-- [ ] Edited-checkpoint writer (chosen b zeroed) with hash; check its logits equal the in-memory hook.
-- [ ] Condition builder refuses unsealed selections and any confirmation-derived input.
-- [ ] Tests: keep-all == full, keep-none == removed, constant-c̄ write == s b c̄, rescale factor correct, checkpoint == hook, sampler determinism and unavailable path.
+- [ ] Remove any adapter set (s·b → 0).
+- [ ] Rebuild c_t from a given neuron subset, rescaled to the discovery mean |c_t|; constant read c_t → c̄.
+- [ ] Write-matched sampler: same module type, ±tolerance, seeded; unavailable rather than loosened.
+- [ ] Edited checkpoint (chosen b zeroed) with hash; logits equal the in-memory hook.
+- [ ] Builder refuses unsealed selections or any confirmation-derived input.
+- [ ] Tests: all-neuron read == full; empty removal == full; constant read writes s·b·c̄; rescale factor; checkpoint == hook; sampler determinism and unavailable path.
 
 ## Comments

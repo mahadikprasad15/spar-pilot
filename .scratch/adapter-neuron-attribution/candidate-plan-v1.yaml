@@ -1,4 +1,4 @@
-# Candidate plan v1 — PROPOSED, not approved or frozen.
+# Candidate plan v1 (first pass) — PROPOSED, not approved or frozen.
 status: proposed
 inputs:
   inventory: runs/joint-neuron-adapter-audit/inventory/inventory-v2
@@ -6,36 +6,40 @@ inputs:
   generation_cohort: adr-0001-gsm8k-test-150-seed42
 arms: [gold-sft, online-grpo, offline-grpo, sampling-sft-k0, sampling-sft-k2, sampling-sft-k5]
 traces:
-  primary: base_correct
-  robustness: gold
+  teacher_forced: base_correct
   base_correct_min: {discovery: 120, held_out: 60}
 metrics:
+  proxies: [m_acc, m_len, kl]
   m_len_exclude_last_tokens: 5
   m_len_exclude_final_answer_line: true
   eos_token: "<|im_end|>"
   early_stop_untuned_percentile: 10
 precision: {dtype: fp32, tf32: false, autocast: false, attention: eager, accumulate: fp64}
-stage_a:
-  layer_select: {per_arm_top_down_proj: 2, cap_layers: 5}
-  top_k_adapters: 10
-stage_b:
-  masked_read_m: [8, 64, 512]
-  random_draws: 3
-controls:
+attribution:
+  adapters: all_196
+  neurons: all_28_down_proj
+  backwards_per_arm: [m_acc, m_len]
+selection:
+  top_k_group: 10
+  top_k_singles: 5
   write_match_tolerance: 0.20
-  write_match_draws: 3
-  shuffled_neuron_draws: 1000
-  spot_check: {adapters: 3, examples: 10}
-  finite_difference: {adapters: 5, neurons: 3, epsilon: null}   # to set in 05
+  neuron_read_size: 64
+  neuron_random_draws: 3
+stage_c_per_arm_metric: [top5_singles, matched5_singles, top10_group, matched10_group,
+                         neuron64_attr, neuron64_term_size, neuron64_random_x3, constant_cbar]
+stage_d:
+  arms: [gold-sft, online-grpo]
+  conditions: [full, top10_m_acc_removed, top10_m_len_removed, matched10_removed]
+  decoding: {mode: greedy, max_new_tokens: 1024, path: hf}
+  scorer: gsm8k_flexible_v3
+  untuned: reuse_if_protocol_and_runtime_match
 tolerances:
-  neuron_sum_identity: null     # to set from CPU + 05
-  batch_invariance: null        # to set in 05
+  neuron_sum_identity: null     # from CPU tests + 05
+  batch_invariance: null        # from 05
+  finite_difference: null       # from 05
 statistics:
   bootstrap: {resamples: 10000, seed: 1234, unit: question}
-  gates: {pred_vs_real_spearman_min: 0.5, top10_jaccard_median_min: 0.5}
-  primary1: {rho_upper_support: 0.3, rho_lower_contradict: 0.6, top10_overlap_max: 3}
-  primary3: {sparse_top64_keep_min: 0.70, dense_m_min: 512}
-  multiple_comparisons: {secondary: holm, families: [adapter, neuron]}
-bands: {layers: [[11,13],[15,17],[20,24]], modules: [down_proj, o_proj]}
-generation: {decoding: greedy, max_new_tokens: 1024, path: hf, scorer: gsm8k_flexible_v3}
+  gate: {pred_vs_real_spearman_min: 0.5, pooled_over: arms}
+  primary1: {rho_ci_upper_support: 0.3, rho_ci_lower_contradict: 0.6, top10_overlap_max: 3}
+  primary3: {sparse_keep_min: 0.70, dense_keep_max: 0.30}
 wall_time_cap_hours: null   # user sets after 05

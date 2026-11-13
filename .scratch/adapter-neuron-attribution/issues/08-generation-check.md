@@ -2,14 +2,13 @@
 
 **Status:** needs-triage — draft for adversarial review
 **Type:** task
+**Blocked by:** 06 (can run alongside 07)
 
-**What to build:** Generate on the ADR 0001 GSM8K cohort under the frozen Stage D conditions and score with flexible v3.
+**What to build:** 8 generation runs on the ADR 0001 cohort: `gold-sft` and `online-grpo` × {full, top-10 M_acc removed, top-10 M_len removed, matched 10 removed}.
 
-**Blocked by:** 06 (conditions). Can run in parallel with 07.
-
-- [ ] Edited PEFT checkpoints for removal conditions, verified against the in-memory hook; hooked HF generation for constant c̄.
-- [ ] Pilot protocol decoding; config and all responses saved as JSONL per condition.
-- [ ] Accuracy (v3), mean tokens, capped rate, early-stop rate using the threshold frozen in 01.
-- [ ] Untuned and full-arm rows regenerated under the same runtime, and compared with the existing pilot results as a consistency check.
+- [ ] Edited checkpoints verified against the hook; pilot protocol decoding; config and all responses as JSONL.
+- [ ] v3 accuracy, mean tokens, capped rate, early-stop rate (threshold from 01).
+- [ ] Untuned run only if 01 flagged a protocol or runtime mismatch.
+- [ ] Full-arm results compared with the existing pilot numbers as a consistency check.
 
 ## Comments
