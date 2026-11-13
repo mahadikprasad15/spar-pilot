@@ -1,13 +1,13 @@
 # Implementation handoff — tickets 01–05, 10, 11 (CPU)
 
-For the implementing agent. Approved: CPU implementation of tickets 01–05, 10 (report code on fixtures) and 11 (overnight chain runner) (user, 2026-11-13). Not approved: any GPU run, Colab or Pod session, proposed value or budget.
+For the implementing agent. Approved: CPU implementation of tickets 01–05, 10 (report code on fixtures) and 11 (overnight chain runner), plus writing the 06a Colab notebook without running it (user, 2026-11-13). Tickets 06b–09 are stages the chain runner executes; they need no separate code beyond 01–05, 10 and 11. Not approved: any GPU run, Colab or Pod session, proposed value or budget.
 
 Read first, in order: `AGENTS.md`; `docs/agents/experiment-lessons.md`; `CONTEXT.md`; this folder's `spec.md` (draft v3), `ticket-proposal.md`, `candidate-plan-v1.yaml`; `review-round-1.md`, `review-response.md`, `review-round-2.md`, `review-response-round-2.md`; the joint audit's `spec.md` and `pilot_eval/neuron_audit_*` modules you will reuse.
 
 Rules that bind here:
 - Branch from `adapter-attribution-spec`; commit after each green step with short messages.
 - Red/green TDD; unit tests on CPU with a tiny random Qwen2 + PEFT 0.18.0, no downloads.
-- Frontier order: 02, 05, 01 (unblocked); then 03, 04 (after 02); then 10 (after 04) and 11 (after 05). The end goal is one unattended overnight Pod run that finishes by stopping the Pod (spec §Overnight unattended chain); 11 must make every exit path end in summary → verified volume copy → Pod stop. Claim a ticket by setting `Status: claimed`; resolve with `## Answer` and a pointer in `map.md` Decisions-so-far.
+- Frontier order: 02, 05, 01 (unblocked); then 03, 04 (after 02); then 10 (after 04) and 11 (after 05); last, write (do not run) the 06a Colab notebook `notebooks/adapter-attribution-colab.ipynb`. The end goal is one unattended overnight Pod run that finishes by stopping the Pod (spec §Overnight unattended chain); 11 must make every exit path end in summary → verified volume copy → Pod stop. Claim a ticket by setting `Status: claimed`; resolve with `## Answer` and a pointer in `map.md` Decisions-so-far.
 - Proposed values stay `[proposed]` in the candidate plan; do not freeze or change thresholds or tolerances. The launch record (not the plan) must resolve every required tolerance and cap before an unattended launch; the code must refuse a record with unresolved values.
 - Any decision not in the spec or an ADR: stop and ask (add a `## Comments` note on the ticket).
 - Do not compute anything on confirmation rows or the ADR 0001 cohort.

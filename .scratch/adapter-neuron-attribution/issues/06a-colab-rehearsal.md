@@ -5,7 +5,7 @@
 **Blocked by:** 01–05
 **Authorization:** user go-ahead and a Colab cap. Outputs labelled `rehearsal-colab`; never feed production.
 
-**What to build and run:** `notebooks/adapter-attribution-colab.ipynb` on calibration rows and the 20 rehearsal generation items only, for `gold-sft`, `online-grpo` and untuned.
+**What to build (approved now, CPU session) and run (needs go-ahead):** `notebooks/adapter-attribution-colab.ipynb` on calibration rows and the 20 rehearsal generation items only, for `gold-sft`, `online-grpo` and untuned.
 
 - [ ] Environment per the joint audit's Colab lessons (stream child output, remove conflicting preinstalled packages, pinned tokenizer pad ID, record runtime).
 - [ ] Base traces for calibration rows via 01.
