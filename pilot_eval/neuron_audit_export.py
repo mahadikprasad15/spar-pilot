@@ -194,8 +194,11 @@ def _run_seal_files(directory):
 
 
 def snapshot(artifact_root, include, label, *, expected_units=None, omitted=None, stage=None, pinned_inputs=None,
-             include_unsealed_evidence=False):
+             include_unsealed_evidence=False, expected_runs=None):
     """Build and save a stable snapshot manifest; returns the manifest dict.
+
+    ``expected_runs``: run directories (relative to the root) that must be sealed (``complete.json`` verifies)
+    for the snapshot to be complete; used by the attribution study's declared expected set.
 
     ``pinned_inputs``: explicit input files (e.g. adapters, tokenizer) as {path, sha256}; each must match its
     recorded hash (from the sealed inventory) or the snapshot is refused.
@@ -208,7 +211,7 @@ def snapshot(artifact_root, include, label, *, expected_units=None, omitted=None
         _scan_secret(path)
         files[rel] = dict(sha256=file_hash(path), bytes=path.stat().st_size, kind=kind)
 
-    sealed_units = set()
+    sealed_units, sealed_runs = set(), set()
     for item in include:
         base = (root / item).resolve()
         if not base.exists():
@@ -220,6 +223,7 @@ def snapshot(artifact_root, include, label, *, expected_units=None, omitted=None
         for directory in run_dirs:
             if any(directory.is_relative_to(u) for u in unit_roots):
                 continue
+            sealed_runs.add(_relative(root, directory))
             for name in _run_seal_files(directory):
                 add(directory / name, 'sealed-run')
                 covered.add((directory / name).resolve())
@@ -271,14 +275,16 @@ def snapshot(artifact_root, include, label, *, expected_units=None, omitted=None
             raise ValueError(f"pinned input {item['path']} is missing or differs from its recorded hash")
         add(path, 'pinned-input')
     missing_units = sorted(set(expected_units or []) - sealed_units)
-    complete = not unsealed and not corrupt and not missing_units
+    missing_runs = sorted(set(expected_runs or []) - sealed_runs)
+    complete = not unsealed and not corrupt and not missing_units and not missing_runs
     body = dict(schema=SNAPSHOT_SCHEMA, label=label, stage=stage, created_unix=time.time(),
                 completeness='complete' if complete else 'partial',
-                scope=dict(include=list(include), stage=stage, expected_units=sorted(expected_units or [])),
+                scope=dict(include=list(include), stage=stage, expected_units=sorted(expected_units or []),
+                           expected_runs=sorted(expected_runs or [])),
                 completeness_meaning='complete = every included item and expected unit is sealed; it says '
                                      'nothing about stages or arms outside this scope',
                 files=dict(sorted(files.items())),
-                unsealed=unsealed, corrupt=corrupt, missing_expected_units=missing_units,
+                unsealed=unsealed, corrupt=corrupt, missing_expected_units=missing_units, missing_expected_runs=missing_runs,
                 interrupted_evidence=evidence, omitted_reconstructible=omitted or [],
                 note='A verified partial export is not a complete audit.')
     body['sha256'] = _canonical_hash({k: v for k, v in body.items() if k != 'created_unix'})
@@ -420,7 +426,8 @@ def restore(upload_receipt, clean_root, *, client=None, attempts=3, on_event=pri
                  completeness=manifest['completeness'], verified_files=len(manifest['files']),
                  verified_units=len(units), clean_root=str(root), restore_seconds=time.monotonic() - started,
                  missing=dict(unsealed=manifest['unsealed'], corrupt=manifest['corrupt'],
-                              expected_units=manifest['missing_expected_units']),
+                              expected_units=manifest['missing_expected_units'],
+                              expected_runs=manifest.get('missing_expected_runs', [])),
                  omitted_reconstructible=manifest['omitted_reconstructible'])
     proof['sha256'] = _canonical_hash({k: v for k, v in proof.items() if k != 'restore_seconds'})
     _write_json(root.parent / f"{root.name}.restore-receipt.json", proof)

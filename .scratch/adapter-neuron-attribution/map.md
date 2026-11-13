@@ -22,6 +22,8 @@
 
 - 2026-11-13: ticket 02 resolved — `attribution_metrics.py` (target-position masks shifted by one; stop pull NaN when empty; KL full ‖ condition). See `issues/02-metrics.md` §Answer.
 
+- 2026-11-13: ticket 05 resolved — `attribution_units.py` (BlockStore units, sealed run directories, persisted hard-cap budget, export with declared expected units and runs) and `attribution_gpu.py`. See `issues/05-units-export.md` §Answer.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
