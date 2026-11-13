@@ -323,3 +323,19 @@ def test_unit_blocks_round_trip_through_a_sealed_unit(model, result, tmp_path):
     assert np.isnan(arrays[('stop', 0, 'attr_stop')][3]).all()
     assert np.allclose(arrays[('examples', 1, 'neuron_trace')], out['neuron']['trace'][1], rtol=1e-6, atol=1e-12)
     assert meta['results'][3]['stop_reason'] == 'empty-stop-pull-mask'
+
+
+def test_pass2_saves_term_size_for_neuron_ordering(model, result):
+    inst, out = result
+    ids, attention, positions = inst.batch(rows())
+    z = {}
+    hook = model.base_model.model.model.layers[1].mlp.down_proj.register_forward_pre_hook(
+        lambda m, a: z.__setitem__(1, a[0].detach().double()))
+    with torch.no_grad():
+        model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False)
+    hook.remove()
+    a = model.base_model.model.model.layers[1].mlp.down_proj.lora_A['default'].weight[0].double()
+    expected = (a.abs() * (z[1].abs() * attention[..., None]).sum(1)).numpy()
+    assert np.allclose(out['term_size'][1], expected, rtol=1e-10)
+    blocks, _, _ = ai.unit_blocks(out)
+    assert ('examples', 1, 'term_size') in blocks

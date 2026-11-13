@@ -38,3 +38,4 @@
 - **Found and fixed.** Leaving `disable_adapter()` in PEFT 0.18.0 re-marks adapter weights trainable. `frozen_disable_adapter` restores the flags; recorded in `docs/agents/experiment-lessons.md`.
 - `unit_blocks` maps one batch result to BlockStore blocks, storing FP32 copies of FP64 results. The identity is checked in memory on FP64 before storage. Stop-pull arrays sit in a `stop` group whose count is 0 for empty masks, so those rows are NaN, never 0.
 - **Not in this module.** Token-budget packing uses `neuron_audit_qualify.pack` in the chain runner, and background unit writes belong to ticket 11. Host copies are per output array, not one async copy per batch; that is a performance item to measure in 06a and 06b, not a validity issue.
+- Addendum (with ticket 04): pass 2 also saves the term size |a_j| Σ_t |z_{j,t}| over unpadded positions per `down_proj` layer (`term_size`), which the term-size neuron order needs; no extra run.

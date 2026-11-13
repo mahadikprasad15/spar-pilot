@@ -240,9 +240,10 @@ class Instrument:
                          for layer, i in self.down_index.items()} for name in METRICS}
         neuron = self._pass2(ids, attention, positions, g_down, attr, metrics, untuned=untuned,
                              corrupt=_corrupt_pass2)
+        term_size = neuron.pop('term_size')
         out = dict(example_ids=[r['id'] for r in rows], adapters=list(self.adapters),
                    metrics={k: v.detach().cpu().numpy() for k, v in metrics.items()}, stop_reasons=reasons,
-                   attr=attr, neuron=neuron, sum_abs_c=abs_c.cpu().numpy(),
+                   attr=attr, neuron=neuron, term_size=term_size, sum_abs_c=abs_c.cpu().numpy(),
                    token_count=attention.sum(1).cpu().numpy(), signed_sum_c=signed.cpu().numpy(),
                    routing=dict(lora_a_calls=sum(calls.values())), padded_width=int(ids.shape[1]))
         if raw:
@@ -257,8 +258,11 @@ class Instrument:
         n = ids.shape[0]
         unpadded = attention.to(torch.float64)
         result = {name: {} for name in METRICS}
+        result['term_size'] = {}
         if untuned:
-            return {name: {l: np.zeros((n, width)) for l in self.down_index} for name in METRICS}
+            out = {name: {l: np.zeros((n, width)) for l in self.down_index} for name in METRICS}
+            out['term_size'] = {l: np.zeros((n, width)) for l in self.down_index}
+            return out
         layers = self.body.layers
         fired = {}
         handles = []
@@ -267,6 +271,7 @@ class Instrument:
             fired[layer] = fired.get(layer, 0) + 1
             z = args[0].detach().double()
             a = module.lora_A[self.adapter].weight[0].detach().double()
+            result['term_size'][layer] = (a.abs() * (z.abs() * unpadded[..., None]).sum(1)).cpu().numpy()
             for name in METRICS:
                 g = g_down[name][layer]
                 if g is None:
@@ -399,6 +404,8 @@ def unit_blocks(out):
               ('stop', 0, 'stop_pull'): f32(np.asarray(out['metrics']['stop'])[:, None])}
     for layer, values in out['neuron']['trace'].items():
         blocks[('examples', layer, 'neuron_trace')] = f32(values)
+    for layer, values in out['term_size'].items():
+        blocks[('examples', layer, 'term_size')] = f32(values)
     for layer, values in out['neuron']['stop'].items():
         blocks[('stop', layer, 'neuron_stop')] = f32(values)
     counts = dict(examples=[1] * n, stop=stop_defined)
