@@ -126,3 +126,54 @@ def profiler_trace(path, *, enabled=True):
         yield profiler
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     profiler.export_chrome_trace(str(path))
+
+
+class StageMonitor:
+    """Per-stage utilization record: NVML (1 Hz), synchronized wall time, unpadded tokens, padding fraction, MFU
+    estimate (only with the record's FP32 peak FLOP/s) and a profiler trace of the stage's first unit only."""
+
+    def __init__(self, stage, *, nvml='auto', sync, parameters, peak_flops, backward_passes=0, now=time.perf_counter,
+                 profile_path=None):
+        self.stage, self.sync, self.now = stage, sync, now
+        self.parameters, self.peak_flops, self.backward_passes = parameters, peak_flops, backward_passes
+        self.sampler = NvmlSampler(nvml=nvml)
+        self.profile_path, self.profiled = profile_path, 0
+        self.tokens = self.padded = 0
+        self.started = None
+
+    def start(self):
+        self.sampler.start()
+        self.sync()
+        self.started = self.now()
+
+    def add_batch(self, *, lengths, padded_width):
+        self.tokens += int(sum(lengths))
+        self.padded += int(padded_width * len(lengths))
+
+    @contextmanager
+    def unit(self):
+        if self.profile_path is not None and self.profiled == 0:
+            self.profiled = 1
+            with profiler_trace(self.profile_path):
+                yield
+        else:
+            yield
+
+    def finish(self):
+        self.sync()
+        seconds = self.now() - self.started
+        self.sampler.stop()
+        record = dict(stage=self.stage, seconds=seconds, tokens=self.tokens, padded_tokens=self.padded,
+                      padding_fraction=(1 - self.tokens / self.padded) if self.padded else None,
+                      tokens_per_second=self.tokens / seconds if seconds > 0 and self.tokens else None,
+                      nvml=self.sampler.summary(), profiled_units=self.profiled,
+                      profile_trace=None if not self.profiled else str(self.profile_path))
+        if not self.peak_flops:
+            record['mfu'] = dict(available=False, reason='no FP32 peak FLOP/s in the launch record')
+        elif not self.tokens or seconds <= 0:
+            record['mfu'] = dict(available=False, reason='no tokens timed')
+        else:
+            record['mfu'] = dict(mfu(parameters=self.parameters, tokens=self.tokens, seconds=seconds,
+                                     peak_flops=self.peak_flops, backward_passes=self.backward_passes),
+                                 available=True)
+        return record

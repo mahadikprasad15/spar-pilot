@@ -459,3 +459,91 @@ def render(report):
                   'Disagreements: ' + (json.dumps(report['concordance']['disagreements']) or 'none')]
     lines += ['', '## Compute appendix', '', '```', json.dumps(report['compute'], indent=2, default=str), '```', '']
     return '\n'.join(lines)
+
+
+# --- wiring for 06b-09 (descriptive) ---------------------------------------------------------------
+
+def resolution_floor(rule, measured):
+    """Evaluate the record's approved rule '<k>x ...' against the qualification's measured discrepancy."""
+    import re
+    match = re.match(r'^\s*(\d+(?:\.\d+)?)\s*x\b', str(rule))
+    if not match:
+        raise ValueError(f'resolution-floor rule must read "<factor>x ..." (got {rule!r})')
+    return float(match.group(1)) * float(measured)
+
+
+def concentration_table(freeze, neuron, *, null_orders, null_seed, resolution_floor):
+    """Concentration and cancellation at each arm x metric's frozen top down_proj adapter (discovery means)."""
+    out = {}
+    for arm, metrics in freeze.items():
+        out[arm] = {}
+        for metric, sel in metrics.items():
+            layer = sel['down_proj']['layer']
+            values = neuron.get(arm, {}).get(metric, {}).get(layer)
+            if values is None:
+                out[arm][metric] = dict(available=False, reason='no neuron attributions', layer=layer)
+                continue
+            out[arm][metric] = dict(concentration(values, null_orders=null_orders, null_seed=null_seed,
+                                                  resolution_floor=float(resolution_floor)), layer=layer)
+    return out
+
+
+def a_vs_a0(rows_path, freeze):
+    """Raw cos(a_T, a_0) and drift from the post hoc init check, for each frozen top down_proj; no sign alignment."""
+    if rows_path is None:
+        return None
+    rows = [json.loads(line) for line in open(rows_path) if line.strip()]
+    index = {(r['arm'], r['layer'], r['module']): r for r in rows}
+    out = {}
+    for arm, metrics in freeze.items():
+        out[arm] = {}
+        for metric, sel in metrics.items():
+            row = index.get((arm, sel['down_proj']['layer'], 'down_proj'))
+            out[arm][metric] = None if row is None else dict(layer=row['layer'], cos_a=row['cos_a'],
+                                                             a_drift=row['a_drift'])
+    return dict(out, label='raw saved-factor cosine and drift; gauge-dependent, historical description only')
+
+
+def early_stop_threshold(untuned_items, *, rule):
+    """Threshold from this study's untuned run under the record's rule (kind: quantile-of-untuned-eos-tokens)."""
+    if not isinstance(rule, dict) or rule.get('kind') != 'quantile-of-untuned-eos-tokens' or \
+            not isinstance(rule.get('quantile'), float) or not 0 < rule['quantile'] < 1:
+        raise ValueError('early-stop rule must be {kind: quantile-of-untuned-eos-tokens, quantile: 0<q<1} '
+                         'from the launch record')
+    tokens = [r['tokens'] for r in untuned_items if r['stop_reason'] == 'eos']
+    if not tokens:
+        raise ValueError('untuned run has no EOS-terminated responses')
+    return float(np.quantile(tokens, rule['quantile']))
+
+
+def early_stop_rate(items, threshold):
+    """Fraction of responses that stopped with EOS below the threshold; capped responses never count."""
+    return float(np.mean([r['stop_reason'] == 'eos' and r['tokens'] < threshold for r in items])) if items else None
+
+
+def stage_d_outcomes(items, *, early_threshold):
+    n = len(items)
+    capped = sum(r['stop_reason'] != 'eos' for r in items)
+    invalid = sum(r.get('status') != 'valid' for r in items)
+    return dict(n=n, accuracy=float(np.mean([bool(r['correct']) for r in items])),
+                mean_tokens=float(np.mean([r['tokens'] for r in items])), capped=capped, invalid=invalid,
+                capped_rate=capped / n, early_stop_rate=early_stop_rate(items, early_threshold))
+
+
+def _correct(row):
+    if 'correct' in row:
+        return bool(row['correct'])
+    if isinstance(row.get('score'), dict) and 'correct' in row['score']:
+        return bool(row['score']['correct'])
+    raise ValueError(f"pilot row {row.get('id')} has no correct flag")
+
+
+def pilot_comparison(study, pilot):
+    """Item-level agreement of this study's full-arm run with the pilot's saved results on the same items."""
+    a = {r['id']: _correct(r) for r in study}
+    b = {r['id']: _correct(r) for r in pilot}
+    if set(a) != set(b):
+        raise ValueError('study and pilot items differ')
+    flips = [dict(id=i, pilot=b[i], study=a[i]) for i in sorted(a) if a[i] != b[i]]
+    return dict(n=len(a), agree=len(a) - len(flips), flips=flips, study_accuracy=float(np.mean(list(a.values()))),
+                pilot_accuracy=float(np.mean(list(b.values()))))
