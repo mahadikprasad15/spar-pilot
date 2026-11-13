@@ -81,7 +81,7 @@ Pass 1 also saves, per example, every adapter's Σ_t |c_t| and token count (for 
 
 This is exact (z does not depend on the backward) and avoids holding 28 × tokens × 8,960 activations. Identity checked per example: Σ_j attr_j = attr_i for that adapter. Both quantities are gauge-invariant under (a, b) → (k a, b/k). Neuron attribution is removal of neuron j's term from the adapter read only, not neuron ablation.
 
-Cost per arm: 2 forwards + 2 backwards over discovery.
+Cost per arm: 2 forwards + 2 backwards over discovery. The output head is evaluated in checkpointed position chunks (as in `stage0_push_backend`), since full-vocabulary FP32 logits are ~10 GB at 16k tokens.
 
 ### Selection and analysis freeze
 

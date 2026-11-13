@@ -12,3 +12,25 @@ Rules that bind here:
 - Any decision not in the spec or an ADR: stop and ask (add a `## Comments` note on the ticket).
 - Do not compute anything on confirmation rows or the ADR 0001 cohort.
 - Record each serious reusable failure in `docs/agents/experiment-lessons.md`.
+
+## Reuse map — build on these, do not rewrite them
+
+| Need | Existing code | Use |
+| --- | --- | --- |
+| Sources, adapters, scales, a₀ | `neuron_audit_inventory` (inventory-v2) | Load and verify; no re-inventory |
+| Frozen rows, calibration split, leakage record | `neuron_audit_sequences` (sequences-v2) | Calibration, discovery, held-out rows; provenance |
+| FP32 / TF32-off settings, live-adapter checks, `down_proj` pre-hook | `neuron_audit_collector` (`set_ieee_precision`, `check_live_adapter`, `NeuronCollector`, `load_saved_factors`) | Same precision and routing checks; z capture convention |
+| Gradients on a frozen model through LoRA-branch hooks, reduced in FP64 inside backward hooks, bounded output head | `stage0_push_backend.collect` | Pattern for pass 1: per-module forward hook + `output.register_hook` reduction; head checkpointing over position chunks (16k tokens × 151,936 vocab × 4 B ≈ 10 GB of logits otherwise) |
+| Target-aligned positions, full-vocabulary KL | `token_measurement_math` (`prediction_positions`, `full_vocabulary_kl`), `stage0_drift_math.kl_values` | Trace log-likelihood alignment; KL per example |
+| Fixed-context engine with LoRA-branch hooks | `stage0_drift_backend.DriftEngine` | Teacher-forced Stage C runner pattern |
+| Edited adapters and in-memory edits | `stage0_edit_math`, `offline_grpo_cuts`, `stage0_merged_backend.merged_scope` | Removal edits, edited checkpoints, equivalence checks |
+| FP32 greedy batched generation with left padding, determinism, sealed decoding (pad/EOS) | `stage0_evaluation_backend.EvaluationEngine` (`generate`, `verify_loaded_adapter`) | Stage D and base-trace generation; pilot-compatible decoding |
+| v3 scoring, ADR 0001 cohort | `scoring.score_gsm8k_flexible_v3`, `protocol.select_gsm8k_indices` | Unchanged |
+| Paired intervals, McNemar | `stage0_findings_math` (`paired`, `mcnemar`, `noninferiority`) | Bootstrap and accuracy contrasts |
+| Token-budget packing, batch manifests, qualification records | `neuron_audit_qualify` (`pack`, `batch_manifest`, `Qualification`) | Sweeps and frozen manifests |
+| Sealed blocks, resume | `neuron_audit_blocks.BlockStore`, `mirror_store` | Units and volume mirror |
+| Export, readback, restore, stop guard | `neuron_audit_export` (`snapshot`, `upload`, `restore`, `may_stop_pod`, `publish_final_manifest`) | Ticket 05 |
+| Overrun rule, single-writer marker | `neuron_audit_production` (`overrun_check`, `Marker`) | Ticket 11 |
+| Pod facts, disk check, rehearsal, chain, stop command | `neuron_audit_pod` (`facts`, `disk_problems`, `rehearsal`, `chain`, `stop_command`) | Ticket 11 |
+
+New code is only what has no precedent: the `lora_B` gate and per-metric `autograd.grad`, pass-2 recompute, stop pull, matched controls, the natural 64-term and constant reads, the report's primary rules, the NVML monitor, the watchdog and the launch record.
