@@ -16,6 +16,8 @@
 
 - 2026-11-13: review round 2 (Codex) recommends CPU implementation without another design cycle; three corrections (frozen-model gradient path, exact stop IDs, uncertainty in primary decisions) made in draft v3. User approved CPU implementation of 01–05.
 
+- 2026-11-13 (user): the Pod run must be overnight and unattended — qualification, traces, attribution, ablation, generation and report as one chain from an approved launch record, ending with the Pod stopped. Added §Overnight unattended chain, ticket 11, report code moved to ready-for-agent.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

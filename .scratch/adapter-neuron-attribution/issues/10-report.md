@@ -1,6 +1,6 @@
 # 10: Report
 
-**Status:** needs-triage — draft v3
+**Status:** ready-for-agent for code on fixtures (needed before the overnight run); running it on real outputs happens inside the chain. No GPU run, value or budget is approved by this status.
 **Type:** task
 **Blocked by:** 07–09 for real data; fixture-implementable after 04
 

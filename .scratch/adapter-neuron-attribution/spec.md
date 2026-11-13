@@ -151,16 +151,43 @@ FP32 forward and backward, TF32 off, autocast off, eager attention, everywhere i
 - Units: A+B per (arm, batch); C per (arm, condition); D per (arm, condition, batch). Each sealed with IDs, input, plan, code and runtime hashes; durable status; duplicates refused; resume verified by hash.
 - Canonical artifact root is a parameter. Every unit saves config, logs, per-example structured results and a partial manifest.
 - This study's manifest, export and restore are built (ticket 05) on the joint audit's `BlockStore` and `neuron_audit_export` primitives and tested on partial states.
-- Qualification and production caps are approved separately and enforced cumulatively at unit boundaries, including export time. Pod stop is a separate authorization, conditional on a verified backup.
+- Caps come from the launch record and are enforced cumulatively at unit boundaries, including export time. The Pod is stopped at the end of every run after the verified volume copy (see §Overnight unattended chain).
 
 ## Run tiers
 
 1. **CPU** (tickets 01–05): code with fixture tests; no GPU authorization implied.
 2. **Colab rehearsal** (06a, needs the user's go-ahead): calibration rows and rehearsal generation items only, for `gold-sft`, `online-grpo` and untuned. Covering set: no-op hook; single removal; group removal; full `down_proj` removal; natural 64-term read; constant read; full vs edited-checkpoint generation on 2 items; a corrupted and an interrupted unit; online upload and readback of this study's partial outputs with child-process logs. Finds bugs; qualifies nothing.
-3. **Pod qualification and preparation** (06b, needs an approved budget): preflight; real-model finite differences; batch invariance; sweeps; generation batch qualification; then blind base-trace generation for discovery and held-out; a resume rehearsal with local state deleted and verified restore.
-4. **Pod production** (07–09, needs an approved cap).
+3. **Overnight Pod chain** (06b → 07 → 08 → 09 → 10 → export → Pod stop, run unattended by the chain runner, ticket 11; needs the user's approval of the launch record below). Stages: preflight; qualification on calibration rows (finite differences, batch invariance, sweeps, generation batch qualification); blind base traces for discovery and held-out; attribution and freeze; Stage C; Stage D; report; verified export; Pod stop.
+
+A small Pod rehearsal of the same chain (2 arms, a few units, an interruption with local state deleted and a verified restore, a real Pod stop) runs attended before the first overnight launch, unless the user waives it.
 
 The joint audit's Colab and Pod lessons apply from the start (`docs/agents/experiment-lessons.md`).
+
+## Overnight unattended chain
+
+Precedent: the joint audit's approved unattended 03b → 04 chain (`frozen_plan_v1.approved.yaml`: automatic sign-off rule, cap fixed before launch, overrun rule, automatic Pod stop after verified backup). This study follows it, with one change: the Pod always ends stopped.
+
+**Launch record (approved by the user before launch, sealed with the code commit).** Every [proposed] value becomes a fixed value or a fixed rule: tolerances (below), minimums, sweeps and selection rules, the generation batch rule, the statistics, the per-stage and total wall-time caps, and the Pod ID and stop command. Nothing is chosen at night by a person.
+
+**Automatic sign-off after qualification** if every qualification check passes against the launch record's fixed tolerances and no review flag is raised; recorded as the rule's sign-off, not the user's. Any failure, flag, missing arm, unmet minimum or no feasible token budget stops the chain before production.
+
+**Tolerances fixed before launch** **[proposed values for the launch record]**:
+- Real-model finite differences (FP32, central difference on g with ε = 1e-2): median relative error ≤ 0.05 and maximum ≤ 0.20 over checked adapters and neurons.
+- Σ_j attr_j = attr_i: relative error ≤ 1e-4 of Σ_j |attr_j|.
+- Batch invariance on calibration rows: per-example |Δattr| ≤ 1e-4 × max |attr| in that arm and metric.
+- Resolution floor for unavailable R and concentration: 10× the measured batch-invariance discrepancy.
+
+**What does not stop the chain.** Analysis outcomes, including a failed validity gate, unavailable controls or inconclusive primaries, are recorded and reported; they never stop or alter the run.
+
+**Caps and overrun.** Per-stage caps and a total cap from the launch record, enforced at unit boundaries including export time. After 10% of a stage's units and every further 10%, the projected stage time is checked; two consecutive projections above 2× the qualification projection or above the cap end the stage at a safe unit boundary with a verified partial export, and the chain proceeds to report-and-stop.
+
+**End of run, success or failure.**
+1. Write a morning summary (`run_summary.md` + JSON): stages completed, gates, primaries, failures with log pointers, utilization, wall time, cost estimate.
+2. Copy sealed outputs to the persistent volume and verify by full hash.
+3. Export to the private HF dataset with fresh readback; retry 3 times. A failed HF export is recorded but does not keep the Pod alive, because the verified volume copy persists.
+4. Stop the Pod with the exercised stop command (try `runpodctl stop pod <id>`, then `runpodctl pod stop <id>`), logging its output.
+
+**Independent watchdog.** At launch, a separate process (outside the chain's Python) sleeps until total cap + 30 min **[proposed]** and then copies whatever is on local disk to the volume and stops the Pod. A hung or crashed chain therefore cannot leave the Pod billing overnight.
 
 ## GPU utilization
 
@@ -192,6 +219,8 @@ CPU, tiny random Qwen2 + PEFT 0.18.0, no downloads, red/green TDD:
 Gold-trace robustness; TF32; rescaled 64-term reads; cumulative top-1..10 curves; layer bands; other read sizes and drop-top-m; more layers per arm; per-example spot checks; generation for the other four arms and for neuron or constant-read conditions; drift on non-math text; head-level `o_proj` attribution.
 
 ## Open decisions (execution only; CPU implementation may proceed)
+
+0. Approve the launch record (all values, caps, Pod ID, stop command) before the first overnight run; decide whether the attended Pod rehearsal can be waived.
 
 1. Approve [proposed] values (minimums, tolerance, gate rule, margin, thresholds, sweeps, batch rule).
 2. Approve the Colab rehearsal (06a) and a 06b budget.

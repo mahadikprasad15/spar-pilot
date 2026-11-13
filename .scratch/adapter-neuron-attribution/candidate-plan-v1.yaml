@@ -56,9 +56,20 @@ gpu:
   generation_batch_candidates: [1, 8, 16, 32, 64]
   generation_batch_rule: {items: 20, max_correctness_flips: 1, max_stop_reason_changes: 1}
   investigation_targets: {median_busy: 0.85, peak_memory_range: [0.50, 0.80]}   # not gates
-tolerances:
-  neuron_sum_identity: null     # from CPU tests + 06b
-  batch_invariance: null        # from 06b
-  finite_difference: null       # from 06b
-  resolution_floor: null        # from 06b batch invariance
-caps_hours: {colab_06a: null, pod_06b: null, pod_production: null}   # user approves each
+tolerances:   # fixed in the launch record before an unattended run
+  finite_difference: {method: central on g, epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20}
+  neuron_sum_identity: {rel_to_sum_abs: 1.0e-4}
+  batch_invariance: {abs_diff_max_fraction_of_max_abs: 1.0e-4}
+  resolution_floor: 10x measured batch-invariance discrepancy
+caps_hours: {colab_06a: null, overnight_total: null, per_stage: {qualification: null, traces: null, attribution: null, stage_c: null, stage_d: null, report_export: null}}   # set in the launch record
+unattended:
+  chain: [preflight, qualification, base_traces, attribution_and_freeze, stage_c, stage_d, report, volume_copy, hf_export, pod_stop]
+  automatic_signoff: all qualification checks pass against fixed tolerances and no review flag
+  stop_before_production_on: [qualification_failure, review_flag, missing_arm, minimum_unmet, no_feasible_budget]
+  never_stops_run: [validity_gate_failure, unavailable_controls, inconclusive_primaries]
+  overrun: {check_every: 0.10, rule: two consecutive projections > 2x qualification projection or > stage cap}
+  end_of_run: [summary, volume_copy_verified, hf_export_3_attempts, pod_stop]
+  hf_export_failure_keeps_pod: false
+  pod_stop_commands: ["runpodctl stop pod {id}", "runpodctl pod stop {id}"]
+  watchdog: {independent_process: true, fires_at: overnight_total + 0.5h, actions: [copy_local_to_volume, pod_stop]}
+  pod_rehearsal_before_first_launch: true   # user may waive
