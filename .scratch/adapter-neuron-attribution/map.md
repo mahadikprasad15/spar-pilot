@@ -28,6 +28,8 @@
 
 - 2026-11-13: ticket 03 resolved — `attribution_instrument.py` (lora_A scalar reads, embedding-output graph, one autograd.grad per metric, checkpointed head at read positions, pass-2 neuron contraction with the Σ_j identity; oracle and FD checks). PEFT 0.18 `disable_adapter()` unfreezes adapters on exit (lesson recorded). See `issues/03-attribution-instrument.md` §Answer.
 
+- 2026-11-13: ticket 04 resolved — `attribution_ablation.py` (lora_B-gate removal == edited checkpoint, natural 64-term and constant reads, matched controls, discovery-only sealed freeze, ≤19 conditions with recorded skips, Stage C vs the same arm unablated). Open question on random-order seeds in `issues/04-ablation-engine.md` §Comments.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
