@@ -1,6 +1,6 @@
 # 11: Overnight chain runner
 
-**Status:** ready-for-agent — CPU implementation approved by the user 2026-11-13 (overnight requirement, spec §Overnight unattended chain). No GPU run, value or budget is approved by this status.
+**Status:** claimed (2026-11-13) — CPU implementation approved by the user 2026-11-13 (overnight requirement, spec §Overnight unattended chain). No GPU run, value or budget is approved by this status.
 **Type:** task
 **Blocked by:** 05
 
