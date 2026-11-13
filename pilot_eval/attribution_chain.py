@@ -48,7 +48,8 @@ PRODUCTION_ARMS = ['gold-sft', 'online-grpo', 'offline-grpo', 'sampling-sft-k0',
 REQUIRED = ['run_id', 'mode', 'code_commit', 'pod_id', 'pod_stop_commands', 'expected_arms', 'volume_identity',
             'export_repo', 'caps_seconds', 'tolerances', 'minimums', 'selection', 'statistics',
             'generation_batch_rule', 'token_budget_sweep', 'watchdog_margin_seconds', 'timeouts_seconds',
-            'marker_stale_seconds', 'hourly_cost_usd']
+            'marker_stale_seconds', 'hourly_cost_usd', 'compute', 'stage_d']
+STAGE_D_ARMS = ['gold-sft', 'online-grpo']
 AUTO_REVIEWER = 'automatic-rule (launch record sign-off rule; recorded as the rule, not as a person)'
 STATE_FILE = 'attribution/chain/state.json'
 BUDGET_FILE = 'attribution/chain/budget.json'
@@ -117,11 +118,19 @@ def load_launch_record(path, *, code_commit):
     if record['mode'] == 'production':
         if sorted(record['expected_arms']) != sorted(PRODUCTION_ARMS):
             raise LaunchRefused('production must expect all six arms; missing arms are refused')
+        if sorted(record['stage_d'].get('pilot_results', {})) != STAGE_D_ARMS:
+            raise LaunchRefused('production needs saved pilot results for gold-sft and online-grpo '
+                                '(stage_d.pilot_results) for the item-level comparison')
     elif record['mode'] == 'rehearsal':
         if not str(record.get('rehearsal_label', '')).startswith('rehearsal'):
             raise LaunchRefused('a rehearsal needs an explicit rehearsal label for its expected arm set')
     else:
         raise LaunchRefused('mode must be production or rehearsal')
+    from pilot_eval.attribution_report import early_stop_threshold
+    try:
+        early_stop_threshold([dict(tokens=1, stop_reason='eos')], rule=record['stage_d'].get('early_stop_rule'))
+    except ValueError as exc:
+        raise LaunchRefused(f'unresolved launch record values: stage_d.early_stop_rule ({exc})')
     for name in STAGES:
         if name not in record['caps_seconds']:
             raise LaunchRefused(f'unresolved launch record values: caps_seconds.{name}')

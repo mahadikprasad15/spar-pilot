@@ -20,11 +20,13 @@ inventory-v2 arms offline; tests: a tiny random Qwen2), so the same code runs on
 """
 import hashlib
 import json
+import time
 from pathlib import Path
 
 import numpy as np
 
 from pilot_eval import attribution_ablation as ab
+from pilot_eval import attribution_gpu as gpu
 from pilot_eval import attribution_instrument as ai
 from pilot_eval import attribution_metrics as am
 from pilot_eval import attribution_report as ar
@@ -40,6 +42,10 @@ REPORT_DIR = 'attribution/report'
 STAGE_D_RUNS = {'gold-sft': ['full', 'top10-trace', 'match10-trace', 'top10-stop', 'match10-stop'],
                 'online-grpo': ['full', 'top10-trace', 'match10-trace']}
 METRICS = ('trace', 'stop')
+COMPUTE_DIR = 'attribution/compute'
+# (forward passes, activation-only backward passes) per token, for the MFU estimate
+PASSES = dict(preflight=(1, 0), qualification=(1, 2), base_traces=(1, 0), attribution_and_freeze=(2, 2),
+              stage_c=(2, 0), stage_d=(1, 0), report=(1, 0))
 
 
 def _sha(value):
@@ -63,11 +69,60 @@ class Stages:
         self.arms = list(record['expected_arms'])
         self.units = au.Units(self.root, plan_sha256=_sha(record), code_sha256=code_sha256,
                               runtime_sha256=_sha(backend.runtime()))
+        self.mon = None
 
     def mapping(self):
-        return {name: getattr(self, name) for name in
+        return {name: self._monitored(name, getattr(self, name)) for name in
                 ['preflight', 'qualification', 'base_traces', 'attribution_and_freeze', 'stage_c', 'stage_d',
                  'report']}
+
+    def _monitored(self, name, fn):
+        """Run a stage under a ``StageMonitor``; its record (and first-unit profiler trace) is sealed per attempt."""
+        def run(ctx):
+            stamp = time.time_ns()
+            staging = self.root / 'profiles' / f'{name}-{stamp}.json'  # outside the export scope until sealed
+            forward, backward = PASSES[name]
+            self.mon = gpu.StageMonitor(name, nvml=getattr(self.backend, 'nvml', 'auto'),
+                                        sync=getattr(self.backend, 'synchronize', lambda: None),
+                                        parameters=getattr(self.backend, 'parameter_count', lambda: None)(),
+                                        peak_flops=self.record['compute']['fp32_peak_flops'],
+                                        forward_passes=forward, backward_passes=backward, profile_path=staging)
+            self.mon.start()
+            try:
+                return fn(ctx)
+            finally:
+                record = self.mon.finish()
+                files = {'compute.json': record}
+                if staging.is_file():
+                    files['trace.json'] = staging.read_bytes()
+                    record['profile_trace'] = 'trace.json'
+                directory = self.root / COMPUTE_DIR / f'{name}-{stamp}'
+                au.seal_run(directory, files)
+                ctx.expect(runs=[str(directory.relative_to(self.root))])
+        return run
+
+    def _unit(self, rows, padded_width=None):
+        """Account one batch (unpadded and padded tokens) and profile it if it is the stage's first unit."""
+        lengths = [len(r['input_ids']) if 'input_ids' in r else len(r['prompt_ids']) for r in rows]
+        if self.mon is not None:
+            self.mon.add_batch(lengths=lengths, padded_width=padded_width or max(lengths))
+            return self.mon.unit()
+        from contextlib import nullcontext
+        return nullcontext()
+
+    def _generate(self, generator, items, batches):
+        """Generation one batch at a time so the first batch is profiled and generated tokens are counted."""
+        by_id = {r['id']: r for r in items}
+        out = []
+        for index, batch in enumerate(batches):
+            rows = [by_id[i] for i in batch]
+            with self.mon.unit() if self.mon is not None else _null():
+                part = at.generate(generator, rows, [batch])
+            lengths = [len(r['prompt_ids']) + len(o['generated_ids']) for r, o in zip(rows, part)]
+            if self.mon is not None:
+                self.mon.add_batch(lengths=lengths, padded_width=max(lengths))
+            out += [dict(o, batch=index) for o in part]
+        return out
 
     # --- helpers ----------------------------------------------------------------------------------
 
@@ -87,7 +142,7 @@ class Stages:
         batches = [[r['id'] for r in rows[i:i + batch_size]] for i in range(0, len(rows), batch_size)]
         directory = at.split_dir(self.root, split) / 'generation'
         if not (directory / 'complete.json').is_file():
-            responses = at.generate(self.backend.untuned_generator(batch_size), rows, batches)
+            responses = self._generate(self.backend.untuned_generator(batch_size), rows, batches)
             config = dict(model=self.backend.runtime().get('model'), adapter=None, decoding=self.backend.decoding(),
                           prompt_template='protocol.gsm8k_messages + chat template (frozen sequences-v2 prefix)',
                           prompt_ids=[r['id'] for r in rows], batches=batches, scorer='gsm8k_flexible_v3',
@@ -230,7 +285,9 @@ class Stages:
             inst = self._instrument(self.backend.load(arm))
 
             def compute(batch, inst=inst):
-                blocks, counts, results = ai.unit_blocks(inst.attribute([by_id[i] for i in batch]))
+                rows_b = [by_id[i] for i in batch]
+                with self._unit(rows_b):
+                    blocks, counts, results = ai.unit_blocks(inst.attribute(rows_b))
                 return dict(blocks=blocks, counts=counts, results=results)
 
             run_units(self.units, arm, batches, compute, boundary=ctx.boundary, input_sha256=input_sha)
@@ -281,7 +338,8 @@ class Stages:
                 def evaluate(condition, stage=stage):
                     merged = {k: np.full(len(ids), np.nan) for k in ('delta_trace', 'delta_stop', 'kl')}
                     for batch in batches:
-                        part = stage.evaluate(batch, condition)
+                        with self._unit(batch):
+                            part = stage.evaluate(batch, condition)
                         for key in merged:
                             merged[key][[order[i] for i in part['example_ids']]] = part[key]
                     return dict(blocks={('examples', 0, 'delta_trace'): merged['delta_trace'][:, None].astype(np.float32),
@@ -295,6 +353,48 @@ class Stages:
                 result = run_conditions(self.units, arm, conditions, evaluate, example_ids=ids,
                                         boundary=ctx.boundary, input_sha256=_sha(ids))
                 out[f'{arm}|{metric}'] = dict(skipped=result['skipped'], conditions=len(conditions))
+        return out
+
+    def _compute_records(self):
+        out = {}
+        for directory in sorted((self.root / COMPUTE_DIR).glob('*')) if (self.root / COMPUTE_DIR).is_dir() else []:
+            if (directory / 'complete.json').is_file():
+                record = _read(directory, 'compute.json')
+                out[record['stage']] = dict(record, sealed_dir=str(directory.relative_to(self.root)))  # latest attempt
+        return out
+
+    def _neuron_means(self, n_batches):
+        group = {'trace': 'examples', 'stop': 'stop'}
+        out = {}
+        for arm in self.arms:
+            parts = [self.units.read(au.unit_key('ab', arm, batch=i))[0] for i in range(n_batches)]
+            out[arm] = {m: {key[1]: np.nanmean(np.concatenate([p[key] for p in parts]).astype(np.float64), 0)
+                            for key in parts[0] if key[0] == group[m] and key[2] == f'neuron_{m}'} for m in METRICS}
+        return out
+
+    def _stage_d_report(self):
+        base = self.root / STAGE_D_DIR
+        runs = {}
+        for config in sorted(base.glob('*/*/complete.json')):
+            directory = config.parent
+            au.verify_run(directory)
+            runs[f'{directory.parent.name}|{directory.name}'] = _jsonl(directory / 'responses.jsonl')
+        if 'untuned|reference' not in runs:
+            return dict(available=False, reason='untuned reference run not sealed')
+        rule = self.record['stage_d']['early_stop_rule']
+        threshold = ar.early_stop_threshold(runs['untuned|reference'], rule=rule)
+        out = dict(early_stop_threshold=dict(rule=rule, tokens=threshold, source='this study\'s untuned run'),
+                   outcomes={k: ar.stage_d_outcomes(v, early_threshold=threshold) for k, v in runs.items()},
+                   pilot_comparison={})
+        root = Path(self.record['inputs'].get('artifact_root', '.'))
+        for arm, path in sorted(self.record['stage_d'].get('pilot_results', {}).items()):
+            if f'{arm}|full' not in runs:
+                continue
+            path = Path(path) if Path(path).is_absolute() else root / path
+            try:
+                out['pilot_comparison'][arm] = ar.pilot_comparison(runs[f'{arm}|full'], _jsonl(path))
+            except (OSError, ValueError, KeyError) as exc:  # an analysis gap is reported, never fatal
+                out['pilot_comparison'][arm] = dict(available=False, reason=f'{type(exc).__name__}: {exc}')
         return out
 
     def stage_d(self, ctx):
@@ -320,7 +420,7 @@ class Stages:
             generator, edit = self.backend.stage_d_generator(None if arm == 'untuned' else arm, adapters, size,
                                                              self.root / 'attribution/edited' / arm / condition)
             scored = []
-            for r in at.generate(generator, items, batches):
+            for r in self._generate(generator, items, batches):
                 score = score_gsm8k_flexible_v3(r['text'], gold[r['id']], capped=r['stop_reason'] != 'eos')
                 scored.append(dict(r, correct=bool(score['correct']), status=score['status'],
                                    tokens=len(r['generated_ids']), capped=r['stop_reason'] != 'eos'))
@@ -372,8 +472,19 @@ class Stages:
                       provenance=self.backend.sources()['provenance'], discovery=discovery,
                       unresolved_arms=self.backend.unresolved_arms(),
                       freeze={arm: freeze['arms'][arm] for arm in self.arms}, stage_c=stage_c, stage_d={},
-                      neuron={}, compute={}, a_vs_a0=None)
+                      neuron={}, compute=self._compute_records(), a_vs_a0=None)
         report = ar.build(inputs)
+        qual = _read(self.root / QUAL_DIR, 'qualification.json')
+        floor_rule = qual['resolution_floor']
+        floor = ar.resolution_floor(floor_rule['rule'], floor_rule['measured_batch_invariance'])
+        frozen = {arm: freeze['arms'][arm] for arm in self.arms}
+        report['descriptive'] = dict(
+            report['descriptive'], resolution_floor=dict(floor_rule, value=floor),
+            concentration=ar.concentration_table(frozen, self._neuron_means(len(batches)),
+                                                 null_orders=stats['null_orders'], null_seed=stats['null_seed'],
+                                                 resolution_floor=floor),
+            a_vs_a0=ar.a_vs_a0(self.record['inputs'].get('init_check_rows'), frozen))
+        report['stage_d'] = self._stage_d_report()
         if stage_d:  # concordance over gold-sft's generated removal conditions
             report['concordance'] = ar.concordance(concordance_c, stage_d,
                                                    ar.bootstrap_indices(len(next(iter(concordance_c.values()))['delta_trace']),
@@ -473,3 +584,8 @@ def build(record, local_root, volume_root, *, backend=None, code_sha256=None):
         from pilot_eval.attribution_backend import TransformersBackend
         backend = TransformersBackend(record, volume_root)
     return Stages(record, local_root, backend, code_sha256=code_sha256 or record['code_commit']).mapping()
+
+
+def _null():
+    from contextlib import nullcontext
+    return nullcontext()

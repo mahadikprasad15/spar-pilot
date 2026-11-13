@@ -34,6 +34,8 @@
 
 - 2026-11-13: ticket 11 resolved — `attribution_chain.py` (sealed launch record, rule sign-off, persisted caps, teardown on every path ending in a requested stop, resume rule, watchdog), `attribution_stages.py` (06b–09 stages from 01–05 and 10, CPU end-to-end rehearsal test), `attribution_backend.py`, `scripts/attribution_{watchdog,overnight}.sh`. New launch-record fields listed in `issues/11-overnight-chain-runner.md` §Comments.
 
+- 2026-11-13: CPU wiring for 06b–09 — per-stage compute monitoring sealed with the run, concentration with the floor rule, a vs a₀, Stage D outcomes with early-stop rate, pilot comparison. Questions on the early-stop definition and pilot files in `issues/11-overnight-chain-runner.md` §Comments.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

@@ -111,6 +111,9 @@ class TinyBackend:
     def preflight(self):
         return []
 
+    def parameter_count(self):
+        return sum(p.numel() for p in make(0).parameters())
+
     def device_memory(self):
         return 10**9
 
@@ -147,6 +150,19 @@ class TinyBackend:
         return at.HFGenerator(model, pad_token_id=PAD, eos_token_id=EOS, max_new_tokens=6, decode=decode), edit
 
 
+def init_rows(tmp_path):
+    path = tmp_path / 'init_rows.jsonl'
+    path.write_text(''.join(json.dumps(dict(arm=a, layer=l, module='down_proj', cos_a=0.9, a_drift=0.1)) + '\n'
+                            for a in ['gold-sft', 'online-grpo'] for l in (0, 1)))
+    return path
+
+
+def pilot_file(tmp_path, arm):
+    path = tmp_path / f'pilot-{arm}.jsonl'
+    path.write_text(''.join(json.dumps(dict(id=f'gsm8k:test:{i}', correct=i % 2 == 0)) + '\n' for i in range(5)))
+    return path
+
+
 def launch(tmp_path):
     rec = dict(
         schema=ch.LAUNCH_SCHEMA, run_id='rehearsal-cpu-1', mode='rehearsal', rehearsal_label='rehearsal-cpu-2arm',
@@ -165,7 +181,11 @@ def launch(tmp_path):
         timeouts_seconds=dict(copy=60, export_attempt=60, stop_attempt=10, writer_join=5),
         qualification=dict(calibration_minimum=2, fd_arms=['gold-sft'], fd_rows=2, fd_adapters=2, fd_neurons=2,
                            head_chunk=4, memory_fraction=0.8),
-        inputs=dict(note='fixture backend'))
+        inputs=dict(note='fixture backend', init_check_rows=str(init_rows(tmp_path))),
+        compute=dict(fp32_peak_flops=1e9),
+        stage_d=dict(early_stop_rule=dict(kind='quantile-of-untuned-eos-tokens', quantile=0.5),
+                     pilot_results={'gold-sft': str(pilot_file(tmp_path, 'gold-sft')),
+                                    'online-grpo': str(pilot_file(tmp_path, 'online-grpo'))}))
     path = tmp_path / 'launch_record.json'
     ch.seal_launch_record(rec, path)
     return ch.load_launch_record(path, code_commit='abc')
@@ -202,6 +222,20 @@ def test_rehearsal_chain_runs_every_real_stage_end_to_end(tmp_path):
     assert au.Units(tmp_path / 'volume', plan_sha256='x', code_sha256='x', runtime_sha256='x').state(
         au.unit_key('ab', 'gold-sft', batch=0)) == 'sealed'
     au.verify_run(tmp_path / 'volume' / ab.FREEZE_DIR)
+    compute = report['compute']
+    assert {'qualification', 'attribution_and_freeze', 'stage_c', 'stage_d'} <= set(compute)
+    attribution = compute['attribution_and_freeze']
+    assert attribution['tokens'] > 0 and 0 <= attribution['padding_fraction'] < 1 and attribution['profiled_units'] == 1
+    assert attribution['nvml']['available'] is False and attribution['mfu']['available'] is True
+    conc = report['descriptive']['concentration']
+    assert set(conc) == {'gold-sft', 'online-grpo'} and 'neurons_to_50' in conc['gold-sft']['trace']
+    assert report['descriptive']['resolution_floor']['rule'] == '10x batch invariance'
+    assert report['descriptive']['a_vs_a0']['gold-sft']['trace']['cos_a'] == 0.9
+    sd = report['stage_d']
+    assert sd['early_stop_threshold']['rule']['quantile'] == 0.5 and 'untuned|reference' in sd['outcomes']
+    assert set(sd['pilot_comparison']) == {'gold-sft', 'online-grpo'} and sd['pilot_comparison']['gold-sft']['n'] == 5
+    md = (local / st.REPORT_DIR / 'report.md').read_text()
+    assert '## Stage D' in md and 'early-stop rate' in md and '## Concentration' in md
     qual = json.loads((local / st.QUAL_DIR / 'qualification.json').read_text())
     assert all(qual['checks'].values()) and qual['generation_batch'] in (1, 2, 4)
 

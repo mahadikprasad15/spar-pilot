@@ -457,6 +457,26 @@ def render(report):
     if 'concordance' in report:
         lines += ['', '## Concordance (exploratory)', '', report['concordance']['label'],
                   'Disagreements: ' + (json.dumps(report['concordance']['disagreements']) or 'none')]
+    sd = report.get('stage_d')
+    if sd and sd.get('outcomes'):
+        lines += ['', '## Stage D (ADR 0001 cohort)', '',
+                  f"Early-stop threshold: {_fmt(sd['early_stop_threshold']['tokens'])} tokens "
+                  f"({sd['early_stop_threshold']['rule']}), from this study's untuned run.", '',
+                  '| run | accuracy | mean tokens | capped | invalid | early-stop rate |',
+                  '| --- | --- | --- | --- | --- | --- |']
+        lines += [f"| {k} | {_fmt(v['accuracy'])} | {_fmt(v['mean_tokens'])} | {v['capped']} | {v['invalid']} | "
+                  f"{_fmt(v['early_stop_rate'])} |" for k, v in sd['outcomes'].items()]
+        for arm, c in sd.get('pilot_comparison', {}).items():
+            lines.append(f"- {arm} vs pilot: " + (f"{c['agree']}/{c['n']} items agree; flips {c['flips']}"
+                                                  if 'agree' in c else f"unavailable ({c['reason']})"))
+    conc = report.get('descriptive', {}).get('concentration')
+    if conc:
+        lines += ['', '## Concentration (descriptive; attribution, not causal sparsity)', '']
+        for arm, metrics in conc.items():
+            for metric, c in metrics.items():
+                lines.append(f"- {arm} {metric} (layer {c.get('layer')}): " +
+                             (f"50% at {c['neurons_to_50']}, 90% at {c['neurons_to_90']} neurons; cancellation "
+                              f"{_fmt(c['cancellation'])}" if c.get('available') else 'unavailable (below floor)'))
     lines += ['', '## Compute appendix', '', '```', json.dumps(report['compute'], indent=2, default=str), '```', '']
     return '\n'.join(lines)
 

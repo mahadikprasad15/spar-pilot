@@ -175,6 +175,13 @@ class TransformersBackend:
         return at.HFGenerator(model, pad_token_id=self.tokenizer.pad_token_id, eos_token_id=self.tokenizer.eos_token_id,
                               max_new_tokens=self.inputs['max_new_tokens'], decode=self.decode), edit
 
+    def parameter_count(self):
+        """N in the FLOP model: base-model parameters (the rank-1 adapters are negligible)."""
+        return sum(p.numel() for n, p in self.untuned().named_parameters())
+
+    def synchronize(self):
+        self.loader.synchronize()
+
     def device_memory(self):
         import torch
         return torch.cuda.get_device_properties(0).total_memory

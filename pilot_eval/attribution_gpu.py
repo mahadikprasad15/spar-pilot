@@ -102,11 +102,11 @@ def padding_fraction(lengths, *, padded_width):
     return 1.0 - sum(lengths) / total
 
 
-def mfu(*, parameters, tokens, seconds, peak_flops, backward_passes=0):
-    """Estimate: (2N forward + 2N per activation-only backward) x unpadded tokens / (seconds x peak)."""
+def mfu(*, parameters, tokens, seconds, peak_flops, backward_passes=0, forward_passes=1):
+    """Estimate: (2N per forward + 2N per activation-only backward) x unpadded tokens / (seconds x peak)."""
     if seconds <= 0 or peak_flops <= 0 or parameters <= 0:
         raise ValueError('positive seconds, peak FLOP/s and parameter count required')
-    flops = 2.0 * parameters * tokens * (1 + backward_passes)
+    flops = 2.0 * parameters * tokens * (forward_passes + backward_passes)
     return dict(flops=flops, seconds=seconds, peak_flops=peak_flops, mfu=flops / seconds / peak_flops,
                 model='forward 2N + 2N per backward without weight gradients, per unpadded token',
                 excludes=['attention_scores', 'padding'], estimate=True)
@@ -133,8 +133,8 @@ class StageMonitor:
     estimate (only with the record's FP32 peak FLOP/s) and a profiler trace of the stage's first unit only."""
 
     def __init__(self, stage, *, nvml='auto', sync, parameters, peak_flops, backward_passes=0, now=time.perf_counter,
-                 profile_path=None):
-        self.stage, self.sync, self.now = stage, sync, now
+                 profile_path=None, forward_passes=1):
+        self.stage, self.sync, self.now, self.forward_passes = stage, sync, now, forward_passes
         self.parameters, self.peak_flops, self.backward_passes = parameters, peak_flops, backward_passes
         self.sampler = NvmlSampler(nvml=nvml)
         self.profile_path, self.profiled = profile_path, 0
@@ -168,12 +168,15 @@ class StageMonitor:
                       tokens_per_second=self.tokens / seconds if seconds > 0 and self.tokens else None,
                       nvml=self.sampler.summary(), profiled_units=self.profiled,
                       profile_trace=None if not self.profiled else str(self.profile_path))
-        if not self.peak_flops:
+        if not self.parameters:
+            record['mfu'] = dict(available=False, reason='parameter count unavailable')
+        elif not self.peak_flops:
             record['mfu'] = dict(available=False, reason='no FP32 peak FLOP/s in the launch record')
         elif not self.tokens or seconds <= 0:
             record['mfu'] = dict(available=False, reason='no tokens timed')
         else:
             record['mfu'] = dict(mfu(parameters=self.parameters, tokens=self.tokens, seconds=seconds,
-                                     peak_flops=self.peak_flops, backward_passes=self.backward_passes),
+                                     peak_flops=self.peak_flops, backward_passes=self.backward_passes,
+                                     forward_passes=self.forward_passes),
                                  available=True)
         return record

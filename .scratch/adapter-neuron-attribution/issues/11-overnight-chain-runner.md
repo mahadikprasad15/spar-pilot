@@ -59,3 +59,23 @@ The code needs these values, and the spec and candidate plan don't give them. Th
   5. rewrites the summary with the outcome.
   It exits cleanly when the chain writes its done file. Both behaviours are tested by running the real script.
 - **Not covered on CPU.** The CUDA loader, NVML sampling inside stages, the real HF upload and a real Pod stop. These are 06a and the attended Pod rehearsal.
+
+### 2026-11-13 — CPU wiring for 06b–09 (implementing agent)
+
+- **Every stage runs under `attribution_gpu.StageMonitor`.** It records NVML busy/memory/power at 1 Hz (≥ 30 s needed for a summary), synchronized wall time, unpadded and padded tokens, padding fraction, an MFU estimate and a profiler trace of the stage's first unit only. Each attempt is sealed under `attribution/compute/<stage>-<ns>/`, and the report's compute appendix shows the latest attempt per stage.
+  - The MFU numerator uses (forward, backward) passes per stage: attribution (2, 2), Stage C (2, 0), generation (1, 0), qualification (1, 2).
+  - On the Pod, NVML needs `nvidia-ml-py` in the venv. Without it the record says "unavailable".
+- **The report now includes:**
+  - neuron concentration and cancellation at each frozen top `down_proj`, with the random-order null; the resolution floor is the record's rule evaluated on 06b's measured batch-invariance discrepancy;
+  - a vs a₀ quoted raw from the init check's `rows.jsonl`, if `inputs.init_check_rows` is given;
+  - Stage D outcomes per run (accuracy, mean tokens, capped, invalid, early-stop rate);
+  - the item-level comparison of the full-arm runs with saved pilot results. A missing or mismatched pilot file is reported as unavailable, never fatal.
+- **New required launch-record fields:**
+  - `compute.fp32_peak_flops`: the measured device's dense FP32 peak, the MFU denominator.
+  - `stage_d.early_stop_rule`, in the form `{kind: quantile-of-untuned-eos-tokens, quantile: q}`.
+  - `stage_d.pilot_results`: saved pilot responses for gold-sft and online-grpo; required in production.
+
+### 2026-11-13 — question for the user (implementing agent)
+
+- **Early-stop definition.** The spec says the early-stop rate uses "the threshold recomputed from this study's untuned run" but never defines early stop, and no ADR or earlier pilot does. I implemented one candidate form: a response counts as an early stop when it ends with EOS before the q-th quantile of the untuned run's EOS-terminated response lengths; capped responses never count. q is left empty. Please confirm the form and give q, or give another definition.
+- **Pilot result files.** Which saved pilot response files are the comparison references for gold-sft and online-grpo (step 64)? Each row needs `id` = `gsm8k:test:<index>` and a `correct` flag (or `score.correct`).
