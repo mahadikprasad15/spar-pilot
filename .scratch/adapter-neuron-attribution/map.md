@@ -26,6 +26,8 @@
 
 - 2026-11-13: ticket 01 resolved — `attribution_traces.py` (prompt IDs from the frozen prefix, raw responses sealed before scoring, decoder-sealed stop IDs, target-position masks, minimum after mask exclusions, confirmation blind until the freeze). Open question on the rehearsal-item draw rule in `issues/01-trace-preparation.md` §Comments.
 
+- 2026-11-13: ticket 03 resolved — `attribution_instrument.py` (lora_A scalar reads, embedding-output graph, one autograd.grad per metric, checkpointed head at read positions, pass-2 neuron contraction with the Σ_j identity; oracle and FD checks). PEFT 0.18 `disable_adapter()` unfreezes adapters on exit (lesson recorded). See `issues/03-attribution-instrument.md` §Answer.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

@@ -1,6 +1,6 @@
 # 03: Attribution instrument
 
-**Status:** ready-for-agent — CPU implementation approved by the user 2026-11-13 (spec draft v3). No GPU run, value or budget is approved by this status.
+**Status:** resolved (2026-11-13) — CPU implementation approved by the user 2026-11-13 (spec draft v3). No GPU run, value or budget is approved by this status.
 **Type:** task
 **Blocked by:** 02
 
@@ -17,3 +17,24 @@
 - [ ] Tests (tiny random Qwen2 + PEFT 0.18.0): frozen model without the embedding-output graph has no grad_fn (documents the failure); each metric's attributions match its own finite differences; metric order does not change results; g = 1 logits identical; untuned and zero-b → 0; finite differences (5 adapters, 3 neurons) independent of the hook path; earlier-prompt-token fixture; pass-2 recompute equals stored-z reference; batch 1 vs 8; gauge; mutations (wrong layer, wrong branch, wrong sign, mean-not-sum, response-only positions) each fail.
 
 ## Comments
+
+## Answer
+
+2026-11-13 — `pilot_eval/attribution_instrument.py`, tests `tests/test_attribution_instrument.py` (22, tiny random Qwen2 + PEFT 0.18.0, CPU, LoRA scale 2).
+
+- **Scalar reads only.** `Instrument` captures each adapter's `lora_A` output c_t ([B, T, 1]) for all adapters, ordered by layer then q, k, v, o, gate, up, down. It computes attr_i = −Σ_t c_t ∂M/∂c_t over every unpadded position. No full-width branch output or gradient is requested.
+- **Graph.** A forward hook calls `requires_grad_(True)` on the embedding output; every weight stays frozen (checked, refused otherwise). Each metric is a separate `torch.autograd.grad` over the list of c_t, with `retain_graph` only on the first call. A test documents that the frozen model without this hook has logits with no `grad_fn`.
+- **Bounded head.** Logits are computed only at the read positions, in checkpointed chunks (`head_chunk`), through `attribution_metrics.position_terms`, the same formulas as ticket 02. Values match the full-logit path.
+- **Pass 1 outputs** per example: attr for both metrics (NaN rows where the stop mask is empty), Σ_t |c_t| and the token count per adapter (write matching), signed Σ_t c_t per `down_proj` (c̄), and per-token g for every `down_proj` adapter.
+- **Pass 2** is forward only. The `down_proj` pre-hook contracts attr_j = −a_j Σ_t z_{j,t} g_t in FP64 and drops z, so at most one layer's z is held. Σ_j attr_j = attr_i is enforced per example at `identity_rtol`, which must be supplied (launch record) and is relative to Σ_j |attr_j|.
+- **Independent oracle and finite differences.** `branch_gates` and `neuron_gate` rebuild the scaled branch explicitly with a gate. Checks against them:
+  - The branch-output oracle matches for all 7 module types, both metrics, at s = 2.
+  - Central finite differences match for 5 adapters and 3 neurons, both metrics.
+  - A prompt-position-only adapter is attributed correctly.
+  - Pass 2 equals a stored-z reference; batch 1 equals the batched run; gauge k ∈ {−2, 0.5} leaves results unchanged; metric order makes no difference; g = 1 hooks leave logits bit-identical.
+  - Untuned and zero-b give exactly 0.
+  - Each mutation fails: wrong layer, wrong branch, wrong sign, mean instead of sum, response-only positions.
+- **Routing.** Checked before every pass: active adapter set, not merged or disabled, rank 1, dropout 0, FP32, frozen. A `set_adapter` switch is re-checked, and the instrument refuses the trainable flags PEFT sets on the new adapter.
+- **Found and fixed.** Leaving `disable_adapter()` in PEFT 0.18.0 re-marks adapter weights trainable. `frozen_disable_adapter` restores the flags; recorded in `docs/agents/experiment-lessons.md`.
+- `unit_blocks` maps one batch result to BlockStore blocks, storing FP32 copies of FP64 results. The identity is checked in memory on FP64 before storage. Stop-pull arrays sit in a `stop` group whose count is 0 for empty masks, so those rows are NaN, never 0.
+- **Not in this module.** Token-budget packing uses `neuron_audit_qualify.pack` in the chain runner, and background unit writes belong to ticket 11. Host copies are per output array, not one async copy per batch; that is a performance item to measure in 06a and 06b, not a validity issue.

@@ -30,6 +30,17 @@ def logit_positions(targets, *, length):
     return [t - 1 for t in targets]
 
 
+def position_terms(logits_at, targets, stop_ids):
+    """Per-position [n, 2] FP32 terms from FP32 logits [n, V]: log p(target), log sum_s p(s).
+
+    The single formula used by the batch functions below and by the chunked output head (ticket 03)."""
+    if logits_at.dtype != torch.float32 or not bool(torch.isfinite(logits_at.detach()).all()):
+        raise ValueError('finite FP32 logits required')
+    lp = torch.log_softmax(logits_at, dim=-1)
+    stops = torch.as_tensor(list(stop_ids), device=logits_at.device)
+    return torch.stack([lp.gather(-1, targets[:, None]).squeeze(-1), torch.logsumexp(lp[:, stops], dim=-1)], dim=-1)
+
+
 def _check(logits):
     if logits.dtype != torch.float32 or logits.ndim != 3:
         raise ValueError('FP32 [batch, seq, vocab] logits required')
@@ -57,9 +68,8 @@ def trace_loglik(logits, input_ids, masks):
     values = []
     for r, positions in enumerate(_selected(logits, masks, 'trace_targets', allow_empty=False)):
         index = torch.tensor(positions, device=logits.device)
-        targets = input_ids[r, index + 1]
-        lp = torch.log_softmax(logits[r, index], dim=-1).gather(-1, targets[:, None]).squeeze(-1)
-        values.append(lp.double().sum() / len(positions))
+        terms = position_terms(logits[r, index], input_ids[r, index + 1], [0])
+        values.append(terms[:, 0].double().sum() / len(positions))
     return torch.stack(values)
 
 
@@ -69,15 +79,15 @@ def stop_pull(logits, masks, *, stop_ids):
     stop_ids = [int(s) for s in stop_ids]
     if not stop_ids or len(set(stop_ids)) != len(stop_ids):
         raise ValueError('stop IDs must be a nonempty set')
-    stops = torch.tensor(stop_ids, device=logits.device)
     values, reasons = [], []
     for r, positions in enumerate(_selected(logits, masks, 'stop_targets', allow_empty=True)):
         if not positions:
             values.append(torch.tensor(float('nan'), dtype=torch.float64, device=logits.device))
             reasons.append(EMPTY_STOP)
             continue
-        lp = torch.log_softmax(logits[r, torch.tensor(positions, device=logits.device)], dim=-1)
-        values.append(torch.logsumexp(lp[:, stops], dim=-1).double().sum() / len(positions))
+        index = torch.tensor(positions, device=logits.device)
+        terms = position_terms(logits[r, index], torch.zeros_like(index), stop_ids)
+        values.append(terms[:, 1].double().sum() / len(positions))
         reasons.append(None)
     return torch.stack(values), reasons
 
