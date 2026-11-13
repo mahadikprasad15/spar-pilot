@@ -48,7 +48,9 @@ class TransformersBackend:
         missing = sorted(set(record['expected_arms']) - set(self.adapter_dirs))
         if missing:
             raise ValueError(f'no adapter directory for arms {missing}')
-        self.loader = Loader(self.path(inputs['model_dir']), self.adapter_dirs, self.path(inputs['tokenizer_dir']),
+        # The base model snapshot is hash-checked at download and may live in the HF cache outside the root.
+        model_dir = Path(inputs['model_dir']) if Path(inputs['model_dir']).is_absolute() else self.path(inputs['model_dir'])
+        self.loader = Loader(model_dir, self.adapter_dirs, self.path(inputs['tokenizer_dir']),
                              record['expected_arms'][0], device=device)
         self.tokenizer = ChatTokenizer(self.path(inputs['tokenizer_dir']))
         if self.tokenizer.pad_token_id is None:
