@@ -19,7 +19,8 @@ metrics:
   kl: full_vs_condition_over_trace_positions
 precision: {dtype: fp32, tf32: false, autocast: false, attention: eager, accumulate: fp64}
 attribution:
-  gate: forward hook on lora_B output (peft 0.18.0)
+  read: lora_A output c_t (rank 1) for all 196 adapters; attr_i = -sum_t c_t * dM/dc_t (no full-width branch gradients)
+  oracle: branch-output gate on fixtures (all module types, s != 1, both metrics)
   graph: requires_grad on embedding output; weights frozen; one torch.autograd.grad call per metric
   pass1_extra_outputs: [per-adapter sum_abs_c and token count, per-down_proj signed sum_c]
   positions: all unpadded
@@ -67,9 +68,12 @@ unattended:
   automatic_signoff: all qualification checks pass against fixed tolerances and no review flag
   stop_before_production_on: [qualification_failure, review_flag, missing_arm, minimum_unmet, no_feasible_budget]
   never_stops_run: [validity_gate_failure, unavailable_controls, inconclusive_primaries]
-  overrun: {check_every: 0.10, rule: two consecutive projections > 2x qualification projection or > stage cap}
-  end_of_run: [summary, volume_copy_verified, hf_export_3_attempts, pod_stop]
+  caps: hard, at unit boundaries, elapsed budget persisted across restarts
+  projections: advisory only, never stop a stage
+  end_of_run: [stop_join_writers, volume_copy_sealed_only_timeout, hf_export_3_attempts_timeout, finalize_sealed_summary, pod_stop_requested_timeout]
+  stop_record: [requested, externally_verified]
+  resume: previous worker verifiably gone and volume identity + sealed units match; else stop for investigation
   hf_export_failure_keeps_pod: false
   pod_stop_commands: ["runpodctl stop pod {id}", "runpodctl pod stop {id}"]
-  watchdog: {independent_process: true, fires_at: overnight_total + 0.5h, actions: [copy_local_to_volume, pod_stop]}
+  watchdog: {independent_process: true, fires_at: persisted remaining total cap + 0.5h, actions: [signal_writer, bounded_wait, copy_sealed_units_only, watchdog_summary, pod_stop_requested]}
   pod_rehearsal_before_first_launch: true   # user may waive

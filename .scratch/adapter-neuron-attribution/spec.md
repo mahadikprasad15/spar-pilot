@@ -63,15 +63,15 @@ Equal weight per example. Attribution = predicted change in the metric when the 
 
 ### Stage A+B — attribution (discovery)
 
-**Gate.** Every `lora_B` module gets a forward hook returning g · out with g = 1. In pinned `peft==0.18.0` the branch is Δy = s · lora_B(lora_A(drop(x))) inline, so ⟨∂M/∂Δy, Δy⟩ = ⟨∂M/∂out, out⟩ and the scale cancels.
+**Scalar read.** For every rank-1 adapter, c_t = the `lora_A` output (one number per token; [batch, seq, 1]). In pinned `peft==0.18.0` the branch is Δy = s · lora_B(lora_A(drop(x))) inline, so removing the adapter (gate g: 1 → 0 on the branch) has first-order effect −Σ_t ⟨∂M/∂Δy_t, Δy_t⟩ = −Σ_t c_t · ∂M/∂c_t: the gradient at c_t already passes through the actual b and scale. Only these scalar reads and their gradients are captured, for all 196 adapters; no full-width branch output or its gradient is requested (those would be ~30.6 GiB for gate/up alone at 16k tokens).
 
-**Differentiable path.** All model and adapter weights stay frozen. The graph comes from `requires_grad_(True)` on the embedding output (an activation; nothing is trained). The captured `lora_B` outputs and `lora_A` outputs (c_t) are graph tensors. Each metric's gradients are taken with a separate `torch.autograd.grad(Σ_e M(e), captured_tensors, retain_graph=…)` call that returns fresh tensors; `.grad` accumulation is never used.
+**Differentiable path.** All model and adapter weights stay frozen. The graph comes from `requires_grad_(True)` on the embedding output (an activation; nothing is trained). The captured c_t tensors are graph tensors. Each metric's gradients are a separate `torch.autograd.grad(Σ_e M(e), [c_t for all adapters], retain_graph=…)` call returning fresh tensors; `.grad` accumulation is never used.
 
-**Pass 1 (forward + 2 backwards).** One forward over a batch; backward of Σ_e L_e, then of Σ_e S_e (graph retained once). Per example, over every unpadded position (prompt, header, response):
+**Pass 1 (forward + 2 backwards).** One forward over a batch; autograd.grad of Σ_e L_e, then of Σ_e S_e. Per example, over every unpadded position (prompt, header, response):
 
-    attr_i(e) = − Σ_t ⟨ ∂M(e)/∂out⁽ⁱ⁾_t , out⁽ⁱ⁾_t ⟩
+    attr_i(e) = − Σ_t c⁽ⁱ⁾_t · ∂M(e)/∂c⁽ⁱ⁾_t
 
-and for each `down_proj` adapter the scalar g_{t} = ∂M(e)/∂c_t at every unpadded position (c_t = `lora_A` output), stored per metric.
+and the per-token g_t = ∂M(e)/∂c_t is kept for every `down_proj` adapter, per metric. An independent oracle on small fixtures, −Σ_t ⟨∂M/∂Δy_t, Δy_t⟩ through a gate on the explicitly built scaled branch, must agree for every module type, for s ≠ 1 and for both metrics. Actual peak memory is still measured in qualification: other retained activations remain.
 
 Pass 1 also saves, per example, every adapter's Σ_t |c_t| and token count (for the discovery write ‖s b‖ · mean |c_t| used by matching) and every `down_proj` adapter's signed Σ_t c_t (for c̄), so selection needs no extra run.
 
@@ -159,7 +159,7 @@ FP32 forward and backward, TF32 off, autocast off, eager attention, everywhere i
 2. **Colab rehearsal** (06a, needs the user's go-ahead): calibration rows and rehearsal generation items only, for `gold-sft`, `online-grpo` and untuned. Covering set: no-op hook; single removal; group removal; full `down_proj` removal; natural 64-term read; constant read; full vs edited-checkpoint generation on 2 items; a corrupted and an interrupted unit; online upload and readback of this study's partial outputs with child-process logs. Finds bugs; qualifies nothing.
 3. **Overnight Pod chain** (06b → 07 → 08 → 09 → 10 → export → Pod stop, run unattended by the chain runner, ticket 11; needs the user's approval of the launch record below). Stages: preflight; qualification on calibration rows (finite differences, batch invariance, sweeps, generation batch qualification); blind base traces for discovery and held-out; attribution and freeze; Stage C; Stage D; report; verified export; Pod stop.
 
-A small Pod rehearsal of the same chain (2 arms, a few units, an interruption with local state deleted and a verified restore, a real Pod stop) runs attended before the first overnight launch, unless the user waives it.
+A small Pod rehearsal of the same chain (2 arms, a few units, an interruption with local state deleted and a verified restore, a real Pod stop) runs attended before the first overnight launch, unless the user waives it. It validates against its own explicitly labelled two-arm expected set; production still refuses missing arms.
 
 The joint audit's Colab and Pod lessons apply from the start (`docs/agents/experiment-lessons.md`).
 
@@ -167,7 +167,7 @@ The joint audit's Colab and Pod lessons apply from the start (`docs/agents/exper
 
 Precedent: the joint audit's approved unattended 03b → 04 chain (`frozen_plan_v1.approved.yaml`: automatic sign-off rule, cap fixed before launch, overrun rule, automatic Pod stop after verified backup). This study follows it, with one change: the Pod always ends stopped.
 
-**Launch record (approved by the user before launch, sealed with the code commit).** Every [proposed] value becomes a fixed value or a fixed rule: tolerances (below), minimums, sweeps and selection rules, the generation batch rule, the statistics, the per-stage and total wall-time caps, and the Pod ID and stop command. Nothing is chosen at night by a person.
+**Launch record (approved by the user before launch, sealed with the code commit).** The candidate plan stays proposed; the approved record must resolve every required tolerance and cap (a derived quantity such as the resolution floor may be an approved rule evaluated in qualification). Every [proposed] value becomes a fixed value or a fixed rule: tolerances (below), minimums, sweeps and selection rules, the generation batch rule, the statistics, the per-stage and total wall-time caps, and the Pod ID and stop command. Nothing is chosen at night by a person.
 
 **Automatic sign-off after qualification** if every qualification check passes against the launch record's fixed tolerances and no review flag is raised; recorded as the rule's sign-off, not the user's. Any failure, flag, missing arm, unmet minimum or no feasible token budget stops the chain before production.
 
@@ -179,15 +179,22 @@ Precedent: the joint audit's approved unattended 03b → 04 chain (`frozen_plan_
 
 **What does not stop the chain.** Analysis outcomes, including a failed validity gate, unavailable controls or inconclusive primaries, are recorded and reported; they never stop or alter the run.
 
-**Caps and overrun.** Per-stage caps and a total cap from the launch record, enforced at unit boundaries including export time. After 10% of a stage's units and every further 10%, the projected stage time is checked; two consecutive projections above 2× the qualification projection or above the cap end the stage at a safe unit boundary with a verified partial export, and the chain proceeds to report-and-stop.
+**Caps.** Per-stage caps and a total cap from the launch record, enforced at unit boundaries including export time; reaching one ends that stage at the boundary with its sealed units kept, and the chain proceeds to report-and-stop. Elapsed budget is persisted, so a resumed run uses the remaining cap, not a fresh one. Time projections are logged as advisory only and never stop a stage (longest-first packing makes early projections pessimistic).
+
+**What is sealed and exported.** Every output of this study is in an export-supported sealed layout: `BlockStore` units for arrays, and sealed run directories (manifest with hashes) for the launch record, freezes, trace and response JSONL, per-unit results, summaries and receipts. Ticket 05 extends the `neuron_audit_export.snapshot` contract to these types with a declared expected set; a restore of a complete run and of a failed partial run must both bring back the morning summary and the missing-work list. An upload of an incomplete scope is labelled partial, never complete.
 
 **End of run, success or failure.**
-1. Write a morning summary (`run_summary.md` + JSON): stages completed, gates, primaries, failures with log pointers, utilization, wall time, cost estimate.
-2. Copy sealed outputs to the persistent volume and verify by full hash.
-3. Export to the private HF dataset with fresh readback; retry 3 times. A failed HF export is recorded but does not keep the Pod alive, because the verified volume copy persists.
-4. Stop the Pod with the exercised stop command (try `runpodctl stop pod <id>`, then `runpodctl pod stop <id>`), logging its output.
+1. Stop and join the scientific writer and background writers; keep only sealed, hash-verified units.
+2. Copy sealed outputs to the persistent volume and verify by full hash (bounded by a timeout).
+3. Export to the private HF dataset with fresh readback; 3 attempts, each with a timeout.
+4. Finalize the morning summary (`run_summary.md` + JSON, itself sealed): stages completed, gates, primaries, failures with log pointers, utilization, wall time, cost estimate, and the outcome of steps 2 and 3. If neither backup verified, it says so and lists possibly missing outputs; nothing unverified is labelled verified.
+5. Write the summary to the volume, then request the Pod stop (try `runpodctl stop pod <id>`, then `runpodctl pod stop <id>`, each with a timeout), logging output. The record distinguishes stop requested from stop externally verified.
 
-**Independent watchdog.** At launch, a separate process (outside the chain's Python) sleeps until total cap + 30 min **[proposed]** and then copies whatever is on local disk to the volume and stops the Pod. A hung or crashed chain therefore cannot leave the Pod billing overnight.
+The stop decision follows the user's policy (stop even if the HF export failed), so `neuron_audit_export.may_stop_pod`, which requires a verified HF restore, is not reused for it.
+
+**Independent watchdog.** At launch, a separate process (outside the chain's Python) sleeps for the persisted remaining total cap + 30 min **[proposed]**. On firing it signals the writer to stop, waits a bounded time, copies only sealed, hash-verified units to the volume (timeout), writes a watchdog summary, and requests the stop (timeout per attempt). An in-Pod watchdog cannot guarantee a stop if the container, credentials or host fail; the record says stop requested, not verified.
+
+**Resume and the single-writer marker.** A relaunch resumes only if the previous worker for this run ID is verifiably gone (PID not running on this host, heartbeat stale) and the volume identity and sealed units match the launch record; then it takes over its own marker. A live writer, a foreign run ID or any ambiguity stops safely for investigation. The marker is an advisory single-host check, not a distributed lock; `resume_own=True` is never set blindly.
 
 ## GPU utilization
 

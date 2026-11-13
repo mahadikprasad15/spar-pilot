@@ -18,6 +18,8 @@
 
 - 2026-11-13 (user): the Pod run must be overnight and unattended — qualification, traces, attribution, ablation, generation and report as one chain from an approved launch record, ending with the Pod stopped. Added §Overnight unattended chain, ticket 11, report code moved to ready-for-agent.
 
+- 2026-11-13: review round 3 (Codex, overnight chain and reuse) adopted in full: scalar-read attribution for all adapters (no full-width gradients), export contract extended to this study's files, bounded-time teardown with sealed-only copies and requested-vs-verified stop, explicit resume rule, hard caps with advisory projections, adapt-not-reuse notes on old numeric code.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

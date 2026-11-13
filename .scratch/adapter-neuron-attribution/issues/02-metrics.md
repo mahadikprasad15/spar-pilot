@@ -12,3 +12,8 @@
 - [ ] Tests: hand-computed sequence with distinct per-position values (first content token included, EOS excluded); padding/template inert; equal-example weighting; finite gradients.
 
 ## Comments
+
+### 2026-11-13 — review round 3 (Codex), adopted
+
+- `token_measurement_math.prediction_positions` expects full-length `question`/`solution`/`user` masks and raises on this study's masks: adapt or parameterize its target-shift logic; do not call it unchanged. Test masks with distinct prompt and content positions.
+- KL direction is KL(full arm ‖ condition) on FP32 forwards with an explicitly constructed same-arm unablated reference — not `DriftEngine`'s variant ‖ untuned with an FP64 head. Test a three-distribution fixture where KL(full ‖ cut), its reverse and KL(cut ‖ untuned) all differ.
