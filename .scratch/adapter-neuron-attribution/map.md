@@ -32,6 +32,8 @@
 
 - 2026-11-13: ticket 10 (code) resolved — `attribution_report.py` (gate, primaries 1–3 by interval rules, Holm per metric, concordance, concentration, render) on fixtures. Interpretations to confirm in `issues/10-report.md` §Comments.
 
+- 2026-11-13: ticket 11 resolved — `attribution_chain.py` (sealed launch record, rule sign-off, persisted caps, teardown on every path ending in a requested stop, resume rule, watchdog), `attribution_stages.py` (06b–09 stages from 01–05 and 10, CPU end-to-end rehearsal test), `attribution_backend.py`, `scripts/attribution_{watchdog,overnight}.sh`. New launch-record fields listed in `issues/11-overnight-chain-runner.md` §Comments.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
