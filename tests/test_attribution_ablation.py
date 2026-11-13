@@ -169,7 +169,7 @@ def test_freeze_and_conditions_from_a_sealed_freeze(tmp_path):
     freeze = ab.build_freeze({'gold-sft': discovery_inputs()}, sources=[dict(split='discovery', sha256='x')],
                              analysis=dict(bootstrap=dict(resamples=10000)), **SETTINGS)
     arm = freeze['arms']['gold-sft']['trace']
-    assert len(arm['top10']) == 10 and arm['top5'] == arm['top10'][:5]
+    assert len(arm['top10']) == 10 and arm['top5'] == arm['top10'][:5] and len(arm['predicted_all']) == 14
     assert arm['down_proj']['index'] in (6, 13) and arm['down_proj']['cbar'] in (0.3, -0.2)
     path = ab.seal_freeze(tmp_path, freeze)
     conds = ab.conditions(path, 'gold-sft', 'trace')

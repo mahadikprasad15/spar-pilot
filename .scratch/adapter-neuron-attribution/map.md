@@ -30,6 +30,8 @@
 
 - 2026-11-13: ticket 04 resolved — `attribution_ablation.py` (lora_B-gate removal == edited checkpoint, natural 64-term and constant reads, matched controls, discovery-only sealed freeze, ≤19 conditions with recorded skips, Stage C vs the same arm unablated). Open question on random-order seeds in `issues/04-ablation-engine.md` §Comments.
 
+- 2026-11-13: ticket 10 (code) resolved — `attribution_report.py` (gate, primaries 1–3 by interval rules, Holm per metric, concordance, concentration, render) on fixtures. Interpretations to confirm in `issues/10-report.md` §Comments.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

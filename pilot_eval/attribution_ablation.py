@@ -199,7 +199,7 @@ def build_freeze(arms, *, sources, analysis, tolerance, seed, random_seeds, top_
             position = layers.index(layer)
             out['arms'][arm][m] = dict(
                 top10=tops[m], top5=tops[m][:top_singles],
-                predicted={str(i): float(mean[i]) for i in tops[m]},
+                predicted={str(i): float(mean[i]) for i in tops[m]}, predicted_all=[float(v) for v in mean],
                 controls=matched_controls(tops[m], np.asarray(x['write'], dtype=np.float64), projections,
                                           exclude=exclude, tolerance=tolerance, seed=seed),
                 down_proj=dict(index=down, layer=layer, predicted=float(mean[down]),
