@@ -24,6 +24,8 @@
 
 - 2026-11-13: ticket 05 resolved — `attribution_units.py` (BlockStore units, sealed run directories, persisted hard-cap budget, export with declared expected units and runs) and `attribution_gpu.py`. See `issues/05-units-export.md` §Answer.
 
+- 2026-11-13: ticket 01 resolved — `attribution_traces.py` (prompt IDs from the frozen prefix, raw responses sealed before scoring, decoder-sealed stop IDs, target-position masks, minimum after mask exclusions, confirmation blind until the freeze). Open question on the rehearsal-item draw rule in `issues/01-trace-preparation.md` §Comments.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
