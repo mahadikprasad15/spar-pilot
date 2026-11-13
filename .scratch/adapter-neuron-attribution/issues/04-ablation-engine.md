@@ -1,18 +1,16 @@
 # 04: Ablation engine and condition builder
 
-**Status:** needs-triage — draft for adversarial review
+**Status:** needs-triage — draft v2
 **Type:** task
 **Blocked by:** 02
 
-**What to build:** `pilot_eval/attribution_ablation.py`: in-memory removal hooks, the 64-neuron read, the constant read, the write-matched sampler, edited checkpoints, and a builder that reads only a sealed selection.
+**What to build:** `pilot_eval/attribution_ablation.py`.
 
-- [ ] Remove any adapter set (s·b → 0).
-- [ ] Rebuild c_t from a given neuron subset, rescaled to the discovery mean |c_t|; constant read c_t → c̄.
-- [ ] Write-matched sampler: same module type, ±tolerance, seeded; unavailable rather than loosened.
-- [ ] Edited checkpoint (chosen b zeroed) with hash; logits equal the in-memory hook.
-- [ ] Builder refuses unsealed selections or any confirmation-derived input.
-- [ ] Conditions switch hooks on one loaded model (all six adapters via PEFT multi-adapter); no reload per condition.
-- [ ] Generation path: length-sorted batches at the plan's generation batch size, left padding, per-sequence stop at EOS.
-- [ ] Tests: all-neuron read == full; empty removal == full; constant read writes s·b·c̄; rescale factor; checkpoint == hook; sampler determinism and unavailable path.
+- [ ] Removal via g = 0 for any set; equal to an edited checkpoint (chosen b zeroed, hashed).
+- [ ] Matched controls per target: same module type, write tolerance, without replacement, seeded, excluding both metrics' top-10 sets; group = union of per-target matches; unavailable recorded, never loosened.
+- [ ] Natural 64-term read (no rescaling) by a given neuron order; constant read c̄ at every unpadded position.
+- [ ] Builder reads only a sealed freeze; refuses confirmation- or cohort-derived inputs.
+- [ ] Generation from edited checkpoints with a frozen batch manifest (left padding, per-sequence stop).
+- [ ] Tests: all-neuron read == full; empty removal == full; constant read writes s·b·c̄; checkpoint == gate; sampler exclusions, determinism, unavailable path; manifest batch order reproduced.
 
 ## Comments

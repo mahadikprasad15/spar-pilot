@@ -1,18 +1,16 @@
-# 03: Merged attribution instrument
+# 03: Attribution instrument
 
-**Status:** needs-triage — draft for adversarial review
+**Status:** needs-triage — draft v2
 **Type:** task
 **Blocked by:** 02
 
-**What to build:** `pilot_eval/attribution_instrument.py`: one forward and two backwards (M_acc, M_len) per batch giving per-example attribution for all 196 adapters and for all 8,960 neurons of all 28 `down_proj` adapters.
+**What to build:** `pilot_eval/attribution_instrument.py`.
 
-- [ ] Hook each live LoRA branch output s·B(Ax) (resolve from the installed PEFT; fail if fused or missing); `retain_grad()`; no parameter requires grad; `requires_grad_(True)` on the embedding output.
-- [ ] attr_i(e) = −Σ_t ⟨grad, Δy⟩ keeping the example axis.
-- [ ] `down_proj`: z via the `NeuronCollector` pre-hook convention, c_t via `lora_A` output, a from saved factors; attr_j(e) = −a_j Σ_t z_{j,t} ∂M/∂c_t, reduced in the backward hook so z is held for one batch only.
-- [ ] Enforce Σ_j attr_j = attr_i per example; fail the unit otherwise.
-- [ ] FP64 accumulation, FP32 storage; neuron results to `BlockStore`.
-- [ ] GPU-side reductions: no `.item()`/`.cpu()` inside hooks; one async copy to pinned host memory per batch; block writes on a background thread.
-- [ ] Length-bucketed packing to a token budget given by the plan (set in 05b), not a fixed batch size.
-- [ ] Tests (tiny random Qwen2 + PEFT, rank 1 on all seven projections): logits unchanged with hooks; untuned → 0; finite differences (5 adapters, 3 neurons); batch 1 vs 8; gauge k ∈ {−2, 0.5}; mutation tests (wrong layer, wrong sign, mean-not-sum) each fail.
+- [ ] Gate: forward hook on each `lora_B` returning g · out (peft 0.18.0); proven equal to an explicit scaled-branch gate with s ≠ 1.
+- [ ] Pass 1: forward + backward of Σ trace log-likelihood + backward of Σ stop pull (graph retained once); attr_i(e) over all unpadded positions; per-token ∂M/∂c_t for every `down_proj` adapter, per metric.
+- [ ] Pass 2: forward-only recompute of z per `down_proj` layer, one layer at a time; attr_j(e) = −a_j Σ_t z_{j,t} g_t; Σ_j attr_j = attr_i enforced per example.
+- [ ] GPU-side reductions; one async host copy per batch; background writes; token-budget packing by length.
+- [ ] Routing and frozen parameters verified after every `set_adapter`.
+- [ ] Tests (tiny random Qwen2 + PEFT 0.18.0): g = 1 logits identical; untuned and zero-b → 0; finite differences (5 adapters, 3 neurons) independent of the hook path; earlier-prompt-token fixture; pass-2 recompute equals stored-z reference; batch 1 vs 8; gauge; mutations (wrong layer, wrong branch, wrong sign, mean-not-sum, response-only positions) each fail.
 
 ## Comments

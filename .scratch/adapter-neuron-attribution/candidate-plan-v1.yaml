@@ -1,54 +1,62 @@
-# Candidate plan v1 (first pass) — PROPOSED, not approved or frozen.
+# Candidate plan (draft v2, after review round 1) — PROPOSED, not approved or frozen.
 status: proposed
 inputs:
   inventory: runs/joint-neuron-adapter-audit/inventory/inventory-v2
   sequences: sequences-v2
   generation_cohort: adr-0001-gsm8k-test-150-seed42
+  rehearsal_generation: {source: gsm8k-test, exclude: adr-0001-cohort, count: 20, seed: 42}
 arms: [gold-sft, online-grpo, offline-grpo, sampling-sft-k0, sampling-sft-k2, sampling-sft-k5]
+splits:
+  calibration: sequences-v2 calibration math (25)     # visible: rehearsal, sweeps, tolerances
+  discovery: sequences-v2 discovery math (200)        # visible: attribution only
+  confirmation: sequences-v2 held_out math (100)      # traced blind; no outputs before freeze
 traces:
-  teacher_forced: base_correct
-  base_correct_min: {discovery: 120, held_out: 60}
+  source: untuned greedy generation, generated IDs kept, no re-tokenization
+  base_correct_min_after_masks: {discovery: 120, confirmation: 60}
 metrics:
-  proxies: [m_acc, m_len, kl]
-  m_len_exclude_last_tokens: 5
-  m_len_exclude_final_answer_line: true
-  eos_token: "<|im_end|>"
-  early_stop_untuned_percentile: 10
+  trace_loglik: {targets: response_content tokens incl. first, excl. im_end/newline/prompt/header/padding}
+  stop_pull: {stop_ids: recorded_in_01, positions: next target before last non-empty content line, empty: exclude_with_reason}
+  kl: full_vs_condition_over_trace_positions
 precision: {dtype: fp32, tf32: false, autocast: false, attention: eager, accumulate: fp64}
 attribution:
-  adapters: all_196
-  neurons: all_28_down_proj
-  backwards_per_arm: [m_acc, m_len]
+  gate: forward hook on lora_B output (peft 0.18.0)
+  positions: all unpadded
+  pass1: forward + backward(trace_loglik) + backward(stop_pull); store per-token dM/dc for down_proj
+  pass2: forward-only recompute of z per layer; attr_j = -a_j * sum_t z_jt * g_t
 selection:
   top_k_group: 10
   top_k_singles: 5
-  write_match_tolerance: 0.20
+  matched_controls: {module: same, write_tolerance: 0.20, exclude: both metrics' top-10 sets, replacement: false, seed: 20000}
   neuron_read_size: 64
-  neuron_random_draws: 3
-stage_c_per_arm_metric: [top5_singles, matched5_singles, top10_group, matched10_group,
-                         neuron64_attr, neuron64_term_size, neuron64_random_x3, constant_cbar]
+  neuron_orders: [signed_attribution, term_size, random_x3]
+  constant_read: {cbar: signed token-weighted mean over unpadded discovery positions}
+stage_c_per_arm_metric_max: 19
 stage_d:
-  arms: [gold-sft, online-grpo]
-  conditions: [full, top10_m_acc_removed, top10_m_len_removed, matched10_removed]
-  decoding: {mode: greedy, max_new_tokens: 1024, path: hf}
+  runs:
+    gold-sft: [full, top10_trace_removed, matched_trace, top10_stop_removed, matched_stop]
+    online-grpo: [full, top10_trace_removed, matched_trace]
+    untuned: [reference]
+  decoding: {mode: greedy, max_new_tokens: 1024, path: hf, precision: fp32}
   scorer: gsm8k_flexible_v3
-  untuned: reuse_if_protocol_and_runtime_match
-tolerances:
-  neuron_sum_identity: null     # from CPU tests + 05b
-  batch_invariance: null        # from 05b
-  finite_difference: null       # from 05b
 statistics:
-  bootstrap: {resamples: 10000, seed: 1234, unit: question}
-  gate: {pred_vs_real_spearman_min: 0.5, pooled_over: arms}
-  primary1: {rho_ci_upper_support: 0.3, rho_ci_lower_contradict: 0.6, top10_overlap_max: 3}
-  primary3: {sparse_keep_min: 0.70, dense_keep_max: 0.30}
+  bootstrap: {resamples: 10000, seed: 1234, unit: question, interval: percentile}
+  gate_per_arm_metric: {top_singles_sign_min: 4, of: 5, top10_group_sign: required}
+  primary1: {equivalence_margin_fraction_of_trace_set_effect: 0.25}
+  primary2: {contrasts: [online_offline_minus_gold_online, online_offline_minus_gold_offline, k0_minus_k2_vs_gold, k2_minus_k5_vs_gold]}
+  primary3: {sparse_R_min: 0.70, dense_R_max: 0.30, random_order_null_draws: 1000}
+  family: {per_metric: [primary1_x2, primary2_x4, primary3_x2_per_arm], method: holm, alpha: 0.05}
 gpu:
   sampler_hz: 1
-  token_budget_sweep_padded: [16384, 32768, 65536, 131072, 262144]
-  select_budget: largest with peak memory <= 0.80 of device and no OOM on stress batch
-  generation_batch_sweep: [16, 32, 64, 150]
-  targets: {median_busy_min: 0.85, peak_memory_range: [0.50, 0.80], padding_max: 0.15}
-  peak_tflops_reference: {fp32: 19.5, tf32: 156, bf16: 312}   # A100 dense, approximate
-  tf32_for_stage_ab_c: undecided   # 05b comparison, then user decision
-run_tiers: [cpu_tests, colab_rehearsal, pod_qualification_and_rehearsal, pod_production]
-wall_time_cap_hours: null   # user sets after 05b
+  min_sample_seconds: 30
+  flop_model: {forward: 2N, backward_activation_only: 2N, excludes: [attention_scores, padding]}
+  token_budget_sweep_padded: [2048, 4096, 8192, 16384, 32768, 65536]
+  select_budget: largest with measured peak memory <= 0.80 of device; stop 06b if none
+  generation_batch_candidates: [1, 8, 16, 32, 64]
+  generation_batch_rule: {items: 20, max_correctness_flips: 1, max_stop_reason_changes: 1}
+  investigation_targets: {median_busy: 0.85, peak_memory_range: [0.50, 0.80]}   # not gates
+tolerances:
+  neuron_sum_identity: null     # from CPU tests + 06b
+  batch_invariance: null        # from 06b
+  finite_difference: null       # from 06b
+  resolution_floor: null        # from 06b batch invariance
+caps_hours: {colab_06a: null, pod_06b: null, pod_production: null}   # user approves each

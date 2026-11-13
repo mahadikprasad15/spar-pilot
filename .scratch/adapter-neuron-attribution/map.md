@@ -12,6 +12,8 @@
 
 - 2026-11-13 (user): GPU is underused; measure utilization (busy %, MFU, tokens/s) in every stage and size batches by sweep. Run tiers: Colab bug-finding notebook, then Pod qualification and production.
 
+- 2026-11-13: review round 1 (Codex) answered in `review-response.md`; draft v2 of spec, plan and tickets (rehearsals on calibration rows only; z recomputed in a forward-only pass; trace log-likelihood and stop pull replace M_acc/M_len; per-arm gates, equivalence margin, Holm families; FP32 throughout; tickets renumbered 01–10).
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

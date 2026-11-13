@@ -1,22 +1,28 @@
-# Adapter and neuron attribution — ticket proposal (first pass)
+# Adapter and neuron attribution — ticket proposal (draft v2)
 
-Status: needs-triage. Not approved.
+Status: needs-triage. Not approved. Implementation tickets authorize no GPU spend; each execution ticket names the authorization it needs.
 
-Graph: 01, 02 → 03, 04 → 05a (Colab) → 05b (Pod) → 06 → {07, 08} → 09. 09 is fixture-implementable after 04.
+## Implementation (CPU, fixture-tested)
 
-Run tiers: CPU tests → Colab bug-finding notebook (05a) → Pod qualification and rehearsal (05b) → Pod production (06–08).
+| # | Ticket | Blocked by | Delivers |
+| --- | --- | --- | --- |
+| 01 | Trace preparation code | — | Generation/scoring/tokenization path keeping generated IDs; masks; accept/reject records |
+| 02 | Proxy metrics | — | `attribution_metrics.py`: trace log-likelihood, stop pull, KL |
+| 03 | Attribution instrument | 02 | `attribution_instrument.py`: lora_B gate, pass 1, pass 2 recompute |
+| 04 | Ablation engine | 02 | `attribution_ablation.py`: removal, matched controls, 64-term read, constant read, edited checkpoints, generation path |
+| 05 | Units, manifest, export | — | Sealed resumable units, partial manifests, export/restore over joint-audit primitives |
 
-| # | Ticket | Blocked by | Where | Delivers |
+## Execution
+
+| # | Ticket | Blocked by | Authorization | Inputs |
 | --- | --- | --- | --- | --- |
-| 01 | Inputs and base-correct traces | — | GPU generation + CPU | Sealed base-correct rows, M_len masks, cohort refs |
-| 02 | Proxy metrics | — | CPU | `attribution_metrics.py` |
-| 03 | Merged attribution instrument | 02 | CPU | `attribution_instrument.py` (196 adapters + 28 `down_proj` neuron reads, one pass) |
-| 04 | Ablation engine | 02 | CPU | `attribution_ablation.py` (removal, 64-neuron read, constant c̄, matched controls, edited checkpoints) |
-| 05a | Colab bug-finding notebook + utilization instrument | 01, 03, 04 | Colab GPU | End-to-end smoke run, real-model checks, `attribution_gpu.py`, first utilization sweep |
-| 05b | Pod qualification and rehearsal | 05a | Pod A100 80 GB | Tolerances, token budget and generation batch from sweeps, utilization check, resume rehearsal, cap |
-| 06 | Attribution run + selection freeze | 05b | GPU | Sealed attributions; frozen conditions |
-| 07 | Stage C on confirmation | 06 | GPU | 216 teacher-forced ablations |
-| 08 | Stage D generation | 06 | GPU | 8 runs: v3 accuracy, length, early stops |
-| 09 | Report | 06, 07, 08 | CPU | Gate, three primaries, figures |
+| 06a | Colab rehearsal | 01–05 | User go-ahead + Colab cap | Calibration rows, 20 rehearsal generation items |
+| 06b | Pod qualification and preparation | 06a | Approved Pod budget | Calibration rows, rehearsal items; then blind traces for discovery and confirmation |
+| 07 | Attribution run and freeze | 06b | Approved production cap | Discovery |
+| 08 | Stage C | 07 | (same cap) | Confirmation |
+| 09 | Stage D | 07 | (same cap) | ADR 0001 cohort |
+| 10 | Report | 07–09 (fixture-implementable after 04) | — | Sealed outputs |
 
-Reuse: `neuron_audit_inventory`, `neuron_audit_sequences`, `NeuronCollector` hook conventions, `check_live_adapter`, `BlockStore`, `neuron_audit_export`, `neuron_audit_pod`.
+Graph: {01, 02, 05}; 02 → {03, 04}; {01–05} → 06a → 06b → 07 → {08, 09} → 10.
+
+Reuse: `neuron_audit_inventory`, `neuron_audit_sequences`, `NeuronCollector` conventions, `check_live_adapter`, `BlockStore`, `neuron_audit_export`, `neuron_audit_pod`.

@@ -1,4 +1,7 @@
-# Adversarial review guide — draft v1 (first pass)
+# Adversarial review guide — draft v2 (first pass)
+
+Round 2: review draft v2 against `review-round-1.md` and `review-response.md`. Reply in `review-round-2.md`: for each round-1 point, say whether the disposition resolves it (resolved / partly / not), then any new points in the same format.
+
 
 For the external reviewer (Codex). Review `spec.md`, `ticket-proposal.md`, `candidate-plan-v1.yaml` and every ticket in `issues/` before any implementation. All are `needs-triage`; nothing authorizes GPU spend. Read the joint audit spec (`.scratch/joint-neuron-adapter-audit/spec.md`), `AGENTS.md`, `CONTEXT.md` and ADRs 0001 and 0005 first.
 
