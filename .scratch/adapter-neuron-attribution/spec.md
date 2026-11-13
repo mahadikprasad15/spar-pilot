@@ -120,7 +120,7 @@ No seed replicates exist; arm differences are not compared against a run-to-run 
 
 ## Precision
 
-As the joint audit: FP32 forward and backward, TF32 off, autocast off, eager attention, backend recorded; attribution products accumulated in FP64, stored FP32.
+As the joint audit: FP32 forward and backward, TF32 off, autocast off, eager attention, backend recorded; attribution products accumulated in FP64, stored FP32. Whether A+B and C may use TF32 is an open decision (see GPU utilization).
 
 ## Outputs and operations
 
@@ -128,9 +128,41 @@ As the joint audit: FP32 forward and backward, TF32 off, autocast off, eager att
 - Sizes: adapter attribution ≈ 6 × 2 × 200 × 196 × 4 B ≈ 1 MB; neuron attribution ≈ 200 × 28 × 8,960 × 4 B ≈ 200 MB per arm and metric, ≈ 2.4 GB total (`BlockStore`).
 - Pod, preflight and verified export reuse `neuron_audit_pod` and `neuron_audit_export`.
 
+## Run tiers
+
+Three tiers, each a gate for the next. Outputs of tiers 1 and 2 are labelled rehearsal and can never feed production.
+
+1. **CPU tests** (local): every ticket's fixture tests, tiny random Qwen2 + PEFT, no downloads.
+2. **Colab bug-finding notebook** (`notebooks/adapter-attribution-colab.ipynb`, ticket 05a; A100 40 GB or whatever Colab gives): the real model and real adapters on a small covering subset — `gold-sft` and `online-grpo`, 16 discovery and 8 confirmation base-correct rows, 10 generation items. Runs every stage end to end once: real-model finite differences and Σ_j attr_j identity, hook-vs-checkpoint equivalence, 3 Stage C conditions, 2 short generation runs, the GPU utilization sweep below, and an evidence upload. Its purpose is to find wiring, environment and shape bugs cheaply; it qualifies nothing.
+3. **Pod** (Runpod A100 80 GB, ticket 05b then 06–08): preflight, qualification on the production device, a small Pod rehearsal with an interrupted resume (as in the joint audit), then the unattended production chain, verified export, Pod stop.
+
+The joint audit's Colab and Pod rehearsal lessons (`docs/agents/experiment-lessons.md`) apply from the start: stream child stdout/stderr into the notebook; uninstall unused preinstalled packages before pinning torch; take `pad_token_id` from the pinned tokenizer config, not a fixture; bind resumable stages to the code commit; make rehearsal subsets cover every group later stages read; check container disk ≥ 60 GB free before installing.
+
+## GPU utilization
+
+The joint audit probed token budgets only up to 32k padded tokens, and the pilot evaluations generated at batch 1–2 (ADR 0004). On an 80 GB A100 that likely leaves most of the device idle. This study measures utilization explicitly and sizes batches from the measurements.
+
+**What is measured, every stage, every run tier** (`pilot_eval/attribution_gpu.py`, ticket 05a):
+- An NVML sampler thread at 1 Hz: GPU busy %, memory used, power. Summary per stage: median and 10th-percentile busy %, peak memory, share of samples below 50% busy.
+- Throughput: real (unpadded) and padded tokens per second; padding fraction; generated tokens per second for Stage D.
+- Model FLOP utilization (MFU): achieved FLOP/s ÷ device peak for the active precision. Forward ≈ 2·N FLOP per token, forward + backward ≈ 6·N, with N the parameter count from the model config. Busy % alone is not enough: a GPU can be 100% busy and still run at a few percent of peak.
+- One `torch.profiler` trace of a steady-state batch per stage, to show CPU stalls (hook reductions, `.cpu()` syncs, block writes) if busy % is low.
+
+**Expected ceilings (to state, not to hide).** A100 dense peak is roughly 19.5 TFLOP/s FP32 without TF32, 156 with TF32, 312 BF16. The joint audit's FP32/TF32-off policy therefore caps MFU at ~6% of BF16 peak before any inefficiency. At full FP32 utilization a 1.5B forward is ~6k tokens/s, so A+B and C are minutes, not hours; Stage D decoding is memory-bandwidth bound and is where batch size matters most.
+
+**Levers, in order, none of which changes a scientific setting:**
+1. **Token budget from a sweep, not a fixed cap.** Probe forward-only (Stage C) and forward + backward (A+B) at 16k, 32k, 64k, 128k, 256k padded tokens with length-bucketed packing; pick the largest with peak memory ≤ 80% of the device and no OOM on the longest-sequence stress batch **[proposed]**.
+2. **Keep reductions on the GPU.** Per-example attribution sums and the Σ_j identity check stay on device; one async copy to pinned host memory per batch; block writes on a background thread. No per-layer `.item()` or `.cpu()` inside hooks.
+3. **Load once.** Base model once; all six adapters via PEFT multi-adapter, switched with `set_adapter`; Stage C conditions switch hooks without reloading.
+4. **Stage D batch size from a sweep** at 16, 32, 64, 150 sequences (length-sorted, left padding, per-sequence stop at EOS), choosing the largest that fits. Full-arm and ablated runs use the same batch setting, so within-study comparisons stay paired. Batch composition can change greedy outputs slightly (ADR 0004); this study's full-arm rerun is the reference, and its difference from the existing pilot numbers is reported.
+
+**Targets [proposed], checked in 05b before production:** median busy ≥ 85% in A+B and C; peak memory 50–80% of the device at the chosen budget; padding fraction ≤ 15%. A miss is investigated with the profiler trace before production, not waived silently.
+
+**Precision trade-off (open decision, not assumed).** TF32 would raise the throughput ceiling ~8×. Attribution and ablation compare whole-adapter effects, not tiny paired differences, so TF32 may be acceptable for A+B and C. Proposed: 05b measures attribution and ΔM on 20 rows under FP32 and TF32; the user decides. Stage D stays FP32 unless decided otherwise, because greedy generation is sensitive to numerics and is compared with FP32 pilot results.
+
 ## Compute (estimate; qualification replaces it)
 
-A+B ≈ 1 GPU-h; C ≈ 1 GPU-h (216 forward passes over ≤ 100 rows); D ≈ 2–3 GPU-h (8 HF FP32 generation runs). The user sets a hard wall-time cap after qualification.
+At measured-not-assumed utilization: A+B and C together are likely under 1 GPU-h; D depends on the generation batch size (batch 1–2: several hours; batch 64+: plausibly under 1 h). Colab tier ≈ 1 h. The user sets a hard wall-time cap after 05b.
 
 ## Testing decisions
 
@@ -155,3 +187,5 @@ Gold-trace robustness; cumulative top-1..10 curves; layer bands (necessity and s
 1. Approve [proposed] values.
 2. Reuse the existing untuned generation results, or regenerate under the new runtime?
 3. Freeze written predictions before attribution results are inspected (optional, as in the joint audit)?
+4. TF32 for A+B and C after the 05b comparison, or FP32 throughout?
+5. Approve the utilization targets and the token-budget and generation-batch sweeps.

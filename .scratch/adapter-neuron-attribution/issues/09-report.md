@@ -9,6 +9,7 @@
 - [ ] Gate: pooled predicted-vs-real Spearman per metric; top-10 group sign agreement per arm. A failed gate changes which evidence the primaries use, never a threshold.
 - [ ] Primaries with paired bootstrap CIs (shared question resampling).
 - [ ] Coverage: arms present, missing units, modules where a moved.
+- [ ] Compute appendix: per-stage busy %, MFU, tokens/s, peak memory, padding fraction, wall time.
 - [ ] Figures: per-arm layer × module attribution maps (both metrics); predicted vs real; neuron concentration curves with shuffled baseline; Stage D accuracy and length per condition.
 - [ ] Fixture tests: planted separable and non-separable cases recovered; gate trips on a planted bad estimator.
 

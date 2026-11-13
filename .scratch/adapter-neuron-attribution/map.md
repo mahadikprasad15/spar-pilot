@@ -10,7 +10,10 @@
 ## Decisions so far
 - 2026-11-13 (user): shrink to a first pass — merged A+B pass, base-correct traces only, top-5 singles + top-10 group in Stage C, one 64-neuron read per arm, generation for gold-sft and online-grpo only, no drift metric.
 
+- 2026-11-13 (user): GPU is underused; measure utilization (busy %, MFU, tokens/s) in every stage and size batches by sweep. Run tiers: Colab bug-finding notebook, then Pod qualification and production.
+
 ## Fog
+- Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
 - Whether a ≈ a₀ in each arm's top `down_proj` module.
 - Whether first-order estimates track real removal of whole adapters (gate).

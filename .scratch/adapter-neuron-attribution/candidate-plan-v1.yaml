@@ -34,12 +34,21 @@ stage_d:
   scorer: gsm8k_flexible_v3
   untuned: reuse_if_protocol_and_runtime_match
 tolerances:
-  neuron_sum_identity: null     # from CPU tests + 05
-  batch_invariance: null        # from 05
-  finite_difference: null       # from 05
+  neuron_sum_identity: null     # from CPU tests + 05b
+  batch_invariance: null        # from 05b
+  finite_difference: null       # from 05b
 statistics:
   bootstrap: {resamples: 10000, seed: 1234, unit: question}
   gate: {pred_vs_real_spearman_min: 0.5, pooled_over: arms}
   primary1: {rho_ci_upper_support: 0.3, rho_ci_lower_contradict: 0.6, top10_overlap_max: 3}
   primary3: {sparse_keep_min: 0.70, dense_keep_max: 0.30}
-wall_time_cap_hours: null   # user sets after 05
+gpu:
+  sampler_hz: 1
+  token_budget_sweep_padded: [16384, 32768, 65536, 131072, 262144]
+  select_budget: largest with peak memory <= 0.80 of device and no OOM on stress batch
+  generation_batch_sweep: [16, 32, 64, 150]
+  targets: {median_busy_min: 0.85, peak_memory_range: [0.50, 0.80], padding_max: 0.15}
+  peak_tflops_reference: {fp32: 19.5, tf32: 156, bf16: 312}   # A100 dense, approximate
+  tf32_for_stage_ab_c: undecided   # 05b comparison, then user decision
+run_tiers: [cpu_tests, colab_rehearsal, pod_qualification_and_rehearsal, pod_production]
+wall_time_cap_hours: null   # user sets after 05b

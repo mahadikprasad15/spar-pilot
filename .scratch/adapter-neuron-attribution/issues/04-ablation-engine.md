@@ -11,6 +11,8 @@
 - [ ] Write-matched sampler: same module type, ±tolerance, seeded; unavailable rather than loosened.
 - [ ] Edited checkpoint (chosen b zeroed) with hash; logits equal the in-memory hook.
 - [ ] Builder refuses unsealed selections or any confirmation-derived input.
+- [ ] Conditions switch hooks on one loaded model (all six adapters via PEFT multi-adapter); no reload per condition.
+- [ ] Generation path: length-sorted batches at the plan's generation batch size, left padding, per-sequence stop at EOS.
 - [ ] Tests: all-neuron read == full; empty removal == full; constant read writes s·b·c̄; rescale factor; checkpoint == hook; sampler determinism and unavailable path.
 
 ## Comments

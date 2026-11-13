@@ -11,5 +11,6 @@ Reply in `review-round-1.md` in this folder: numbered points, each tagged **bloc
 5. **First-order validity.** Removing a whole adapter is not small. Is a pooled Spearman over 10 singles per arm (60 points per metric) a meaningful gate? Are finite differences enough? What happens to the conclusions if the gate fails?
 6. **Implementation.** Hook points against the installed PEFT (branch output vs fused), `retain_grad` on frozen models, memory of an FP32 backward holding z for all 28 `down_proj` layers in one batch, batch invariance, edited-checkpoint equivalence, constant-c̄ generation path.
 7. **Tests.** Are the CPU tests sufficient to catch wiring errors (mutation tests)? Missing negative controls?
-8. **Ticket graph.** Dependencies, sizes, anything that should be split or merged; what can run before 05.
-9. **Scope.** This is a deliberately small first pass (see "Deferred" in the spec). Is anything cut that the three primaries actually need? Is anything left that they don't?
+8. **GPU utilization and run tiers.** Are the NVML/MFU measurements and targets meaningful? Is the token-budget and generation-batch sweep sound, and does a larger generation batch threaten comparability with the pilot numbers? Is the TF32 question framed correctly? Does the Colab tier catch the bugs the joint audit's Colab and Pod rehearsals found?
+9. **Ticket graph.** Dependencies, sizes, anything that should be split or merged; what can run before 05.
+10. **Scope.** This is a deliberately small first pass (see "Deferred" in the spec). Is anything cut that the three primaries actually need? Is anything left that they don't?
