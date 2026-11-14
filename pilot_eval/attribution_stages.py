@@ -260,7 +260,7 @@ class Stages:
             raise StopBeforeProduction(f"expected {rule['items']} rehearsal generation items, got {len(items)}")
         ordered = sorted(items, key=lambda r: (-len(r['prompt_ids']), r['id']))  # longest prompts first
         gold = self.backend.gold('rehearsal')
-        reference, records, selected, stopped = None, [], 1, False
+        reference, records, selected, stopped = None, [], None, False
         for size in sorted(rule['candidates']):
             if size > len(ordered):
                 records.append(dict(batch=size, outcome='not-exercised',
@@ -289,6 +289,7 @@ class Stages:
             if reference is None:
                 reference = (out, correct)
                 records.append(dict(measured, outcome='reference'))
+                selected = size  # the reference itself succeeded, so it is a tested size
                 continue
             flips = sum(correct[i] != reference[1][i] for i in correct)
             stops = sum(out[i]['stop_reason'] != reference[0][i]['stop_reason'] for i in out)
@@ -299,6 +300,9 @@ class Stages:
                 stopped = True
                 continue
             selected = size
+        if reference is None:  # nothing fits, not even batch size 1 (review round 5, 5)
+            raise StopBeforeProduction(f'generation batch qualification: batch size 1 did not run ({records}); '
+                                       'no generation batch size qualifies')
         return dict(candidates=records, selected=selected, rule=rule,
                     note='only exercised sizes can be selected (review round 4, 9)')
 

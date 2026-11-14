@@ -269,3 +269,22 @@ def test_r4_10_primary1_headline_is_the_family_adjusted_inference():
     assert both['outcome'] == 'supported'
     for raw_outcome in ('contradicted', 'inconclusive'):
         assert ar.primary1_adjusted(dict(outcome=raw_outcome, p=0.5), holm)['outcome'] == raw_outcome
+
+
+def test_r5_6_a_raw_contradiction_is_labelled_unadjusted_not_after_holm():
+    raw = dict(outcome='contradicted', p=0.5, reasons=[], r_point=0.9, r_lower_95=0.6, r_upper_95=1.2, margin=0.25)
+    holm = {m: {'primary1': dict(adjusted=1.0, reject=False)} for m in ('trace', 'stop')}
+    out = ar.primary1_adjusted(raw, holm)
+    assert out['outcome'] == 'contradicted' and out['outcome_basis'] == 'unadjusted interval classification'
+    assert 'support conjunction' in out['adjustment_note']
+    report = dict(scope='s', provenance={}, provenance_statement='p', independence='i', gates={}, primary1=out,
+                  primary2={m: dict(contrasts={}) for m in ('trace', 'stop')}, consequences={
+                      m: dict(primary2={}, primary3='x') for m in ('trace', 'stop')},
+                  primary3={'trace': {}, 'stop': {}}, holm={'trace': {}, 'stop': {}}, compute={})
+    md = ar.render(report)
+    assert 'Outcome after Holm: **contradicted**' not in md
+    assert 'contradicted** (unadjusted interval classification' in md
+    supported = ar.primary1_adjusted(dict(raw, outcome='supported'), {m: {'primary1': dict(adjusted=0.01, reject=True)}
+                                                                     for m in ('trace', 'stop')})
+    assert supported['outcome_basis'] == 'after Holm' and 'Outcome after Holm: **supported**' in ar.render(
+        dict(report, primary1=supported))

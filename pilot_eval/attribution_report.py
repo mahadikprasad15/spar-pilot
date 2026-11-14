@@ -311,10 +311,15 @@ def primary1_adjusted(raw, holm_by_metric):
     primary 1 is rejected by Holm in every family it belongs to; the raw interval outcome stays visible."""
     holm = {m: dict(adjusted=f['primary1'].get('adjusted'), reject=bool(f['primary1'].get('reject')))
             for m, f in holm_by_metric.items() if 'primary1' in f}
-    outcome, note = raw['outcome'], 'unchanged by the family adjustment'
+    outcome, basis, note = raw['outcome'], 'after Holm', 'unchanged by the family adjustment'
     if raw['outcome'] == 'supported' and not (holm and all(h['reject'] for h in holm.values())):
         outcome, note = 'inconclusive', 'supported by the interval rule but not supported after Holm in every family'
-    return dict(raw, outcome=outcome, outcome_unadjusted=raw['outcome'], holm=holm, adjustment_note=note)
+    elif raw['outcome'] == 'contradicted':  # review round 5, 6: no adjusted test of contradiction exists
+        basis = 'unadjusted interval classification'
+        note = ("the Holm-adjusted p tests the support conjunction, not contradiction; this is the raw "
+                'interval-based classification')
+    return dict(raw, outcome=outcome, outcome_unadjusted=raw['outcome'], outcome_basis=basis, holm=holm,
+                adjustment_note=note)
 
 
 def dense_everywhere(results):
@@ -459,7 +464,8 @@ def render(report):
         lines.append(f"| {arm} | {metric} | {g['top_singles_sign_agree']}/5 | {g['group_sign_agree']} | {g['pass']} |")
     p1 = report['primary1']
     lines += ['', '## Primary 1 (gold-sft separability)', '',
-              f"Outcome after Holm: **{p1['outcome']}** (interval rule before adjustment: "
+              (f"Outcome: **{p1['outcome']}** ({p1['outcome_basis']}; " if p1.get('outcome_basis', 'after Holm') !=
+               'after Holm' else f"Outcome after Holm: **{p1['outcome']}** (") + f"interval rule before adjustment: "
               f"{p1.get('outcome_unadjusted', p1['outcome'])}; {p1.get('adjustment_note', '')}). "
               f"r point {_fmt(p1.get('r_point'))}, one-sided 95% bounds [{_fmt(p1.get('r_lower_95'))}, "
               f"{_fmt(p1.get('r_upper_95'))}], margin {_fmt(p1.get('margin'))}. " + ' '.join(p1['reasons'])]

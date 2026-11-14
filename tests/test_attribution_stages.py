@@ -522,3 +522,32 @@ def test_r4_9_selected_budget_rechecked_on_worst_case_batches_before_production(
     monkeypatch.setattr(ai.Instrument, 'attribute', attribute)
     summary = chain(tmp_path, record, backend, []).run()
     assert summary['state'] == 'stopped-before-production' and 'worst-case' in summary['stop_reason']
+
+
+def test_r5_5_qualification_stops_when_even_the_batch_1_reference_does_not_fit(tmp_path):
+    record = launch(tmp_path)
+    backend = TinyBackend(tmp_path, strict_rehearsal=True)
+    backend.is_oom = lambda exc: 'out of memory' in str(exc)
+
+    class AlwaysOOM:
+        def generate(self, prompts):
+            raise RuntimeError('CUDA out of memory')
+
+    backend.untuned_generator = lambda size: AlwaysOOM() if size >= 1 and not getattr(backend, '_traces', False) \
+        else Scripted()
+    real_traces = st.Stages._traces
+
+    def traces(self, *a, **k):  # calibration traces must still be generated before the batch sweep
+        backend._traces = True
+        try:
+            return real_traces(self, *a, **k)
+        finally:
+            backend._traces = False
+
+    st.Stages._traces = traces
+    try:
+        summary = chain(tmp_path, record, backend, []).run()
+    finally:
+        st.Stages._traces = real_traces
+    assert summary['state'] == 'stopped-before-production'
+    assert 'batch size 1' in summary['stop_reason'] and summary.get('signoff') is None
