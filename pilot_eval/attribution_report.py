@@ -265,7 +265,9 @@ def _removed_condition(stage, down, metric, top5):
     return None
 
 
-def primary3(stage, down, metric, indices, *, sparse_lower, dense_upper, top5=None):
+def primary3(stage, down, metric, indices, *, sparse_lower, dense_upper, resolution_floor, top5=None):
+    """R is unavailable when the full-removal effect's interval includes 0, is non-finite, or the effect is
+    below the approved resolution floor (spec §Tolerances; review r4, 10)."""
     key = METRIC_KEY[metric]
     removed = _removed_condition(stage, down, metric, top5)
     unavailable = dict(estimate=None, interval_95=None, p_two_sided=None)
@@ -279,8 +281,9 @@ def primary3(stage, down, metric, indices, *, sparse_lower, dense_upper, top5=No
     denominator_draws = -_nanmean_rows(rem, indices)
     den = summarize(denominator_point, denominator_draws)
     available = den['interval_95'] is not None and (den['interval_95'][0] > 0 or den['interval_95'][1] < 0)
-    if not available:
-        reason = 'denominator-interval-includes-0'
+    below_floor = available and abs(denominator_point) < float(resolution_floor)
+    if not available or below_floor:
+        reason = 'denominator-below-resolution-floor' if below_floor else 'denominator-interval-includes-0'
         return dict(R={o: dict(unavailable, reason=reason) for o in ORDERS}, classification='unavailable',
                     denominator=den, removed_condition=removed,
                     tests={t: dict(unavailable, reason=reason) for t in ('attr_minus_size', 'attr_minus_mean_random')},
@@ -301,6 +304,17 @@ def primary3(stage, down, metric, indices, *, sparse_lower, dense_upper, top5=No
                 classification_is_descriptive=True,
                 classification_rule=f'sparse: lower 95% bound of R(attr) >= {sparse_lower}; dense: upper bound < '
                                     f'{dense_upper} in every arm (see dense_everywhere); never point estimates')
+
+
+def primary1_adjusted(raw, holm_by_metric):
+    """The headline is the family-adjusted inference: 'supported' only if the interval rule supports it *and*
+    primary 1 is rejected by Holm in every family it belongs to; the raw interval outcome stays visible."""
+    holm = {m: dict(adjusted=f['primary1'].get('adjusted'), reject=bool(f['primary1'].get('reject')))
+            for m, f in holm_by_metric.items() if 'primary1' in f}
+    outcome, note = raw['outcome'], 'unchanged by the family adjustment'
+    if raw['outcome'] == 'supported' and not (holm and all(h['reject'] for h in holm.values())):
+        outcome, note = 'inconclusive', 'supported by the interval rule but not supported after Holm in every family'
+    return dict(raw, outcome=outcome, outcome_unadjusted=raw['outcome'], holm=holm, adjustment_note=note)
 
 
 def dense_everywhere(results):
@@ -399,7 +413,7 @@ def build(inputs):
         report['primary3'][metric] = {
             arm: primary3(stage_c[arm][metric], inputs['freeze'][arm][metric]['down_proj'], metric, conf,
                           sparse_lower=s['sparse_lower'], dense_upper=s['dense_upper'],
-                          top5=inputs['freeze'][arm][metric].get('top5'))
+                          resolution_floor=s['resolution_floor'], top5=inputs['freeze'][arm][metric].get('top5'))
             for arm in stage_c if metric in stage_c[arm]}
         report['primary3'][metric + '_dense_everywhere'] = dense_everywhere(report['primary3'][metric])
         family = {'primary1': report['primary1']['p']}
@@ -411,6 +425,7 @@ def build(inputs):
         report['consequences'][metric] = gate_consequences(gates, report['primary2'][metric], metric)
         report['primary2'][metric]['support'] = primary2_support(report['primary2'][metric]['contrasts'],
                                                                  report['holm'][metric])
+    report['primary1'] = primary1_adjusted(report['primary1'], report['holm'])
     if inputs.get('stage_d'):
         cohort_n = len(next(iter(inputs['stage_d'].values()))[0])
         report['concordance'] = concordance(
@@ -443,7 +458,9 @@ def render(report):
         arm, metric = key.split('|')
         lines.append(f"| {arm} | {metric} | {g['top_singles_sign_agree']}/5 | {g['group_sign_agree']} | {g['pass']} |")
     p1 = report['primary1']
-    lines += ['', '## Primary 1 (gold-sft separability)', '', f"Outcome: **{p1['outcome']}**. "
+    lines += ['', '## Primary 1 (gold-sft separability)', '',
+              f"Outcome after Holm: **{p1['outcome']}** (interval rule before adjustment: "
+              f"{p1.get('outcome_unadjusted', p1['outcome'])}; {p1.get('adjustment_note', '')}). "
               f"r point {_fmt(p1.get('r_point'))}, one-sided 95% bounds [{_fmt(p1.get('r_lower_95'))}, "
               f"{_fmt(p1.get('r_upper_95'))}], margin {_fmt(p1.get('margin'))}. " + ' '.join(p1['reasons'])]
     for metric in METRIC_KEY:

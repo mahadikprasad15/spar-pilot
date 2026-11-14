@@ -523,8 +523,11 @@ class Stages:
                     stage_d[condition] = (full, responses)
         concordance_c = {name: values for metric in METRICS for name, values in
                          stage_c.get('gold-sft', {}).get(metric, {}).items()}
-        inputs = dict(settings={k: stats[k] for k in ('resamples', 'seed', 'alpha', 'margin', 'sparse_lower',
-                                                      'dense_upper', 'gate_singles_min')},
+        qual_floor = _read(self.root / QUAL_DIR, 'qualification.json')['resolution_floor']
+        settings = {k: stats[k] for k in ('resamples', 'seed', 'alpha', 'margin', 'sparse_lower', 'dense_upper',
+                                          'gate_singles_min')}
+        settings['resolution_floor'] = ar.resolution_floor(qual_floor['rule'], qual_floor['measured_batch_invariance'])
+        inputs = dict(settings=settings,
                       provenance=self.backend.sources()['provenance'], discovery=discovery,
                       unresolved_arms=self.backend.unresolved_arms(),
                       freeze={arm: freeze['arms'][arm] for arm in self.arms}, stage_c=stage_c, stage_d={},

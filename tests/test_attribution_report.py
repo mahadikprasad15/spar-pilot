@@ -7,7 +7,7 @@ import pytest
 from pilot_eval import attribution_report as ar
 
 SETTINGS = dict(resamples=2000, seed=1234, alpha=0.05, margin=0.25, sparse_lower=0.70, dense_upper=0.30,
-                gate_singles_min=4)
+                gate_singles_min=4, resolution_floor=0.0)
 
 
 def idx(n, resamples=2000, seed=1234):
@@ -113,7 +113,7 @@ def r_case(full_minus_removed=1.0, attr_retained=0.9, size_retained=0.5, n=80, n
 
 
 def test_retained_effect_and_primary3_contrasts():
-    out = ar.primary3(r_case(), dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3)
+    out = ar.primary3(r_case(), dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3, resolution_floor=0.0)
     assert out['R']['attr']['estimate'] == pytest.approx(0.9, abs=0.05)
     assert out['classification'] == 'sparse' and out['classification_is_descriptive'] is True
     assert out['tests']['attr_minus_size']['interval_95'][0] > 0
@@ -122,14 +122,14 @@ def test_retained_effect_and_primary3_contrasts():
 
 def test_r_point_above_threshold_but_lower_bound_below_is_inconclusive():
     out = ar.primary3(r_case(attr_retained=0.75, noise=0.6, seed=3), dict(index=7, layer=1), 'trace', idx(80),
-                      sparse_lower=0.7, dense_upper=0.3)
+                      sparse_lower=0.7, dense_upper=0.3, resolution_floor=0.0)
     assert out['R']['attr']['estimate'] > 0.70 and out['R']['attr']['interval_95'][0] < 0.70
     assert out['classification'] == 'inconclusive'
 
 
 def test_r_unavailable_when_full_removal_effect_interval_includes_zero():
     out = ar.primary3(r_case(full_minus_removed=0.0), dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7,
-                      dense_upper=0.3)
+                      dense_upper=0.3, resolution_floor=0.0)
     assert out['R']['attr']['estimate'] is None and out['R']['attr']['reason'] == 'denominator-interval-includes-0'
     assert out['classification'] == 'unavailable' and out['tests']['attr_minus_size']['estimate'] is None
 
@@ -137,18 +137,18 @@ def test_r_unavailable_when_full_removal_effect_interval_includes_zero():
 def test_primary3_uses_top_single_when_down_proj_was_a_single():
     stage = r_case()
     stage['top2-trace'] = stage.pop('down-full-trace')
-    out = ar.primary3(stage, dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3,
+    out = ar.primary3(stage, dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3, resolution_floor=0.0,
                       top5=[3, 7])
     assert out['R']['attr']['estimate'] == pytest.approx(0.9, abs=0.05)
 
 
 def test_dense_requires_upper_bound_below_threshold_in_every_arm():
     arms = {'a': r_case(attr_retained=0.05), 'b': r_case(attr_retained=0.1, seed=5)}
-    results = {arm: ar.primary3(s, dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3)
+    results = {arm: ar.primary3(s, dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3, resolution_floor=0.0)
                for arm, s in arms.items()}
     assert ar.dense_everywhere(results) is True
     results['c'] = ar.primary3(r_case(attr_retained=0.5), dict(index=7, layer=1), 'trace', idx(80),
-                               sparse_lower=0.7, dense_upper=0.3)
+                               sparse_lower=0.7, dense_upper=0.3, resolution_floor=0.0)
     assert ar.dense_everywhere(results) is False
 
 
@@ -242,3 +242,30 @@ def test_primary2_support_needs_both_differences_holm_rejected_and_positive():
     assert out['grpo_sharing'] == 'not supported' and out['k_ordering'] == 'not supported'
     contrasts['c'] = dict(estimate=None, p_two_sided=None)
     assert ar.primary2_support(contrasts, holm)['k_ordering'] == 'unavailable'
+
+
+def test_r4_10_r_unavailable_when_the_full_removal_effect_is_below_the_resolution_floor():
+    stage = r_case(full_minus_removed=1e-12, noise=1e-15)
+    out = ar.primary3(stage, dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3,
+                      resolution_floor=1e-3)
+    assert out['classification'] == 'unavailable'
+    assert out['R']['attr']['reason'] == 'denominator-below-resolution-floor'
+    ok = ar.primary3(r_case(), dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3,
+                     resolution_floor=1e-3)
+    assert ok['classification'] == 'sparse'
+    with pytest.raises(TypeError):
+        ar.primary3(r_case(), dict(index=7, layer=1), 'trace', idx(80), sparse_lower=0.7, dense_upper=0.3)
+
+
+def test_r4_10_primary1_headline_is_the_family_adjusted_inference():
+    raw = dict(outcome='supported', p=0.0056)
+    holm = {'trace': {'primary1': dict(adjusted=0.0952, reject=False)},
+            'stop': {'primary1': dict(adjusted=0.03, reject=True)}}
+    out = ar.primary1_adjusted(raw, holm)
+    assert out['outcome'] == 'inconclusive' and out['outcome_unadjusted'] == 'supported'
+    assert out['holm'] == {'trace': dict(adjusted=0.0952, reject=False), 'stop': dict(adjusted=0.03, reject=True)}
+    assert 'not supported after Holm' in out['adjustment_note']
+    both = ar.primary1_adjusted(raw, {m: {'primary1': dict(adjusted=0.01, reject=True)} for m in ('trace', 'stop')})
+    assert both['outcome'] == 'supported'
+    for raw_outcome in ('contradicted', 'inconclusive'):
+        assert ar.primary1_adjusted(dict(outcome=raw_outcome, p=0.5), holm)['outcome'] == raw_outcome
