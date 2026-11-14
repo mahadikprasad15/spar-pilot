@@ -23,3 +23,10 @@
 - **Joint-audit Colab lessons applied:** child output streamed into the cells; torchvision and torchaudio removed before pinning; pad ID taken from the pinned tokenizer (`ChatTokenizer`); runtime recorded; the evidence-upload receipt printed in the cell.
 - **Inputs:** calibration rows and the 20 rehearsal items only. The notebook refuses to start until the user sets the Colab cap, the 20 rehearsal item indices (ticket 01 question), the random-order seeds and the null seed (ticket 04 question), and the step timeouts (ticket 11). Tolerances and sweeps are copied unchanged from the candidate plan and only exercise the checks.
 - **Still needs:** the user's go-ahead and a cap, as before.
+
+### 2026-11-14 — operating rules for the first run (user + Codex)
+
+- **Supervised.** Run the notebook once and don't restart automatically; if a step fails, run the evidence cell and report.
+- **A test, not production.** Before trusting the backup, check that the summary lists every step and that the clean restore returned it.
+- **Inputs.** The tokenizer directory is explicit (cell 6, the inventory's pinned tokenizer revision).
+- **What to learn:** GPU execution (incl. the device fix from round 4), memory use per token budget, and runtime per step. Fix only what this run reveals, then decide on an overnight launch.

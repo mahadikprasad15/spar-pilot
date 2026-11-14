@@ -96,3 +96,11 @@ The code needs these values, and the spec and candidate plan don't give them. Th
   - There is no pilot comparison, and the report is titled REHEARSAL.
   - A CPU test runs the whole rehearsal chain with a backend that raises on any discovery, held-out or cohort request. A separate six-arm production test keeps the real path covered.
 - **Also found by that test:** when the untuned reference had no EOS-terminated response, the Stage D report raised and failed the report stage. Early stop is now reported unavailable with the reason, never fatal.
+
+### 2026-11-14 — open before any unattended overnight launch (review round 5, deferred by agreement)
+
+- [ ] Re-check the persisted per-stage cap when a completed stage is skipped on retry. Never persist an over-cap stage as one a retry may skip. Also test a cap reached at an interrupted unit boundary. (r5-1)
+- [ ] Persist the expected units and run directories across attempts and reconcile them before skipping a stage or calling a backup complete. Restore from a verified backup, or rerun, when artifacts are missing. (r5-2)
+- [ ] Watchdog: transfer ownership only after the launch record is validated and no live writer exists; re-check ownership immediately before the stop request. Test both races. (r5-3)
+- [ ] Bind the tokenizer files to the sequences-v2 manifest's `inputs.tokenizer.files`. (r5-4)
+- **Until then:** run the chain from a single launcher, don't restart automatically, treat the run as a test, and check the expected outputs before trusting a backup.

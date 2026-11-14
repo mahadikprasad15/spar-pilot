@@ -40,6 +40,8 @@
 
 - 2026-11-14: review round 4 (Codex, implementation) adopted in full; user chose option A for point 9 (qualify only exercised sizes) and the two-phase summary for point 8. Dispositions in `review-response-round-4.md`; GPU verification of point 1 is part of 06a.
 
+- 2026-11-14 (user + Codex): review round 5 — fixed 5 and 6; 1–4 deferred until before an unattended overnight launch (open items on ticket 11). Next: the supervised 06a Colab rehearsal; fix only what it reveals.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
