@@ -414,3 +414,39 @@ def test_r4_5_edited_checkpoint_is_reused_or_rebuilt_after_an_interruption(tmp_p
     assert rebuilt['edited_sha256'] == record['edited_sha256'] and rebuilt['reused'] is False
     other = ab.edit_checkpoint(tmp_path / 'adapter', tmp_path / 'edited', [(1, 'down_proj')])  # different edit
     assert other['zeroed_keys'] != record['zeroed_keys']
+
+
+def test_r4_1_finite_differences_put_gates_on_the_input_device_and_move_metrics_to_cpu(monkeypatch):
+    """CPU cannot show a CUDA device mismatch, so this fails on the two patterns that do: a gate built without
+    the input's device, and a metric converted with .numpy() before .cpu(). The real check is 06a on a GPU."""
+    import torch
+    from pilot_eval import attribution_instrument as ai
+    from pilot_eval import attribution_metrics as am
+    from tests.test_attribution_instrument import rows as fixture_rows, tiny
+    model = tiny()
+    inst = ai.Instrument(model, stop_ids=[31], pad_token_id=0, identity_rtol=1e-4)
+    real_full = torch.full
+
+    def full(*args, **kwargs):
+        assert 'device' in kwargs, 'gate created without an explicit device'
+        return real_full(*args, **kwargs)
+
+    class CudaLike:
+        def __init__(self, tensor):
+            self.tensor = tensor
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self.tensor.detach().cpu()
+
+        def numpy(self):
+            raise TypeError("can't convert cuda tensor to numpy; use .cpu() first")
+
+    real_trace, real_stop = am.trace_loglik, am.stop_pull
+    monkeypatch.setattr(torch, 'full', full)
+    monkeypatch.setattr(am, 'trace_loglik', lambda *a, **k: CudaLike(real_trace(*a, **k)))
+    monkeypatch.setattr(am, 'stop_pull', lambda *a, **k: (CudaLike(real_stop(*a, **k)[0]), real_stop(*a, **k)[1]))
+    out = st.finite_difference_check(model, inst, fixture_rows()[:3], [31], epsilon=1e-2, adapters=1, neurons=1)
+    assert np.isfinite(out['median_rel_err']) and out['checked']

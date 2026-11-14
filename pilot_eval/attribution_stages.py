@@ -627,9 +627,9 @@ def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, n
         with torch.no_grad(), ai.branch_gates(model, gates or {}, inst.adapter), \
                 ai.neuron_gate(model, neuron, inst.adapter):
             logits = model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
-        if name == 'trace':
-            return am.trace_loglik(logits, ids, masks).numpy()
-        return am.stop_pull(logits, masks, stop_ids=stop_ids)[0].numpy()
+        if name == 'trace':  # CUDA tensors reach NumPy only through .cpu() (review r4, 1)
+            return am.trace_loglik(logits, ids, masks).detach().cpu().numpy()
+        return am.stop_pull(logits, masks, stop_ids=stop_ids)[0].detach().cpu().numpy()
 
     def compare(name, got, kw_up, kw_down):
         fd = -(metric(name, **kw_up) - metric(name, **kw_down)) / (2 * epsilon)
@@ -641,15 +641,15 @@ def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, n
         if np.isnan(mean).all():
             continue
         for index in ab.top_k(np.nan_to_num(mean), adapters):
-            compare(name, out['attr'][name][:, index], dict(gates={index: torch.full((n, 1, 1), 1 + epsilon)}),
-                    dict(gates={index: torch.full((n, 1, 1), 1 - epsilon)}))
+            compare(name, out['attr'][name][:, index], dict(gates={index: torch.full((n, 1, 1), 1 + epsilon, device=ids.device)}),
+                    dict(gates={index: torch.full((n, 1, 1), 1 - epsilon, device=ids.device)}))
             checked.append(dict(metric=name, adapter=int(index)))
         layer = max(inst.down_index, key=lambda l: abs(np.nan_to_num(mean[inst.down_index[l]])))
         values = np.nanmean(out['neuron'][name][layer], 0)
         for j in np.argsort(-np.abs(values))[:neurons]:
             compare(name, out['neuron'][name][layer][:, j],
-                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 + epsilon))),
-                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 - epsilon))))
+                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 + epsilon, device=ids.device))),
+                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 - epsilon, device=ids.device))))
             checked.append(dict(metric=name, layer=int(layer), neuron=int(j)))
     errors = np.asarray(errors, dtype=np.float64)
     return dict(median_rel_err=float(np.median(errors)) if len(errors) else float('inf'),

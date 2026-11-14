@@ -19,8 +19,11 @@ def record(tmp_path):
 
 def test_covering_set_runs_and_exports_a_restorable_partial_output(tmp_path):
     hub = FakeHub()
-    summary = rh.Rehearsal(record(tmp_path), tmp_path / 'local', TinyBackend(tmp_path), client=hub,
+    backend = TinyBackend(tmp_path, strict_rehearsal=True)  # any discovery/held-out/cohort access raises
+    summary = rh.Rehearsal(record(tmp_path), tmp_path / 'local', backend, client=hub,
                            clean_root=tmp_path / 'clean').run()
+    rehearsal_prompts = [r['prompt_ids'] for r in backend.rehearsal_items()]
+    assert backend.probes and all(p in rehearsal_prompts for p in backend.probes)  # review r4 (11)
     assert summary['failed'] == [], json.dumps(summary, default=str)[:4000]
     steps = summary['steps']
     for name in ['calibration_traces', 'attribution:gold-sft', 'finite_differences:gold-sft', 'conditions:gold-sft',

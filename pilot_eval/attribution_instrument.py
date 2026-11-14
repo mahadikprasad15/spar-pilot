@@ -54,7 +54,7 @@ def adapter_modules(model):
 def contract(c, g, mask):
     """−Σ_t c_t g_t over the masked positions, FP64, per example (numpy)."""
     import torch
-    mask = torch.as_tensor(mask).to(torch.float64)
+    mask = torch.as_tensor(mask).to(device=c.device, dtype=torch.float64)
     return (-(c[..., 0].double() * g[..., 0].double() * mask).sum(1)).cpu().numpy()
 
 
@@ -62,7 +62,7 @@ def response_mask(instrument, rows):
     """Mutation helper: only response-content (trace-target) positions."""
     import torch
     ids, _, _ = instrument.batch(rows)
-    mask = torch.zeros(ids.shape, dtype=torch.float64)
+    mask = torch.zeros(ids.shape, dtype=torch.float64, device=ids.device)
     for r, row in enumerate(rows):
         mask[r, row['masks']['trace_targets']] = 1
     return mask
@@ -370,7 +370,7 @@ def branch_oracle(model, rows, name, *, stop_ids, pad_token_id, adapter='default
     import torch
     inst = Instrument(model, stop_ids=stop_ids, pad_token_id=pad_token_id, identity_rtol=1.0, adapter=adapter)
     ids, attention, positions = inst.batch(rows)
-    gates = {i: torch.ones((len(rows), 1, 1), requires_grad=True) for i in range(len(inst.modules))}
+    gates = {i: torch.ones((len(rows), 1, 1), requires_grad=True, device=ids.device) for i in range(len(inst.modules))}
     masks = [r['masks'] for r in rows]
     with torch.enable_grad(), branch_gates(model, gates, adapter):
         logits = model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
@@ -380,8 +380,8 @@ def branch_oracle(model, rows, name, *, stop_ids, pad_token_id, adapter='default
             value = am.stop_pull(logits, masks, stop_ids=stop_ids)[0]
         defined = ~torch.isnan(value)
         grads = torch.autograd.grad(value[defined].sum(), [gates[i] for i in range(len(gates))])
-    out = -torch.stack([g.reshape(-1).double() for g in grads], dim=1).numpy()
-    out[~defined.numpy()] = np.nan
+    out = -torch.stack([g.reshape(-1).double() for g in grads], dim=1).cpu().numpy()
+    out[~defined.cpu().numpy()] = np.nan
     return out
 
 
