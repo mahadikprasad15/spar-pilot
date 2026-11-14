@@ -38,6 +38,8 @@
 
 - 2026-11-14 (user): rehearsal items by the seed-42 cohort mechanism; random-order seeds 20001–20003 and null seed 20004; report interpretations as proposed (primary 2 support = > 0 and Holm-rejected); early stop = EOS before 0.5 × the untuned response to the same question; pilot responses re-scored with v3; operational values approved. Launch-record draft in `launch-record-draft.yaml`.
 
+- 2026-11-14: review round 4 (Codex, implementation) adopted in full; user chose option A for point 9 (qualify only exercised sizes) and the two-phase summary for point 8. Dispositions in `review-response-round-4.md`; GPU verification of point 1 is part of 06a.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
