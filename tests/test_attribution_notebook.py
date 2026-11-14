@@ -22,8 +22,7 @@ def test_notebook_code_cells_parse_and_never_touch_production_inputs():
 
 def test_notebook_refuses_unset_user_decisions_and_carries_the_approved_ones():
     settings = ''.join(cells()[2]['source'])
-    for name in ['COLAB_CAP_HOURS', 'FP32_PEAK_FLOPS']:
-        assert f'{name} = None' in settings
+    assert 'FP32_PEAK_FLOPS = None' in settings and 'COLAB_CAP_HOURS = 3' in settings
     for approved in ['RANDOM_ORDER_SEEDS = [20001, 20002, 20003]', 'NULL_SEED = 20004', 'EARLY_STOP_RATIO = 0.5']:
         assert approved in settings
     assert any('assert not missing' in ''.join(c['source']) for c in cells())
