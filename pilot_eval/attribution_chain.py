@@ -289,6 +289,40 @@ def _sealed_matching(units, key, identity):
     return True
 
 
+def restore_from_volume(volume_root, local_root):
+    """Bring back to local disk every sealed unit and run directory the volume holds but local disk lacks (a
+    fresh Pod); each copy is re-verified by hash. Local sealed work is never overwritten."""
+    volume, local = Path(volume_root), Path(local_root)
+    restored = dict(units=[], runs=[])
+    store = volume / au.UNITS_DIR
+    if store.is_dir():
+        local_store = BlockStore(local / au.UNITS_DIR)
+        keys = [k for k, state in BlockStore(store).status().items()
+                if state == 'sealed' and local_store.state(k) != 'sealed']
+        if keys:
+            mirror_store(store, local / au.UNITS_DIR, keys=keys, source_listing=False)
+            restored['units'] = sorted(keys)
+    for seal in sorted((volume / 'attribution').rglob('complete.json')) if (volume / 'attribution').is_dir() else []:
+        directory = seal.parent
+        if directory.is_relative_to(store):
+            continue
+        target = local / directory.relative_to(volume)
+        if (target / 'complete.json').is_file():
+            au.verify_run(target)
+            continue
+        files = au.verify_run(directory)
+        if target.exists():  # unsealed leftovers: keep them as evidence, never mix them with the restored copy
+            os.replace(target, target.with_name(f'{target.name}.unsealed-{time.time_ns()}'))
+        target.mkdir(parents=True)
+        for name in sorted(files):
+            (target / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(directory / name, target / name)
+        shutil.copyfile(seal, target / 'complete.json')
+        au.verify_run(target)
+        restored['runs'].append(str(directory.relative_to(volume)))
+    return restored
+
+
 def run_units(units, arm, batches, compute, *, boundary, input_sha256, kind='ab', condition=None):
     """Seal one unit per batch in order; sealed units are skipped (resume); ``boundary`` between units."""
     done = []
@@ -383,6 +417,7 @@ class Chain:
             run_id=self.record['run_id'], completed={})
         if state['run_id'] != self.record['run_id']:
             raise ResumeRefused('chain state belongs to another run ID')
+        self.restored = restore_from_volume(self.volume_root, self.local_root)
         state['attempts'] = state.get('attempts', 0) + 1
         self.attempt = f"attempt-{state['attempts']:03d}"
         self._save(state)
@@ -441,7 +476,8 @@ class Chain:
         state, decision = self._start()
         started = time.time()
         summary = dict(run_id=self.record['run_id'], mode=self.record['mode'], attempt=self.attempt, resume=decision,
-                       stages={}, failures=[], state='running', signoff=state.get('signoff'))
+                       restored_from_volume=self.restored, stages={}, failures=[], state='running',
+                       signoff=state.get('signoff'))
         skip_to_report = False
 
         def stop_before_production(name, reason, status='stopped'):

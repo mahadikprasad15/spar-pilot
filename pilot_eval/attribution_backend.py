@@ -160,7 +160,9 @@ class TransformersBackend:
                               eos_token_id=self.tokenizer.eos_token_id, max_new_tokens=self.inputs['max_new_tokens'],
                               decode=self.decode)
 
-    def stage_d_generator(self, arm, adapters, size, edit_dir):
+    def stage_d_generator(self, arm, adapters, size, edit_dir, *, probe_ids):
+        """Generator for one Stage D run; an edited checkpoint is checked against the gate on ``probe_ids``,
+        an allowed prompt supplied by the caller (a rehearsal item in rehearsals, never a blind cohort item)."""
         import torch
         from peft import PeftModel
         if arm is None:
@@ -173,7 +175,7 @@ class TransformersBackend:
             ab.verify_edit(edit_dir, edit)
             edited = self._freeze(PeftModel.from_pretrained(self.loader.fresh_base('float32'), edit_dir,
                                                             is_trainable=False, torch_device=self.device))
-            probe = torch.tensor([self.cohort_items()[0]['prompt_ids']], device=self.device)
+            probe = torch.tensor([list(probe_ids)], device=self.device)
             with torch.no_grad():
                 with ab.removal(model, adapters):
                     gated = model(input_ids=probe, use_cache=False).logits

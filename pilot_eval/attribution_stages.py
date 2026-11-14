@@ -400,10 +400,11 @@ class Stages:
     def _stage_d_report(self):
         base = self.root / STAGE_D_DIR
         runs = {}
-        for config in sorted(base.glob('*/*/complete.json')):
-            directory = config.parent
-            au.verify_run(directory)
-            runs[f'{directory.parent.name}|{directory.name}'] = _jsonl(directory / 'responses.jsonl')
+        for config in sorted(base.glob('*/*/config/complete.json')):
+            arm, condition = config.parent.parent.parent.name, config.parent.parent.name
+            responses = stage_d_batches(self.root, arm, condition)
+            if responses is not None:  # only complete runs (every batch sealed) are analysed
+                runs[f'{arm}|{condition}'] = responses
         if 'untuned|reference' not in runs:
             return dict(available=False, reason='untuned reference run not sealed')
         rule = self.record['stage_d']['early_stop_rule']
@@ -433,39 +434,61 @@ class Stages:
         return out
 
     def stage_d(self, ctx):
+        """Stage D, one sealed run directory per (arm, condition, batch); a resumed run skips sealed batches whose
+        identity matches and never regenerates them. The condition's config is sealed first and must match."""
         freeze = _read(self.root / ab.FREEZE_DIR, 'freeze.json')
         size = _read(self.root / QUAL_DIR, 'qualification.json')['generation_batch']
         items, gold = self._cohort()
+        by_id = {r['id']: r for r in items}
         batches = [[r['id'] for r in items[i:i + size]] for i in range(0, len(items), size)]
         runs = [('untuned', 'reference')] + [(arm, c) for arm, cs in STAGE_D_RUNS.items() if arm in self.arms
                                               for c in cs]
         out = {}
         for arm, condition in runs:
             directory = self.root / STAGE_D_DIR / arm / condition
-            ctx.expect(runs=[str(directory.relative_to(self.root))])
-            if (directory / 'complete.json').is_file():
-                out[f'{arm}|{condition}'] = 'sealed'
-                continue
             adapters = None if condition in ('full', 'reference') else stage_d_adapters(freeze, arm, condition)
             if adapters is False:
-                self.root.joinpath(STAGE_D_DIR).mkdir(parents=True, exist_ok=True)
                 out[f'{arm}|{condition}'] = 'skipped: matched-control-unavailable'
                 continue
-            generator, edit = self.backend.stage_d_generator(None if arm == 'untuned' else arm, adapters, size,
-                                                             self.root / EDITED_DIR / arm / condition)
-            scored = []
-            for r in self._generate(generator, items, batches):
-                score = score_gsm8k_flexible_v3(r['text'], gold[r['id']], capped=r['stop_reason'] != 'eos')
-                scored.append(dict(r, correct=bool(score['correct']), status=score['status'],
-                                   tokens=len(r['generated_ids']), capped=r['stop_reason'] != 'eos'))
-            au.seal_run(directory, {'responses.jsonl': ''.join(json.dumps(s, sort_keys=True) + '\n' for s in scored),
-                                    'config.json': dict(arm=arm, condition=condition, adapters=adapters, edit=edit,
-                                                        decoding=self.backend.decoding(), batches=batches,
-                                                        scorer='gsm8k_flexible_v3',
-                                                        cohort='rehearsal-items' if self.rehearsal else 'adr-0001',
-                                                        model=self.backend.runtime().get('model'))})
-            out[f'{arm}|{condition}'] = dict(accuracy=float(np.mean([s['correct'] for s in scored])))
-            ctx.boundary()
+            config = dict(arm=arm, condition=condition, adapters=adapters, decoding=self.backend.decoding(),
+                          batches=batches, scorer='gsm8k_flexible_v3',
+                          cohort='rehearsal-items' if self.rehearsal else 'adr-0001',
+                          model=self.backend.runtime().get('model'))
+            if (directory / 'config' / 'complete.json').is_file():
+                if _read(directory / 'config', 'config.json') != json.loads(json.dumps(config)):
+                    raise ValueError(f'Stage D {arm}/{condition}: sealed config differs from this run; investigate')
+            else:
+                au.seal_run(directory / 'config', {'config.json': config})
+            ctx.expect(runs=[str((directory / d).relative_to(self.root)) for d in
+                             ['config'] + [f'b{i:05d}' for i in range(len(batches))]])
+            generator, done = None, 0
+            for index, batch in enumerate(batches):
+                bdir = directory / f'b{index:05d}'
+                if (bdir / 'complete.json').is_file():
+                    if [r['id'] for r in _jsonl_verified(bdir)] != batch:
+                        raise ValueError(f'Stage D {arm}/{condition} batch {index}: sealed items differ')
+                    done += 1
+                    continue
+                if generator is None:  # built only when some batch still needs generating
+                    generator, edit = self.backend.stage_d_generator(
+                        None if arm == 'untuned' else arm, adapters, size, self.root / EDITED_DIR / arm / condition,
+                        probe_ids=items[0]['prompt_ids'])
+                    if edit is not None:
+                        ctx.expect(runs=[str((directory / 'edit').relative_to(self.root))])
+                        if not (directory / 'edit' / 'complete.json').is_file():
+                            au.seal_run(directory / 'edit', {'edit.json': {k: v for k, v in edit.items()
+                                                                          if k != 'reused'}})
+                rows = [by_id[i] for i in batch]
+                scored = []
+                for r in self._generate(generator, rows, [batch]):
+                    score = score_gsm8k_flexible_v3(r['text'], gold[r['id']], capped=r['stop_reason'] != 'eos')
+                    scored.append(dict(r, batch=index, correct=bool(score['correct']), status=score['status'],
+                                       tokens=len(r['generated_ids']), capped=r['stop_reason'] != 'eos'))
+                au.seal_run(bdir, {'responses.jsonl': ''.join(json.dumps(x, sort_keys=True) + '\n' for x in scored)})
+                ctx.boundary()  # caps are enforced between generation batches
+            responses = stage_d_batches(self.root, arm, condition)
+            out[f'{arm}|{condition}'] = dict(accuracy=float(np.mean([r['correct'] for r in responses])),
+                                             batches_reused=done)
         return out
 
     def report(self, ctx):
@@ -491,15 +514,13 @@ class Stages:
                                                            delta_stop=arrays[('stop', 0, 'delta_stop')][:, 0],
                                                            kl=arrays[('examples', 0, 'kl')][:, 0])
         stage_d = {}
-        gold_dir = self.root / STAGE_D_DIR / 'gold-sft'
-        if (gold_dir / 'full' / 'complete.json').is_file():
-            full = _jsonl(gold_dir / 'full' / 'responses.jsonl')
+        full = stage_d_batches(self.root, 'gold-sft', 'full')
+        if full is not None:
             for condition in STAGE_D_RUNS['gold-sft'][1:]:
-                directory = gold_dir / condition
                 metric = condition.split('-')[1]
-                if (directory / 'complete.json').is_file() and condition in stage_c.get('gold-sft', {}).get(metric, {}):
-                    au.verify_run(directory)
-                    stage_d[condition] = (full, _jsonl(directory / 'responses.jsonl'))
+                responses = stage_d_batches(self.root, 'gold-sft', condition)
+                if responses is not None and condition in stage_c.get('gold-sft', {}).get(metric, {}):
+                    stage_d[condition] = (full, responses)
         concordance_c = {name: values for metric in METRICS for name, values in
                          stage_c.get('gold-sft', {}).get(metric, {}).items()}
         inputs = dict(settings={k: stats[k] for k in ('resamples', 'seed', 'alpha', 'margin', 'sparse_lower',
@@ -531,6 +552,29 @@ class Stages:
         ctx.expect(runs=[REPORT_DIR])
         return dict(gates={k: g['pass'] for k, g in report['gates'].items()}, primary1=report['primary1']['outcome'],
                     primary3={m: {a: r['classification'] for a, r in report['primary3'][m].items()} for m in METRICS})
+
+
+def _jsonl_verified(directory):
+    au.verify_run(directory)
+    return _jsonl(Path(directory) / 'responses.jsonl')
+
+
+def stage_d_batches(root, arm, condition):
+    """All responses of one Stage D run in batch order, or None unless its config and every batch are sealed."""
+    directory = Path(root) / STAGE_D_DIR / arm / condition
+    if not (directory / 'config' / 'complete.json').is_file():
+        return None
+    config = _read(directory / 'config', 'config.json')
+    out = []
+    for index, batch in enumerate(config['batches']):
+        bdir = directory / f'b{index:05d}'
+        if not (bdir / 'complete.json').is_file():
+            return None
+        rows = _jsonl_verified(bdir)
+        if [r['id'] for r in rows] != batch:
+            raise ValueError(f'Stage D {arm}/{condition} batch {index}: sealed items differ from the config')
+        out += rows
+    return out
 
 
 def stage_d_adapters(freeze, arm, condition):

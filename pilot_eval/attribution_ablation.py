@@ -96,7 +96,11 @@ def _key(layer, projection):
 
 
 def edit_checkpoint(adapter_dir, out_dir, adapters):
-    """Copy a PEFT checkpoint with the chosen adapters' b zeroed; returns hashes and zeroed keys."""
+    """Copy a PEFT checkpoint with the chosen adapters' b zeroed; returns hashes and zeroed keys.
+
+    Retry-safe: an existing complete edit of the same source and adapters is verified and reused; anything else
+    at ``out_dir`` (an interrupted or different edit) is moved aside and the edit is rebuilt."""
+    import time
     from safetensors.numpy import load_file, save_file
     adapter_dir, out_dir = Path(adapter_dir), Path(out_dir)
     tensors = load_file(str(adapter_dir / 'adapter_model.safetensors'))
@@ -104,16 +108,27 @@ def edit_checkpoint(adapter_dir, out_dir, adapters):
     missing = [k for k in keys if k not in tensors]
     if missing or len(set(keys)) != len(keys):
         raise ValueError(f'adapters not in the checkpoint or repeated: {missing[:3]}')
+    source_sha = _sha(adapter_dir / 'adapter_model.safetensors')
+    if out_dir.exists():
+        previous = out_dir / 'edit_record.json'
+        if previous.is_file():
+            old = json.loads(previous.read_text())
+            if old.get('source_sha256') == source_sha and old.get('zeroed_keys') == sorted(keys):
+                try:
+                    verify_edit(out_dir, old)
+                    return dict(old, reused=True)
+                except ValueError:
+                    pass
+        out_dir.rename(out_dir.with_name(f'{out_dir.name}.interrupted-{time.time_ns()}'))
     edited = {k: (np.zeros_like(v) if k in keys else v) for k, v in tensors.items()}
-    out_dir.mkdir(parents=True, exist_ok=False)
+    out_dir.mkdir(parents=True)
     save_file(edited, str(out_dir / 'adapter_model.safetensors'))
     (out_dir / 'adapter_config.json').write_bytes((adapter_dir / 'adapter_config.json').read_bytes())
-    record = dict(source_sha256=_sha(adapter_dir / 'adapter_model.safetensors'),
-                  edited_sha256=_sha(out_dir / 'adapter_model.safetensors'),
+    record = dict(source_sha256=source_sha, edited_sha256=_sha(out_dir / 'adapter_model.safetensors'),
                   config_sha256=_sha(out_dir / 'adapter_config.json'), zeroed_keys=sorted(keys),
                   adapters=[list(a) for a in adapters])
-    (out_dir / 'edit_record.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
-    return record
+    (out_dir / 'edit_record.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')  # written last
+    return dict(record, reused=False)
 
 
 def verify_edit(out_dir, record):

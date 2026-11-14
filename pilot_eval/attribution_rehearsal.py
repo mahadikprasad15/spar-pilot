@@ -149,9 +149,10 @@ class Rehearsal:
         items = self.backend.rehearsal_items()[:2]
         sel_rows = at.load_rows(self.root, 'calibration')
         top = self._calibration_selection(arm, sel_rows)['top']
-        full, _ = self.backend.stage_d_generator(arm, None, 2, None)
-        edited, edit = self.backend.stage_d_generator(arm, top, 2,
-                                                      self.root / f'edited/rehearsal/{arm}')
+        probe = items[0]['prompt_ids']  # a rehearsal item: the blind cohort is never forwarded in a rehearsal
+        full, _ = self.backend.stage_d_generator(arm, None, 2, None, probe_ids=probe)
+        edited, edit = self.backend.stage_d_generator(arm, top, 2, self.root / f'edited/rehearsal/{arm}',
+                                                      probe_ids=probe)
         batches = [[r['id'] for r in items]]
         a, b = at.generate(full, items, batches), at.generate(edited, items, batches)
         au.seal_run(self.root / f'attribution/rehearsal/generation/{arm}',

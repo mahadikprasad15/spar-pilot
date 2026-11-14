@@ -67,6 +67,7 @@ class TinyBackend:
     def __init__(self, tmp, *, fail_stage_c_after=None, strict_rehearsal=False):
         self.tmp, self.models, self.fail_after, self.calls = tmp, {}, fail_stage_c_after, 0
         self.strict = strict_rehearsal  # a rehearsal must never read discovery, confirmation or the cohort
+        self.probes = []
 
     def _guard(self, what):
         if self.strict:
@@ -145,7 +146,8 @@ class TinyBackend:
         self._guard('cohort')
         return [dict(id=f'gsm8k:test:{i}', prompt_ids=[i + 3, 4, 5, 6][: 2 + i % 3]) for i in range(5)]
 
-    def stage_d_generator(self, arm, adapters, size, edit_dir):
+    def stage_d_generator(self, arm, adapters, size, edit_dir, *, probe_ids):
+        self.probes.append(list(probe_ids))
         from peft import PeftModel
         if arm is None:
             return at.HFGenerator(make(0), pad_token_id=PAD, eos_token_id=EOS, max_new_tokens=6, decode=decode), None
@@ -233,8 +235,8 @@ def test_rehearsal_chain_uses_only_visible_inputs(tmp_path):
     assert not (local / 'attribution/traces/discovery').exists() and not (local / 'attribution/traces/heldout').exists()
     freeze = json.loads((local / ab.FREEZE_DIR / 'freeze.json').read_text())
     assert freeze['rehearsal'] is True and freeze['sources'][0]['split'] == 'calibration'
-    responses = (local / 'attribution/stage_d/gold-sft/full/responses.jsonl').read_text()
-    assert '"id": "r0"' in responses and 'gsm8k:test' not in responses
+    responses = st.stage_d_batches(local, 'gold-sft', 'full')
+    assert {r['id'] for r in responses} == {'r0', 'r1', 'r2', 'r3'}
     report = json.loads((local / st.REPORT_DIR / 'report.json').read_text())
     assert report['stage_d']['pilot_comparison'] == dict(available=False, reason='rehearsal: no pilot items')
     assert report['rehearsal'] is True
@@ -263,8 +265,8 @@ def test_production_chain_runs_every_real_stage_end_to_end(tmp_path):
     assert summary['signoff']['by'] == ch.AUTO_REVIEWER
     local = tmp_path / 'local'
     for directory in [st.QUAL_DIR, ab.FREEZE_DIR, st.REPORT_DIR, 'attribution/traces/discovery/rows',
-                      'attribution/traces/heldout/rows', 'attribution/stage_d/untuned/reference',
-                      'attribution/stage_d/gold-sft/full']:
+                      'attribution/traces/heldout/rows', 'attribution/stage_d/untuned/reference/config',
+                      'attribution/stage_d/gold-sft/full/b00000']:
         au.verify_run(local / directory)
     freeze = json.loads((local / ab.FREEZE_DIR / 'freeze.json').read_text())
     assert set(freeze['arms']) == set(PRODUCTION_ARMS) and freeze['sources'][0]['split'] == 'discovery'
@@ -328,3 +330,87 @@ def test_interrupted_stage_c_resumes_and_skips_sealed_units(tmp_path):
     assert second['state'] == 'complete' and second['stages']['attribution_and_freeze'].get('resumed') is True
     assert any(k.startswith('c-gold-sft') for k in sealed_before)
     assert len(stops) == 2  # each run ended with a stop request
+
+
+# --- review round 4 (5): recovery onto an empty local disk; Stage D per batch -------------------------
+
+def _stale_marker(tmp_path):
+    import socket
+    (tmp_path / 'volume' / ch.MARKER_FILE).write_text(json.dumps(dict(
+        run_id='rehearsal-cpu-1', host=socket.gethostname(), pid=999999, state='running', heartbeat_unix=0)))
+
+
+def test_r4_5_resume_onto_an_empty_local_disk_restores_sealed_work_from_the_volume(tmp_path):
+    import shutil
+    record, stops = launch(tmp_path), []
+    original = ab.StageC.evaluate
+
+    def crash(self, rows, condition):
+        raise RuntimeError('simulated Pod loss in Stage C')
+
+    ab.StageC.evaluate = crash
+    try:
+        assert chain(tmp_path, record, TinyBackend(tmp_path, strict_rehearsal=True), stops).run()['state'] == 'failed'
+    finally:
+        ab.StageC.evaluate = original
+    shutil.rmtree(tmp_path / 'local')  # a fresh Pod: nothing local survives
+    _stale_marker(tmp_path)
+    summary = chain(tmp_path, record, TinyBackend(tmp_path, strict_rehearsal=True), stops).run()
+    assert summary['state'] == 'complete', json.dumps(summary, default=str)[:2000]
+    assert summary['stages']['qualification'] == dict(status='complete', resumed=True)
+    assert summary['restored_from_volume']['units'] and summary['restored_from_volume']['runs']
+
+
+def test_r4_5_stage_d_is_sealed_per_batch_and_an_interrupted_condition_resumes(tmp_path):
+    record, stops = launch(tmp_path), []
+    original_generate, original_stage_d = at.generate, st.Stages.stage_d
+    seen = dict(in_stage_d=False, calls=0, crash_at=None)
+
+    def stage_d(self, ctx):
+        seen['in_stage_d'] = True
+        try:
+            return original_stage_d(self, ctx)
+        finally:
+            seen['in_stage_d'] = False
+
+    def generate(generator, rows, batches):
+        if seen['in_stage_d']:
+            seen['calls'] += 1
+            if seen['calls'] == seen['crash_at']:
+                raise RuntimeError('interrupted inside Stage D')
+        return original_generate(generator, rows, batches)
+
+    at.generate, st.Stages.stage_d = generate, stage_d
+    try:
+        seen['crash_at'] = 2  # the first Stage D batch is sealed, the second is interrupted
+        first = chain(tmp_path, record, TinyBackend(tmp_path, strict_rehearsal=True), stops).run()
+        assert first['state'] == 'failed' and first['failures'][0]['error'].endswith('interrupted inside Stage D')
+        sealed = list((tmp_path / 'local' / st.STAGE_D_DIR).glob('*/*/b*/complete.json'))
+        assert len(sealed) == 1  # exactly the batch generated before the interruption
+        seen.update(calls=0, crash_at=None)
+        _stale_marker(tmp_path)
+        second = chain(tmp_path, record, TinyBackend(tmp_path, strict_rehearsal=True), stops).run()
+    finally:
+        at.generate, st.Stages.stage_d = original_generate, original_stage_d
+    assert second['state'] == 'complete', json.dumps(second, default=str)[:2000]
+    total = 0
+    for config in sorted((tmp_path / 'local' / st.STAGE_D_DIR).glob('*/*/config/config.json')):
+        total += len(json.loads(config.read_text())['batches'])
+        arm, condition = config.parent.parent.parent.name, config.parent.parent.name
+        assert st.stage_d_batches(tmp_path / 'local', arm, condition) is not None
+    assert total > 1 and seen['calls'] == total - 1  # the batch sealed before the crash was not regenerated
+
+
+def test_r4_5_edited_checkpoint_is_reused_or_rebuilt_after_an_interruption(tmp_path):
+    from tests.test_attribution_instrument import tiny
+    model = tiny(seed=2)
+    model.save_pretrained(tmp_path / 'adapter')
+    names = [(0, 'down_proj')]
+    record = ab.edit_checkpoint(tmp_path / 'adapter', tmp_path / 'edited', names)
+    again = ab.edit_checkpoint(tmp_path / 'adapter', tmp_path / 'edited', names)  # retry after success: reused
+    assert again['edited_sha256'] == record['edited_sha256'] and again['reused'] is True
+    (tmp_path / 'edited' / 'edit_record.json').unlink()  # interrupted before its record was written
+    rebuilt = ab.edit_checkpoint(tmp_path / 'adapter', tmp_path / 'edited', names)
+    assert rebuilt['edited_sha256'] == record['edited_sha256'] and rebuilt['reused'] is False
+    other = ab.edit_checkpoint(tmp_path / 'adapter', tmp_path / 'edited', [(1, 'down_proj')])  # different edit
+    assert other['zeroed_keys'] != record['zeroed_keys']
