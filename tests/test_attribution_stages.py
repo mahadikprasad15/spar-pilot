@@ -450,3 +450,75 @@ def test_r4_1_finite_differences_put_gates_on_the_input_device_and_move_metrics_
     monkeypatch.setattr(am, 'stop_pull', lambda *a, **k: (CudaLike(real_stop(*a, **k)[0]), real_stop(*a, **k)[1]))
     out = st.finite_difference_check(model, inst, fixture_rows()[:3], [31], epsilon=1e-2, adapters=1, neurons=1)
     assert np.isfinite(out['median_rel_err']) and out['checked']
+
+
+# --- review round 4 (9): only exercised sizes qualify ---------------------------------------------------
+
+def test_r4_9_generation_batch_larger_than_the_items_is_not_exercised_and_cannot_be_selected(tmp_path):
+    rule = dict(candidates=[1, 2, 4, 8], items=4, max_flips=1, max_stop_changes=1)
+    record = launch(tmp_path, generation_batch_rule=rule)
+    summary = chain(tmp_path, record, TinyBackend(tmp_path, strict_rehearsal=True), []).run()
+    details = json.loads((tmp_path / 'local' / st.QUAL_DIR / 'details.json').read_text())
+    gen = {c['batch']: c for c in details['generation_batches']['candidates']}
+    assert gen[8]['outcome'] == 'not-exercised' and 'needs 8 items' in gen[8]['reason']
+    assert details['generation_batches']['selected'] <= 4
+    assert all('peak_bytes' in c for b, c in gen.items() if b != 8)
+    assert summary['stages']['qualification']['status'] == 'complete'
+
+
+def test_r4_9_generation_oom_fails_that_candidate_and_falls_back(tmp_path):
+    record = launch(tmp_path)
+    backend = TinyBackend(tmp_path, strict_rehearsal=True)
+    backend.is_oom = lambda exc: 'out of memory' in str(exc)
+    original = backend.untuned_generator
+
+    def generator(size):
+        inner = original(size)
+
+        class Limited:
+            def generate(self, prompts):
+                if len(prompts) >= 4:
+                    raise RuntimeError('CUDA out of memory')
+                return inner.generate(prompts)
+        return Limited()
+
+    backend.untuned_generator = generator
+    chain(tmp_path, record, backend, []).run()
+    details = json.loads((tmp_path / 'local' / st.QUAL_DIR / 'details.json').read_text())
+    gen = {c['batch']: c for c in details['generation_batches']['candidates']}
+    assert gen[4]['outcome'] == 'oom' and details['generation_batches']['selected'] == 2
+
+
+def test_r4_9_token_budget_probe_fills_the_budget_and_records_what_it_used(tmp_path):
+    record = launch(tmp_path)
+    chain(tmp_path, record, TinyBackend(tmp_path, strict_rehearsal=True), []).run()
+    details = json.loads((tmp_path / 'local' / st.QUAL_DIR / 'details.json').read_text())
+    for c in details['sweep']['candidates']:
+        assert c['outcome'] == 'ok'
+        assert c['budget'] - c['width'] < c['padded_tokens'] <= c['budget'] and c['rows'] >= 2
+
+
+def test_r4_9_selected_budget_rechecked_on_worst_case_batches_before_production(tmp_path, monkeypatch):
+    from pilot_eval import attribution_instrument as ai
+    record = launch(tmp_path, run_id='production-cpu-1', mode='production', expected_arms=PRODUCTION_ARMS)
+    backend = TinyBackend(tmp_path)
+    backend.is_oom = lambda exc: 'out of memory' in str(exc)
+    original, seen = ai.Instrument.attribute, dict(stage=None)
+    real_base = st.Stages.base_traces
+
+    def base_traces(self, ctx):
+        seen['stage'] = 'base_traces'
+        try:
+            return real_base(self, ctx)
+        finally:
+            seen['stage'] = None
+
+    def attribute(self, rows, **kw):
+        if seen['stage'] == 'base_traces':
+            raise RuntimeError('CUDA out of memory')
+        return original(self, rows, **kw)
+
+    monkeypatch.setattr(st.Stages, 'base_traces', base_traces)
+    monkeypatch.setattr(ai.Instrument, 'attribute', attribute)
+    summary = chain(tmp_path, record, backend, []).run()
+    assert summary['state'] == 'stopped-before-production' and 'worst-case' in summary['stop_reason']

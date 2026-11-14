@@ -215,56 +215,109 @@ class Stages:
         ctx.expect(runs=[QUAL_DIR])
         return result
 
+    def _probe_memory(self, inst, rows):
+        """Pass 1 + pass 2 on ``rows`` with the peak measured; returns (outcome, record). OOM fails this probe only."""
+        width = max(len(r['input_ids']) for r in rows)
+        record = dict(rows=len(rows), width=width, padded_tokens=len(rows) * width)
+        self.backend.reset_peak()
+        try:
+            inst.attribute(rows)
+        except Exception as exc:
+            if not self.backend.is_oom(exc):
+                raise
+            return 'oom', dict(record, outcome='oom')
+        peak = self.backend.peak_memory()
+        fits = peak <= self.q['memory_fraction'] * self.backend.device_memory()
+        return 'ok', dict(record, outcome='ok', peak_bytes=peak, fits=fits)
+
     def _sweep(self, rows):
+        """Each candidate budget is exercised by a batch that actually fills it: the longest calibration row
+        replicated (distinct IDs) up to the budget. The records give the rows, width and padded tokens used."""
         device = self.backend.device_memory()
         records, selected = [], None
         inst = self._instrument(self.backend.load(self.arms[0]))
+        longest = max(rows, key=lambda r: (len(r['input_ids']), r['id']))
         for budget in sorted(self.record['token_budget_sweep']):
-            probe = longest_probe(rows, budget)
-            if probe is None:
+            copies = budget // len(longest['input_ids'])
+            if copies < 1:
                 records.append(dict(budget=budget, outcome='longest-example-exceeds-budget'))
                 continue
-            self.backend.reset_peak()
-            try:
-                inst.attribute(probe)
-            except Exception as exc:  # an OOM fails this candidate only
-                if not self.backend.is_oom(exc):
-                    raise
-                records.append(dict(budget=budget, outcome='oom'))
-                continue
-            peak = self.backend.peak_memory()
-            fits = peak <= self.q['memory_fraction'] * device
-            records.append(dict(budget=budget, outcome='ok', peak_bytes=peak, fits=fits))
-            if fits:
+            probe = [dict(longest, id=f"{longest['id']}#probe{k}") for k in range(copies)]
+            outcome, record = self._probe_memory(inst, probe)
+            records.append(dict(record, budget=budget, probe='longest calibration row replicated to fill the budget'))
+            if outcome == 'ok' and record['fits']:
                 selected = budget
         return dict(candidates=records, selected=selected, device_bytes=device,
                     memory_fraction=self.q['memory_fraction'])
 
     def _generation_batches(self):
+        """Batch 1 is the reference. A candidate qualifies only if it was actually exercised (no more rows than
+        there are rehearsal items), did not OOM, and meets the flip / stop-change rule; the first failure ends
+        the sweep. Actual batch size, padded tokens and peak memory are recorded."""
         rule = self.record['generation_batch_rule']
         items = self.backend.rehearsal_items()
         if len(items) != rule['items']:
             raise StopBeforeProduction(f"expected {rule['items']} rehearsal generation items, got {len(items)}")
         ordered = sorted(items, key=lambda r: (-len(r['prompt_ids']), r['id']))  # longest prompts first
         gold = self.backend.gold('rehearsal')
-        reference, records, selected = None, [], 1
+        reference, records, selected, stopped = None, [], 1, False
         for size in sorted(rule['candidates']):
+            if size > len(ordered):
+                records.append(dict(batch=size, outcome='not-exercised',
+                                    reason=f'needs {size} items; only {len(ordered)} rehearsal items exist'))
+                continue
+            if stopped:
+                records.append(dict(batch=size, outcome='not-tried', reason='a smaller candidate failed'))
+                continue
             batches = [[r['id'] for r in ordered[i:i + size]] for i in range(0, len(ordered), size)]
-            out = {o['id']: o for o in at.generate(self.backend.untuned_generator(size), ordered, batches)}
+            self.backend.reset_peak()
+            try:
+                out = {o['id']: o for o in at.generate(self.backend.untuned_generator(size), ordered, batches)}
+            except Exception as exc:
+                if not self.backend.is_oom(exc):
+                    raise
+                records.append(dict(batch=size, outcome='oom'))
+                stopped = True
+                continue
+            peak = self.backend.peak_memory()
+            padded = max(len(r['prompt_ids']) for r in ordered[:size]) * size + \
+                size * max(len(out[r['id']]['generated_ids']) for r in ordered[:size])
             correct = {i: score_gsm8k_flexible_v3(o['text'], gold[i], capped=o['stop_reason'] != 'eos')['correct']
                        for i, o in out.items()}
+            measured = dict(batch=size, rows_in_first_batch=len(batches[0]), padded_tokens_first_batch=padded,
+                            peak_bytes=peak)
             if reference is None:
                 reference = (out, correct)
-                records.append(dict(batch=size, outcome='reference'))
+                records.append(dict(measured, outcome='reference'))
                 continue
             flips = sum(correct[i] != reference[1][i] for i in correct)
             stops = sum(out[i]['stop_reason'] != reference[0][i]['stop_reason'] for i in out)
             ok = flips <= rule['max_flips'] and stops <= rule['max_stop_changes']
-            records.append(dict(batch=size, flips=flips, stop_changes=stops, qualifies=ok))
+            records.append(dict(measured, outcome='qualifies' if ok else 'fails-rule', flips=flips,
+                                stop_changes=stops, qualifies=ok))
             if not ok:
-                break
+                stopped = True
+                continue
             selected = size
-        return dict(candidates=records, selected=selected, rule=rule)
+        return dict(candidates=records, selected=selected, rule=rule,
+                    note='only exercised sizes can be selected (review round 4, 9)')
+
+    def _worst_case_check(self, budget):
+        """Re-check the selected budget on the real attribution rows before production: the packed batch with the
+        most padded tokens and the one holding the longest rows. OOM or a peak over the limit stops the chain."""
+        rows = at.load_rows(self.root, self._split('discovery'))
+        batches = pack(rows, budget)
+        worst = {'most-padded-tokens': max(batches, key=lambda b: len(b) * max(len(r['input_ids']) for r in b)),
+                 'longest-rows': batches[0]}
+        inst = self._instrument(self.backend.load(self.arms[0]))
+        out = {}
+        for name, batch in worst.items():
+            outcome, record = self._probe_memory(inst, batch)
+            out[name] = record
+            if outcome == 'oom' or not record['fits']:
+                raise StopBeforeProduction(f'selected token budget {budget} fails the worst-case {name} attribution '
+                                           f'batch ({record}); qualification must pick a smaller budget')
+        return out
 
     def base_traces(self, ctx):
         qual = _read(self.root / QUAL_DIR, 'qualification.json')
@@ -281,6 +334,7 @@ class Stages:
                              for d in ('generation', 'rows')])
             out[split] = manifest['counts']  # counts only; no confirmation output is inspected
             ctx.boundary()
+        out['worst_case_memory'] = self._worst_case_check(qual['budget'])
         return out
 
     def _split(self, role):
