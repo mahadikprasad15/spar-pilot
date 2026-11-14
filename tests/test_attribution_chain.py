@@ -433,7 +433,9 @@ def test_watchdog_fires_on_a_hung_stage(tmp_path):
     env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}; exit 1',
                WATCHDOG_STOP_2=f'echo stop2 >> {log}', WATCHDOG_SUMMARY=str(tmp_path / 'watchdog_summary.json'))
     deadline = time.time() + 1
-    result = subprocess.run(['bash', str(WATCHDOG), str(deadline), str(hung.pid), str(tmp_path / 'done'), '2', '5', '5'],
+    (tmp_path / 'owner').write_text('attempt-A\n')
+    result = subprocess.run(['bash', str(WATCHDOG), str(deadline), str(hung.pid), str(tmp_path / 'done'), '2', '5', '5',
+                             str(tmp_path / 'owner'), 'attempt-A'],
                             env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
     assert hung.wait(timeout=10) is not None
@@ -447,8 +449,10 @@ def test_watchdog_cancelled_cleanly_on_normal_completion(tmp_path):
     (tmp_path / 'done').write_text('complete')
     env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
                WATCHDOG_STOP_2='true', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    (tmp_path / 'owner').write_text('attempt-A\n')
     result = subprocess.run(['bash', str(WATCHDOG), str(time.time() + 3600), str(os.getpid()), str(tmp_path / 'done'),
-                             '2', '5', '5'], env=env, capture_output=True, text=True, timeout=30)
+                             '2', '5', '5', str(tmp_path / 'owner'), 'attempt-A'], env=env, capture_output=True,
+                            text=True, timeout=30)
     assert result.returncode == 0 and not log.exists() and 'cancelled' in result.stdout
 
 
@@ -647,3 +651,24 @@ def test_r4_8_a_retry_never_leaves_a_stale_summary(tmp_path):
     assert chain.run()['state'] == 'complete'
     latest = au.latest_summary(tmp_path / 'volume')
     assert latest['summary']['state'] == 'complete' and latest['attempt'].startswith('attempt-002')
+
+
+
+def test_r4_7_a_superseded_watchdog_stands_down_without_signalling_or_stopping(tmp_path):
+    """A killed attempt's watchdog must never stop the Pod under a resumed writer (review round 4, 7)."""
+    replacement = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    log = tmp_path / 'actions.log'
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
+               WATCHDOG_STOP_2=f'echo stop2 >> {log}', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    owner = tmp_path / 'owner'
+    owner.write_text('attempt-A\n')
+    old = subprocess.Popen(['bash', str(WATCHDOG), str(time.time() + 3), str(replacement.pid), str(tmp_path / 'done'),
+                            '2', '5', '5', str(owner), 'attempt-A'], env=env, stdout=subprocess.PIPE, text=True)
+    time.sleep(1)
+    owner.write_text('attempt-B\n')  # the relaunch takes ownership before starting its own chain and watchdog
+    out, _ = old.communicate(timeout=30)
+    try:
+        assert old.returncode == 0 and 'superseded' in out
+        assert not log.exists() and replacement.poll() is None  # nothing copied or stopped; the new writer lives
+    finally:
+        replacement.kill()

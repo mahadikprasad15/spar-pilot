@@ -12,6 +12,10 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
 export PYTHONUNBUFFERED=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUBLAS_WORKSPACE_CONFIG=:4096:8
 mkdir -p "$local_dir" "$volume/attribution/chain"
+# Take ownership first: any watchdog left by an earlier (killed) attempt sees a new token and stands down.
+owner="$volume/attribution/chain/watchdog_owner"
+token="$(hostname)-$$-$(date +%s%N)"
+printf '%s\n' "$token" > "$owner"
 rm -f "$volume/attribution/chain/done"
 
 deadline=$(python -m pilot_eval.attribution_chain deadline --record "$record" --local "$local_dir" --volume "$volume")
@@ -31,6 +35,6 @@ WATCHDOG_COPY="python -m pilot_eval.attribution_chain watchdog-copy --local '$lo
 WATCHDOG_STOP_1="${stop1//$'\x1f'/ }" WATCHDOG_STOP_2="${stop2//$'\x1f'/ }" \
 WATCHDOG_SUMMARY="$volume/attribution/chain/watchdog_summary.json" \
   setsid nohup bash scripts/attribution_watchdog.sh "$deadline" "$chain_pid" "$volume/attribution/chain/done" \
-  120 "$copy_t" "$stop_t" > "$volume/attribution/chain/watchdog.log" 2>&1 < /dev/null &
+  120 "$copy_t" "$stop_t" "$owner" "$token" >> "$volume/attribution/chain/watchdog.log" 2>&1 < /dev/null &
 echo "chain pid $chain_pid; watchdog deadline $(date -u -d "@${deadline%.*}" +%FT%TZ) for Pod $pod"
 wait "$chain_pid"
