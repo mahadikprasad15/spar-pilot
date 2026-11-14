@@ -45,6 +45,56 @@ def rehearsal_indices(ids, total, *, count=20):
     return ids
 
 
+def _file_sha(path):
+    import hashlib
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for block in iter(lambda: stream.read(1 << 24), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def bind_sources(inventory, sequences_manifest, *, adapter_dirs, model_dir, test_parquet, step='64'):
+    """Bind the actual inputs to their sealed identities before any work (review round 4, 3).
+
+    Each arm's ``adapter_model.safetensors`` and ``adapter_config.json`` must equal that arm's verified step-64
+    entry in inventory-v2; every pinned base-model file must match its hash; the GSM8K test parquet must equal
+    the one pinned in the sequences-v2 manifest. Swapped arm directories or another compatible model or split
+    are refused rather than producing results under the wrong label."""
+    problems, record = [], dict(step=step, arms={})
+    for arm, directory in sorted(adapter_dirs.items()):
+        entry = inventory.get('arms', {}).get(arm, {}).get('checkpoints', {}).get(step)
+        if entry is None:
+            problems.append(f'{arm}: no step-{step} checkpoint in the inventory')
+            continue
+        if entry.get('status') != 'verified':
+            problems.append(f"{arm}: inventory step-{step} checkpoint is {entry.get('status')}, not verified")
+            continue
+        record['arms'][arm] = {}
+        for name in ('adapter_model.safetensors', 'adapter_config.json'):
+            expected = entry.get('files', {}).get(name, {}).get('sha256')
+            path = Path(directory) / name
+            actual = _file_sha(path) if path.is_file() else None
+            if expected is None or actual != expected:
+                problems.append(f'{arm}: {name} differs from the inventory (expected {expected}, got {actual})')
+            record['arms'][arm][name] = actual
+    expected_base = inventory.get('base', {}).get('expected_file_sha256') or {}
+    if not expected_base:
+        problems.append('base model: the inventory pins no file hashes')
+    for name, digest in sorted(expected_base.items()):
+        path = Path(model_dir) / name
+        if not path.is_file() or _file_sha(path) != digest:
+            problems.append(f'base model: {name} differs from its pinned hash')
+    expected_test = sequences_manifest.get('inputs', {}).get('files', {}).get('gsm8k_test')
+    actual_test = _file_sha(test_parquet) if Path(test_parquet).is_file() else None
+    if expected_test is None or actual_test != expected_test:
+        problems.append('test parquet: differs from the sequences-v2 manifest')
+    if problems:
+        raise ValueError('inputs are not the sealed sources: ' + '; '.join(problems))
+    record.update(base_files=sorted(expected_base), test_parquet_sha256=actual_test)
+    return record
+
+
 class TransformersBackend:
     def __init__(self, record, volume_root, *, device='cuda'):
         from pilot_eval.neuron_audit_collector import set_ieee_precision
@@ -62,6 +112,10 @@ class TransformersBackend:
         model_dir = Path(inputs['model_dir']) if Path(inputs['model_dir']).is_absolute() else self.path(inputs['model_dir'])
         self.loader = Loader(model_dir, self.adapter_dirs, self.path(inputs['tokenizer_dir']),
                              record['expected_arms'][0], device=device)
+        self.bound = bind_sources(
+            json.loads((self.path(inputs['inventory_dir']) / 'inventory.json').read_text()),
+            json.loads((self.path(inputs['sequences_dir']) / 'manifest.json').read_text()),
+            adapter_dirs=self.adapter_dirs, model_dir=model_dir, test_parquet=self.path(inputs['gsm8k_test_parquet']))
         self.tokenizer = ChatTokenizer(self.path(inputs['tokenizer_dir']))
         if self.tokenizer.pad_token_id is None:
             raise ValueError('the pinned tokenizer has no pad token')
@@ -79,7 +133,7 @@ class TransformersBackend:
         import torch
         return dict(model=str(self.inputs['model_dir']), torch=torch.__version__, dtype='float32', tf32=False,
                     autocast=False, attention='eager', precision=self.precision,
-                    device=torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu',
+                    device=torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu', sources=self.bound,
                     tokenizer=self.tokenizer.identity())
 
     def decoder(self):
