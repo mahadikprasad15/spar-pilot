@@ -87,3 +87,12 @@ The code needs these values, and the spec and candidate plan don't give them. Th
 - **Operational values approved:** marker staleness 900 s; timeouts copy 2700 s, export attempt 3600 s, stop attempt 120 s, writer join 300 s; FD 4 rows / 5 adapters / 3 neurons; calibration minimum 10; head chunk 1024; memory fraction 0.80. The hourly cost is still the user's to give.
 - The writer heartbeat is now refreshed at every unit boundary, not only at stage start.
 - `launch-record-draft.yaml` collects every value, each marked `[user]`, `[approved]` or `[proposed]`. `python -m pilot_eval.attribution_chain seal --draft … --out …` seals it against the checkout and refuses while anything is null.
+
+### 2026-11-14 — rehearsal mode reads only visible inputs (user-approved fix)
+
+- **Before:** rehearsal mode still generated discovery and confirmation traces and ran Stage C on confirmation rows and Stage D on the ADR 0001 cohort, so a Pod rehearsal would have produced visible confirmation outcomes before the production freeze (the 2026-11-13 lesson).
+- **Now:** in rehearsal mode the calibration rows stand in for discovery and confirmation, and the 20 rehearsal items for the cohort. No blind trace is generated.
+  - The freeze is labelled `rehearsal` and built from calibration rows. The condition builder refuses a rehearsal freeze in production and a production freeze in a rehearsal.
+  - There is no pilot comparison, and the report is titled REHEARSAL.
+  - A CPU test runs the whole rehearsal chain with a backend that raises on any discovery, held-out or cohort request. A separate six-arm production test keeps the real path covered.
+- **Also found by that test:** when the untuned reference had no EOS-terminated response, the Stage D report raised and failed the report stage. Early stop is now reported unavailable with the reason, never fatal.

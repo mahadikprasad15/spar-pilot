@@ -17,6 +17,11 @@ inventory-v2 arms offline; tests: a tiny random Qwen2), so the same code runs on
 - **stage_c**: <= 19 conditions per arm and metric on confirmation rows, read only after the freeze.
 - **stage_d**: 9 generation runs on the ADR 0001 cohort from edited checkpoints at the qualified batch size.
 - **report**: ``attribution_report.build`` + ``render``, sealed.
+
+**Rehearsal mode** (record ``mode: rehearsal``) reads only visible inputs: the calibration rows stand in for
+discovery *and* confirmation, and the record's 20 rehearsal items stand in for the ADR 0001 cohort. No blind
+trace is generated, the freeze is labelled ``rehearsal`` (refused by production), there is no pilot comparison,
+and the report is titled REHEARSAL. It exercises the machinery; its numbers mean nothing scientifically.
 """
 import hashlib
 import json
@@ -67,6 +72,7 @@ class Stages:
         self.root = Path(local_root)
         self.q = record['qualification']
         self.arms = list(record['expected_arms'])
+        self.rehearsal = record['mode'] == 'rehearsal'
         self.units = au.Units(self.root, plan_sha256=_sha(record), code_sha256=code_sha256,
                               runtime_sha256=_sha(backend.runtime()))
         self.mon = None
@@ -263,6 +269,12 @@ class Stages:
         qual = _read(self.root / QUAL_DIR, 'qualification.json')
         out = {}
         for split in ('discovery', 'heldout'):
+            if self.rehearsal:  # calibration rows (traced in qualification) stand in; nothing blind is generated
+                manifest = _read(at.split_dir(self.root, 'calibration') / 'rows', 'manifest.json')
+                at.check_minimum(split, manifest['counts'], minimum=self.record['minimums'][split])
+                out[split] = dict(manifest['counts'], stands_in='calibration')
+                ctx.boundary()
+                continue
             manifest = self._traces(split, qual['generation_batch'], minimum=self.record['minimums'][split])
             ctx.expect(runs=[str(at.split_dir(self.root, split).relative_to(self.root) / d)
                              for d in ('generation', 'rows')])
@@ -270,9 +282,19 @@ class Stages:
             ctx.boundary()
         return out
 
+    def _split(self, role):
+        """The sequences split playing ``role`` (discovery or heldout); calibration for both in a rehearsal."""
+        return 'calibration' if self.rehearsal else role
+
+    def _cohort(self):
+        """Stage D items and gold: the ADR 0001 cohort, or the 20 rehearsal items in a rehearsal."""
+        if self.rehearsal:
+            return self.backend.rehearsal_items(), self.backend.gold('rehearsal')
+        return self.backend.cohort_items(), self.backend.gold('cohort')
+
     def _discovery_batches(self):
         qual = _read(self.root / QUAL_DIR, 'qualification.json')
-        rows = at.load_rows(self.root, 'discovery')
+        rows = at.load_rows(self.root, self._split('discovery'))
         return rows, [[r['id'] for r in b] for b in pack(rows, qual['budget'])]
 
     def attribution_and_freeze(self, ctx):
@@ -293,7 +315,8 @@ class Stages:
             run_units(self.units, arm, batches, compute, boundary=ctx.boundary, input_sha256=input_sha)
             arms[arm] = self._discovery_summary(arm, len(batches), inst)
         selection = self.record['selection']
-        freeze = ab.build_freeze(arms, sources=[dict(split='discovery', rows_sha256=input_sha)],
+        freeze = ab.build_freeze(arms, sources=[dict(split=self._split('discovery'), rows_sha256=input_sha)],
+                                 rehearsal=self.rehearsal,
                                  analysis=dict(statistics=self.record['statistics'],
                                                tolerances=self.record['tolerances']),
                                  tolerance=selection['tolerance'], seed=selection['seed'],
@@ -324,7 +347,8 @@ class Stages:
 
     def stage_c(self, ctx):
         freeze_dir = self.root / ab.FREEZE_DIR
-        rows = at.load_rows(self.root, 'heldout', freeze_dir=freeze_dir)
+        au.verify_run(freeze_dir)  # Stage C never runs before a sealed freeze
+        rows = at.load_rows(self.root, self._split('heldout'), freeze_dir=freeze_dir)
         ids = [r['id'] for r in rows]
         order = {i: k for k, i in enumerate(ids)}
         batches = pack(rows, _read(self.root / QUAL_DIR, 'qualification.json')['budget'])
@@ -333,7 +357,7 @@ class Stages:
             stage = ab.StageC(self.backend.load(arm), stop_ids=self._stop()['stop_ids'], pad_token_id=self._pad(),
                               head_chunk=self.q['head_chunk'])
             for metric in METRICS:
-                conditions = ab.conditions(freeze_dir, arm, metric)
+                conditions = ab.conditions(freeze_dir, arm, metric, rehearsal=self.rehearsal)
 
                 def evaluate(condition, stage=stage):
                     merged = {k: np.full(len(ids), np.nan) for k in ('delta_trace', 'delta_stop', 'kl')}
@@ -382,12 +406,19 @@ class Stages:
         if 'untuned|reference' not in runs:
             return dict(available=False, reason='untuned reference run not sealed')
         rule = self.record['stage_d']['early_stop_rule']
-        reference = ar.early_stop_reference(runs['untuned|reference'], rule=rule)
-        out = dict(early_stop_reference=reference,
+        try:
+            reference = ar.early_stop_reference(runs['untuned|reference'], rule=rule)
+        except ValueError as exc:  # e.g. every untuned response capped: reported, never fatal
+            reference = None
+            unavailable = dict(available=False, rule=rule, reason=str(exc))
+        out = dict(early_stop_reference=reference if reference is not None else unavailable,
                    outcomes={k: ar.stage_d_outcomes(v, early_reference=reference) for k, v in runs.items()},
                    pilot_comparison={})
+        if self.rehearsal:
+            out['pilot_comparison'] = dict(available=False, reason='rehearsal: no pilot items')
+            return out
         root = Path(self.record['inputs'].get('artifact_root', '.'))
-        gold = self.backend.gold('cohort')
+        _, gold = self._cohort()
         for arm, spec in sorted(self.record['stage_d'].get('pilot_results', {}).items()):
             if f'{arm}|full' not in runs:
                 continue
@@ -403,9 +434,8 @@ class Stages:
     def stage_d(self, ctx):
         freeze = _read(self.root / ab.FREEZE_DIR, 'freeze.json')
         size = _read(self.root / QUAL_DIR, 'qualification.json')['generation_batch']
-        items = self.backend.cohort_items()
+        items, gold = self._cohort()
         batches = [[r['id'] for r in items[i:i + size]] for i in range(0, len(items), size)]
-        gold = self.backend.gold('cohort')
         runs = [('untuned', 'reference')] + [(arm, c) for arm, cs in STAGE_D_RUNS.items() if arm in self.arms
                                               for c in cs]
         out = {}
@@ -430,7 +460,8 @@ class Stages:
             au.seal_run(directory, {'responses.jsonl': ''.join(json.dumps(s, sort_keys=True) + '\n' for s in scored),
                                     'config.json': dict(arm=arm, condition=condition, adapters=adapters, edit=edit,
                                                         decoding=self.backend.decoding(), batches=batches,
-                                                        scorer='gsm8k_flexible_v3', cohort='adr-0001',
+                                                        scorer='gsm8k_flexible_v3',
+                                                        cohort='rehearsal-items' if self.rehearsal else 'adr-0001',
                                                         model=self.backend.runtime().get('model'))})
             out[f'{arm}|{condition}'] = dict(accuracy=float(np.mean([s['correct'] for s in scored])))
             ctx.boundary()
@@ -450,7 +481,7 @@ class Stages:
             stage_c[arm] = {}
             for metric in METRICS:
                 stage_c[arm][metric] = {}
-                for c in ab.conditions(self.root / ab.FREEZE_DIR, arm, metric):
+                for c in ab.conditions(self.root / ab.FREEZE_DIR, arm, metric, rehearsal=self.rehearsal):
                     key = au.unit_key('c', arm, condition=c['name'])
                     if c['status'] != 'run' or self.units.state(key) != 'sealed':
                         continue
@@ -477,6 +508,7 @@ class Stages:
                       freeze={arm: freeze['arms'][arm] for arm in self.arms}, stage_c=stage_c, stage_d={},
                       neuron={}, compute=self._compute_records(), a_vs_a0=None)
         report = ar.build(inputs)
+        report['rehearsal'] = self.rehearsal
         qual = _read(self.root / QUAL_DIR, 'qualification.json')
         floor_rule = qual['resolution_floor']
         floor = ar.resolution_floor(floor_rule['rule'], floor_rule['measured_batch_invariance'])

@@ -175,13 +175,19 @@ def neuron_orders(attr_j, *, attr_i, term_size, random_seeds):
                 random_seeds=list(random_seeds))
 
 
-def build_freeze(arms, *, sources, analysis, tolerance, seed, random_seeds, top_group, top_singles, read_size):
-    """Selection and analysis freeze from discovery-only inputs (per arm: mean attributions, writes, reads)."""
-    if not sources or any(s.get('split') != 'discovery' for s in sources):
-        raise ValueError('the freeze is built from discovery inputs only')
+def build_freeze(arms, *, sources, analysis, tolerance, seed, random_seeds, top_group, top_singles, read_size,
+                 rehearsal=False):
+    """Selection and analysis freeze from discovery-only inputs (per arm: mean attributions, writes, reads).
+
+    A rehearsal freeze is built from calibration rows instead, is labelled ``rehearsal``, and is refused by the
+    production condition builder."""
+    allowed = 'calibration' if rehearsal else 'discovery'
+    if not sources or any(s.get('split') != allowed for s in sources):
+        raise ValueError(f'the freeze is built from {allowed} inputs only' +
+                         ('' if rehearsal else ' (discovery)'))
     if not random_seeds:
         raise ValueError('random-order seeds must come from the launch record')
-    out = dict(schema=f'{au.STUDY}/freeze-v1', sources=sources, analysis=analysis,
+    out = dict(schema=f'{au.STUDY}/freeze-v1', sources=sources, analysis=analysis, rehearsal=bool(rehearsal),
                settings=dict(tolerance=tolerance, seed=seed, random_seeds=list(random_seeds), top_group=top_group,
                              top_singles=top_singles, read_size=read_size), arms={})
     for arm, x in sorted(arms.items()):
@@ -215,12 +221,15 @@ def seal_freeze(root, freeze):
     return directory
 
 
-def conditions(freeze_dir, arm, metric):
+def conditions(freeze_dir, arm, metric, *, rehearsal=False):
     """Stage C conditions for one arm and metric, read only from a sealed freeze (≤ 19)."""
     au.verify_run(freeze_dir)
     freeze = json.loads((Path(freeze_dir) / 'freeze.json').read_text())
-    if any(s.get('split') != 'discovery' for s in freeze['sources']):
-        raise ValueError('freeze lists non-discovery inputs')
+    if bool(freeze.get('rehearsal', False)) != bool(rehearsal):
+        raise ValueError('a rehearsal freeze cannot feed production, and vice versa (rehearsal flag differs)')
+    allowed = 'calibration' if rehearsal else 'discovery'
+    if any(s.get('split') != allowed for s in freeze['sources']):
+        raise ValueError(f'freeze lists non-{allowed} inputs')
     sel = freeze['arms'][arm][metric]
     read = freeze['settings']['read_size']
     out = []

@@ -432,7 +432,9 @@ def _fmt(x):
 
 
 def render(report):
-    lines = ['# Adapter and neuron attribution — report', '', report['scope'], '',
+    title = ('# REHEARSAL — adapter and neuron attribution (machinery check on visible inputs; these are not '
+             'scientific results)') if report.get('rehearsal') else '# Adapter and neuron attribution — report'
+    lines = [title, '', report['scope'], '',
              f"Provenance: {report['provenance_statement']}; per arm: "
              + '; '.join(f"{a}: {v.get('status')}" for a, v in sorted(report['provenance'].items())) + '.', '',
              report['independence'], '', '## Validity gates', '', f'Each gate is a {GATE_LABEL}.', '',
@@ -462,15 +464,20 @@ def render(report):
     sd = report.get('stage_d')
     if sd and sd.get('outcomes'):
         ref = sd['early_stop_reference']
-        lines += ['', '## Stage D (ADR 0001 cohort)', '',
-                  f"An early stop is a response that ends with EOS before {ref['rule']['ratio']} x this study's "
-                  f"untuned response to the same question ({len(ref['excluded_capped'])} questions without an "
-                  'uncapped untuned reference are excluded); the early-stop rate below is per run.', '',
+        definition = (f"An early stop is a response that ends with EOS before {ref['rule']['ratio']} x this study's "
+                      f"untuned response to the same question ({len(ref['excluded_capped'])} questions without an "
+                      'uncapped untuned reference are excluded); the early-stop rate below is per run.'
+                      if 'tokens' in ref else f"Early-stop rate unavailable: {ref['reason']}.")
+        lines += ['', '## Stage D', '', definition, '',
                   '| run | accuracy | mean tokens | capped | invalid | early-stop rate |',
                   '| --- | --- | --- | --- | --- | --- |']
         lines += [f"| {k} | {_fmt(v['accuracy'])} | {_fmt(v['mean_tokens'])} | {v['capped']} | {v['invalid']} | "
                   f"{_fmt(v['early_stop']['rate'])} |" for k, v in sd['outcomes'].items()]
-        for arm, c in sd.get('pilot_comparison', {}).items():
+        comparisons = sd.get('pilot_comparison', {})
+        if comparisons.get('available') is False:  # e.g. a rehearsal: no pilot items to compare
+            lines.append(f"- Pilot comparison: unavailable ({comparisons['reason']})")
+            comparisons = {}
+        for arm, c in comparisons.items():
             lines.append(f"- {arm} vs pilot (v3): " + (f"{c['agree']}/{c['n']} items agree; flips {c['flips']}; "
                                                        f"stored-score disagreements {len(c['stored_score_disagreements'])}"
                                                   if 'agree' in c else f"unavailable ({c['reason']})"))
@@ -569,7 +576,9 @@ def stage_d_outcomes(items, *, early_reference):
     invalid = sum(r.get('status') != 'valid' for r in items)
     return dict(n=n, accuracy=float(np.mean([bool(r['correct']) for r in items])),
                 mean_tokens=float(np.mean([r['tokens'] for r in items])), capped=capped, invalid=invalid,
-                capped_rate=capped / n, early_stop=early_stop_rate(items, early_reference))
+                capped_rate=capped / n,
+                early_stop=early_stop_rate(items, early_reference) if early_reference is not None else
+                dict(rate=None, reason='no untuned EOS-terminated reference'))
 
 
 def primary2_support(contrasts, holm_family):

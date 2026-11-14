@@ -64,8 +64,13 @@ class Scripted:
 
 
 class TinyBackend:
-    def __init__(self, tmp, *, fail_stage_c_after=None):
+    def __init__(self, tmp, *, fail_stage_c_after=None, strict_rehearsal=False):
         self.tmp, self.models, self.fail_after, self.calls = tmp, {}, fail_stage_c_after, 0
+        self.strict = strict_rehearsal  # a rehearsal must never read discovery, confirmation or the cohort
+
+    def _guard(self, what):
+        if self.strict:
+            raise AssertionError(f'rehearsal read a blind input: {what}')
 
     def runtime(self):
         return dict(model='tiny-qwen2', torch=torch.__version__)
@@ -90,12 +95,16 @@ class TinyBackend:
         return []
 
     def prompt_rows(self, split):
-        offset, n = dict(calibration=(1, 4), discovery=(40, 8), heldout=(80, 8))[split]
+        if split != 'calibration':
+            self._guard(split)
+        offset, n = dict(calibration=(1, 8), discovery=(40, 8), heldout=(80, 8))[split]
         return [dict(id=f'{split}:{i}', split=split, source_ref=i,
                      prompt_ids=[(offset + i) % 29 + 1, 3, 4, (i * 7) % 29 + 1][:3 + i % 2] + [5])
                 for i in range(n)]
 
     def gold(self, split):
+        if split not in ('calibration', 'rehearsal'):
+            self._guard(f'gold:{split}')
         if split in ('rehearsal', 'cohort'):
             return {r['id']: '#### 7' for r in (self.rehearsal_items() if split == 'rehearsal' else self.cohort_items())}
         return {r['id']: 'w\n#### 7' for r in self.prompt_rows(split)}
@@ -108,7 +117,7 @@ class TinyBackend:
 
     def load(self, arm):
         if arm not in self.models:
-            self.models[arm] = make(0, arm_seed={'gold-sft': 11, 'online-grpo': 12}[arm])
+            self.models[arm] = make(0, arm_seed=11 + PRODUCTION_ARMS.index(arm))
         return self.models[arm]
 
     def preflight(self):
@@ -133,6 +142,7 @@ class TinyBackend:
         return [dict(id=f'r{i}', prompt_ids=[i + 1, 2, 3][: 1 + i % 3]) for i in range(4)]
 
     def cohort_items(self):
+        self._guard('cohort')
         return [dict(id=f'gsm8k:test:{i}', prompt_ids=[i + 3, 4, 5, 6][: 2 + i % 3]) for i in range(5)]
 
     def stage_d_generator(self, arm, adapters, size, edit_dir):
@@ -167,7 +177,10 @@ def pilot_file(tmp_path, arm):
     return path
 
 
-def launch(tmp_path):
+PRODUCTION_ARMS = ['gold-sft', 'online-grpo', 'offline-grpo', 'sampling-sft-k0', 'sampling-sft-k2', 'sampling-sft-k5']
+
+
+def launch(tmp_path, **overrides):
     rec = dict(
         schema=ch.LAUNCH_SCHEMA, run_id='rehearsal-cpu-1', mode='rehearsal', rehearsal_label='rehearsal-cpu-2arm',
         code_commit='abc', pod_id='pod-1', pod_stop_commands=['echo stop {id}'], expected_arms=['gold-sft', 'online-grpo'],
@@ -190,6 +203,7 @@ def launch(tmp_path):
         stage_d=dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item', ratio=0.5),
                      pilot_results={'gold-sft': dict(path=str(pilot_file(tmp_path, 'gold-sft')), filters={}),
                                     'online-grpo': dict(path=str(pilot_file(tmp_path, 'online-grpo')), filters={})}))
+    rec.update(overrides)
     path = tmp_path / 'launch_record.json'
     ch.seal_launch_record(rec, path)
     return ch.load_launch_record(path, code_commit='abc')
@@ -208,21 +222,57 @@ def chain(tmp_path, record, backend, stops):
                     exporter=exporter, runner=runner, volume_identity='vol')
 
 
-def test_rehearsal_chain_runs_every_real_stage_end_to_end(tmp_path):
-    record, backend, stops = launch(tmp_path), TinyBackend(tmp_path), []
+def test_rehearsal_chain_uses_only_visible_inputs(tmp_path):
+    """Rehearsal: calibration rows stand in for discovery and confirmation, the 20 rehearsal items for the cohort.
+
+    The strict backend raises if anything asks for discovery, held-out or cohort data."""
+    record, backend, stops = launch(tmp_path), TinyBackend(tmp_path, strict_rehearsal=True), []
+    summary = chain(tmp_path, record, backend, stops).run()
+    assert summary['state'] == 'complete', json.dumps(summary, default=str)[:3000]
+    local = tmp_path / 'local'
+    assert not (local / 'attribution/traces/discovery').exists() and not (local / 'attribution/traces/heldout').exists()
+    freeze = json.loads((local / ab.FREEZE_DIR / 'freeze.json').read_text())
+    assert freeze['rehearsal'] is True and freeze['sources'][0]['split'] == 'calibration'
+    responses = (local / 'attribution/stage_d/gold-sft/full/responses.jsonl').read_text()
+    assert '"id": "r0"' in responses and 'gsm8k:test' not in responses
+    report = json.loads((local / st.REPORT_DIR / 'report.json').read_text())
+    assert report['stage_d']['pilot_comparison'] == dict(available=False, reason='rehearsal: no pilot items')
+    assert report['rehearsal'] is True
+    md = (local / st.REPORT_DIR / 'report.md').read_text()
+    assert md.startswith('# REHEARSAL') and 'not scientific results' in md
+    assert stops == [['echo', 'stop', 'pod-1']]
+
+
+def test_production_freeze_refuses_calibration_inputs_and_rehearsal_freeze_is_refused_in_production(tmp_path):
+    from tests.test_attribution_ablation import SETTINGS, discovery_inputs
+    with pytest.raises(ValueError, match='discovery'):
+        ab.build_freeze({'gold-sft': discovery_inputs()}, sources=[dict(split='calibration')], analysis={}, **SETTINGS)
+    rehearsal = ab.build_freeze({'gold-sft': discovery_inputs()}, sources=[dict(split='calibration')], analysis={},
+                                rehearsal=True, **SETTINGS)
+    path = ab.seal_freeze(tmp_path, rehearsal)
+    assert ab.conditions(path, 'gold-sft', 'trace', rehearsal=True)
+    with pytest.raises(ValueError, match='rehearsal'):
+        ab.conditions(path, 'gold-sft', 'trace')
+
+
+def test_production_chain_runs_every_real_stage_end_to_end(tmp_path):
+    record = launch(tmp_path, run_id='production-cpu-1', mode='production', expected_arms=PRODUCTION_ARMS)
+    backend, stops = TinyBackend(tmp_path), []
     summary = chain(tmp_path, record, backend, stops).run()
     assert summary['state'] == 'complete', json.dumps(summary, default=str)[:3000]
     assert summary['signoff']['by'] == ch.AUTO_REVIEWER
     local = tmp_path / 'local'
     for directory in [st.QUAL_DIR, ab.FREEZE_DIR, st.REPORT_DIR, 'attribution/traces/discovery/rows',
-                      'attribution/stage_d/untuned/reference', 'attribution/stage_d/gold-sft/full']:
+                      'attribution/traces/heldout/rows', 'attribution/stage_d/untuned/reference',
+                      'attribution/stage_d/gold-sft/full']:
         au.verify_run(local / directory)
     freeze = json.loads((local / ab.FREEZE_DIR / 'freeze.json').read_text())
-    assert set(freeze['arms']) == {'gold-sft', 'online-grpo'} and freeze['sources'][0]['split'] == 'discovery'
+    assert set(freeze['arms']) == set(PRODUCTION_ARMS) and freeze['sources'][0]['split'] == 'discovery'
+    assert freeze.get('rehearsal') is False
     report = json.loads((local / st.REPORT_DIR / 'report.json').read_text())
     assert report['primary1']['outcome'] in ('supported', 'contradicted', 'inconclusive')
+    assert report['rehearsal'] is False
     assert summary['backups']['volume_copy']['verified'] is True and stops == [['echo', 'stop', 'pod-1']]
-    # the volume holds the sealed units and the freeze
     assert au.Units(tmp_path / 'volume', plan_sha256='x', code_sha256='x', runtime_sha256='x').state(
         au.unit_key('ab', 'gold-sft', batch=0)) == 'sealed'
     au.verify_run(tmp_path / 'volume' / ab.FREEZE_DIR)
@@ -232,14 +282,14 @@ def test_rehearsal_chain_runs_every_real_stage_end_to_end(tmp_path):
     assert attribution['tokens'] > 0 and 0 <= attribution['padding_fraction'] < 1 and attribution['profiled_units'] == 1
     assert attribution['nvml']['available'] is False and attribution['mfu']['available'] is True
     conc = report['descriptive']['concentration']
-    assert set(conc) == {'gold-sft', 'online-grpo'} and 'neurons_to_50' in conc['gold-sft']['trace']
+    assert set(conc) == set(PRODUCTION_ARMS) and 'neurons_to_50' in conc['gold-sft']['trace']
     assert report['descriptive']['resolution_floor']['rule'] == '10x batch invariance'
     assert report['descriptive']['a_vs_a0']['gold-sft']['trace']['cos_a'] == 0.9
     sd = report['stage_d']
     assert sd['early_stop_reference']['rule']['ratio'] == 0.5 and 'untuned|reference' in sd['outcomes']
     assert set(sd['pilot_comparison']) == {'gold-sft', 'online-grpo'} and sd['pilot_comparison']['gold-sft']['n'] == 5
     md = (local / st.REPORT_DIR / 'report.md').read_text()
-    assert '## Stage D' in md and 'early-stop rate' in md and '## Concentration' in md
+    assert '## Stage D' in md and 'early-stop rate' in md and '## Concentration' in md and 'REHEARSAL' not in md
     qual = json.loads((local / st.QUAL_DIR / 'qualification.json').read_text())
     assert all(qual['checks'].values()) and qual['generation_batch'] in (1, 2, 4)
 

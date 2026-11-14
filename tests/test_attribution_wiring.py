@@ -146,3 +146,10 @@ def test_pilot_rows_filtered_by_the_record_and_capped_rows_scored_as_capped(tmp_
     assert out['agree'] == 2  # the capped pilot row is scored capped (v3 refuses it), so it agrees with False
     with pytest.raises(ValueError, match='duplicate'):
         ar.load_pilot_rows(path, filters={})
+
+
+def test_early_stop_unavailable_without_an_untuned_reference_is_reported_not_fatal():
+    rows = [dict(id='a', correct=True, status='valid', tokens=5, stop_reason='eos')]
+    out = ar.stage_d_outcomes(rows, early_reference=None)
+    assert out['early_stop'] == dict(rate=None, reason='no untuned EOS-terminated reference')
+    assert out['accuracy'] == 1.0
