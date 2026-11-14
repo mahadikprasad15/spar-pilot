@@ -76,42 +76,73 @@ def test_a_vs_a0_quoted_raw_for_the_frozen_top_down_proj(tmp_path):
     assert ar.a_vs_a0(None, freeze) is None
 
 
-# --- early stop ---------------------------------------------------------------------------------
+# --- early stop (rule B: per-question fraction of the untuned response; user 2026-11-14) ---------------
 
 def items(tokens, stop='eos'):
     return [dict(id=f'i{k}', tokens=t, stop_reason=stop, correct=True) for k, t in enumerate(tokens)]
 
 
-def test_early_stop_threshold_comes_from_the_study_untuned_run_and_the_record_rule():
-    untuned = items([100, 200, 300, 400, 500])
-    threshold = ar.early_stop_threshold(untuned, rule=dict(kind='quantile-of-untuned-eos-tokens', quantile=0.2))
-    assert threshold == pytest.approx(np.quantile([100, 200, 300, 400, 500], 0.2))
-    assert ar.early_stop_rate(items([50, 400, 150]), threshold) == pytest.approx(2 / 3)
-    assert ar.early_stop_rate(items([50, 60], stop='cap'), threshold) == 0.0  # capped is its own outcome
-    for bad in (None, dict(kind='quantile-of-untuned-eos-tokens', quantile=None), dict(kind='other', quantile=0.1)):
+RULE = dict(kind='fraction-of-untuned-same-item', ratio=0.5)
+
+
+def test_early_stop_reference_is_the_untuned_response_to_the_same_question():
+    untuned = items([100, 400, 200]) + [dict(id='i3', tokens=1024, stop_reason='cap', correct=False)]
+    reference = ar.early_stop_reference(untuned, rule=RULE)
+    assert reference == dict(rule=RULE, tokens={'i0': 100, 'i1': 400, 'i2': 200}, excluded_capped=['i3'],
+                             source="this study's untuned run")
+    run = items([40, 300, 99]) + [dict(id='i3', tokens=10, stop_reason='eos', correct=True)]
+    rate = ar.early_stop_rate(run, reference)
+    # i0: 40 < 50 early; i1: 300 >= 200 not; i2: 99 < 100 early; i3 excluded (untuned capped)
+    assert rate == dict(rate=pytest.approx(2 / 3), early=['i0', 'i2'], counted=3, excluded=['i3'])
+    capped = ar.early_stop_rate(items([10, 10, 10], stop='cap'), reference)
+    assert capped['rate'] == 0.0  # a capped response is its own outcome, never an early stop
+    for bad in (None, dict(kind='fraction-of-untuned-same-item', ratio=None), dict(kind='quantile', ratio=0.5),
+                dict(kind='fraction-of-untuned-same-item', ratio=1.5)):
         with pytest.raises(ValueError):
-            ar.early_stop_threshold(untuned, rule=bad)
+            ar.early_stop_reference(untuned, rule=bad)
 
 
 def test_stage_d_outcomes_count_capped_and_invalid_separately():
-    rows = [dict(id='a', correct=True, status='valid', tokens=10, stop_reason='eos'),
+    untuned = [dict(id=i, tokens=20, stop_reason='eos', correct=True) for i in 'abc']
+    reference = ar.early_stop_reference(untuned, rule=RULE)
+    rows = [dict(id='a', correct=True, status='valid', tokens=5, stop_reason='eos'),
             dict(id='b', correct=False, status='invalid', tokens=12, stop_reason='eos'),
             dict(id='c', correct=False, status='invalid', tokens=1024, stop_reason='cap')]
-    out = ar.stage_d_outcomes(rows, early_threshold=11)
-    assert out == dict(n=3, accuracy=pytest.approx(1 / 3), mean_tokens=pytest.approx(1046 / 3), capped=1, invalid=2,
-                       capped_rate=pytest.approx(1 / 3), early_stop_rate=pytest.approx(1 / 3))
+    out = ar.stage_d_outcomes(rows, early_reference=reference)
+    assert out['n'] == 3 and out['accuracy'] == pytest.approx(1 / 3) and out['capped'] == 1 and out['invalid'] == 2
+    assert out['capped_rate'] == pytest.approx(1 / 3) and out['early_stop']['rate'] == pytest.approx(1 / 3)
 
 
-# --- pilot comparison ------------------------------------------------------------------------------
+# --- pilot comparison (pilot responses re-scored with flexible v3; stored scores audited) -------------
 
-def test_item_level_comparison_with_pilot_results():
+def test_item_level_comparison_rescores_pilot_responses_with_v3_and_records_disagreements():
+    gold = {f'gsm8k:test:{i}': 'w\n#### 7' for i in (1, 2, 3)}
     study = [dict(id='gsm8k:test:1', correct=True), dict(id='gsm8k:test:2', correct=False),
              dict(id='gsm8k:test:3', correct=True)]
-    pilot = [dict(id='gsm8k:test:1', correct=True), dict(id='gsm8k:test:2', score=dict(correct=True)),
-             dict(id='gsm8k:test:3', correct=True)]
-    out = ar.pilot_comparison(study, pilot)
-    assert out['n'] == 3 and out['agree'] == 2 and out['flips'] == [dict(id='gsm8k:test:2', pilot=True, study=False)]
+    pilot = [dict(id='gsm8k:test:1', text='so\n#### 7', correct=True, stop_reason='eos'),
+             dict(id='gsm8k:test:2', text='so\n#### 7', score=dict(correct=False), stop_reason='eos'),  # stale
+             dict(id='gsm8k:test:3', text='so\n#### 8', correct=False, stop_reason='eos')]
+    out = ar.pilot_comparison(study, pilot, gold)
+    assert out['scorer'] == 'gsm8k_flexible_v3 (re-scored from pilot text)'
+    assert out['stored_score_disagreements'] == [dict(id='gsm8k:test:2', stored=False, v3=True)]
+    assert out['n'] == 3 and out['agree'] == 1
+    assert out['flips'] == [dict(id='gsm8k:test:2', pilot=True, study=False), dict(id='gsm8k:test:3', pilot=False,
+                                                                                    study=True)]
     with pytest.raises(ValueError, match='items'):
-        ar.pilot_comparison(study[:2], pilot)
-    with pytest.raises(ValueError, match='correct'):
-        ar.pilot_comparison(study, [dict(id=r['id']) for r in pilot])
+        ar.pilot_comparison(study[:2], pilot, gold)
+    with pytest.raises(ValueError, match='text'):
+        ar.pilot_comparison(study, [dict(id=r['id'], correct=True) for r in pilot], gold)
+
+
+def test_pilot_rows_filtered_by_the_record_and_capped_rows_scored_as_capped(tmp_path):
+    path = tmp_path / 'p.jsonl'
+    rows = [dict(id='gsm8k:test:1', step=0, text='#### 1'), dict(id='gsm8k:test:1', step=64, text='#### 7'),
+            dict(id='gsm8k:test:2', step=64, text='#### 7', stop_reason='cap')]
+    path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    selected = ar.load_pilot_rows(path, filters=dict(step=64))
+    assert [r['text'] for r in selected] == ['#### 7', '#### 7']
+    out = ar.pilot_comparison([dict(id='gsm8k:test:1', correct=True), dict(id='gsm8k:test:2', correct=False)],
+                              selected, {'gsm8k:test:1': '#### 7', 'gsm8k:test:2': '#### 7'})
+    assert out['agree'] == 2  # the capped pilot row is scored capped (v3 refuses it), so it agrees with False
+    with pytest.raises(ValueError, match='duplicate'):
+        ar.load_pilot_rows(path, filters={})

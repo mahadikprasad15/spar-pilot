@@ -100,6 +100,9 @@ class TinyBackend:
             return {r['id']: '#### 7' for r in (self.rehearsal_items() if split == 'rehearsal' else self.cohort_items())}
         return {r['id']: 'w\n#### 7' for r in self.prompt_rows(split)}
 
+    def gold_cohort(self):
+        return self.gold('cohort')
+
     def untuned_generator(self, size):
         return Scripted()
 
@@ -159,7 +162,8 @@ def init_rows(tmp_path):
 
 def pilot_file(tmp_path, arm):
     path = tmp_path / f'pilot-{arm}.jsonl'
-    path.write_text(''.join(json.dumps(dict(id=f'gsm8k:test:{i}', correct=i % 2 == 0)) + '\n' for i in range(5)))
+    path.write_text(''.join(json.dumps(dict(id=f'gsm8k:test:{i}', text='x\n#### 7' if i % 2 else 'x\n#### 3',
+                                            stop_reason='eos')) + '\n' for i in range(5)))
     return path
 
 
@@ -183,9 +187,9 @@ def launch(tmp_path):
                            head_chunk=4, memory_fraction=0.8),
         inputs=dict(note='fixture backend', init_check_rows=str(init_rows(tmp_path))),
         compute=dict(fp32_peak_flops=1e9),
-        stage_d=dict(early_stop_rule=dict(kind='quantile-of-untuned-eos-tokens', quantile=0.5),
-                     pilot_results={'gold-sft': str(pilot_file(tmp_path, 'gold-sft')),
-                                    'online-grpo': str(pilot_file(tmp_path, 'online-grpo'))}))
+        stage_d=dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item', ratio=0.5),
+                     pilot_results={'gold-sft': dict(path=str(pilot_file(tmp_path, 'gold-sft')), filters={}),
+                                    'online-grpo': dict(path=str(pilot_file(tmp_path, 'online-grpo')), filters={})}))
     path = tmp_path / 'launch_record.json'
     ch.seal_launch_record(rec, path)
     return ch.load_launch_record(path, code_commit='abc')
@@ -232,7 +236,7 @@ def test_rehearsal_chain_runs_every_real_stage_end_to_end(tmp_path):
     assert report['descriptive']['resolution_floor']['rule'] == '10x batch invariance'
     assert report['descriptive']['a_vs_a0']['gold-sft']['trace']['cos_a'] == 0.9
     sd = report['stage_d']
-    assert sd['early_stop_threshold']['rule']['quantile'] == 0.5 and 'untuned|reference' in sd['outcomes']
+    assert sd['early_stop_reference']['rule']['ratio'] == 0.5 and 'untuned|reference' in sd['outcomes']
     assert set(sd['pilot_comparison']) == {'gold-sft', 'online-grpo'} and sd['pilot_comparison']['gold-sft']['n'] == 5
     md = (local / st.REPORT_DIR / 'report.md').read_text()
     assert '## Stage D' in md and 'early-stop rate' in md and '## Concentration' in md

@@ -20,9 +20,10 @@ def test_notebook_code_cells_parse_and_never_touch_production_inputs():
         assert forbidden not in text
 
 
-def test_notebook_refuses_unset_user_decisions():
+def test_notebook_refuses_unset_user_decisions_and_carries_the_approved_ones():
     settings = ''.join(cells()[2]['source'])
-    for name in ['COLAB_CAP_HOURS', 'REHEARSAL_GENERATION_IDS', 'RANDOM_ORDER_SEEDS', 'NULL_SEED', 'TIMEOUTS_SECONDS',
-                 'FP32_PEAK_FLOPS', 'EARLY_STOP_QUANTILE']:
+    for name in ['COLAB_CAP_HOURS', 'FP32_PEAK_FLOPS']:
         assert f'{name} = None' in settings
+    for approved in ['RANDOM_ORDER_SEEDS = [20001, 20002, 20003]', 'NULL_SEED = 20004', 'EARLY_STOP_RATIO = 0.5']:
+        assert approved in settings
     assert any('assert not missing' in ''.join(c['source']) for c in cells())

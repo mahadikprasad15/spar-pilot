@@ -382,18 +382,21 @@ class Stages:
         if 'untuned|reference' not in runs:
             return dict(available=False, reason='untuned reference run not sealed')
         rule = self.record['stage_d']['early_stop_rule']
-        threshold = ar.early_stop_threshold(runs['untuned|reference'], rule=rule)
-        out = dict(early_stop_threshold=dict(rule=rule, tokens=threshold, source='this study\'s untuned run'),
-                   outcomes={k: ar.stage_d_outcomes(v, early_threshold=threshold) for k, v in runs.items()},
+        reference = ar.early_stop_reference(runs['untuned|reference'], rule=rule)
+        out = dict(early_stop_reference=reference,
+                   outcomes={k: ar.stage_d_outcomes(v, early_reference=reference) for k, v in runs.items()},
                    pilot_comparison={})
         root = Path(self.record['inputs'].get('artifact_root', '.'))
-        for arm, path in sorted(self.record['stage_d'].get('pilot_results', {}).items()):
+        gold = self.backend.gold('cohort')
+        for arm, spec in sorted(self.record['stage_d'].get('pilot_results', {}).items()):
             if f'{arm}|full' not in runs:
                 continue
-            path = Path(path) if Path(path).is_absolute() else root / path
             try:
-                out['pilot_comparison'][arm] = ar.pilot_comparison(runs[f'{arm}|full'], _jsonl(path))
-            except (OSError, ValueError, KeyError) as exc:  # an analysis gap is reported, never fatal
+                path = Path(spec['path'])
+                path = path if path.is_absolute() else root / path
+                pilot = ar.load_pilot_rows(path, filters=spec.get('filters', {}))
+                out['pilot_comparison'][arm] = ar.pilot_comparison(runs[f'{arm}|full'], pilot, gold)
+            except (OSError, ValueError, KeyError, TypeError) as exc:  # an analysis gap is reported, never fatal
                 out['pilot_comparison'][arm] = dict(available=False, reason=f'{type(exc).__name__}: {exc}')
         return out
 

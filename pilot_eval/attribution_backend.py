@@ -8,7 +8,9 @@ Launch-record ``inputs`` block:
 
     artifact_root, inventory_dir, sequences_dir, model_dir, tokenizer_dir, gsm8k_test_parquet,
     adapter_dirs: {arm: dir}, max_new_tokens: 1024, work_dir,
-    rehearsal_generation_ids: [20 GSM8K test indices outside the ADR 0001 cohort]   # chosen by the user
+    stage_d.pilot_results: {arm: {path, filters}}   # pilot responses, re-scored with flexible v3
+
+The 20 rehearsal items are ``rehearsal_draw`` (seed 42, outside the ADR 0001 cohort; user 2026-11-14).
 
 The ADR 0001 cohort is ``protocol.select_gsm8k_indices(len(test), 150, 42)``. Edited checkpoints are verified
 by hash and by *bit-identical* logits against the g = 0 gate (a zeroed b adds exactly the 0 the gate adds).
@@ -23,6 +25,14 @@ from pilot_eval.protocol import gsm8k_messages, select_gsm8k_indices
 
 def cohort_indices(total):
     return select_gsm8k_indices(total, 150, 42)
+
+
+def rehearsal_draw(total, *, count=20, seed=42):
+    """The 20 rehearsal items (user 2026-11-14): a seed-42 draw from the test indices outside ADR 0001, by the
+    cohort's own mechanism: sorted(random.Random(42).sample(non-cohort indices, 20))."""
+    import random
+    cohort = set(cohort_indices(total))
+    return sorted(random.Random(seed).sample([i for i in range(total) if i not in cohort], count))
 
 
 def rehearsal_indices(ids, total, *, count=20):
@@ -57,8 +67,9 @@ class TransformersBackend:
             raise ValueError('the pinned tokenizer has no pad token')
         self.precision = set_ieee_precision()
         self.test_rows = _read_parquet(self.path(inputs['gsm8k_test_parquet']))
-        self._rehearsal = rehearsal_indices(inputs['rehearsal_generation_ids'], len(self.test_rows),
-                                            count=record['generation_batch_rule']['items'])
+        self._rehearsal = rehearsal_indices(rehearsal_draw(len(self.test_rows),
+                                                           count=record['generation_batch_rule']['items']),
+                                            len(self.test_rows), count=record['generation_batch_rule']['items'])
         self._sequences = None
         self._current, self._untuned = (None, None), None
 

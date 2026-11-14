@@ -39,3 +39,9 @@
 - **Holm** runs per metric over primary 1, primary 2's four differences and primary 3's two contrasts per arm.
 - **Descriptive and exploratory.** `concordance` (sign agreement, McNemar via `stage0_findings_math.mcnemar`, listed disagreements). `concentration` (neurons to 50% and 90%, cancellation, 1,000-order random-accumulation null; unavailable below the resolution floor). a vs a₀ is quoted only as raw and gauge-dependent. A compute appendix.
 - `build` assembles everything from sealed-output inputs, and `render` writes Markdown with the scope line, provenance statement and partial-independence note.
+
+### 2026-11-14 — user decisions
+
+- Primary 1's p-value is in both metrics' Holm families (as implemented).
+- Primary 2 support: both differences > 0 **and** rejected by Holm (`primary2_support`, now in the report for GRPO sharing and k-ordering).
+- Concordance directions as implemented: ΔL with the same sign as Δaccuracy; ΔS with the opposite sign to Δlength.

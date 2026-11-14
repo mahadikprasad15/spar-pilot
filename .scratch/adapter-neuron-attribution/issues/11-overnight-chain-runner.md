@@ -79,3 +79,11 @@ The code needs these values, and the spec and candidate plan don't give them. Th
 
 - **Early-stop definition.** The spec says the early-stop rate uses "the threshold recomputed from this study's untuned run" but never defines early stop, and no ADR or earlier pilot does. I implemented one candidate form: a response counts as an early stop when it ends with EOS before the q-th quantile of the untuned run's EOS-terminated response lengths; capped responses never count. q is left empty. Please confirm the form and give q, or give another definition.
 - **Pilot result files.** Which saved pilot response files are the comparison references for gold-sft and online-grpo (step 64)? Each row needs `id` = `gsm8k:test:<index>` and a `correct` flag (or `score.correct`).
+
+### 2026-11-14 — user decisions and changes
+
+- **Early stop is rule B.** A response is an early stop when it ends with EOS before 0.5 × the untuned response to the same question. Questions whose untuned response was capped are excluded and listed, and a capped response is never an early stop (`attribution_report.early_stop_reference` / `early_stop_rate`).
+- **Pilot comparison re-scores** each pilot response with flexible v3 and uses the v3 score. Every stored score that disagrees is listed; the pilot files are not modified. The arms are the step-64 checkpoints (user). The HF paths couldn't be found from this container (no Hub access), so 06a notebook cell 5b lists them. `pilot_results` entries are `{path, filters}`; online-grpo is filtered to step 64.
+- **Operational values approved:** marker staleness 900 s; timeouts copy 2700 s, export attempt 3600 s, stop attempt 120 s, writer join 300 s; FD 4 rows / 5 adapters / 3 neurons; calibration minimum 10; head chunk 1024; memory fraction 0.80. The hourly cost is still the user's to give.
+- The writer heartbeat is now refreshed at every unit boundary, not only at stage start.
+- `launch-record-draft.yaml` collects every value, each marked `[user]`, `[approved]` or `[proposed]`. `python -m pilot_eval.attribution_chain seal --draft … --out …` seals it against the checkout and refuses while anything is null.

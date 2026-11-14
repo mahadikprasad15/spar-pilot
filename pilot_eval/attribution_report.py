@@ -409,6 +409,8 @@ def build(inputs):
                 family[f'primary3.{arm}.{t}'] = v['p_two_sided']
         report['holm'][metric] = holm(family, alpha=s['alpha'])
         report['consequences'][metric] = gate_consequences(gates, report['primary2'][metric], metric)
+        report['primary2'][metric]['support'] = primary2_support(report['primary2'][metric]['contrasts'],
+                                                                 report['holm'][metric])
     if inputs.get('stage_d'):
         cohort_n = len(next(iter(inputs['stage_d'].values()))[0])
         report['concordance'] = concordance(
@@ -459,15 +461,18 @@ def render(report):
                   'Disagreements: ' + (json.dumps(report['concordance']['disagreements']) or 'none')]
     sd = report.get('stage_d')
     if sd and sd.get('outcomes'):
+        ref = sd['early_stop_reference']
         lines += ['', '## Stage D (ADR 0001 cohort)', '',
-                  f"Early-stop threshold: {_fmt(sd['early_stop_threshold']['tokens'])} tokens "
-                  f"({sd['early_stop_threshold']['rule']}), from this study's untuned run.", '',
+                  f"An early stop is a response that ends with EOS before {ref['rule']['ratio']} x this study's "
+                  f"untuned response to the same question ({len(ref['excluded_capped'])} questions without an "
+                  'uncapped untuned reference are excluded); the early-stop rate below is per run.', '',
                   '| run | accuracy | mean tokens | capped | invalid | early-stop rate |',
                   '| --- | --- | --- | --- | --- | --- |']
         lines += [f"| {k} | {_fmt(v['accuracy'])} | {_fmt(v['mean_tokens'])} | {v['capped']} | {v['invalid']} | "
-                  f"{_fmt(v['early_stop_rate'])} |" for k, v in sd['outcomes'].items()]
+                  f"{_fmt(v['early_stop']['rate'])} |" for k, v in sd['outcomes'].items()]
         for arm, c in sd.get('pilot_comparison', {}).items():
-            lines.append(f"- {arm} vs pilot: " + (f"{c['agree']}/{c['n']} items agree; flips {c['flips']}"
+            lines.append(f"- {arm} vs pilot (v3): " + (f"{c['agree']}/{c['n']} items agree; flips {c['flips']}; "
+                                                       f"stored-score disagreements {len(c['stored_score_disagreements'])}"
                                                   if 'agree' in c else f"unavailable ({c['reason']})"))
     conc = report.get('descriptive', {}).get('concentration')
     if conc:
@@ -524,30 +529,67 @@ def a_vs_a0(rows_path, freeze):
     return dict(out, label='raw saved-factor cosine and drift; gauge-dependent, historical description only')
 
 
-def early_stop_threshold(untuned_items, *, rule):
-    """Threshold from this study's untuned run under the record's rule (kind: quantile-of-untuned-eos-tokens)."""
-    if not isinstance(rule, dict) or rule.get('kind') != 'quantile-of-untuned-eos-tokens' or \
-            not isinstance(rule.get('quantile'), float) or not 0 < rule['quantile'] < 1:
-        raise ValueError('early-stop rule must be {kind: quantile-of-untuned-eos-tokens, quantile: 0<q<1} '
-                         'from the launch record')
-    tokens = [r['tokens'] for r in untuned_items if r['stop_reason'] == 'eos']
+EARLY_STOP_KIND = 'fraction-of-untuned-same-item'
+
+
+def check_early_stop_rule(rule):
+    """Rule B (user 2026-11-14): early stop = EOS before ``ratio`` x the untuned response to the same question."""
+    if not isinstance(rule, dict) or rule.get('kind') != EARLY_STOP_KIND or \
+            not isinstance(rule.get('ratio'), float) or not 0 < rule['ratio'] < 1:
+        raise ValueError(f'early-stop rule must be {{kind: {EARLY_STOP_KIND}, ratio: 0<r<1}} from the launch record')
+    return rule
+
+
+def early_stop_reference(untuned_items, *, rule):
+    """Per-question reference lengths from this study's untuned run; capped untuned items have no reference."""
+    check_early_stop_rule(rule)
+    tokens = {r['id']: int(r['tokens']) for r in untuned_items if r['stop_reason'] == 'eos'}
     if not tokens:
         raise ValueError('untuned run has no EOS-terminated responses')
-    return float(np.quantile(tokens, rule['quantile']))
+    return dict(rule=rule, tokens=tokens, excluded_capped=sorted(r['id'] for r in untuned_items
+                                                                 if r['stop_reason'] != 'eos'),
+                source="this study's untuned run")
 
 
-def early_stop_rate(items, threshold):
-    """Fraction of responses that stopped with EOS below the threshold; capped responses never count."""
-    return float(np.mean([r['stop_reason'] == 'eos' and r['tokens'] < threshold for r in items])) if items else None
+def early_stop_rate(items, reference):
+    """Share of counted questions whose response ended with EOS before ratio x the untuned response's length.
+
+    A capped response is its own outcome and never an early stop; questions whose untuned response was capped
+    are excluded and listed."""
+    ratio, ref = reference['rule']['ratio'], reference['tokens']
+    counted = [r for r in items if r['id'] in ref]
+    early = sorted(r['id'] for r in counted if r['stop_reason'] == 'eos' and r['tokens'] < ratio * ref[r['id']])
+    return dict(rate=len(early) / len(counted) if counted else None, early=early, counted=len(counted),
+                excluded=sorted(r['id'] for r in items if r['id'] not in ref))
 
 
-def stage_d_outcomes(items, *, early_threshold):
+def stage_d_outcomes(items, *, early_reference):
     n = len(items)
     capped = sum(r['stop_reason'] != 'eos' for r in items)
     invalid = sum(r.get('status') != 'valid' for r in items)
     return dict(n=n, accuracy=float(np.mean([bool(r['correct']) for r in items])),
                 mean_tokens=float(np.mean([r['tokens'] for r in items])), capped=capped, invalid=invalid,
-                capped_rate=capped / n, early_stop_rate=early_stop_rate(items, early_threshold))
+                capped_rate=capped / n, early_stop=early_stop_rate(items, early_reference))
+
+
+def primary2_support(contrasts, holm_family):
+    """Support needs both differences > 0 and both rejected by Holm (user 2026-11-14)."""
+    def verdict(keys):
+        if any(contrasts[k].get('estimate') is None for k in keys):
+            return 'unavailable'
+        ok = all(contrasts[k]['estimate'] > 0 and holm_family.get(f'primary2.{k}', {}).get('reject') for k in keys)
+        return 'supported' if ok else 'not supported'
+    return dict(grpo_sharing=verdict('ab'), k_ordering=verdict('cd'), rule='both differences > 0 and rejected by Holm')
+
+
+def load_pilot_rows(path, *, filters):
+    """Pilot response rows matching every ``filters`` field (e.g. step: 64); one row per item."""
+    rows = [json.loads(line) for line in open(path) if line.strip()]
+    selected = [r for r in rows if all(r.get(k) == v for k, v in (filters or {}).items())]
+    ids = [r.get('id') for r in selected]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f'duplicate pilot items after filtering by {filters}; refine the filter')
+    return selected
 
 
 def _correct(row):
@@ -558,12 +600,29 @@ def _correct(row):
     raise ValueError(f"pilot row {row.get('id')} has no correct flag")
 
 
-def pilot_comparison(study, pilot):
-    """Item-level agreement of this study's full-arm run with the pilot's saved results on the same items."""
-    a = {r['id']: _correct(r) for r in study}
-    b = {r['id']: _correct(r) for r in pilot}
+def pilot_comparison(study, pilot, gold):
+    """Item-level agreement of this study's full-arm run with the pilot's responses, re-scored with flexible v3.
+
+    The pilot files stay as they are; each stored score that disagrees with v3 is listed."""
+    from pilot_eval.scoring import score_gsm8k_flexible_v3
+    a = {r['id']: bool(r['correct']) for r in study}
+    b, disagreements = {}, []
+    for row in pilot:
+        text = row.get('text', row.get('response'))
+        if text is None:
+            raise ValueError(f"pilot row {row.get('id')} has no response text to re-score")
+        capped = row.get('stop_reason') == 'cap' or bool(row.get('capped'))
+        v3 = bool(score_gsm8k_flexible_v3(text, gold[row['id']], capped=capped)['correct'])
+        try:
+            stored = _correct(row)
+        except ValueError:
+            stored = None
+        if stored is not None and stored != v3:
+            disagreements.append(dict(id=row['id'], stored=stored, v3=v3))
+        b[row['id']] = v3
     if set(a) != set(b):
         raise ValueError('study and pilot items differ')
     flips = [dict(id=i, pilot=b[i], study=a[i]) for i in sorted(a) if a[i] != b[i]]
     return dict(n=len(a), agree=len(a) - len(flips), flips=flips, study_accuracy=float(np.mean(list(a.values()))),
-                pilot_accuracy=float(np.mean(list(b.values()))))
+                pilot_accuracy=float(np.mean(list(b.values()))), stored_score_disagreements=disagreements,
+                scorer='gsm8k_flexible_v3 (re-scored from pilot text)')

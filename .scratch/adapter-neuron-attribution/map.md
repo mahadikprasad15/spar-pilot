@@ -36,6 +36,8 @@
 
 - 2026-11-13: CPU wiring for 06b–09 — per-stage compute monitoring sealed with the run, concentration with the floor rule, a vs a₀, Stage D outcomes with early-stop rate, pilot comparison. Questions on the early-stop definition and pilot files in `issues/11-overnight-chain-runner.md` §Comments.
 
+- 2026-11-14 (user): rehearsal items by the seed-42 cohort mechanism; random-order seeds 20001–20003 and null seed 20004; report interpretations as proposed (primary 2 support = > 0 and Holm-rejected); early stop = EOS before 0.5 × the untuned response to the same question; pilot responses re-scored with v3; operational values approved. Launch-record draft in `launch-record-draft.yaml`.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

@@ -1,0 +1,102 @@
+# Adapter and neuron attribution — overnight launch record, DRAFT (not approved, not sealed).
+#
+# Use: the single record the unattended chain runs from (spec §Overnight unattended chain). Edit the values,
+# have the user approve the whole file, then seal it against the commit being run:
+#     python -m pilot_eval.attribution_chain seal --draft <this file> --out <launch_record.json>
+# Sealing refuses while any value is null; the chain refuses a record that is unsealed, edited after sealing,
+# bound to another commit, or missing an arm. Nothing here is chosen at night by a person.
+#
+# Legend:  [user]      only the user can supply it (left null)
+#          [approved]  decided by the user (date given)
+#          [proposed]  candidate-plan-v1 value, still to approve or change
+schema: adapter-neuron-attribution/launch-record-v1
+run_id: attribution-overnight-v1
+mode: production
+code_commit: null                  # filled by `seal` from the checkout
+expected_arms: [gold-sft, online-grpo, offline-grpo, sampling-sft-k0, sampling-sft-k2, sampling-sft-k5]
+
+# --- Pod ------------------------------------------------------------------------------------------
+pod_id: null                       # [user] RUNPOD_POD_ID of the Pod that will run the chain
+pod_stop_commands: ['runpodctl stop pod {id}', 'runpodctl pod stop {id}']   # both forms (lesson 2026-11-12)
+volume_identity: null              # [user] identity string in <volume>/volume_identity.json (sl-0)
+export_repo: Prasadmahadik/spar-sampling-sft-artifacts
+hourly_cost_usd: null              # [user] Pod price, for the morning summary's cost line
+compute:
+  fp32_peak_flops: null            # [user] dense FP32 peak of the Pod's GPU (A100: 19.5e12), MFU denominator
+
+# --- caps (seconds; hard, at unit boundaries, persisted across restarts) -------------------------------
+caps_seconds:                      # [user] every value
+  total: null
+  preflight: null
+  qualification: null
+  base_traces: null
+  attribution_and_freeze: null
+  stage_c: null
+  stage_d: null
+  report: null
+watchdog_margin_seconds: 1800      # [proposed] watchdog fires at remaining total cap + this
+marker_stale_seconds: 900          # [approved 2026-11-14]
+timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_join: 300}   # [approved 2026-11-14]
+
+# --- tolerances (qualification sign-off) ------------------------------------------------------------
+tolerances:
+  finite_difference: {epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20}   # [proposed]
+  neuron_sum_identity: 1.0e-4      # [proposed] relative to sum_j |attr_j|
+  batch_invariance: 1.0e-4         # [proposed] fraction of max |attr| per arm and metric
+  resolution_floor: 10x measured batch-invariance discrepancy   # [proposed] rule, evaluated in 06b
+minimums: {discovery: 120, heldout: 60}   # [proposed] base-correct rows after all mask exclusions
+qualification:
+  calibration_minimum: 10          # [approved 2026-11-14]
+  fd_arms: [gold-sft, online-grpo] # spec 06b
+  fd_rows: 4                       # [approved 2026-11-14]
+  fd_adapters: 5                   # spec
+  fd_neurons: 3                    # spec
+  head_chunk: 1024                 # [approved 2026-11-14] memory only
+  memory_fraction: 0.80            # [proposed] sweep accepts peak <= 80% of the device
+token_budget_sweep: [2048, 4096, 8192, 16384, 32768, 65536]   # [proposed]
+generation_batch_rule: {candidates: [1, 8, 16, 32, 64], items: 20, max_flips: 1, max_stop_changes: 1}   # [proposed]
+
+# --- selection and statistics (frozen before any confirmation output) -----------------------------------
+selection:
+  top_group: 10                    # [proposed]
+  top_singles: 5                   # [proposed]
+  tolerance: 0.20                  # [proposed] matched-control write tolerance
+  seed: 20000                      # [proposed] matched controls
+  random_seeds: [20001, 20002, 20003]   # [approved 2026-11-14] random 64-neuron orders
+  read_size: 64                    # [proposed]
+statistics:
+  resamples: 10000                 # [proposed]
+  seed: 1234                       # [proposed] bootstrap
+  alpha: 0.05                      # [proposed] Holm
+  margin: 0.25                     # [proposed] primary 1 equivalence margin
+  sparse_lower: 0.70               # [proposed] primary 3 (descriptive)
+  dense_upper: 0.30                # [proposed] primary 3 (descriptive)
+  gate_singles_min: 4              # [proposed] of 5 top singles
+  null_orders: 1000                # [proposed]
+  null_seed: 20004                 # [approved 2026-11-14]
+
+# --- Stage D -----------------------------------------------------------------------------------
+stage_d:
+  early_stop_rule: {kind: fraction-of-untuned-same-item, ratio: 0.5}   # [approved 2026-11-14]
+  pilot_results:                   # [user] exact files (list them with the 06a notebook, cell 5b)
+    gold-sft: {path: null, filters: {}}             # pilot2-sft-fp32-l4-batch8-v1-step-64
+    online-grpo: {path: null, filters: {step: 64}}  # pilot4-grpo-fp32-v1-behaviour-v1; check the step field name
+
+# --- inputs on the Pod (paths inside artifact_root unless absolute) ------------------------------------
+inputs:
+  artifact_root: null              # [user] restored prep-v2 root on the container disk
+  inventory_dir: runs/joint-neuron-adapter-audit/inventory/inventory-v2
+  sequences_dir: runs/joint-neuron-adapter-audit/sequences/sequences-v2
+  model_dir: null                  # [user] hash-checked base-model snapshot
+  tokenizer_dir: null              # [user] inputs/models/<tokenizer revision>
+  gsm8k_test_parquet: null         # [user] as in the sequences-v2 manifest
+  adapter_dirs:                    # [user] step-64 checkpoints from inventory-v2
+    gold-sft: null
+    online-grpo: null
+    offline-grpo: null
+    sampling-sft-k0: null
+    sampling-sft-k2: null
+    sampling-sft-k5: null
+  max_new_tokens: 1024             # pilot protocol
+  work_dir: null                   # [user] container-disk work directory (>= 60 GB free)
+  # init_check_rows: <path>        # optional: post hoc init check rows.jsonl for the a vs a0 quote

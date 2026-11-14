@@ -9,6 +9,13 @@ def test_cohort_is_adr_0001():
     assert ab.cohort_indices(1319) == select_gsm8k_indices(1319, 150, 42)
 
 
+def test_rehearsal_draw_rule_user_2026_11_14():
+    import random
+    cohort = set(select_gsm8k_indices(1319, 150, 42))
+    expected = sorted(random.Random(42).sample([i for i in range(1319) if i not in cohort], 20))
+    assert ab.rehearsal_draw(1319) == expected and not cohort & set(expected) and len(set(expected)) == 20
+
+
 def test_rehearsal_ids_must_be_explicit_distinct_and_outside_the_cohort():
     cohort = set(ab.cohort_indices(1319))
     outside = [i for i in range(1319) if i not in cohort][:20]

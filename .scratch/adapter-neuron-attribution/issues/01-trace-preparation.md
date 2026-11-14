@@ -40,3 +40,7 @@
   - The "trailing newline" in the exclusion list is the template newline after `<|im_end|>` in the joint-audit sequences. Generated IDs end at `<|im_end|>`, so it never appears here. A newline inside the content is a content token.
 - `load_rows` refuses heldout (confirmation) rows until a sealed selection freeze is given. Calibration is `visible`, discovery `attribution-only`, heldout `blind-until-freeze`.
 - Minimums come only from the launch record (a missing value is refused); the proposed 120/60 are not hard-coded.
+
+### 2026-11-14 — user decision
+
+- Rehearsal items: a seed-42 draw by the cohort's own mechanism, `sorted(random.Random(42).sample(<test indices outside ADR 0001>, 20))`. Implemented as `attribution_backend.rehearsal_draw`; the launch record no longer lists the indices.

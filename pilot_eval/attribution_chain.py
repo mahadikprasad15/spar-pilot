@@ -86,6 +86,24 @@ def seal_launch_record(record, path):
     return path
 
 
+# Values only the user can supply for a launch (the draft leaves them null): Pod and volume facts, caps, cost,
+# the device's FP32 peak, input locations and the pilot result files.
+USER_FIELDS = {'pod_id', 'volume_identity', 'hourly_cost_usd', 'caps_seconds', 'compute', 'inputs', 'stage_d'}
+
+
+def finalize_draft(draft_path, out_path, *, code_commit):
+    """Edited YAML draft -> sealed JSON launch record bound to ``code_commit``; refuses while anything is unresolved."""
+    import yaml
+    record = yaml.safe_load(Path(draft_path).read_text())
+    record['code_commit'] = code_commit
+    problems = unresolved(record)
+    if problems:
+        raise LaunchRefused(f'unresolved launch record values: {problems}')
+    path = seal_launch_record(record, out_path)
+    load_launch_record(path, code_commit=code_commit)
+    return path
+
+
 def unresolved(value, prefix=''):
     if value is None:
         return [prefix or '<root>']
@@ -126,9 +144,9 @@ def load_launch_record(path, *, code_commit):
             raise LaunchRefused('a rehearsal needs an explicit rehearsal label for its expected arm set')
     else:
         raise LaunchRefused('mode must be production or rehearsal')
-    from pilot_eval.attribution_report import early_stop_threshold
+    from pilot_eval.attribution_report import check_early_stop_rule
     try:
-        early_stop_threshold([dict(tokens=1, stop_reason='eos')], rule=record['stage_d'].get('early_stop_rule'))
+        check_early_stop_rule(record['stage_d'].get('early_stop_rule'))
     except ValueError as exc:
         raise LaunchRefused(f'unresolved launch record values: stage_d.early_stop_rule ({exc})')
     for name in STAGES:
@@ -301,9 +319,14 @@ class Context:
         self.chain, self.stage, self.record = chain, stage, chain.record
         self.local_root, self.volume_root = chain.local_root, chain.volume_root
         self.writers = chain.writers
+        self.units_done = 0
 
     def boundary(self):
-        return self.chain.budget.boundary(self.stage)
+        """Unit boundary: charge the budget (may raise CapReached) and refresh the writer heartbeat."""
+        self.units_done += 1
+        result = self.chain.budget.boundary(self.stage)
+        self.chain._beat('running', stage=self.stage, units_done=self.units_done)
+        return result
 
     def projection(self, *, done, total):
         record = self.chain.budget.projection(self.stage, done=done, total=total)
@@ -558,6 +581,9 @@ def _commit():
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = parser.add_subparsers(dest='command', required=True)
+    seal = sub.add_parser('seal', help='turn the approved YAML draft into the sealed JSON launch record')
+    seal.add_argument('--draft', required=True)
+    seal.add_argument('--out', required=True)
     for name in ['run', 'deadline', 'watchdog-copy']:
         p = sub.add_parser(name)
         p.add_argument('--local', required=True)
@@ -565,6 +591,9 @@ def main(argv=None):
         if name != 'watchdog-copy':
             p.add_argument('--record', required=True)
     args = parser.parse_args(argv)
+    if args.command == 'seal':
+        print(finalize_draft(args.draft, args.out, code_commit=_commit()))
+        return 0
     if args.command == 'watchdog-copy':
         print(json.dumps(copy_sealed(args.local, args.volume), indent=2))
         return 0

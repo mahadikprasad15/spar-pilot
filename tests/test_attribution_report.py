@@ -229,3 +229,16 @@ def test_build_and_render_report_end_to_end(tmp_path):
     assert 'questions the untuned model solves' in md and 'limited check on selected removals' in md
     assert 'partially independent' in md and 'no overlap with available sources' in md
     json.dumps(report, default=str)
+
+
+def test_primary2_support_needs_both_differences_holm_rejected_and_positive():
+    contrasts = {k: dict(estimate=0.3, p_two_sided=0.001) for k in 'abcd'}
+    holm = {f'primary2.{k}': dict(reject=True) for k in 'abcd'}
+    assert ar.primary2_support(contrasts, holm) == dict(grpo_sharing='supported', k_ordering='supported',
+                                                        rule='both differences > 0 and rejected by Holm')
+    holm['primary2.b'] = dict(reject=False)
+    contrasts['d'] = dict(estimate=-0.3, p_two_sided=0.001)
+    out = ar.primary2_support(contrasts, holm)
+    assert out['grpo_sharing'] == 'not supported' and out['k_ordering'] == 'not supported'
+    contrasts['c'] = dict(estimate=None, p_two_sided=None)
+    assert ar.primary2_support(contrasts, holm)['k_ordering'] == 'unavailable'

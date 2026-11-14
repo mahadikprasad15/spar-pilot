@@ -33,7 +33,7 @@ def record(**overrides):
         generation_batch_rule=dict(candidates=[1, 8, 16, 32, 64], items=20, max_flips=1, max_stop_changes=1),
         token_budget_sweep=[2048, 4096, 8192, 16384, 32768, 65536], watchdog_margin_seconds=1800,
         marker_stale_seconds=600, compute=dict(fp32_peak_flops=19.5e12),
-        stage_d=dict(early_stop_rule=dict(kind='quantile-of-untuned-eos-tokens', quantile=0.1),
+        stage_d=dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item', ratio=0.5),
                      pilot_results={'gold-sft': 'p/gold.jsonl', 'online-grpo': 'p/online.jsonl'}),
         timeouts_seconds=dict(copy=60, export_attempt=60, stop_attempt=30, writer_join=10))
     base.update(overrides)
@@ -108,8 +108,8 @@ def test_launch_record_refuses_null_or_proposed_values(tmp_path):
     for bad in [dict(stage_d=dict(early_stop_rule=None, pilot_results={})), dict(compute=dict(fp32_peak_flops=None))]:
         with pytest.raises(ch.LaunchRefused, match='unresolved'):
             ch.load_launch_record(sealed_record(tmp_path / 'c', **bad), code_commit='abc123')
-    no_pilot = sealed_record(tmp_path / 'd', stage_d=dict(early_stop_rule=dict(kind='quantile-of-untuned-eos-tokens',
-                                                                               quantile=0.1), pilot_results={}))
+    no_pilot = sealed_record(tmp_path / 'd', stage_d=dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item',
+                                                                               ratio=0.5), pilot_results={}))
     with pytest.raises(ch.LaunchRefused, match='pilot'):
         ch.load_launch_record(no_pilot, code_commit='abc123')
     with pytest.raises(ch.LaunchRefused, match='commit'):
@@ -448,3 +448,41 @@ def test_watchdog_cancelled_cleanly_on_normal_completion(tmp_path):
     result = subprocess.run(['bash', str(WATCHDOG), str(time.time() + 3600), str(os.getpid()), str(tmp_path / 'done'),
                              '2', '5', '5'], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0 and not log.exists() and 'cancelled' in result.stdout
+
+
+def test_heartbeat_is_refreshed_at_every_unit_boundary(tmp_path):
+    beats = []
+
+    def attribution(ctx):
+        for _ in range(3):
+            ctx.boundary()
+            beats.append(json.loads((tmp_path / 'volume' / ch.MARKER_FILE).read_text())['units_done'])
+        return {}
+
+    chain, _ = harness(tmp_path, ok_stages(attribution_and_freeze=attribution))
+    chain.run()
+    assert beats == [1, 2, 3]
+
+
+def test_finalize_turns_an_edited_draft_into_a_sealed_loadable_record(tmp_path):
+    import yaml
+    draft = tmp_path / 'draft.yaml'
+    rec = record()
+    rec['code_commit'] = None  # filled at seal time from the checkout
+    draft.write_text(yaml.safe_dump(dict(rec, pod_id=None)))
+    with pytest.raises(ch.LaunchRefused, match='pod_id'):
+        ch.finalize_draft(draft, tmp_path / 'out.json', code_commit='abc123')
+    assert not (tmp_path / 'out.json').exists()  # nothing sealed while a value is unresolved
+    draft.write_text(yaml.safe_dump(rec))
+    path = ch.finalize_draft(draft, tmp_path / 'out.json', code_commit='abc123')
+    assert ch.load_launch_record(path, code_commit='abc123')['code_commit'] == 'abc123'
+
+
+def test_the_repository_draft_is_complete_except_for_user_values():
+    import yaml
+    from pathlib import Path
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-draft.yaml'
+    rec = yaml.safe_load(draft.read_text())
+    missing = set(ch.unresolved(dict(rec, code_commit='x')))
+    assert missing and all(p.split('.')[0].split('[')[0] in ch.USER_FIELDS for p in missing), sorted(missing)
+    assert set(ch.REQUIRED) <= set(rec)

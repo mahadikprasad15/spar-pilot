@@ -38,3 +38,7 @@
 - **Stage C** (`StageC.evaluate`) gives per-example ΔL, ΔS and KL(full arm ‖ condition) against the same arm unablated: two FP32 forwards, logits only at read positions in chunks, KL summed over the vocabulary in FP64. Values match the full-logit `attribution_metrics` path; an empty stop mask gives ΔS = NaN.
 - The read size (64), tolerance (0.20) and control seed (20000) are passed in from the launch record and are not defaults here. The random-order seeds are open (see the question above).
 - Stage D's ADR 0001 cohort prompts are built in the chain from `protocol.build_gsm8k_items` and the pinned tokenizer (ticket 11).
+
+### 2026-11-14 — user decision
+
+- Random neuron orders use seeds 20001, 20002, 20003, and the 1,000-order concentration null uses seed 20004; all in the 2000x selection block next to the matched-control seed 20000. They are recorded in `launch-record-draft.yaml` and the 06a notebook.
