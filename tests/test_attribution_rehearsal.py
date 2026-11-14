@@ -32,7 +32,8 @@ def test_covering_set_runs_and_exports_a_restorable_partial_output(tmp_path):
     assert steps['corrupt_and_interrupted_units']['result'] == dict(corrupted='corrupt', interrupted='interrupted')
     assert {p['probe'] for p in steps['token_budget_probe']['result']} == {'singleton-longest', 'packed'}
     assert summary['export']['status'] == 'ok' and summary['export']['restored_summary_label'] == 'rehearsal-colab-cpu'
-    assert (tmp_path / 'clean' / au.SUMMARY_DIR / 'run_summary.md').is_file()
+    restored = au.latest_summary(tmp_path / 'clean')
+    assert restored['summary']['label'] == 'rehearsal-colab-cpu' and summary['export']['completeness'] == 'complete'
 
 
 def test_a_failing_step_is_recorded_and_later_steps_still_run(tmp_path):

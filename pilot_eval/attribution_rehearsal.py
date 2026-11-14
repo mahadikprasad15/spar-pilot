@@ -42,7 +42,7 @@ class Rehearsal:
         self.steps, self.started = {}, time.monotonic()
         caps = dict(record['caps_seconds'])
         total = caps.pop('total')
-        self.budget = au.Budget(self.root / 'attribution/rehearsal/budget.json', stage_caps=caps, total_cap=total)
+        self.budget = au.Budget(self.root / 'state/rehearsal_budget.json', stage_caps=caps, total_cap=total)
 
     def step(self, name, fn):
         self.budget.start('qualification')
@@ -78,7 +78,8 @@ class Rehearsal:
                        note='rehearsal: finds bugs, qualifies nothing; never feeds production')
         au.seal_run(self.root / 'attribution/rehearsal/tracebacks',
                     {'tracebacks.json': {k: v.get('traceback') for k, v in self.steps.items()}})
-        au.write_summary(self.root, summary=summary, markdown=_markdown(summary), missing_work=summary['failed'])
+        self.summary_dir = au.write_summary(self.root, summary=summary, markdown=_markdown(summary),
+                                            missing_work=summary['failed'], attempt='rehearsal', phase='final')
         if self.client is not None:
             summary['export'] = self._export()
         return summary
@@ -150,7 +151,7 @@ class Rehearsal:
         top = self._calibration_selection(arm, sel_rows)['top']
         full, _ = self.backend.stage_d_generator(arm, None, 2, None)
         edited, edit = self.backend.stage_d_generator(arm, top, 2,
-                                                      self.root / f'attribution/rehearsal/edited/{arm}')
+                                                      self.root / f'edited/rehearsal/{arm}')
         batches = [[r['id'] for r in items]]
         a, b = at.generate(full, items, batches), at.generate(edited, items, batches)
         au.seal_run(self.root / f'attribution/rehearsal/generation/{arm}',
@@ -211,7 +212,7 @@ class Rehearsal:
         label = self.record['rehearsal_label']
         try:
             receipt = au.export(self.root, label=label, include=['attribution'], expected_units=[],
-                                expected_runs=[au.SUMMARY_DIR], client=self.client, repo=self.record['export_repo'],
+                                expected_runs=[self.summary_dir], client=self.client, repo=self.record['export_repo'],
                                 temp_dir=self.root / 'tmp', on_event=lambda e: print(json.dumps(e), flush=True))
             restored = au.restore_summary(receipt, self.clean_root, client=self.client,
                                           on_event=lambda e: print(json.dumps(e), flush=True))

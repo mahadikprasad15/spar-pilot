@@ -129,11 +129,11 @@ def test_longest_first_projection_is_advisory_and_does_not_stop_a_healthy_run(tm
 
 def test_summary_only_fixture_is_exported_and_restored_with_missing_work(tmp_path):
     root, clean = tmp_path / 'root', tmp_path / 'clean'
-    au.write_summary(root, summary=dict(stages=dict(attribution='cap-reached')), markdown='# Morning summary\n',
-                     missing_work=['ab-gold-sft-b00004'])
+    summary = au.write_summary(root, summary=dict(stages=dict(attribution='cap-reached')),
+                               markdown='# Morning summary\n', missing_work=['ab-gold-sft-b00004'])
     hub = FakeHub()
     receipt = au.export(root, label='rehearsal-x', include=['attribution'], expected_units=[],
-                        expected_runs=[au.SUMMARY_DIR], client=hub, temp_dir=tmp_path / 'tmp', on_event=lambda e: None)
+                        expected_runs=[summary], client=hub, temp_dir=tmp_path / 'tmp', on_event=lambda e: None)
     assert receipt['completeness'] == 'complete'
     restored = au.restore_summary(receipt, clean, client=hub, on_event=lambda e: None)
     assert restored['summary']['stages']['attribution'] == 'cap-reached'
@@ -146,10 +146,11 @@ def test_failed_partial_run_exports_as_partial_and_restores_into_empty_root(tmp_
     key, _ = write_ab(units, 'gold-sft', 0, ['e1'])
     expected = [key, 'ab-gold-sft-b00001']
     au.seal_run(root / 'attribution/launch', {'launch_record.json': dict(run_id='r1')})
-    au.write_summary(root, summary=dict(state='failed'), markdown='failed\n', missing_work=['ab-gold-sft-b00001'])
+    summary = au.write_summary(root, summary=dict(state='failed'), markdown='failed\n',
+                               missing_work=['ab-gold-sft-b00001'])
     hub = FakeHub()
     receipt = au.export(root, label='r1', include=['attribution'], expected_units=expected,
-                        expected_runs=[au.SUMMARY_DIR, 'attribution/launch', 'attribution/freeze'],
+                        expected_runs=[summary, 'attribution/launch', 'attribution/freeze'],
                         client=hub, temp_dir=tmp_path / 'tmp', on_event=lambda e: None)
     assert receipt['completeness'] == 'partial'
     snap = json.loads((root / receipt['snapshot_path']).read_text())
@@ -241,3 +242,18 @@ def test_profiler_trace_hook_writes_a_trace(tmp_path):
     with gpu.profiler_trace(path):
         torch.ones(4) @ torch.ones(4)
     assert path.is_file() and path.stat().st_size > 0
+
+
+
+def test_latest_summary_prefers_the_newest_attempt_then_the_final_phase(tmp_path):
+    au.write_summary(tmp_path, summary=dict(state='failed'), markdown='a', missing_work=[], attempt='attempt-001',
+                     phase='final')
+    au.write_summary(tmp_path, summary=dict(state='pre'), markdown='b', missing_work=[], attempt='attempt-002',
+                     phase='pre-export')
+    assert au.latest_summary(tmp_path)['summary']['state'] == 'pre'
+    au.write_summary(tmp_path, summary=dict(state='complete'), markdown='c', missing_work=[], attempt='attempt-002',
+                     phase='final')
+    latest = au.latest_summary(tmp_path)
+    assert latest['summary']['state'] == 'complete' and latest['phase'] == 'final'
+    with pytest.raises(ValueError):
+        au.latest_summary(tmp_path / 'empty')

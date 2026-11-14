@@ -29,7 +29,8 @@ from pilot_eval.neuron_audit_blocks import BlockStore, CorruptUnit
 
 STUDY = 'adapter-neuron-attribution'
 UNITS_DIR = 'attribution/store'
-SUMMARY_DIR = 'attribution/summary'
+SUMMARY_DIR = 'attribution/summaries'   # <attempt>/<phase>/ ; phases in order: pre-export, final
+SUMMARY_PHASES = ['pre-export', 'final']
 RUN_SCHEMA = f'{STUDY}/sealed-run-v1'
 UNIT_IDENTITY_SCHEMA = f'{STUDY}/unit-v1'
 NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]*$')
@@ -193,10 +194,39 @@ def verify_run(directory):
     return set(files)
 
 
-def write_summary(root, *, summary, markdown, missing_work):
-    """The morning summary (``run_summary.md`` + ``run_summary.json``) and missing-work list, sealed."""
-    return seal_run(Path(root) / SUMMARY_DIR, {'run_summary.json': summary, 'run_summary.md': markdown,
-                                               'missing_work.json': list(missing_work)})
+def summary_dir(attempt, phase):
+    """Relative directory of one attempt's summary in one phase (each attempt and phase is its own sealed run)."""
+    if phase not in SUMMARY_PHASES:
+        raise ValueError(f'summary phase must be one of {SUMMARY_PHASES}')
+    return f'{SUMMARY_DIR}/{_name(attempt, "attempt")}/{phase}'
+
+
+def write_summary(root, *, summary, markdown, missing_work, attempt='attempt-001', phase='final'):
+    """The morning summary (``run_summary.md`` + ``run_summary.json``) and missing-work list, sealed.
+
+    A retry writes its own attempt directory, so it never collides with (or copies) an older summary."""
+    relative = summary_dir(attempt, phase)
+    seal_run(Path(root) / relative, {'run_summary.json': summary, 'run_summary.md': markdown,
+                                     'missing_work.json': list(missing_work)})
+    return relative
+
+
+def latest_summary(root):
+    """The newest sealed summary under ``root``: latest attempt, then the latest phase within it."""
+    base = Path(root) / SUMMARY_DIR
+    found = []
+    for seal in base.glob('*/*/complete.json') if base.is_dir() else []:
+        attempt, phase = seal.parent.parent.name, seal.parent.name
+        if phase in SUMMARY_PHASES:
+            found.append((attempt, SUMMARY_PHASES.index(phase), seal.parent))
+    if not found:
+        raise ValueError(f'no sealed summary under {base}')
+    attempt, phase_index, directory = max(found)
+    verify_run(directory)
+    return dict(attempt=attempt, phase=SUMMARY_PHASES[phase_index], directory=str(directory),
+                summary=json.loads((directory / 'run_summary.json').read_text()),
+                markdown=(directory / 'run_summary.md').read_text(),
+                missing_work=json.loads((directory / 'missing_work.json').read_text()))
 
 
 # --- budget ------------------------------------------------------------------------------------
@@ -254,6 +284,24 @@ class Budget:
             raise CapReached('total', self.elapsed(), self.state['total_cap'])
         return dict(stage=stage, elapsed_stage=self.elapsed(stage), remaining_total=self.remaining_total())
 
+    def close(self, stage):
+        """Charge the time since the last mark when a stage ends (success, cap, stop or exception)."""
+        if self.stage == stage and self.mark is not None:
+            now = self.now()
+            self.state['elapsed'][stage] = self.elapsed(stage) + (now - self.mark)
+            self.mark = None
+            self._save()
+        return self.elapsed(stage)
+
+    def exceeded(self, stage):
+        """Which cap, if any, is met now: the stage's own or the total."""
+        cap = self.state['stage_caps'].get(stage)
+        if cap is not None and self.elapsed(stage) >= cap:
+            return stage
+        if self.elapsed() >= self.state['total_cap']:
+            return 'total'
+        return None
+
     def projection(self, stage, *, done, total):
         """Linear forecast, logged only: longest-first packing makes early forecasts pessimistic."""
         projected = self.elapsed(stage) / done * total if done else None
@@ -265,6 +313,7 @@ class Budget:
 
 def export(root, *, label, include, expected_units, expected_runs, client=None, repo=ex.DEFAULT_REPO,
            attempts=3, deadline_seconds=None, temp_dir=None, on_event=print):
+    # ``include`` may name a single sealed directory (e.g. the final summary's second, small upload)
     """Snapshot (declared expected set) -> private upload with fresh readback. Incomplete scope is ``partial``."""
     if temp_dir is not None:
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -280,8 +329,4 @@ def export(root, *, label, include, expected_units, expected_runs, client=None, 
 def restore_summary(receipt, clean_root, *, client=None, attempts=3, on_event=print):
     """Clean-root restore; returns the restore proof, morning summary and missing-work list."""
     proof = ex.restore(receipt, clean_root, client=client, attempts=attempts, on_event=on_event)
-    summary_dir = Path(clean_root) / SUMMARY_DIR
-    verify_run(summary_dir)
-    return dict(proof=proof, summary=json.loads((summary_dir / 'run_summary.json').read_text()),
-                markdown=(summary_dir / 'run_summary.md').read_text(),
-                missing_work=json.loads((summary_dir / 'missing_work.json').read_text()))
+    return dict(latest_summary(clean_root), proof=proof)

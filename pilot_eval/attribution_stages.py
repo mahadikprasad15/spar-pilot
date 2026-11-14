@@ -48,6 +48,7 @@ STAGE_D_RUNS = {'gold-sft': ['full', 'top10-trace', 'match10-trace', 'top10-stop
                 'online-grpo': ['full', 'top10-trace', 'match10-trace']}
 METRICS = ('trace', 'stop')
 COMPUTE_DIR = 'attribution/compute'
+EDITED_DIR = 'edited'  # reconstructible edited checkpoints, outside the export scope; edit records are sealed
 # (forward passes, activation-only backward passes) per token, for the MFU estimate
 PASSES = dict(preflight=(1, 0), qualification=(1, 2), base_traces=(1, 0), attribution_and_freeze=(2, 2),
               stage_c=(2, 0), stage_d=(1, 0), report=(1, 0))
@@ -451,7 +452,7 @@ class Stages:
                 out[f'{arm}|{condition}'] = 'skipped: matched-control-unavailable'
                 continue
             generator, edit = self.backend.stage_d_generator(None if arm == 'untuned' else arm, adapters, size,
-                                                             self.root / 'attribution/edited' / arm / condition)
+                                                             self.root / EDITED_DIR / arm / condition)
             scored = []
             for r in self._generate(generator, items, batches):
                 score = score_gsm8k_flexible_v3(r['text'], gold[r['id']], capped=r['stop_reason'] != 'eos')

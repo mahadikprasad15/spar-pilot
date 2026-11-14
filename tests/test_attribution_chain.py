@@ -14,7 +14,8 @@ from pilot_eval import attribution_chain as ch
 from pilot_eval import attribution_units as au
 
 ARMS = ['gold-sft', 'online-grpo', 'offline-grpo', 'sampling-sft-k0', 'sampling-sft-k2', 'sampling-sft-k5']
-TEARDOWN = ['writers_joined', 'volume_copy', 'hf_export', 'summary_sealed', 'summary_on_volume', 'stop_requested']
+# review round 4 (8): the pre-export summary is sealed before the export so it is inside the HF backup
+TEARDOWN = ['writers_joined', 'volume_copy', 'summary_sealed', 'hf_export', 'summary_on_volume', 'stop_requested']
 
 
 def record(**overrides):
@@ -60,7 +61,7 @@ def harness(tmp_path, stages, *, copier=None, exporter=None, runner=None, now=No
         assert sealed_only
         return dict(verified=True, copied=['x'], problems=[])
 
-    def default_exporter(local, *, label, expected_units, expected_runs, repo):
+    def default_exporter(local, *, label, include, expected_units, expected_runs, repo):
         calls.order.append('hf_export')
         return dict(revision='a' * 40, completeness='complete', readback_verified=True)
 
@@ -141,7 +142,7 @@ def test_success_path_runs_every_stage_signs_off_and_ends_in_teardown_order(tmp_
     assert summary['signoff']['by'] == ch.AUTO_REVIEWER and 'user' not in summary['signoff']['by'].split()
     assert calls.stops[0][0] == ['runpodctl', 'stop', 'pod', 'pod-1'] and calls.stops[0][1] == 30
     assert summary['stop'] == dict(requested=True, externally_verified=False, attempts=summary['stop']['attempts'])
-    restored = json.loads((tmp_path / 'volume' / au.SUMMARY_DIR / 'run_summary.json').read_text())
+    restored = au.latest_summary(tmp_path / 'volume')['summary']
     assert restored['backups']['volume_copy']['verified'] and restored['backups']['hf_export']['verified']
 
 
@@ -206,7 +207,7 @@ def test_exception_path_still_tears_down_in_order(tmp_path):
     summary = chain.run()
     assert summary['state'] == 'failed' and 'device-side assert' in summary['failures'][0]['error']
     assert summary['failures'][0]['log'] and summary['teardown'] == TEARDOWN
-    assert calls.order == ['volume_copy', 'hf_export', 'stop']
+    assert calls.order == ['volume_copy', 'hf_export', 'hf_export', 'stop']  # full export, then final summary
 
 
 def test_hf_failure_still_stops_and_is_reported(tmp_path):
@@ -241,7 +242,7 @@ def test_hung_copy_and_hung_stop_time_out_and_neither_backup_verified_is_reporte
     assert 'NO VERIFIED BACKUP' in summary['backups']['statement']
     assert len(attempts) == 2 and summary['stop']['requested'] is False
     assert [a['outcome'] for a in summary['stop']['attempts']] == ['timeout', 'timeout']
-    local = json.loads((tmp_path / 'local' / au.SUMMARY_DIR / 'run_summary.json').read_text())
+    local = au.latest_summary(tmp_path / 'local')['summary']
     assert local['backups']['volume_copy']['verified'] is False  # never labelled verified
 
 
@@ -346,9 +347,10 @@ def test_killed_worker_stale_marker_resumes_and_skips_completed_stages(tmp_path)
     chain, _ = harness(tmp_path, ok_stages(order))
     state = tmp_path / 'volume' / ch.STATE_FILE
     state.parent.mkdir(parents=True, exist_ok=True)
-    state.write_text(json.dumps(dict(run_id='overnight-r1', completed={
-        'preflight': {}, 'qualification': dict(checks=dict(fd=True), review_flags=[], arms=ARMS)},
-        signoff=dict(by=ch.AUTO_REVIEWER))))
+    qual = dict(checks=dict(fd=True), review_flags=[], arms=ARMS)
+    state.write_text(json.dumps(dict(run_id='overnight-r1', completed={'preflight': {}, 'qualification': qual},
+                                     signoff=dict(by=ch.AUTO_REVIEWER, decision='accept',
+                                                  qualification_sha256=ch.Chain._qualification_sha(qual)))))
     marker(tmp_path)
     summary = chain.run()
     assert summary['resume']['decision'] == 'take-over' and order[0] == 'base_traces'
@@ -486,3 +488,162 @@ def test_the_repository_draft_is_complete_except_for_user_values():
     missing = set(ch.unresolved(dict(rec, code_commit='x')))
     assert missing and all(p.split('.')[0].split('[')[0] in ch.USER_FIELDS for p in missing), sorted(missing)
     assert set(ch.REQUIRED) <= set(rec)
+
+
+# --- review round 4 -------------------------------------------------------------------------------
+
+def test_r4_2_failed_qualification_is_not_marked_complete_and_resume_requires_signoff(tmp_path):
+    order = []
+
+    def failing(ctx):
+        order.append('qualification')
+        return dict(checks=dict(finite_differences=False), review_flags=[], arms=list(ARMS))
+
+    chain, _ = harness(tmp_path, ok_stages(order, qualification=failing))
+    assert chain.run()['state'] == 'stopped-before-production'
+    state = json.loads((tmp_path / 'volume' / ch.STATE_FILE).read_text())
+    assert 'qualification' not in state['completed'] and state.get('signoff') is None
+    # a resumed attempt reruns qualification; it never skips to production
+    order.clear()
+    chain, _ = harness(tmp_path / 'r', ok_stages(order), )
+    # forge a state that claims qualification completed but has no sign-off
+    state_path = tmp_path / 'r' / 'volume' / ch.STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(dict(run_id='overnight-r1', completed={'preflight': {}, 'qualification': {}})))
+    summary = chain.run()
+    assert summary['state'] == 'failed' and 'sign-off' in summary['failures'][0]['error']
+    assert 'attribution_and_freeze' not in order
+
+
+def test_r4_2_signoff_must_match_the_completed_qualification(tmp_path):
+    order = []
+    chain, _ = harness(tmp_path, ok_stages(order))
+    state_path = tmp_path / 'volume' / ch.STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    qual = dict(checks=dict(fd=True), review_flags=[], arms=ARMS)
+    state_path.write_text(json.dumps(dict(run_id='overnight-r1', completed={'preflight': {}, 'qualification': qual},
+                                          signoff=dict(by=ch.AUTO_REVIEWER, decision='accept',
+                                                       qualification_sha256='0' * 64))))
+    summary = chain.run()
+    assert summary['state'] == 'failed' and 'sign-off' in summary['failures'][0]['error'] and order == []
+
+
+def test_r4_4_resume_refuses_a_sealed_unit_with_another_identity(tmp_path):
+    units = au.Units(tmp_path / 'local', plan_sha256='p', code_sha256='c', runtime_sha256='r')
+
+    def compute(batch):
+        return dict(blocks={('examples', 0, 'x'): np.ones((1, 2), dtype=np.float32)}, counts={'examples': [1]})
+
+    ch.run_units(units, 'gold-sft', [['e0']], compute, boundary=lambda: None, input_sha256='i')
+    changed = au.Units(tmp_path / 'local', plan_sha256='p2', code_sha256='c', runtime_sha256='r')
+    with pytest.raises(ValueError, match='identity'):
+        ch.run_units(changed, 'gold-sft', [['e0']], compute, boundary=lambda: None, input_sha256='i')
+    with pytest.raises(ValueError, match='identity'):
+        ch.run_units(units, 'gold-sft', [['e9']], compute, boundary=lambda: None, input_sha256='i')
+    conditions = [dict(name='top1-trace', kind='removal', adapters=[1], status='run', reason=None)]
+
+    def evaluate(condition):
+        return dict(blocks={('examples', 0, 'd'): np.zeros((1, 1), dtype=np.float32)}, counts={'examples': [1]})
+
+    ch.run_conditions(units, 'gold-sft', conditions, evaluate, example_ids=['q0'], boundary=lambda: None,
+                      input_sha256='i')
+    with pytest.raises(ValueError, match='identity'):
+        ch.run_conditions(changed, 'gold-sft', conditions, evaluate, example_ids=['q0'], boundary=lambda: None,
+                          input_sha256='i')
+
+
+def test_r4_6_time_after_the_last_boundary_and_export_time_are_charged(tmp_path):
+    clock = [0.0]
+
+    def preflight(ctx):
+        clock[0] += 200  # no unit boundary at all
+        return {}
+
+    def exporter(*a, **k):
+        clock[0] += 30
+        return dict(revision='a' * 40, completeness='complete', readback_verified=True)
+
+    chain, _ = harness(tmp_path, ok_stages(preflight=preflight), exporter=exporter, now=lambda: clock[0])
+    summary = chain.run()
+    budget = json.loads((tmp_path / 'volume' / ch.BUDGET_FILE).read_text())
+    assert budget['elapsed']['preflight'] == pytest.approx(200)
+    assert summary['stages']['preflight']['status'] == 'cap-exceeded-at-completion'
+    assert summary['state'] == 'stopped-before-production'
+    assert budget['elapsed']['teardown'] >= 30
+
+
+def test_r4_6_total_cap_checked_before_each_stage(tmp_path):
+    clock = [0.0]
+    order = []
+
+    def attribution(ctx):
+        order.append('attribution_and_freeze')
+        clock[0] += 290  # under its 300 s cap, but the total (1000) is now spent with earlier stages
+        return {}
+
+    def traces(ctx):
+        order.append('base_traces')
+        clock[0] += 99
+        return {}
+
+    def qual(ctx):
+        order.append('qualification')
+        clock[0] += 99
+        return dict(checks=dict(fd=True), review_flags=[], arms=list(ARMS))
+
+    def stage_c(ctx):
+        order.append('stage_c')
+        clock[0] += 199
+        return {}
+
+    def stage_d(ctx):
+        order.append('stage_d')
+        clock[0] += 199
+        return {}
+
+    def pre(ctx):
+        clock[0] += 49
+        return {}
+
+    chain, _ = harness(tmp_path, ok_stages(order, preflight=pre, qualification=qual, base_traces=traces,
+                                           attribution_and_freeze=attribution, stage_c=stage_c, stage_d=stage_d),
+                       now=lambda: clock[0],
+                       caps_seconds=dict(total=700, qualification=100, base_traces=100, attribution_and_freeze=300,
+                                         stage_c=200, stage_d=200, report=50, preflight=50))
+    summary = chain.run()
+    assert 'stage_d' not in order and summary['stages']['stage_d']['status'] == 'not-run'
+    assert summary['state'] == 'cap-reached' and order[-1] == 'report'
+
+
+def test_r4_8_summary_is_inside_the_hf_backup_and_the_final_one_reaches_the_volume(tmp_path):
+    from tests.test_neuron_audit_export import FakeHub
+    hub = FakeHub()
+
+    def exporter(local, *, label, include, expected_units, expected_runs, repo):
+        return au.export(local, label=label, include=include, expected_units=expected_units,
+                         expected_runs=expected_runs, client=hub, temp_dir=tmp_path / 'tmp', on_event=lambda e: None)
+
+    chain, _ = harness(tmp_path, ok_stages(), exporter=exporter)
+    summary = chain.run()
+    receipt = summary['backups']['hf_export']['receipt']
+    assert receipt['completeness'] == 'complete'
+    restored = au.restore_summary(receipt, tmp_path / 'clean', client=hub, on_event=lambda e: None)
+    assert restored['phase'] == 'pre-export' and restored['summary']['backups']['hf_export']['verified'] == 'pending'
+    final = au.latest_summary(tmp_path / 'volume')
+    assert final['phase'] == 'final' and final['summary']['backups']['hf_export']['verified'] is True
+    record = json.loads((tmp_path / 'volume' / 'attribution/chain/stop_record.json').read_text())
+    assert record['final_summary_upload']['outcome'] == 'ok'
+
+
+def test_r4_8_a_retry_never_leaves_a_stale_summary(tmp_path):
+    def boom(ctx):
+        raise RuntimeError('first attempt fails')
+
+    chain, _ = harness(tmp_path, ok_stages(stage_c=boom))
+    assert chain.run()['state'] == 'failed'
+    (tmp_path / 'volume' / ch.MARKER_FILE).write_text(json.dumps(dict(
+        run_id='overnight-r1', host=socket.gethostname(), pid=999999, state='running', heartbeat_unix=0)))
+    chain, _ = harness(tmp_path, ok_stages())
+    assert chain.run()['state'] == 'complete'
+    latest = au.latest_summary(tmp_path / 'volume')
+    assert latest['summary']['state'] == 'complete' and latest['attempt'].startswith('attempt-002')

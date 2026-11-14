@@ -275,16 +275,30 @@ def copy_sealed(local_root, volume_root, *, sealed_only=True):
     return dict(verified=not problems, copied=copied, problems=problems)
 
 
+def _sealed_matching(units, key, identity):
+    """True if ``key`` is sealed *and* belongs to this run; a hash-intact unit of another identity is refused."""
+    state = units.state(key)
+    if state == 'corrupt':
+        raise ValueError(f'unit {key} is corrupt; investigate before resuming')
+    if state != 'sealed':
+        return False
+    stored = units.store.index(key)['identity']
+    if stored != identity:
+        changed = sorted(k for k in set(stored) | set(identity) if stored.get(k) != identity.get(k))
+        raise ValueError(f'sealed unit {key} has a different identity (fields {changed}); refusing to reuse it')
+    return True
+
+
 def run_units(units, arm, batches, compute, *, boundary, input_sha256, kind='ab', condition=None):
     """Seal one unit per batch in order; sealed units are skipped (resume); ``boundary`` between units."""
     done = []
     for index, batch in enumerate(batches):
         key = au.unit_key(kind, arm, batch=index, condition=condition)
-        if units.state(key) == 'sealed':
+        identity = units.identity(kind, arm, batch, input_sha256=input_sha256, batch=index, condition=condition)
+        if _sealed_matching(units, key, identity):
             done.append((key, 'skipped-sealed'))
             continue
         result = compute(batch)
-        identity = units.identity(kind, arm, batch, input_sha256=input_sha256, batch=index, condition=condition)
         done.append((key, units.write(key, identity=identity, example_ids=batch, blocks=result['blocks'],
                                       counts=result['counts'], results=result.get('results'),
                                       config=result.get('config'), log=result.get('log'))))
@@ -300,11 +314,11 @@ def run_conditions(units, arm, conditions, evaluate, *, example_ids, boundary, i
             skipped.append(dict(name=condition['name'], reason=condition['reason']))
             continue
         key = au.unit_key('c', arm, condition=condition['name'])
-        if units.state(key) == 'sealed':
+        identity = units.identity('c', arm, example_ids, input_sha256=input_sha256, condition=condition['name'])
+        if _sealed_matching(units, key, identity):
             done.append((key, 'skipped-sealed'))
             continue
         result = evaluate(condition)
-        identity = units.identity('c', arm, example_ids, input_sha256=input_sha256, condition=condition['name'])
         done.append((key, units.write(key, identity=identity, example_ids=example_ids, blocks=result['blocks'],
                                       counts=result['counts'], results=result.get('results'),
                                       config=dict(condition=condition))))
@@ -345,7 +359,8 @@ class Chain:
         self.local_root, self.volume_root = Path(local_root), Path(volume_root)
         self.copier, self.exporter, self.runner, self.now = copier, exporter or _default_exporter, runner, now
         self.writers, self.volume_identity, self.host = list(writers), volume_identity, host or socket.gethostname()
-        self.expected_units, self.expected_runs = set(), {au.SUMMARY_DIR, LAUNCH_DIR}
+        self.expected_units, self.expected_runs = set(), {LAUNCH_DIR}
+        self.attempt = None
         self.timeouts = record['timeouts_seconds']
         self.budget = None
 
@@ -368,6 +383,9 @@ class Chain:
             run_id=self.record['run_id'], completed={})
         if state['run_id'] != self.record['run_id']:
             raise ResumeRefused('chain state belongs to another run ID')
+        state['attempts'] = state.get('attempts', 0) + 1
+        self.attempt = f"attempt-{state['attempts']:03d}"
+        self._save(state)
         self._marker = dict(run_id=self.record['run_id'], host=self.host, pid=os.getpid(), started_unix=time.time())
         self._beat('running')
         caps = dict(self.record['caps_seconds'])
@@ -384,6 +402,22 @@ class Chain:
 
     # --- sign-off ------------------------------------------------------------------------------------
 
+    @staticmethod
+    def _qualification_sha(result):
+        return hashlib.sha256(_canonical(result).encode()).hexdigest()
+
+    def _check_signoff(self, state):
+        """Before any work: a completed qualification (or anything after it) needs its matching sign-off."""
+        later = [s for s in STAGES[STAGES.index('qualification'):] if s in state['completed']]
+        if not later:
+            return
+        signoff = state.get('signoff') or {}
+        qual = state['completed'].get('qualification')
+        if qual is None or signoff.get('decision') != 'accept' or signoff.get('by') != AUTO_REVIEWER or \
+                signoff.get('qualification_sha256') != self._qualification_sha(qual):
+            raise RuntimeError('completed stages without a matching automatic sign-off of the completed '
+                               'qualification; investigate, never continue to production')
+
     def _signoff(self, result):
         reasons = [f'check failed: {k}' for k, v in sorted(result.get('checks', {}).items()) if v is not True]
         if not result.get('checks'):
@@ -396,7 +430,7 @@ class Chain:
             raise StopBeforeProduction('; '.join(reasons))
         record = dict(by=AUTO_REVIEWER, decision='accept', rule='every qualification check passes against the '
                       "launch record's fixed tolerances and no review flag is raised", checks=result['checks'],
-                      signed_unix=time.time())
+                      qualification_sha256=self._qualification_sha(result), signed_unix=time.time())
         au.seal_run(self.local_root / 'attribution/signoff', {'signoff.json': record})
         return record
 
@@ -406,16 +440,29 @@ class Chain:
         from pilot_eval.attribution_traces import MinimumUnmet
         state, decision = self._start()
         started = time.time()
-        summary = dict(run_id=self.record['run_id'], mode=self.record['mode'], resume=decision, stages={},
-                       failures=[], state='running', signoff=state.get('signoff'))
+        summary = dict(run_id=self.record['run_id'], mode=self.record['mode'], attempt=self.attempt, resume=decision,
+                       stages={}, failures=[], state='running', signoff=state.get('signoff'))
         skip_to_report = False
+
+        def stop_before_production(name, reason, status='stopped'):
+            summary['stages'][name] = dict(summary['stages'].get(name, {}), status=status, reason=reason)
+            summary['state'], summary['stop_reason'] = 'stopped-before-production', reason
+
         try:
+            self._check_signoff(state)
             for name in STAGES:
                 if name in state['completed']:
                     summary['stages'][name] = dict(status='complete', resumed=True)
                     continue
                 if skip_to_report and name != 'report':
                     summary['stages'][name] = dict(status='not-run', reason='cap reached earlier')
+                    continue
+                if name != 'report' and self.budget.remaining_total() <= 0:
+                    if name in PRE_PRODUCTION:
+                        stop_before_production(name, 'total cap reached before the stage started', 'not-run')
+                        break
+                    summary['stages'][name] = dict(status='not-run', reason='total cap reached')
+                    skip_to_report, summary['state'] = True, 'cap-reached'
                     continue
                 self.budget.start(name)
                 self._beat('running', stage=name)
@@ -426,27 +473,38 @@ class Chain:
                     self.log(f'stage {name} cap reached: {exc}')
                     summary['stages'][name] = dict(status='cap-reached', scope=exc.scope)
                     if name in PRE_PRODUCTION:
-                        summary['state'], summary['stop_reason'] = 'stopped-before-production', str(exc)
+                        stop_before_production(name, str(exc), 'cap-reached')
                         break
                     skip_to_report, summary['state'] = True, 'cap-reached'
                     continue
                 except (StopBeforeProduction, MinimumUnmet) as exc:
-                    summary['stages'][name] = dict(status='stopped', reason=str(exc))
-                    summary['state'], summary['stop_reason'] = 'stopped-before-production', str(exc)
+                    stop_before_production(name, str(exc))
                     break
-                summary['stages'][name] = dict(status='complete')
-                state['completed'][name] = result
+                finally:
+                    self.budget.close(name)  # time after the last unit boundary is charged too
+                over = self.budget.exceeded(name)
+                summary['stages'][name] = dict(status='complete' if over is None else 'cap-exceeded-at-completion',
+                                               **({} if over is None else dict(scope=over)))
                 if name == 'qualification':
                     try:
-                        state['signoff'] = summary['signoff'] = self._signoff(result)
+                        if over is not None:
+                            raise StopBeforeProduction(f'qualification exceeded the {over} cap; no sign-off')
+                        signoff = self._signoff(result)
                     except StopBeforeProduction as exc:
-                        summary['stages'][name] = dict(status='stopped', reason=str(exc))
-                        summary['state'], summary['stop_reason'] = 'stopped-before-production', str(exc)
-                        self._save(state)
+                        stop_before_production(name, str(exc))
                         break
+                    state['signoff'] = summary['signoff'] = signoff
+                state['completed'][name] = result  # only after the stage (and, for qualification, sign-off) succeeded
                 if name == 'report':
                     summary['report'] = result
                 self._save(state)
+                if over is not None:
+                    self.log(f'stage {name} exceeded the {over} cap at completion')
+                    if name in PRE_PRODUCTION:
+                        stop_before_production(name, f'{name} exceeded the {over} cap', 'cap-exceeded-at-completion')
+                        break
+                    if name != 'report':
+                        skip_to_report, summary['state'] = True, 'cap-reached'
             else:
                 if summary['state'] == 'running':
                     summary['state'] = 'complete'
@@ -459,13 +517,48 @@ class Chain:
             self._save(state)
             summary['wall_seconds'] = time.time() - started
             summary['cost_estimate_usd'] = summary['wall_seconds'] / 3600 * self.record['hourly_cost_usd']
-            summary['budget'] = dict(elapsed=self.budget.state['elapsed'], remaining_total=self.budget.remaining_total())
             self.teardown(summary)
         return summary
 
     # --- teardown ------------------------------------------------------------------------------------
 
+    def _export(self, *, include, expected_units, expected_runs, attempts):
+        tries, outcome = [], dict(verified=False)
+        for _ in range(attempts):
+            kind, value = call_with_timeout(self.exporter, self.timeouts['export_attempt'], self.local_root,
+                                            label=self.record['run_id'], include=include,
+                                            expected_units=expected_units, expected_runs=expected_runs,
+                                            repo=self.record['export_repo'])
+            if kind == 'ok':
+                tries.append(dict(outcome='ok'))
+                outcome = dict(verified=bool(value.get('readback_verified', True)), receipt=value,
+                               completeness=value.get('completeness'))
+                break
+            tries.append(dict(outcome=kind, error=None if value is None else f'{type(value).__name__}: {value}'))
+        outcome['attempts'] = tries
+        return outcome
+
+    def _copy_run_to_volume(self, relative):
+        source, target = self.local_root / relative, self.volume_root / relative
+        files = au.verify_run(source)
+        target.mkdir(parents=True, exist_ok=True)
+        for name in sorted(files):
+            (target / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / name, target / name)
+        shutil.copyfile(source / 'complete.json', target / 'complete.json')
+        au.verify_run(target)
+        return True
+
+    def _summary(self, summary, phase, missing):
+        relative = au.write_summary(self.local_root, summary=summary, markdown=_markdown(summary), missing_work=missing,
+                                    attempt=self.attempt, phase=phase)
+        kind, value = call_with_timeout(self._copy_run_to_volume, self.timeouts['copy'], relative)
+        return relative, kind == 'ok' and bool(value)
+
     def teardown(self, summary):
+        """Writers -> sealed volume copy -> pre-export summary (on the volume and inside the HF backup) -> HF
+        export -> final summary with both outcomes (volume + a second small upload) -> stop request."""
+        teardown_started = self.now()
         steps = summary['teardown'] = []
         for writer in self.writers:
             writer.stop()
@@ -481,50 +574,37 @@ class Chain:
         else:
             copy = dict(value, outcome='ok', verified=bool(value.get('verified')))
         steps.append('volume_copy')
-        attempts, export = [], dict(verified=False)
-        for attempt in range(3):
-            kind, value = call_with_timeout(self.exporter, self.timeouts['export_attempt'], self.local_root,
-                                            label=self.record['run_id'], expected_units=sorted(self.expected_units),
-                                            expected_runs=sorted(self.expected_runs), repo=self.record['export_repo'])
-            if kind == 'ok':
-                attempts.append(dict(outcome='ok'))
-                export = dict(verified=bool(value.get('readback_verified', True)), receipt=value,
-                              completeness=value.get('completeness'))
-                break
-            attempts.append(dict(outcome=kind, error=None if value is None else f'{type(value).__name__}: {value}'))
-        export['attempts'] = attempts
-        steps.append('hf_export')
-        verified = [n for n, b in [('volume copy', copy), ('HF export', export)] if b['verified']]
-        statement = ('verified backups: ' + ', '.join(verified)) if verified else \
-            'NO VERIFIED BACKUP; possibly missing outputs: every unit and run directory not on the volume or HF'
-        summary['backups'] = dict(volume_copy=copy, hf_export=export, statement=statement)
         missing = sorted(self.expected_units - {c.split(':', 1)[1] for c in copy.get('copied', [])
                                                 if c.startswith('unit:')}) if self.expected_units else []
-        markdown = _markdown(summary)
-        try:
-            au.write_summary(self.local_root, summary=summary, markdown=markdown, missing_work=missing)
-        except ValueError:  # a resumed run that already sealed a summary: keep a dated copy beside it
-            au.write_summary(self.local_root / f'attribution/summaries/{int(time.time())}', summary=summary,
-                             markdown=markdown, missing_work=missing)
+        summary['budget'] = dict(elapsed=dict(self.budget.state['elapsed']), remaining_total=self.budget.remaining_total())
+        summary['backups'] = dict(volume_copy=copy, hf_export=dict(verified='pending'),
+                                  statement='HF export pending; this pre-export summary is the one inside the backup')
+        pre, pre_on_volume = self._summary(summary, 'pre-export', missing)
         steps.append('summary_sealed')
-        kind, value = call_with_timeout(self._summary_to_volume, self.timeouts['copy'])
-        summary['summary_on_volume'] = kind == 'ok' and bool(value)
+        export = self._export(include=['attribution'], expected_units=sorted(self.expected_units),
+                              expected_runs=sorted(self.expected_runs | {pre}), attempts=3)
+        steps.append('hf_export')
+        self.budget.charge('teardown', self.now() - teardown_started)  # export time counts toward the total
+        verified = [n for n, b in [('volume copy', copy), ('HF export', export)] if b['verified'] is True]
+        statement = ('verified backups: ' + ', '.join(verified)) if verified else \
+            'NO VERIFIED BACKUP; possibly missing outputs: every unit and run directory not on the volume or HF'
+        summary['backups'] = dict(volume_copy=copy, hf_export=export, statement=statement,
+                                  pre_export_summary=dict(path=pre, on_volume=pre_on_volume))
+        summary['budget'] = dict(elapsed=dict(self.budget.state['elapsed']), remaining_total=self.budget.remaining_total())
+        final, final_on_volume = self._summary(summary, 'final', missing)
+        summary['summary_on_volume'] = final_on_volume
         steps.append('summary_on_volume')
+        upload = self._export(include=[final], expected_units=[], expected_runs=[final], attempts=1)
+        final_upload = dict(outcome='ok' if upload['verified'] else 'failed', attempts=upload['attempts'],
+                            path=final, note='second, small upload of the final summary; best effort')
         summary['stop'] = self._stop()
         steps.append('stop_requested')
-        _write_json(self.volume_root / 'attribution/chain/stop_record.json', dict(stop=summary['stop'], steps=steps))
+        _write_json(self.volume_root / 'attribution/chain/stop_record.json',
+                    dict(stop=summary['stop'], steps=steps, attempt=self.attempt, final_summary_upload=final_upload))
+        summary['final_summary_upload'] = final_upload
         self._beat('released', final_state=summary['state'])
         (self.volume_root / DONE_FILE).write_text(summary['state'] + '\n')
         return summary
-
-    def _summary_to_volume(self):
-        source, target = self.local_root / au.SUMMARY_DIR, self.volume_root / au.SUMMARY_DIR
-        files = au.verify_run(source)
-        target.mkdir(parents=True, exist_ok=True)
-        for name in sorted(files) + ['complete.json']:
-            shutil.copyfile(source / name, target / name)
-        au.verify_run(target)
-        return True
 
     def _stop(self):
         attempts, requested = [], False
@@ -557,15 +637,16 @@ def _markdown(summary):
     backups = summary['backups']
     lines += ['', '## Backups', '', backups['statement'],
               f"- volume copy: {backups['volume_copy'].get('outcome')} verified={backups['volume_copy']['verified']}",
-              f"- HF export: verified={backups['hf_export']['verified']} attempts={len(backups['hf_export']['attempts'])}",
+              f"- HF export: verified={backups['hf_export']['verified']} "
+              f"attempts={len(backups['hf_export'].get('attempts', []))}",
               '', 'The Pod stop is requested after this summary is written; its outcome is in stop_record.json on '
               'the volume (requested, not externally verified).', '']
     return '\n'.join(lines)
 
 
-def _default_exporter(local_root, *, label, expected_units, expected_runs, repo):
+def _default_exporter(local_root, *, label, include, expected_units, expected_runs, repo):
     from pilot_eval.neuron_audit_export import OnlineHubProcess
-    receipt = au.export(local_root, label=label, include=['attribution'], expected_units=expected_units,
+    receipt = au.export(local_root, label=label, include=include, expected_units=expected_units,
                         expected_runs=expected_runs, client=OnlineHubProcess(), repo=repo, attempts=1,
                         temp_dir=Path(local_root) / 'tmp')
     return dict(receipt, readback_verified=True)  # upload returns only after a fresh readback hash matched
