@@ -457,6 +457,40 @@ def test_watchdog_cancelled_cleanly_on_normal_completion(tmp_path):
     assert result.returncode == 0 and not log.exists() and 'cancelled' in result.stdout
 
 
+def test_r6_1_watchdog_acts_at_once_when_the_writer_dies_without_completing(tmp_path):
+    """Review round 6 (1): a startup failure (CLI, backend construction, ``_start``) exits before the chain's own
+    teardown; the watchdog must copy and stop within seconds, not at the deadline hours later."""
+    dead = subprocess.Popen([sys.executable, '-c', 'raise SystemExit(1)'])
+    dead.wait(timeout=10)
+    log = tmp_path / 'actions.log'
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
+               WATCHDOG_STOP_2='true', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    (tmp_path / 'owner').write_text('attempt-A\n')
+    started = time.time()
+    result = subprocess.run(['bash', str(WATCHDOG), str(time.time() + 3600), str(dead.pid), str(tmp_path / 'done'),
+                             '2', '5', '5', str(tmp_path / 'owner'), 'attempt-A'], env=env, capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert time.time() - started < 15
+    assert log.read_text().split() == ['copy', 'stop1']
+    summary = json.loads((tmp_path / 's.json').read_text())
+    assert summary['reason'] == 'writer-exited-without-completing' and summary['stop'] == 'requested'
+
+
+def test_r6_1_watchdog_still_stands_down_when_the_writer_finished_normally(tmp_path):
+    finished = subprocess.Popen([sys.executable, '-c', 'pass'])
+    finished.wait(timeout=10)
+    log = tmp_path / 'actions.log'
+    (tmp_path / 'done').write_text('complete')
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
+               WATCHDOG_STOP_2='true', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    (tmp_path / 'owner').write_text('attempt-A\n')
+    result = subprocess.run(['bash', str(WATCHDOG), str(time.time() + 3600), str(finished.pid), str(tmp_path / 'done'),
+                             '2', '5', '5', str(tmp_path / 'owner'), 'attempt-A'], env=env, capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0 and not log.exists() and 'cancelled' in result.stdout
+
+
 def test_heartbeat_is_refreshed_at_every_unit_boundary(tmp_path):
     beats = []
 
