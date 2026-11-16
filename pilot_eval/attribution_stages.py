@@ -717,7 +717,7 @@ def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, n
             attention.to(next(reference.parameters()).device), positions.to(next(reference.parameters()).device)
 
     def metric(name, gates=None, neuron=None):
-        with torch.no_grad(), ai.branch_gates(reference, gates or {}, inst.adapter), \
+        with torch.no_grad(), ai.full_fp64(reference), ai.branch_gates(reference, gates or {}, inst.adapter), \
                 ai.neuron_gate(reference, neuron, inst.adapter):
             logits = reference(input_ids=ids, attention_mask=attention, position_ids=positions,
                                use_cache=False).logits
@@ -763,8 +763,9 @@ def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, n
                 max_rel_err=float(errors.max()) if len(errors) else float('inf'), checked=checked, epsilon=epsilon,
                 items=items, worst=sorted(items, key=lambda i: -i['rel_err'])[:10],
                 precision='fp64' if dtype == torch.float64 else 'fp32',
-                parts=dict(attribution='fp32 (instrument; FP64 accumulation of products)',
-                           finite_difference='fp64 weights, activations, gates, log-softmax and metric means'
+                parts=dict(attribution=f"{getattr(inst, 'precision', 'fp32')} (instrument; FP64 accumulation of products)",
+                           finite_difference='fp64 weights, activations (incl. attention softmax, RMSNorm and RoPE '
+                                             'via full_fp64), gates, log-softmax and metric means'
                            if dtype == torch.float64 else 'fp32'),
                 note='central differences; fd_noise_estimate = ulp(|M|) / (2 epsilon) in the reference precision, '
                      'an estimate of the rounding floor of each finite difference')

@@ -1,4 +1,6 @@
 """Ticket 03: scalar-read attribution instrument on a tiny random Qwen2 + PEFT 0.18.0 (CPU, no downloads)."""
+import json
+
 import numpy as np
 import pytest
 
@@ -339,3 +341,91 @@ def test_pass2_saves_term_size_for_neuron_ordering(model, result):
     assert np.allclose(out['term_size'][1], expected, rtol=1e-10)
     blocks, _, _ = ai.unit_blocks(out)
     assert ('examples', 1, 'term_size') in blocks
+
+
+# --- FP64 attribution mode (diagnostic 4, toward option A; user 2026-11-16) ----------------------------------
+
+def test_fp64_attribution_agrees_with_the_fp64_reference_even_for_tiny_neuron_effects():
+    import copy
+    from pilot_eval import attribution_stages as st
+    model = tiny()
+    fp64 = copy.deepcopy(model).double()
+    inst64 = ai.Instrument(fp64, stop_ids=STOP, pad_token_id=0, identity_rtol=1e-8, precision='fp64')
+    out64 = st.finite_difference_check(fp64, inst64, rows(), STOP, epsilon=1e-2, adapters=3, neurons=3)
+    inst32 = ai.Instrument(model, stop_ids=STOP, pad_token_id=0, identity_rtol=1e-4)
+    out32 = st.finite_difference_check(model, inst32, rows(), STOP, epsilon=1e-2, adapters=3, neurons=3,
+                                       reference_model=fp64)
+    assert out64['precision'] == 'fp64' and out32['precision'] == 'fp64'
+    # with a truly FP64 reference (full_fp64) both the FP32 and the FP64 attribution agree closely, even on the
+    # fixture's ~1e-7 neuron effects that disagreed against the partly-FP32 "FP64" reference (06a diagnostics 2-3)
+    assert out32['max_rel_err'] < 1e-2 and out64['max_rel_err'] < 1e-2
+    assert out64['parts']['attribution'].startswith('fp64')
+
+
+def test_instrument_precision_must_match_the_model():
+    import copy
+    model = tiny()
+    with pytest.raises(ai.InstrumentFailure, match='FP64'):
+        ai.Instrument(model, stop_ids=STOP, pad_token_id=0, identity_rtol=1e-4, precision='fp64').attribute(rows())
+    with pytest.raises(ai.InstrumentFailure, match='FP32'):
+        ai.Instrument(copy.deepcopy(model).double(), stop_ids=STOP, pad_token_id=0,
+                      identity_rtol=1e-4).attribute(rows())
+    with pytest.raises(ai.InstrumentFailure):
+        ai.Instrument(model, stop_ids=STOP, pad_token_id=0, identity_rtol=1e-4, precision='bf16')
+
+
+def test_full_fp64_removes_qwen2s_fp32_islands_so_fp64_finite_differences_are_smooth():
+    """transformers 4.57 Qwen2 computes the attention softmax, RMSNorm and RoPE in FP32 even in an FP64 model; an
+    'FP64' finite difference is then not consistent across step sizes. Inside full_fp64 it is."""
+    import copy
+    from pilot_eval import attribution_stages as st
+    fp64 = copy.deepcopy(tiny()).double()
+    inst = ai.Instrument(fp64, stop_ids=STOP, pad_token_id=0, identity_rtol=1e-8, precision='fp64')
+    fds = {}
+    for eps in (1e-2, 1e-4, 1e-6):
+        out = st.finite_difference_check(fp64, inst, rows(), STOP, epsilon=eps, adapters=2, neurons=3)
+        fds[eps] = {(i['metric'], i['kind'], json.dumps(i['target']), i['row']): i['finite_difference']
+                    for i in out['items']}
+    keys = sorted(fds[1e-2])
+    assert keys == sorted(fds[1e-4]) == sorted(fds[1e-6])
+    small, smaller, big = (np.array([fds[e][k] for k in keys]) for e in (1e-4, 1e-6, 1e-2))
+    assert np.allclose(small, smaller, rtol=1e-3, atol=1e-9)  # FP64 rounding at eps = 1e-6 is ~1e-10
+    assert np.allclose(big, small, rtol=1e-2, atol=1e-11)
+
+
+def test_full_fp64_leaves_fp32_models_bit_identical():
+    model = tiny()
+    inst = ai.Instrument(model, stop_ids=STOP, pad_token_id=0, identity_rtol=1e-4)
+    ids, attention, positions = inst.batch(rows())
+    with torch.no_grad():
+        plain = model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
+        with ai.full_fp64(model):
+            inside = model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
+    assert torch.equal(plain, inside)
+
+
+def test_full_fp64_computes_softmax_norm_and_rope_in_fp64():
+    import copy
+    from transformers.models.qwen2 import modeling_qwen2 as mq
+    fp64 = copy.deepcopy(tiny()).double()
+    seen = []
+    real_softmax = torch.nn.functional.softmax
+
+    def spy(x, *a, dtype=None, **k):
+        seen.append(dtype or x.dtype)
+        return real_softmax(x, *a, dtype=dtype, **k)
+
+    inst = ai.Instrument(fp64, stop_ids=STOP, pad_token_id=0, identity_rtol=1e-8, precision='fp64')
+    ids, attention, positions = inst.batch(rows())
+    torch.nn.functional.softmax = spy
+    try:
+        with torch.no_grad(), ai.full_fp64(fp64):
+            norm = fp64.base_model.model.model.norm
+            out = norm(torch.randn(2, 3, 8, dtype=torch.float64))
+            cos, sin = fp64.base_model.model.model.rotary_emb(torch.zeros(1, dtype=torch.float64), positions)
+            fp64(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False)
+    finally:
+        torch.nn.functional.softmax = real_softmax
+    assert seen and set(seen) == {torch.float64}
+    assert out.dtype == torch.float64 and cos.dtype == torch.float64
+    assert mq.eager_attention_forward.__name__ == 'eager_attention_forward'  # restored after the context

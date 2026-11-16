@@ -85,3 +85,15 @@ stop before production. A decision is needed (see the 06a ticket).
 ## Still to record
 - ~~online-grpo with the FP64 reference~~ (done above).
 - **Residual risk (now observed on online-grpo).** The gate is relative. A checked single-neuron effect of ~1e-6 on the Pod's calibration rows could still exceed 0.20 because of the attribution's own FP32 rounding. This is a measured limit, not a reason to loosen the tolerance. If it occurs, qualification stops and the decision returns to the user.
+
+## Correction (2026-11-16): the "FP64" reference was not fully FP64
+
+transformers 4.57's Qwen2 casts to FP32 inside **the eager attention softmax** (`modeling_qwen2.py:114`), **every
+RMSNorm** (`:198`) and **the rotary embedding** (`:296–301`), even when the model is converted to FP64. The
+"FP64 reference" in diagnostics 2 and 3 therefore still carried FP32 rounding from every block. The statement that
+it was FP64 "throughout (weights, activations, gates, log-softmax, metric means)" was wrong.
+
+The conclusion that the residual errors are the FP32 attribution's own rounding floor is therefore **not
+established**. On the CPU fixture, a truly FP64 reference (`attribution_instrument.full_fp64`, which computes those
+three steps in FP64) brings even the ordinary FP32 attribution to agreement within 1.1e-4. The same comparisons had
+disagreed by up to 13× against the partly-FP32 reference. Diagnostic 4 repeats this on the real model.

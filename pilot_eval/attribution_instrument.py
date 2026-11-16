@@ -51,6 +51,72 @@ def adapter_modules(model):
     return out
 
 
+@contextmanager
+def full_fp64(model):
+    """Make an FP64 Qwen2 really FP64 (diagnostic 4, 2026-11-16).
+
+    transformers 4.57 Qwen2 casts to FP32 inside the eager attention softmax, every RMSNorm and the rotary embedding,
+    even in an FP64 model; an "FP64" finite difference then still carries FP32 rounding from every block. Inside this
+    context those three steps compute in the input's dtype when it is FP64 (inv_freq recomputed in FP64 for the
+    default RoPE). FP32 inputs follow the original code paths exactly, so FP32 results are bit-identical."""
+    import torch
+    from transformers.models.qwen2 import modeling_qwen2 as mq
+    original_attention = mq.eager_attention_forward
+
+    def attention(module, query, key, value, attention_mask, scaling, dropout=0.0, **kwargs):
+        if query.dtype != torch.float64:
+            return original_attention(module, query, key, value, attention_mask, scaling, dropout=dropout, **kwargs)
+        key_states = mq.repeat_kv(key, module.num_key_value_groups)
+        value_states = mq.repeat_kv(value, module.num_key_value_groups)
+        weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            weights = weights + attention_mask[:, :, :, : key_states.shape[-2]]
+        weights = torch.nn.functional.softmax(weights, dim=-1, dtype=torch.float64)
+        weights = torch.nn.functional.dropout(weights, p=dropout, training=module.training)
+        return torch.matmul(weights, value_states).transpose(1, 2).contiguous(), weights
+
+    attention.__name__ = 'eager_attention_forward'
+    patched = []
+
+    def norm_forward(module, original):
+        def forward(hidden_states):
+            if hidden_states.dtype != torch.float64:
+                return original(hidden_states)
+            variance = hidden_states.pow(2).mean(-1, keepdim=True)
+            return module.weight * (hidden_states * torch.rsqrt(variance + module.variance_epsilon))
+        return forward
+
+    def rope_forward(module, original):
+        def forward(x, position_ids):
+            if x.dtype != torch.float64:
+                return original(x, position_ids)
+            if module.rope_type != 'default':
+                raise ValueError(f'full_fp64 supports the default RoPE only, not {module.rope_type!r}')
+            config = module.config
+            dim = getattr(config, 'head_dim', None) or config.hidden_size // config.num_attention_heads
+            inv = 1.0 / (config.rope_theta ** (torch.arange(0, dim, 2, dtype=torch.float64, device=x.device) / dim))
+            freqs = (inv[None, :, None].expand(position_ids.shape[0], -1, 1)
+                     @ position_ids[:, None, :].to(torch.float64)).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            return emb.cos() * module.attention_scaling, emb.sin() * module.attention_scaling
+        return forward
+
+    try:
+        mq.eager_attention_forward = attention
+        for module in model.modules():
+            if isinstance(module, mq.Qwen2RMSNorm):
+                patched.append((module, module.forward))
+                module.forward = norm_forward(module, module.forward)
+            elif isinstance(module, mq.Qwen2RotaryEmbedding):
+                patched.append((module, module.forward))
+                module.forward = rope_forward(module, module.forward)
+        yield
+    finally:
+        mq.eager_attention_forward = original_attention
+        for module, forward in patched:
+            module.forward = forward
+
+
 def contract(c, g, mask):
     """−Σ_t c_t g_t over the masked positions, FP64, per example (numpy)."""
     import torch
@@ -70,7 +136,7 @@ def response_mask(instrument, rows):
 
 class Instrument:
     def __init__(self, model, *, stop_ids, pad_token_id, identity_rtol, adapter='default', head_chunk=1024,
-                 metric_order=METRICS):
+                 metric_order=METRICS, precision='fp32'):
         import torch
         self.torch, self.model, self.adapter = torch, model, adapter
         self.stop_ids = [int(s) for s in stop_ids]
@@ -80,6 +146,10 @@ class Instrument:
             raise InstrumentFailure('the neuron-sum identity tolerance must come from the launch record')
         if sorted(metric_order) != sorted(METRICS):
             raise InstrumentFailure('metric order must name both metrics once')
+        if precision not in ('fp32', 'fp64'):  # fp64: diagnostic 4 toward option A (user 2026-11-16)
+            raise InstrumentFailure(f'precision must be fp32 or fp64, not {precision!r}')
+        self.precision = precision
+        self.dtype = torch.float32 if precision == 'fp32' else torch.float64
         self.pad, self.rtol, self.chunk, self.order = pad_token_id, identity_rtol, head_chunk, tuple(metric_order)
         self.body = model.get_base_model().model
         self.head = model.get_base_model().lm_head
@@ -93,8 +163,8 @@ class Instrument:
         problems = []
         if any(p.requires_grad for p in self.model.parameters()):
             raise InstrumentFailure('all model and adapter weights must stay frozen (requires_grad False)')
-        if any(p.dtype != self.torch.float32 for p in self.model.parameters()):
-            raise InstrumentFailure('FP32 weights required')
+        if any(p.dtype != self.dtype for p in self.model.parameters()):
+            raise InstrumentFailure(f'{self.precision.upper()} weights required for a {self.precision} instrument')
         if not untuned and list(self.model.active_adapters) != [self.adapter]:
             problems.append(dict(active=list(self.model.active_adapters)))
         for layer, projection, module in self.modules:
@@ -200,6 +270,17 @@ class Instrument:
         unpadded = attention.to(torch.float64)
         n, count = len(rows), len(self.modules)
         captured, calls = {}, {}
+        precision_scope = full_fp64(self.model) if self.precision == 'fp64' else ExitStack()
+        precision_scope.__enter__()
+        try:
+            return self._attribute(rows, ids, attention, positions, unpadded, n, count, captured, calls,
+                                   raw=raw, untuned=untuned, corrupt=_corrupt_pass2)
+        finally:
+            precision_scope.__exit__(None, None, None)
+
+    def _attribute(self, rows, ids, attention, positions, unpadded, n, count, captured, calls, *, raw, untuned,
+                   corrupt):
+        torch = self.torch
         context = frozen_disable_adapter(self.model) if untuned else ExitStack()
         with context, torch.enable_grad(), torch.autocast(ids.device.type, enabled=False), \
                 self._capture(captured, calls):
@@ -239,7 +320,7 @@ class Instrument:
         g_down = {name: {layer: (grads[name][i][..., 0].detach().double() if grads[name] is not None else None)
                          for layer, i in self.down_index.items()} for name in METRICS}
         neuron = self._pass2(ids, attention, positions, g_down, attr, metrics, untuned=untuned,
-                             corrupt=_corrupt_pass2)
+                             corrupt=corrupt)
         term_size = neuron.pop('term_size')
         out = dict(example_ids=[r['id'] for r in rows], adapters=list(self.adapters),
                    metrics={k: v.detach().cpu().numpy() for k, v in metrics.items()}, stop_reasons=reasons,

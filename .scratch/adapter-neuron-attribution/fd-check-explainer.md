@@ -133,7 +133,7 @@ few-percent residual in FP64 sits on the smallest effects (~1e-5) and matches th
 | Part | Precision |
 | --- | --- |
 | Attribution (forward, two backwards, neuron pass) | FP32, FP64 accumulation of products |
-| Finite-difference reference (weights, activations, gates, log-softmax, metric means) | FP64 |
+| Finite-difference reference (weights, activations, gates, log-softmax, metric means) | FP64 — *corrected 2026-11-16:* Qwen2's attention softmax, RMSNorm and RoPE stayed FP32 until `full_fp64` (see `06a-r3-fd-diagnosis.md`, Correction) |
 | All Stage C / Stage D measurements | FP32 |
 
 The FP64 copy's peak memory is measured in qualification and must fit the memory fraction.

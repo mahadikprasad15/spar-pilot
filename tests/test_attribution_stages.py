@@ -606,7 +606,8 @@ def test_fd_reference_runs_every_perturbed_forward_in_fp64_and_leaves_the_fp32_m
     assert set(dtypes) == {torch.float64} and out['precision'] == 'fp64'
     assert all(p.dtype == torch.float32 for p in model.parameters())  # attribution model untouched
     assert out['parts'] == dict(attribution='fp32 (instrument; FP64 accumulation of products)',
-                                finite_difference='fp64 weights, activations, gates, log-softmax and metric means')
+                                finite_difference='fp64 weights, activations (incl. attention softmax, RMSNorm and '
+                                                  'RoPE via full_fp64), gates, log-softmax and metric means')
     # with the FP64 reference only the FP32 attribution's own rounding remains: every effect clearly above that
     # floor (|attribution| >= 1e-6 on this fixture) agrees within 10%
     clear = [i for i in out['items'] if abs(i['attribution']) >= 1e-6]

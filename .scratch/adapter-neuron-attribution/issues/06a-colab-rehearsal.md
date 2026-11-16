@@ -92,3 +92,12 @@
 - **Where it fails:** all six failures are trace-metric single neurons with effects of 6e-8 to 1.3e-5. The absolute errors are 6e-7 to 2.7e-6. That is the FP32 attribution's own rounding floor, which adapter-level trace comparisons also show (~1e-6 to 2e-6 absolute).
 - **What is clean:** every adapter (trace and stop) and every stop-pull neuron is at ≤ 0.09. Full table: `06a-r3-fd-diagnosis.md`.
 - **Open decision (user):** how to handle checks whose true effect is at the FP32 attribution's precision floor. Options are on this ticket's thread in the conversation of 2026-11-16 and summarised in `06a-r3-fd-diagnosis.md`. No tolerance has been changed.
+
+### 2026-11-16 — correction and diagnostic 4
+
+- **Correction:** the FP64 reference of diagnostics 2 and 3 was not fully FP64. Qwen2 (transformers 4.57) computes the attention softmax, RMSNorm and RoPE in FP32 even in an FP64 model. `attribution_instrument.full_fp64` now makes those steps FP64 for FP64 inputs; FP32 models are bit-identical with and without it. The finite-difference reference and the new FP64 instrument mode both run inside it.
+- **CPU fixture:** against the truly FP64 reference, the FP32 attribution agrees within 1.1e-4 (previously up to 13×). The "FP32 attribution floor" was not established. Diagnostic 4 on Colab compares, for online-grpo:
+  - FP32 attribution against the old partial-FP64 reference;
+  - FP32 attribution against the full-FP64 reference;
+  - FP64 attribution against the full-FP64 reference;
+  with the peak memory and time of each.
