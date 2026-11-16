@@ -33,6 +33,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -779,7 +780,7 @@ def main(argv=None):
     seal.add_argument('--out', required=True)
     seal.add_argument('--inputs', help="neuron_audit_pod prepare's inputs.json (fills empty input paths)")
     seal.add_argument('--work', help='container-disk work directory (fills an empty inputs.work_dir)')
-    for name in ['run', 'deadline', 'watchdog-copy']:
+    for name in ['run', 'deadline', 'precheck', 'watchdog-copy']:
         p = sub.add_parser(name)
         p.add_argument('--local', required=True)
         p.add_argument('--volume', required=True)
@@ -794,6 +795,18 @@ def main(argv=None):
         print(json.dumps(copy_sealed(args.local, args.volume), indent=2))
         return 0
     record = load_launch_record(args.record, code_commit=_commit())
+    if args.command == 'precheck':
+        # Review round 7 (1): before the launcher takes watchdog ownership, refuse a live, foreign or ambiguous
+        # writer marker (the same rule ``Chain._start`` applies), so a refused second launch never disarms or
+        # stops an active writer's run.
+        try:
+            decision = resume_decision(Path(args.volume) / MARKER_FILE, record['run_id'],
+                                       stale_seconds=record['marker_stale_seconds'])
+        except ResumeRefused as exc:
+            print(f'precheck refused: {exc}', file=sys.stderr)
+            return 3
+        print(json.dumps(dict(precheck='ok', run_id=record['run_id'], decision=decision['decision'])))
+        return 0
     if args.command == 'deadline':
         caps = dict(record['caps_seconds'])
         total = caps.pop('total')
