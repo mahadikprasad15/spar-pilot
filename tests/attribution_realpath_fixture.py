@@ -129,7 +129,7 @@ def arm_adapter(base, directory, seed):
     return directory
 
 
-def build(tmp, *, sizes=None):
+def build(tmp, *, sizes=None, draft_path=None, arms=('gold-sft', 'online-grpo'), math=None):
     """The prep root, inputs.json and the sealed launch record; returns paths and the record."""
     from pilot_eval import attribution_chain as ch
     from pilot_eval import neuron_audit_sequences as seq
@@ -143,7 +143,7 @@ def build(tmp, *, sizes=None):
     model_dir = tmp / 'hf/snapshots/base-rev'
     base = base_snapshot(model_dir, vocab)
     adapters = {arm: str(arm_adapter(base, root / 'runs/arms' / arm / 'checkpoint-64', seed))
-                for seed, arm in enumerate(['gold-sft', 'online-grpo'], start=1)}
+                for seed, arm in enumerate(arms, start=1)}
     (root / 'lineage').mkdir(parents=True)
     (root / 'lineage/gold.json').write_text(json.dumps([dict(id='gsm8k:train:3')]))
     (root / 'lineage/grpo.jsonl').write_text(json.dumps(dict(item='gsm8k:train:5')) + '\n')
@@ -167,7 +167,7 @@ def build(tmp, *, sizes=None):
                    test_parquet='data/gsm8k-test.parquet', prompt='protocol.gsm8k_messages+gold-answer'),
         background=dict(dataset='HuggingFaceH4/ultrachat_200k', revision='u' * 40, license='mit', split='test_sft',
                         parquet='data/ultrachat.parquet'),
-        counts=dict(math=dict(discovery=2, heldout=2, calibration=14), general=dict(discovery=1, heldout=1, calibration=1),
+        counts=dict(math=math or dict(discovery=2, heldout=2, calibration=14), general=dict(discovery=1, heldout=1, calibration=1),
                     near_miss=dict(discovery=1, heldout=1)),
         lineage=[dict(arm='gold-sft', role='training', path='lineage/gold.json'),
                  dict(arm='online-grpo', role='rollout', path='lineage/grpo.jsonl')],
@@ -177,7 +177,7 @@ def build(tmp, *, sizes=None):
     inputs = tmp / 'inputs.json'
     inputs.write_text(json.dumps(dict(prep=str(root), model_dir=str(model_dir), tokenizer_dir=str(tok_dir),
                                       adapter_dirs=adapters, model_bytes=0, hf_home=str(tmp / 'hf'))))
-    draft = yaml.safe_load(DRAFT.read_text())
+    draft = yaml.safe_load(Path(draft_path or DRAFT).read_text())
     draft.update(hourly_cost_usd=1.0, **(sizes or {}))
     draft_path = tmp / 'draft.yaml'
     draft_path.write_text(yaml.safe_dump(draft))

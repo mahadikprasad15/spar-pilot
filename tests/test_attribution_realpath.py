@@ -124,3 +124,28 @@ def test_the_whole_rehearsal_chain_runs_through_the_real_backend(world):
         au.verify_run(local / directory)
     assert summary['backups']['volume_copy']['verified'] is True
     assert stops and stops[0][:3] == ['runpodctl', 'stop', 'pod']
+
+
+PRODUCTION = fx.REPO / '.scratch/adapter-neuron-attribution/launch-record-production.yaml'
+
+
+@pytest.fixture(scope='module')
+def production_world(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp('realpath-production')
+    arms = ('gold-sft', 'online-grpo', 'offline-grpo', 'sampling-sft-k0', 'sampling-sft-k2', 'sampling-sft-k5')
+    sizes = dict(SIZES, minimums=dict(discovery=5, heldout=5))
+    return dict(fx.build(tmp, sizes=sizes, draft_path=PRODUCTION, arms=arms,
+                         math=dict(discovery=8, heldout=8, calibration=14)), tmp=tmp)
+
+
+def test_the_whole_production_chain_runs_through_the_real_backend(production_world):
+    """The production record as approved (6 arms, blind held-out rows, the 150-item ADR 0001 cohort, pilot
+    comparison deferred); only sizes reduced for CPU."""
+    summary, local, volume, stops = run_chain(production_world, 'production')
+    assert summary['state'] == 'complete', json.dumps(summary, default=str, indent=1)[:6000]
+    assert all(s.get('status') == 'complete' for s in summary['stages'].values()), summary['stages']
+    report = json.loads((local / st.REPORT_DIR / 'report.json').read_text())
+    assert report['rehearsal'] is False and 'deferred' in report['stage_d']['pilot_comparison']['reason']
+    for directory in ['attribution/traces/discovery/rows', 'attribution/traces/heldout/rows',
+                      'attribution/stage_d/gold-sft/full/b00000']:
+        au.verify_run(local / directory)
