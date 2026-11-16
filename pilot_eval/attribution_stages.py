@@ -198,7 +198,7 @@ class Stages:
         details['sweep'] = sweep
         if sweep['selected'] is None:
             raise StopBeforeProduction('no token budget meets the memory policy')
-        budgets = sorted({min(self.record['token_budget_sweep']), sweep['selected']})
+        budgets = invariance_budgets(sweep)
         for arm in arms:
             bi = batch_invariance(self._instrument(self.backend.load(arm)), rows, budgets)
             details[f'batch_invariance:{arm}'] = bi
@@ -668,6 +668,13 @@ def longest_probe(rows, budget):
         return pack(rows, budget)[0]
     except ValueError:
         return None
+
+
+def invariance_budgets(sweep):
+    """The smallest and the selected budget among those the sweep exercised and that fit (review round 6, 2): a
+    budget skipped because the longest row exceeds it, or one that ran out of memory, is never packed."""
+    fitting = [c['budget'] for c in sweep['candidates'] if c.get('outcome') == 'ok' and c.get('fits')]
+    return sorted({min(fitting), sweep['selected']}) if fitting else []
 
 
 def batch_invariance(inst, rows, budgets):

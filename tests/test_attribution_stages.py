@@ -651,3 +651,15 @@ def test_qualification_records_the_fd_check_peak_and_stops_when_it_does_not_fit(
     backend.peak_memory = lambda: 9 * 10**8 if state.pop('fp64', False) else 10**8
     summary = chain(tmp_path / 'b', launch(tmp_path / 'b'), backend, []).run()
     assert summary['state'] == 'stopped-before-production' and 'fd_memory:gold-sft' in summary['stop_reason']
+
+
+def test_r6_2_invariance_uses_only_exercised_fitting_budgets():
+    """Review round 6 (2): a calibration row longer than the smallest budget skips it in the sweep; batch
+    invariance must not then pack at that skipped budget (``pack`` refuses the row)."""
+    skipped = dict(budget=2048, outcome='longest-example-exceeds-budget')
+    fit = lambda b: dict(budget=b, outcome='ok', fits=True)  # noqa: E731
+    sweep = dict(candidates=[skipped, fit(4096), dict(budget=8192, outcome='oom'), fit(16384)], selected=16384)
+    assert st.invariance_budgets(sweep) == [4096, 16384]
+    assert st.invariance_budgets(dict(candidates=[skipped, fit(4096)], selected=4096)) == [4096]
+    rows = [dict(id='long', input_ids=list(range(2049)))]
+    assert st.longest_probe(rows, 2048) is None  # the packer itself refuses it
