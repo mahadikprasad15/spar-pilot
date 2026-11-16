@@ -298,6 +298,9 @@ def test_production_chain_runs_every_real_stage_end_to_end(tmp_path):
     sd = report['stage_d']
     assert sd['early_stop_reference']['rule']['ratio'] == 0.5 and 'untuned|reference' in sd['outcomes']
     assert set(sd['pilot_comparison']) == {'gold-sft', 'online-grpo'} and sd['pilot_comparison']['gold-sft']['n'] == 5
+    # review round 6 (8): every Stage D run config names its prompt template and the seed convention (AGENTS.md)
+    config = json.loads((local / 'attribution/stage_d/gold-sft/full/config/config.json').read_text())
+    assert config['prompt_template'].startswith('protocol.gsm8k_messages') and config['seed'] == 'greedy (no sampling)'
     # review round 6 (5): edit verification never runs a cohort prompt, only an allowed rehearsal one
     allowed = {tuple(r['prompt_ids']) for r in backend.rehearsal_items()}
     assert backend.probes and all(tuple(p) in allowed for p in backend.probes)

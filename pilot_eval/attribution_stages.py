@@ -529,7 +529,10 @@ class Stages:
             config = dict(arm=arm, condition=condition, adapters=adapters, decoding=self.backend.decoding(),
                           batches=batches, scorer='gsm8k_flexible_v3',
                           cohort='rehearsal-items' if self.rehearsal else 'adr-0001',
-                          model=self.backend.runtime().get('model'))
+                          model=self.backend.runtime().get('model'), tokenizer=self.backend.runtime().get('tokenizer'),
+                          prompt_template='protocol.gsm8k_messages(question) + the pinned chat template, '
+                                          'add_generation_prompt=True',
+                          prompt_ids=[r['id'] for r in items], seed='greedy (no sampling)')
             if (directory / 'config' / 'complete.json').is_file():
                 if _read(directory / 'config', 'config.json') != json.loads(json.dumps(config)):
                     raise ValueError(f'Stage D {arm}/{condition}: sealed config differs from this run; investigate')
