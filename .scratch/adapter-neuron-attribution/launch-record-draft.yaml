@@ -22,7 +22,7 @@ volume_identity: null              # [user] identity string in <volume>/volume_i
 export_repo: Prasadmahadik/spar-sampling-sft-artifacts
 hourly_cost_usd: null              # [user] Pod price, for the morning summary's cost line
 compute:
-  fp32_peak_flops: null            # [user] dense FP32 peak of the Pod's GPU (A100: 19.5e12), MFU denominator
+  fp32_peak_flops: null            # [user] dense FP32 peak of the Pod's GPU (A100: 19.5e+12, with the exponent's sign: PyYAML reads 19.5e12 as text), MFU denominator
 
 # --- caps (seconds; hard, at unit boundaries, persisted across restarts) -------------------------------
 caps_seconds:                      # [user] every value

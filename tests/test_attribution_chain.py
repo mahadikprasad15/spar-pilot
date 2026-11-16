@@ -748,4 +748,22 @@ def test_the_pod_rehearsal_draft_seals_once_the_pod_and_the_price_are_filled(tmp
     (tmp_path / 'd.yaml').write_text(yaml.safe_dump(dict(rec, hourly_cost_usd=1.9)))
     path = ch.finalize_draft(tmp_path / 'd.yaml', tmp_path / 'r.json', code_commit='abc', inputs_json=inputs,
                              pod_id='pod1', work_dir='/root/attr')
-    assert ch.load_launch_record(path, code_commit='abc')['run_id'] == 'rehearsal-pod-1'
+    loaded = ch.load_launch_record(path, code_commit='abc')
+    assert loaded['run_id'] == rec['run_id']
+    assert isinstance(loaded['compute']['fp32_peak_flops'], float)  # pod-2: YAML read 19.5e12 as text
+
+
+@pytest.mark.parametrize('path, value', [
+    (('compute', 'fp32_peak_flops'), '19.5e12'),          # Pod launch 2: PyYAML reads an unsigned exponent as text
+    (('caps_seconds', 'total'), '10800'),
+    (('statistics', 'alpha'), True),
+    (('inputs', 'max_new_tokens'), '1024'),
+])
+def test_a_number_given_as_text_or_bool_is_refused_at_load(tmp_path, path, value):
+    rec = record(inputs=dict(max_new_tokens=1024, model_dir='/m'))
+    target = rec
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    with pytest.raises(ch.LaunchRefused, match='.'.join(path)):
+        ch.load_launch_record(sealed_record(tmp_path, **{path[0]: rec[path[0]]}), code_commit='abc123')

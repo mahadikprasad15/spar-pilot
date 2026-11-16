@@ -22,14 +22,21 @@ Find the next failures, not the last ones.
 | 6 | Pod launch | — | launcher calls plain `python`; venv not active | `source /root/venv/bin/activate` (runbook) | `scripts/attribution_overnight.sh` |
 | 7 | Pod launch 1 (`rehearsal-pod-1`, `d5ab854`) | preflight `TypeError: string indices must be integers` after 24 s | `TransformersBackend.preflight` passed a path to `neuron_audit_pod.disk_problems`, which takes `local_disk(path)` | `d2e52d3`, red/green test running the real preflight body | HF `neuron-audit/rehearsal-pod-1/aff49aa4…`; lessons |
 | 8 | Pod relaunch | would be refused | chain state on the volume is at fixed paths; a resealed record (new commit) under the same run ID is refused by `seal_run`; a new run ID by `state.json` | operator moves `$VOL/attribution` aside; run ID `rehearsal-pod-2` | lessons |
-| 9 | Pod launch 2 (`rehearsal-pod-2`, `2bce6a6`) | Pod stopped during qualification (started 10:06:33 UTC; stopped before ~10:30) | **not yet known** — summary to be added below | — | HF `neuron-audit/rehearsal-pod-2/`, `$VOL/attribution/chain/console.log` |
+| 9 | Pod launch 2 (`rehearsal-pod-2`, `2bce6a6`) | qualification `TypeError: '<=' not supported between instances of 'str' and 'int'` after 761 s (calibration traces had sealed) | launch record `compute.fp32_peak_flops: 19.5e12`: PyYAML (YAML 1.1) reads an exponent without a sign as **text**; `attribution_gpu.mfu` compared it with 0. `seal` never checked types | `attribution_chain.mistyped` + `TEXT_FIELDS`: `load_launch_record` (so `seal` too) refuses text where a number belongs and any bool; YAML now `19.5e+12` | HF `neuron-audit/rehearsal-pod-2/` (pre-export summary); lessons |
 
 Launch 1's teardown worked end to end on the real Pod (volume copy verified, HF export verified, final summary
 uploaded, `runpodctl stop pod` returned 0). The failure path is the one part that has been exercised for real.
 
-### Launch 2 failure (to be filled in)
+### Launch 2 failure
 
-_Paste the run summary and the end of `chain.log` / `console.log` here._
+Summary (from the HF backup): state `failed`; budget used preflight 23 s, qualification 761 s; failure
+`qualification: TypeError: '<=' not supported between instances of 'str' and 'int'`; volume copy verified (launch,
+qualification, calibration generation and rows, preflight compute record). Teardown again ran to the Pod stop.
+
+Note what this says about the class of bug: items 7 and 9 are both **type or shape mismatches at a boundary**
+(path vs dict; text vs float), found only when real inputs reached that line. Please look for every other boundary
+where an input from YAML/JSON, the environment, a subprocess, NVML or `torch.cuda` is used without its type being
+checked, and every place the Python side assumes a unit or type the other side does not promise.
 
 ## The pattern to attack
 

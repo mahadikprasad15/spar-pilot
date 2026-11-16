@@ -151,6 +151,30 @@ def unresolved(value, prefix=''):
     return []
 
 
+# Launch-record values that are text; every other value must be a number (int or float, never bool). PyYAML
+# reads an unsigned exponent such as ``19.5e12`` as text (Pod launch 2 failed 12 minutes in on exactly that).
+TEXT_FIELDS = ('schema', 'run_id', 'mode', 'rehearsal_label', 'code_commit', 'pod_id', 'volume_identity', 'export_repo',
+               'pod_stop_commands[*]', 'expected_arms[*]', 'tolerances.finite_difference.precision',
+               'tolerances.resolution_floor', 'qualification.fd_arms[*]', 'stage_d.early_stop_rule.kind',
+               'stage_d.pilot_results.*', 'inputs.*')
+NUMBER_FIELDS = ('inputs.max_new_tokens',)
+
+
+def mistyped(value, prefix=''):
+    """Paths whose value has the wrong type: text where a number belongs, or a bool anywhere."""
+    import fnmatch
+    if isinstance(value, dict):
+        return [p for k, v in value.items() for p in mistyped(v, f'{prefix}.{k}' if prefix else str(k))]
+    if isinstance(value, list):
+        return [p for v in value for p in mistyped(v, f'{prefix}[*]')]
+    if value is None:
+        return []  # reported by ``unresolved``
+    text = prefix not in NUMBER_FIELDS and any(fnmatch.fnmatchcase(prefix, f.replace('[', '[[]')) for f in TEXT_FIELDS)
+    if isinstance(value, bool) or (isinstance(value, str) != text) or not isinstance(value, (str, int, float)):
+        return [f'{prefix} ({value!r} is {type(value).__name__}; expected {"text" if text else "a number"})']
+    return []
+
+
 def load_launch_record(path, *, code_commit):
     path = Path(path)
     record = json.loads(path.read_text())
@@ -164,6 +188,9 @@ def load_launch_record(path, *, code_commit):
     problems = unresolved(record)
     if missing or problems:
         raise LaunchRefused(f'unresolved launch record values: {(missing + problems)[:8]}')
+    wrong = mistyped(record)
+    if wrong:
+        raise LaunchRefused(f'launch record values of the wrong type: {wrong[:8]}')
     if record['code_commit'] != code_commit:
         raise LaunchRefused(f"code commit {code_commit} differs from the record's {record['code_commit']}")
     if record['mode'] == 'production':

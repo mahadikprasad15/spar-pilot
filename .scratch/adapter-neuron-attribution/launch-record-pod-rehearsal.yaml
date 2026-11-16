@@ -24,7 +24,8 @@ volume_identity: sl-0                   # [user] the joint audit's Global Volume
 export_repo: Prasadmahadik/spar-sampling-sft-artifacts
 hourly_cost_usd: null                   # [user] Pod price per hour (cost line in the summary only)
 compute:
-  fp32_peak_flops: 19.5e12              # A100 dense FP32 (spec sheet), MFU denominator
+  fp32_peak_flops: 19.5e+12             # A100 dense FP32 (spec sheet), MFU denominator. The exponent needs its
+                                        # sign: PyYAML reads `19.5e12` as text (Pod launch 2 failed on that).
 
 caps_seconds:                           # [approved 2026-11-16] from 06a timings (Colab 40 GB), with margin
   total: 10800                          # 3 h
