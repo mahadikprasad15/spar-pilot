@@ -97,6 +97,33 @@ def bind_sources(inventory, sequences_manifest, *, adapter_dirs, model_dir, test
     return record
 
 
+def fetch_gsm8k(prep, sequences_dir, *, download=None):
+    """Fetch the GSM8K parquet files the sequences-v2 manifest pins (path, revision, SHA-256) into the restored prep
+    root; the prep snapshot does not contain them (06a r1). A file whose hash differs is refused, never used."""
+    import hashlib
+    import shutil
+    if download is None:
+        from huggingface_hub import hf_hub_download
+
+        def download(dataset, filename, *, revision):
+            return hf_hub_download(dataset, filename, repo_type='dataset', revision=revision)
+    prep = Path(prep)
+    manifest = json.loads((Path(sequences_dir) / 'manifest.json').read_text())
+    gsm = manifest['sources']['gsm8k']
+    out = {}
+    for split in ('train', 'test'):
+        target = prep / gsm[f'{split}_parquet']
+        expected = manifest['inputs']['files'][f'gsm8k_{split}']
+        out[split] = 'present' if target.is_file() else 'ok'
+        if not target.is_file():
+            path = download(gsm['dataset'], f'main/{split}-00000-of-00001.parquet', revision=gsm['revision'])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+        if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            raise ValueError(f'GSM8K {split} parquet differs from the sequences-v2 manifest: {target}')
+    return out
+
+
 class TransformersBackend:
     def __init__(self, record, volume_root, *, device='cuda'):
         from pilot_eval.neuron_audit_collector import set_ieee_precision
@@ -171,9 +198,10 @@ class TransformersBackend:
             problems.append('CUDA unavailable')
         if os.environ.get('HF_HUB_OFFLINE') != '1':
             problems.append('worker is not offline (HF_HUB_OFFLINE=1 required; exports run in a child process)')
-        identity = self.volume_root / 'volume_identity.json'
-        if not identity.is_file() or json.loads(identity.read_text()).get('identity') != self.record['volume_identity']:
-            problems.append('persistent volume identity does not match the launch record')
+        from pilot_eval.neuron_audit_preflight import volume_identity
+        _, volume_problems = volume_identity(self.volume_root, expected_id=self.record['volume_identity'],
+                                             local_dir=self.inputs['work_dir'])
+        problems += volume_problems  # the joint audit's sentinel and mount checks
         try:
             self.sources()
         except ValueError as exc:
@@ -313,3 +341,19 @@ class TransformersBackend:
         if split == 'cohort':
             return {f'gsm8k:test:{i}': self.test_rows[i]['answer'] for i in cohort_indices(len(self.test_rows))}
         return at.load_gold(self.path(self.inputs['sequences_dir']), self.root, self.prompt_rows(split))
+
+
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description='attribution backend utilities')
+    sub = parser.add_subparsers(dest='command', required=True)
+    fetch = sub.add_parser('fetch-gsm8k', help='fetch the pinned GSM8K parquet files into the prep root (online)')
+    fetch.add_argument('--prep', required=True)
+    fetch.add_argument('--sequences_dir', required=True)
+    args = parser.parse_args(argv)
+    print(json.dumps(fetch_gsm8k(args.prep, args.sequences_dir)))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

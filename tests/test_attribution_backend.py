@@ -99,3 +99,29 @@ def test_missing_test_parquet_is_reported_as_missing_not_different(tmp_path):
     parquet.unlink()
     with pytest.raises(ValueError, match='test parquet: missing'):
         ab.bind_sources(inventory, manifest, adapter_dirs=arms, model_dir=model, test_parquet=parquet)
+
+
+def test_fetch_gsm8k_writes_the_pinned_files_and_refuses_a_hash_mismatch(tmp_path):
+    prep, seq, cache = tmp_path / 'prep', tmp_path / 'seq', tmp_path / 'cache'
+    for d in (prep, seq, cache):
+        d.mkdir()
+    payload = {'train': b'train rows', 'test': b'test rows'}
+    for split, data in payload.items():
+        (cache / split).write_bytes(data)
+    manifest = dict(sources=dict(gsm8k=dict(dataset='openai/gsm8k', revision='r' * 40,
+                                            train_parquet='data/train.parquet', test_parquet='data/test.parquet')),
+                    inputs=dict(files={f'gsm8k_{s}': hashlib.sha256(d).hexdigest() for s, d in payload.items()}))
+    (seq / 'manifest.json').write_text(json.dumps(manifest))
+    calls = []
+
+    def download(dataset, filename, *, revision):
+        calls.append((dataset, filename, revision))
+        return str(cache / ('train' if 'train' in filename else 'test'))
+
+    out = ab.fetch_gsm8k(prep, seq, download=download)
+    assert out == {'train': 'ok', 'test': 'ok'} and (prep / 'data/test.parquet').read_bytes() == b'test rows'
+    assert calls[0] == ('openai/gsm8k', 'main/train-00000-of-00001.parquet', 'r' * 40)
+    assert ab.fetch_gsm8k(prep, seq, download=download) == {'train': 'present', 'test': 'present'}
+    (prep / 'data/test.parquet').write_bytes(b'tampered')
+    with pytest.raises(ValueError, match='test parquet differs'):
+        ab.fetch_gsm8k(prep, seq, download=download)

@@ -17,3 +17,13 @@ Run by the chain runner (ticket 11) together with 07–10, unattended, from an a
 - [ ] Utilization summary and time projection feed the overrun rule; production continues automatically after sign-off.
 
 ## Comments
+
+### 2026-11-16 — supervised Pod rehearsal prepared (implementing agent)
+
+- **Runbook:** `pod-runbook.md` (one launch, no automatic restart, real Pod stop at the end). **Draft record:** `launch-record-pod-rehearsal.yaml`: 2 arms, visible inputs only, every value labelled measured, approved, spec or proposed.
+- **Integration fixes, with tests:**
+  - the chain launcher and the backend preflight use the joint audit's volume sentinel and mount checks (`.neuron-audit-volume.json`), not a separate file;
+  - `attribution_backend fetch-gsm8k` fetches the pinned GSM8K files, hash-checked (the prep snapshot lacks them);
+  - `attribution_chain seal --inputs --work` fills only empty fields: input paths from `neuron_audit_pod prepare`, the Pod ID from `RUNPOD_POD_ID`, and the GSM8K path from the sequences-v2 manifest;
+  - the console log is also written to the volume, so it survives the Pod stop.
+- **Pilot files:** the 06a listing found none under the two run names in the HF dataset. Production needs them, located some other way; the rehearsal doesn't.

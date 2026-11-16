@@ -91,11 +91,44 @@ def seal_launch_record(record, path):
 USER_FIELDS = {'pod_id', 'volume_identity', 'hourly_cost_usd', 'caps_seconds', 'compute', 'inputs', 'stage_d'}
 
 
-def finalize_draft(draft_path, out_path, *, code_commit):
-    """Edited YAML draft -> sealed JSON launch record bound to ``code_commit``; refuses while anything is unresolved."""
+def observed_volume_identity(volume_dir, local_dir, *, expected, **probes):
+    """The persistent volume's id via the joint audit's sentinel and mount checks (``neuron_audit_preflight``):
+    a different filesystem from local disk, and ``.neuron-audit-volume.json`` naming ``expected``."""
+    from pilot_eval.neuron_audit_preflight import volume_identity
+    record, problems = volume_identity(volume_dir, expected_id=expected, local_dir=local_dir, **probes)
+    if problems:
+        raise ResumeRefused('persistent volume check failed: ' + '; '.join(problems))
+    return record['identity']['volume_id']
+
+
+def finalize_draft(draft_path, out_path, *, code_commit, inputs_json=None, pod_id=None, work_dir=None):
+    """Edited YAML draft -> sealed JSON launch record bound to ``code_commit``; refuses while anything is unresolved.
+
+    Optional, never invented: input paths from ``neuron_audit_pod prepare``'s ``inputs.json``, the Pod ID from the
+    Pod's environment and the work directory. Only empty (null) fields are filled."""
     import yaml
     record = yaml.safe_load(Path(draft_path).read_text())
     record['code_commit'] = code_commit
+    if record.get('pod_id') is None and pod_id:
+        record['pod_id'] = pod_id
+    inputs = record.setdefault('inputs', {})
+    if inputs_json is not None:
+        prepared = json.loads(Path(inputs_json).read_text())
+        filled = dict(artifact_root=prepared.get('prep'), model_dir=prepared.get('model_dir'),
+                      tokenizer_dir=prepared.get('tokenizer_dir'))
+        for key, value in filled.items():
+            if inputs.get(key) is None and value:
+                inputs[key] = value
+        arms = inputs.setdefault('adapter_dirs', {})
+        for arm in record.get('expected_arms', []):
+            if arms.get(arm) is None and prepared.get('adapter_dirs', {}).get(arm):
+                arms[arm] = prepared['adapter_dirs'][arm]
+    if inputs.get('work_dir') is None and work_dir:
+        inputs['work_dir'] = str(work_dir)
+    if inputs.get('gsm8k_test_parquet') is None and inputs.get('artifact_root') and inputs.get('sequences_dir'):
+        manifest = Path(inputs['artifact_root']) / inputs['sequences_dir'] / 'manifest.json'
+        if manifest.is_file():  # the path the sealed sequences-v2 manifest pins
+            inputs['gsm8k_test_parquet'] = json.loads(manifest.read_text())['sources']['gsm8k']['test_parquet']
     problems = unresolved(record)
     if problems:
         raise LaunchRefused(f'unresolved launch record values: {problems}')
@@ -703,6 +736,8 @@ def main(argv=None):
     seal = sub.add_parser('seal', help='turn the approved YAML draft into the sealed JSON launch record')
     seal.add_argument('--draft', required=True)
     seal.add_argument('--out', required=True)
+    seal.add_argument('--inputs', help="neuron_audit_pod prepare's inputs.json (fills empty input paths)")
+    seal.add_argument('--work', help='container-disk work directory (fills an empty inputs.work_dir)')
     for name in ['run', 'deadline', 'watchdog-copy']:
         p = sub.add_parser(name)
         p.add_argument('--local', required=True)
@@ -711,7 +746,8 @@ def main(argv=None):
             p.add_argument('--record', required=True)
     args = parser.parse_args(argv)
     if args.command == 'seal':
-        print(finalize_draft(args.draft, args.out, code_commit=_commit()))
+        print(finalize_draft(args.draft, args.out, code_commit=_commit(), inputs_json=args.inputs,
+                             pod_id=os.environ.get('RUNPOD_POD_ID'), work_dir=args.work))
         return 0
     if args.command == 'watchdog-copy':
         print(json.dumps(copy_sealed(args.local, args.volume), indent=2))
@@ -724,8 +760,7 @@ def main(argv=None):
         print(f"{watchdog_deadline(budget, margin_seconds=record['watchdog_margin_seconds']):.0f}")
         return 0
     from pilot_eval import attribution_stages
-    identity_path = Path(args.volume) / 'volume_identity.json'
-    identity = json.loads(identity_path.read_text()).get('identity') if identity_path.is_file() else None
+    identity = observed_volume_identity(args.volume, args.local, expected=record['volume_identity'])
     chain = Chain(record, local_root=args.local, volume_root=args.volume,
                   stages=attribution_stages.build(record, args.local, args.volume), volume_identity=identity)
     summary = chain.run()

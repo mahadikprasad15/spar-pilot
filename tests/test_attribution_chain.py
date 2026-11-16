@@ -682,3 +682,70 @@ def test_launch_record_must_state_the_finite_difference_precision(tmp_path):
         tol['finite_difference'] = dict(tol['finite_difference'], precision=bad)
         with pytest.raises(ch.LaunchRefused, match='precision|unresolved'):
             ch.load_launch_record(sealed_record(tmp_path / str(bad), tolerances=tol), code_commit='abc123')
+
+
+# --- Pod integration (2026-11-16) ------------------------------------------------------------------------
+
+def test_observed_volume_identity_uses_the_joint_audit_sentinel_and_mount_checks(tmp_path):
+    from pilot_eval.neuron_audit_preflight import VOLUME_SENTINEL
+    volume, local = tmp_path / 'volume', tmp_path / 'local'
+    volume.mkdir()
+    local.mkdir()
+    (volume / VOLUME_SENTINEL).write_text(json.dumps(dict(volume_id='sl-0')))
+    on_volume = lambda p: Path(p).name == 'volume'  # noqa: E731
+    probes = dict(mount_of=lambda p: '/workspace' if on_volume(p) else '/', mounts_text='',
+                  device_of=lambda p: 2 if on_volume(p) else 1)
+    assert ch.observed_volume_identity(volume, local, expected='sl-0', **probes) == 'sl-0'
+    with pytest.raises(ch.ResumeRefused, match='not sl-1'):
+        ch.observed_volume_identity(volume, local, expected='sl-1', **probes)
+    same_disk = dict(probes, mount_of=lambda p: '/', device_of=lambda p: 1)
+    with pytest.raises(ch.ResumeRefused, match='same filesystem'):
+        ch.observed_volume_identity(volume, local, expected='sl-0', **same_disk)
+
+
+def test_fill_from_prepare_inputs_and_the_pod_environment(tmp_path):
+    import yaml
+    rec = record()
+    rec.update(code_commit=None, pod_id=None, inputs=dict(artifact_root=None, model_dir=None, tokenizer_dir=None,
+                                                          adapter_dirs={a: None for a in ARMS},
+                                                          inventory_dir='runs/i', sequences_dir='runs/s',
+                                                          gsm8k_test_parquet='data/test.parquet', work_dir=None,
+                                                          max_new_tokens=1024))
+    draft = tmp_path / 'draft.yaml'
+    draft.write_text(yaml.safe_dump(rec))
+    inputs = tmp_path / 'inputs.json'
+    inputs.write_text(json.dumps(dict(prep='/root/attr/prep', model_dir='/root/attr/hf/model', tokenizer_dir='/t',
+                                      adapter_dirs={a: f'/root/attr/prep/adapters/{a}' for a in ARMS})))
+    seq = tmp_path / 'prep' / 'runs/s'
+    seq.mkdir(parents=True)
+    (seq / 'manifest.json').write_text(json.dumps(dict(sources=dict(gsm8k=dict(test_parquet='data/pinned-test.parquet')))))
+    inputs.write_text(json.dumps(dict(json.loads(inputs.read_text()), prep=str(tmp_path / 'prep'))))
+    rec['inputs']['gsm8k_test_parquet'] = None
+    draft.write_text(yaml.safe_dump(rec))
+    path = ch.finalize_draft(draft, tmp_path / 'out.json', code_commit='abc123', inputs_json=inputs,
+                             pod_id='pod-xyz', work_dir='/root/attr')
+    sealed = ch.load_launch_record(path, code_commit='abc123')
+    assert sealed['pod_id'] == 'pod-xyz' and sealed['inputs']['artifact_root'] == str(tmp_path / 'prep')
+    assert sealed['inputs']['gsm8k_test_parquet'] == 'data/pinned-test.parquet'  # from the sequences manifest
+    assert sealed['inputs']['adapter_dirs']['gold-sft'].endswith('adapters/gold-sft')
+    assert sealed['inputs']['work_dir'] == '/root/attr' and sealed['inputs']['inventory_dir'] == 'runs/i'
+    with pytest.raises(ch.LaunchRefused, match='pod_id'):  # never filled with an invented value
+        ch.finalize_draft(draft, tmp_path / 'out2.json', code_commit='abc123', inputs_json=inputs, pod_id=None,
+                          work_dir='/root/attr')
+
+
+def test_the_pod_rehearsal_draft_seals_once_the_pod_and_the_price_are_filled(tmp_path):
+    import yaml
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-pod-rehearsal.yaml'
+    rec = yaml.safe_load(draft.read_text())
+    assert rec['mode'] == 'rehearsal' and rec['tolerances']['finite_difference']['precision'] == 'fp64'
+    seq = tmp_path / 'prep' / rec['inputs']['sequences_dir']
+    seq.mkdir(parents=True)
+    (seq / 'manifest.json').write_text(json.dumps(dict(sources=dict(gsm8k=dict(test_parquet='t.parquet')))))
+    inputs = tmp_path / 'inputs.json'
+    inputs.write_text(json.dumps(dict(prep=str(tmp_path / 'prep'), model_dir='/m', tokenizer_dir='/t',
+                                      adapter_dirs={'gold-sft': '/a', 'online-grpo': '/b'})))
+    (tmp_path / 'd.yaml').write_text(yaml.safe_dump(dict(rec, hourly_cost_usd=1.9)))
+    path = ch.finalize_draft(tmp_path / 'd.yaml', tmp_path / 'r.json', code_commit='abc', inputs_json=inputs,
+                             pod_id='pod1', work_dir='/root/attr')
+    assert ch.load_launch_record(path, code_commit='abc')['run_id'] == 'rehearsal-pod-1'

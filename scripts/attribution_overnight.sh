@@ -28,7 +28,7 @@ PY
 )"
 
 python -m pilot_eval.attribution_chain run --record "$record" --local "$local_dir" --volume "$volume" \
-  > >(tee -a "$local_dir/chain.stdout.log") 2>&1 &
+  > >(tee -a "$local_dir/chain.stdout.log" "$volume/attribution/chain/console.log") 2>&1 &   # the volume copy survives the Pod stop
 chain_pid=$!
 
 WATCHDOG_COPY="python -m pilot_eval.attribution_chain watchdog-copy --local '$local_dir' --volume '$volume'" \
