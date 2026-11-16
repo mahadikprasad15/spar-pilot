@@ -166,3 +166,18 @@ def test_r6_3_tokenizer_files_are_bound_to_the_sequences_manifest(tmp_path):
     with pytest.raises(ValueError, match='tokenizer: the sequences-v2 manifest pins no tokenizer'):
         ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=tmp_path / 'b' / 'tokenizer',
                         model_dir=model, test_parquet=parquet)
+
+
+def test_r6_7_parameter_count_reads_the_weights_header_without_loading_a_model(tmp_path):
+    """Review round 6 (7): the stage monitor asks for N before preflight; the real backend must not load (and
+    keep) the untuned model on the GPU to answer."""
+    import types
+    import torch
+    from safetensors.torch import save_file
+    save_file({'a.weight': torch.zeros(3, 4), 'b.bias': torch.zeros(5)}, str(tmp_path / 'model-00001.safetensors'))
+    save_file({'c.weight': torch.zeros(2, 2, dtype=torch.float16)}, str(tmp_path / 'model-00002.safetensors'))
+
+    def no_load(*a, **k):
+        raise AssertionError('parameter_count loaded a model')
+    backend = types.SimpleNamespace(model_dir=tmp_path, untuned=no_load, loader=types.SimpleNamespace(fresh_base=no_load))
+    assert ab.TransformersBackend.parameter_count(backend) == 12 + 5 + 4

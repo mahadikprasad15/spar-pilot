@@ -148,6 +148,7 @@ class TransformersBackend:
             raise ValueError(f'no adapter directory for arms {missing}')
         # The base model snapshot is hash-checked at download and may live in the HF cache outside the root.
         model_dir = Path(inputs['model_dir']) if Path(inputs['model_dir']).is_absolute() else self.path(inputs['model_dir'])
+        self.model_dir = model_dir
         self.loader = Loader(model_dir, self.adapter_dirs, self.path(inputs['tokenizer_dir']),
                              record['expected_arms'][0], device=device)
         self.bound = bind_sources(
@@ -303,8 +304,20 @@ class TransformersBackend:
             torch.cuda.empty_cache()
 
     def parameter_count(self):
-        """N in the FLOP model: base-model parameters (the rank-1 adapters are negligible)."""
-        return sum(p.numel() for n, p in self.untuned().named_parameters())
+        """N in the FLOP model: base-model parameters (the rank-1 adapters are negligible), read from the
+        safetensors headers of the pinned snapshot. It loads no model (review round 6, 7): the stage monitor asks
+        for N before preflight has checked CUDA, disk or the volume."""
+        import math
+        import struct
+        total = 0
+        for path in sorted(Path(self.model_dir).glob('*.safetensors')):
+            with open(path, 'rb') as stream:
+                (size,) = struct.unpack('<Q', stream.read(8))
+                header = json.loads(stream.read(size))
+            total += sum(math.prod(v['shape']) for k, v in header.items() if k != '__metadata__')
+        if not total:
+            raise ValueError(f'no safetensors weights found in {self.model_dir}')
+        return total
 
     def synchronize(self):
         self.loader.synchronize()
