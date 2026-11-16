@@ -54,12 +54,14 @@ def _file_sha(path):
     return digest.hexdigest()
 
 
-def bind_sources(inventory, sequences_manifest, *, adapter_dirs, model_dir, test_parquet, step='64'):
+def bind_sources(inventory, sequences_manifest, *, adapter_dirs, tokenizer_dir, model_dir, test_parquet, step='64'):
     """Bind the actual inputs to their sealed identities before any work (review round 4, 3).
 
     Each arm's ``adapter_model.safetensors`` and ``adapter_config.json`` must equal that arm's verified step-64
     entry in inventory-v2; every pinned base-model file must match its hash; the GSM8K test parquet must equal
-    the one pinned in the sequences-v2 manifest. Swapped arm directories or another compatible model or split
+    the one pinned in the sequences-v2 manifest; the tokenizer files (``tokenizer.json`` and
+    ``tokenizer_config.json``, which holds the chat template) must equal the ones sequences-v2 was built with
+    (review round 6, 3). Swapped arm directories or another compatible model or split
     are refused rather than producing results under the wrong label."""
     problems, record = [], dict(step=step, arms={})
     for arm, directory in sorted(adapter_dirs.items()):
@@ -91,9 +93,16 @@ def bind_sources(inventory, sequences_manifest, *, adapter_dirs, model_dir, test
         problems.append(f'test parquet: missing at {test_parquet} (fetch it at the pinned revision first)')
     elif expected_test is None or actual_test != expected_test:
         problems.append('test parquet: differs from the sequences-v2 manifest')
+    pinned_tokenizer = (sequences_manifest.get('inputs', {}).get('tokenizer') or {}).get('files') or {}
+    if not pinned_tokenizer:
+        problems.append('tokenizer: the sequences-v2 manifest pins no tokenizer files')
+    for name, digest in sorted(pinned_tokenizer.items()):
+        path = Path(tokenizer_dir) / name
+        if not path.is_file() or _file_sha(path) != digest:
+            problems.append(f'tokenizer: {name} differs from the sequences-v2 manifest')
     if problems:
         raise ValueError('inputs are not the sealed sources: ' + '; '.join(problems))
-    record.update(base_files=sorted(expected_base), test_parquet_sha256=actual_test)
+    record.update(base_files=sorted(expected_base), test_parquet_sha256=actual_test, tokenizer=dict(pinned_tokenizer))
     return record
 
 
@@ -144,8 +153,10 @@ class TransformersBackend:
         self.bound = bind_sources(
             json.loads((self.path(inputs['inventory_dir']) / 'inventory.json').read_text()),
             json.loads((self.path(inputs['sequences_dir']) / 'manifest.json').read_text()),
-            adapter_dirs=self.adapter_dirs, model_dir=model_dir, test_parquet=self.path(inputs['gsm8k_test_parquet']))
-        self.tokenizer = ChatTokenizer(self.path(inputs['tokenizer_dir']))
+            adapter_dirs=self.adapter_dirs, tokenizer_dir=self.path(inputs['tokenizer_dir']), model_dir=model_dir,
+            test_parquet=self.path(inputs['gsm8k_test_parquet']))
+        # The same pins again at load, so the tokenizer object in use is the bound one.
+        self.tokenizer = ChatTokenizer(self.path(inputs['tokenizer_dir']), self.bound['tokenizer'])
         if self.tokenizer.pad_token_id is None:
             raise ValueError('the pinned tokenizer has no pad token')
         self.precision = set_ieee_precision()

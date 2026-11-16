@@ -57,13 +57,18 @@ def fixture(tmp_path):
             'adapter_config.json': dict(sha256=sha(d / 'adapter_config.json'))})}) for arm, d in arms.items()},
         base=dict(expected_file_sha256={'model.safetensors': sha(model / 'model.safetensors'),
                                         'config.json': sha(model / 'config.json')}))
-    manifest = dict(inputs=dict(files=dict(gsm8k_test=sha(parquet))))
+    tokenizer = tmp_path / 'tokenizer'
+    tokenizer.mkdir()
+    (tokenizer / 'tokenizer.json').write_text('{"model": "pinned"}')
+    (tokenizer / 'tokenizer_config.json').write_text('{"chat_template": "pinned"}')
+    manifest = dict(inputs=dict(files=dict(gsm8k_test=sha(parquet)), tokenizer=dict(
+        kind='tokenizers+jinja2', files={n: sha(tokenizer / n) for n in ('tokenizer.json', 'tokenizer_config.json')})))
     return inventory, manifest, arms, model, parquet
 
 
 def test_r4_3_inputs_bound_to_inventory_and_manifest(tmp_path):
     inventory, manifest, arms, model, parquet = fixture(tmp_path)
-    record = ab.bind_sources(inventory, manifest, adapter_dirs=arms, model_dir=model, test_parquet=parquet)
+    record = ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=model.parent / 'tokenizer', model_dir=model, test_parquet=parquet)
     assert record['arms']['gold-sft']['adapter_model.safetensors'] == sha(arms['gold-sft'] / 'adapter_model.safetensors')
     assert record['step'] == '64' and record['test_parquet_sha256'] == sha(parquet)
 
@@ -72,33 +77,33 @@ def test_r4_3_swapped_arm_directories_are_refused(tmp_path):
     inventory, manifest, arms, model, parquet = fixture(tmp_path)
     swapped = {'gold-sft': arms['online-grpo'], 'online-grpo': arms['gold-sft']}
     with pytest.raises(ValueError, match='gold-sft'):
-        ab.bind_sources(inventory, manifest, adapter_dirs=swapped, model_dir=model, test_parquet=parquet)
+        ab.bind_sources(inventory, manifest, adapter_dirs=swapped, tokenizer_dir=model.parent / 'tokenizer', model_dir=model, test_parquet=parquet)
 
 
 def test_r4_3_other_base_model_or_test_file_or_unverified_checkpoint_is_refused(tmp_path):
     inventory, manifest, arms, model, parquet = fixture(tmp_path)
     (model / 'model.safetensors').write_bytes(b'other weights')
     with pytest.raises(ValueError, match='base model'):
-        ab.bind_sources(inventory, manifest, adapter_dirs=arms, model_dir=model, test_parquet=parquet)
+        ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=model.parent / 'tokenizer', model_dir=model, test_parquet=parquet)
     inventory, manifest, arms, model, parquet = fixture(tmp_path / 'b')
     parquet.write_bytes(b'another split')
     with pytest.raises(ValueError, match='test parquet'):
-        ab.bind_sources(inventory, manifest, adapter_dirs=arms, model_dir=model, test_parquet=parquet)
+        ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=model.parent / 'tokenizer', model_dir=model, test_parquet=parquet)
     inventory, manifest, arms, model, parquet = fixture(tmp_path / 'c')
     inventory['arms']['online-grpo']['checkpoints']['64']['status'] = 'unresolved'
     with pytest.raises(ValueError, match='online-grpo'):
-        ab.bind_sources(inventory, manifest, adapter_dirs=arms, model_dir=model, test_parquet=parquet)
+        ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=model.parent / 'tokenizer', model_dir=model, test_parquet=parquet)
     inventory, manifest, arms, model, parquet = fixture(tmp_path / 'd')
     with pytest.raises(ValueError, match='sampling-sft-k0'):
         ab.bind_sources(inventory, manifest, adapter_dirs=dict(arms, **{'sampling-sft-k0': arms['gold-sft']}),
-                        model_dir=model, test_parquet=parquet)
+                        tokenizer_dir=model.parent / 'tokenizer', model_dir=model, test_parquet=parquet)
 
 
 def test_missing_test_parquet_is_reported_as_missing_not_different(tmp_path):
     inventory, manifest, arms, model, parquet = fixture(tmp_path)
     parquet.unlink()
     with pytest.raises(ValueError, match='test parquet: missing'):
-        ab.bind_sources(inventory, manifest, adapter_dirs=arms, model_dir=model, test_parquet=parquet)
+        ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=model.parent / 'tokenizer', model_dir=model, test_parquet=parquet)
 
 
 def test_fetch_gsm8k_writes_the_pinned_files_and_refuses_a_hash_mismatch(tmp_path):
@@ -143,3 +148,21 @@ def test_preflight_runs_its_real_body_on_the_work_dir_path(tmp_path, monkeypatch
                                     record=dict(volume_identity='sl-0', export_repo='o/r'), sources=lambda: {})
     problems = ab.TransformersBackend.preflight(backend)
     assert all('container disk' in p for p in problems)  # only the free-space rule may object on this machine
+
+
+def test_r6_3_tokenizer_files_are_bound_to_the_sequences_manifest(tmp_path):
+    """Review round 6 (3): the tokenizer (and its chat template, in tokenizer_config.json) that renders prompts and
+    decodes answers must be the one sequences-v2 was built with; a changed or unpinned tokenizer is refused."""
+    inventory, manifest, arms, model, parquet = fixture(tmp_path)
+    record = ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=tmp_path / 'tokenizer',
+                             model_dir=model, test_parquet=parquet)
+    assert record['tokenizer'] == manifest['inputs']['tokenizer']['files']
+    (tmp_path / 'tokenizer' / 'tokenizer_config.json').write_text('{"chat_template": "another template"}')
+    with pytest.raises(ValueError, match='tokenizer: tokenizer_config.json differs'):
+        ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=tmp_path / 'tokenizer',
+                        model_dir=model, test_parquet=parquet)
+    inventory, manifest, arms, model, parquet = fixture(tmp_path / 'b')
+    del manifest['inputs']['tokenizer']
+    with pytest.raises(ValueError, match='tokenizer: the sequences-v2 manifest pins no tokenizer'):
+        ab.bind_sources(inventory, manifest, adapter_dirs=arms, tokenizer_dir=tmp_path / 'b' / 'tokenizer',
+                        model_dir=model, test_parquet=parquet)
