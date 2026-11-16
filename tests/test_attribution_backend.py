@@ -92,3 +92,10 @@ def test_r4_3_other_base_model_or_test_file_or_unverified_checkpoint_is_refused(
     with pytest.raises(ValueError, match='sampling-sft-k0'):
         ab.bind_sources(inventory, manifest, adapter_dirs=dict(arms, **{'sampling-sft-k0': arms['gold-sft']}),
                         model_dir=model, test_parquet=parquet)
+
+
+def test_missing_test_parquet_is_reported_as_missing_not_different(tmp_path):
+    inventory, manifest, arms, model, parquet = fixture(tmp_path)
+    parquet.unlink()
+    with pytest.raises(ValueError, match='test parquet: missing'):
+        ab.bind_sources(inventory, manifest, adapter_dirs=arms, model_dir=model, test_parquet=parquet)

@@ -30,3 +30,9 @@
 - **A test, not production.** Before trusting the backup, check that the summary lists every step and that the clean restore returned it.
 - **Inputs.** The tokenizer directory is explicit (cell 6, the inventory's pinned tokenizer revision).
 - **What to learn:** GPU execution (incl. the device fix from round 4), memory use per token budget, and runtime per step. Fix only what this run reveals, then decide on an overnight launch.
+
+### 2026-11-16 — run r1 (user)
+
+- Cells 1–6 passed on an A100-SXM4-40GB (FP32 peak 19.5e12 picked up automatically; rehearsal record sealed at `480234a`).
+- Cell 7 stopped in `bind_sources`: the GSM8K test parquet is absent from the prep snapshot, which the message wrongly called "differs". The evidence upload worked; it held 0 files because nothing had been written.
+- Fixed: the message now says "missing" (with a test), and new notebook cell 4b fetches both GSM8K parquets at the manifest's pinned revision with hash verification. Next: rerun all cells.

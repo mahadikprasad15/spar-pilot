@@ -87,7 +87,9 @@ def bind_sources(inventory, sequences_manifest, *, adapter_dirs, model_dir, test
             problems.append(f'base model: {name} differs from its pinned hash')
     expected_test = sequences_manifest.get('inputs', {}).get('files', {}).get('gsm8k_test')
     actual_test = _file_sha(test_parquet) if Path(test_parquet).is_file() else None
-    if expected_test is None or actual_test != expected_test:
+    if actual_test is None:
+        problems.append(f'test parquet: missing at {test_parquet} (fetch it at the pinned revision first)')
+    elif expected_test is None or actual_test != expected_test:
         problems.append('test parquet: differs from the sequences-v2 manifest')
     if problems:
         raise ValueError('inputs are not the sealed sources: ' + '; '.join(problems))
