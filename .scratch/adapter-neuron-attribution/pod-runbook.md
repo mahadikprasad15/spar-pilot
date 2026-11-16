@@ -78,7 +78,7 @@ bash scripts/attribution_overnight.sh $WORK/launch_record.json $WORK/local $VOL 
 
 ## 6. Afterwards (the Pod is stopped)
 
-Results are on sl-0 (`$VOL/attribution/…`) and in the HF dataset (label `rehearsal-pod-1`). To read them, start a
+Results are on sl-0 (`$VOL/attribution/…`) and in the HF dataset (label `rehearsal-pod-2`). To read them, start a
 cheap CPU Pod with sl-0 attached and send back:
 
 ```bash

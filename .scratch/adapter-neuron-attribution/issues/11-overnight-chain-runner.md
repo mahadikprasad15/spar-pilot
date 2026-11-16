@@ -28,7 +28,7 @@ The code needs these values, and the spec and candidate plan don't give them. Th
 - `inputs.rehearsal_generation_ids`: the 20 test indices, pending the draw-rule question on ticket 01.
 - `selection.random_seeds` and `statistics.null_seed`, pending the question on ticket 04.
 
-- 2026-11-16 (agent): Pod rehearsal launch 1 (`rehearsal-pod-1`, code `d5ab854`) failed in preflight after 24 s: `TransformersBackend.preflight` passed a path where `disk_problems` takes `local_disk(path)`. Fixed with a red/green CPU test that runs the real preflight body. Teardown ran fully on the real Pod: volume copy and HF export verified, final summary uploaded (HF `neuron-audit/rehearsal-pod-1/aff49aa4…`), Pod stopped. Setup findings: `HF_HOME` must be off the sl-0 volume (empty downloads); the launcher needs the venv active. A relaunch needs a new run ID with `$VOL/attribution` moved aside (fixed volume paths; lessons file). Proposed: `rehearsal-pod-2`, pending the user's OK.
+- 2026-11-16 (agent): Pod rehearsal launch 1 (`rehearsal-pod-1`, code `d5ab854`) failed in preflight after 24 s: `TransformersBackend.preflight` passed a path where `disk_problems` takes `local_disk(path)`. Fixed with a red/green CPU test that runs the real preflight body. Teardown ran fully on the real Pod: volume copy and HF export verified, final summary uploaded (HF `neuron-audit/rehearsal-pod-1/aff49aa4…`), Pod stopped. Setup findings: `HF_HOME` must be off the sl-0 volume (empty downloads); the launcher needs the venv active. A relaunch needs a new run ID with `$VOL/attribution` moved aside (fixed volume paths; lessons file). Relaunch named `rehearsal-pod-2` (a label only; all approved values unchanged).
 
 ## Answer
 
