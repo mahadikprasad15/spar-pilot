@@ -125,3 +125,21 @@ def test_fetch_gsm8k_writes_the_pinned_files_and_refuses_a_hash_mismatch(tmp_pat
     (prep / 'data/test.parquet').write_bytes(b'tampered')
     with pytest.raises(ValueError, match='test parquet differs'):
         ab.fetch_gsm8k(prep, seq, download=download)
+
+
+def test_preflight_runs_its_real_body_on_the_work_dir_path(tmp_path, monkeypatch):
+    """Pod rehearsal pod-1: preflight passed the work-dir string to ``disk_problems`` (which takes the
+    ``local_disk`` dict) and failed with a TypeError before any check ran. Run the real body; stub only
+    the outside world (CUDA, the volume's mount checks, the Hub)."""
+    import types
+    import torch
+    from pilot_eval import neuron_audit_export, neuron_audit_preflight
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(neuron_audit_preflight, 'volume_identity', lambda *a, **k: ({}, []))
+    monkeypatch.setattr(neuron_audit_export, 'OnlineHubProcess',
+                        lambda **k: types.SimpleNamespace(info=lambda repo: types.SimpleNamespace(private=True)))
+    monkeypatch.setenv('HF_HUB_OFFLINE', '1')
+    backend = types.SimpleNamespace(inputs=dict(work_dir=str(tmp_path)), volume_root=tmp_path,
+                                    record=dict(volume_identity='sl-0', export_repo='o/r'), sources=lambda: {})
+    problems = ab.TransformersBackend.preflight(backend)
+    assert all('container disk' in p for p in problems)  # only the free-space rule may object on this machine

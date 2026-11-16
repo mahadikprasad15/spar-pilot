@@ -192,8 +192,9 @@ class TransformersBackend:
         import torch
         from pilot_eval.neuron_audit_export import OnlineHubProcess
         from pilot_eval.neuron_audit_pod import disk_problems
+        from pilot_eval.neuron_audit_preflight import local_disk
         from pilot_eval.sampling_sft_hf import private
-        problems = list(disk_problems(self.inputs['work_dir']))
+        problems = list(disk_problems(local_disk(self.inputs['work_dir'])))
         if not torch.cuda.is_available():
             problems.append('CUDA unavailable')
         if os.environ.get('HF_HUB_OFFLINE') != '1':

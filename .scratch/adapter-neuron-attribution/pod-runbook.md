@@ -62,7 +62,12 @@ $PY -m pilot_eval.attribution_chain seal --draft $WORK/draft.yaml --out $WORK/la
 
 ## 5. Launch once (supervised)
 
+The launcher calls plain `python`, so the venv must be active. Any earlier attempt's chain state on sl-0 is moved
+aside first: the chain's volume paths are fixed, and a new record needs a new run ID (lessons, pod-1).
+
 ```bash
+source /root/venv/bin/activate && which python
+[ -d $VOL/attribution ] && mv $VOL/attribution $VOL/attribution-<previous run_id>
 bash scripts/attribution_overnight.sh $WORK/launch_record.json $WORK/local $VOL 2>&1 | tee $WORK/launch.console.log
 ```
 
