@@ -160,6 +160,13 @@ TEXT_FIELDS = ('schema', 'run_id', 'mode', 'rehearsal_label', 'code_commit', 'po
 NUMBER_FIELDS = ('inputs.max_new_tokens',)
 # Pilot-row filters compare with the rows' own fields, so each keeps whatever type the row has (review r6, 4).
 SCALAR_FIELDS = ('stage_d.pilot_results.*.filters.*',)
+# Counts, seeds and budgets are integers (review round 6, 9); thresholds, times and ratios may be real-valued.
+INTEGER_FIELDS = ('inputs.max_new_tokens', 'minimums.*', 'qualification.calibration_minimum', 'qualification.fd_rows',
+                  'qualification.fd_adapters', 'qualification.fd_neurons', 'qualification.head_chunk',
+                  'selection.top_group', 'selection.top_singles', 'selection.seed', 'selection.random_seeds[*]',
+                  'selection.read_size', 'statistics.resamples', 'statistics.seed', 'statistics.gate_singles_min',
+                  'statistics.null_orders', 'statistics.null_seed', 'generation_batch_rule.*',
+                  'token_budget_sweep[*]')
 
 
 def mistyped(value, prefix=''):
@@ -176,6 +183,9 @@ def mistyped(value, prefix=''):
     text = prefix not in NUMBER_FIELDS and any(fnmatch.fnmatchcase(prefix, f.replace('[', '[[]')) for f in TEXT_FIELDS)
     if isinstance(value, bool) or (isinstance(value, str) != text) or not isinstance(value, (str, int, float)):
         return [f'{prefix} ({value!r} is {type(value).__name__}; expected {"text" if text else "a number"})']
+    if not text and any(fnmatch.fnmatchcase(prefix, f.replace('[', '[[]')) for f in INTEGER_FIELDS) \
+            and not isinstance(value, int):
+        return [f'{prefix} ({value!r} is {type(value).__name__}; expected an integer)']
     return []
 
 

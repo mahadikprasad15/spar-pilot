@@ -817,3 +817,17 @@ def test_r6_4_the_production_draft_has_no_type_errors():
     import yaml
     draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-draft.yaml'
     assert ch.mistyped(yaml.safe_load(draft.read_text())) == []
+
+
+@pytest.mark.parametrize('path, value', [
+    (('qualification', 'fd_rows'), 1.5), (('inputs', 'max_new_tokens'), 1.5), (('selection', 'random_seeds'), [1, 2.5]),
+    (('token_budget_sweep',), [2048, 4096.0]), (('statistics', 'resamples'), 1e4)])
+def test_r6_9_counts_seeds_and_budgets_must_be_integers(path, value):
+    """Review round 6 (9): a fractional count, seed or budget is refused; real-valued thresholds stay floats."""
+    rec = record(qualification=dict(fd_rows=4), inputs=dict(max_new_tokens=1024))
+    assert ch.mistyped(rec) == []
+    target = rec
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    assert any(p.startswith('.'.join(path)) and 'integer' in p for p in ch.mistyped(rec))
