@@ -244,6 +244,16 @@ class TransformersBackend:
         return at.HFGenerator(model, pad_token_id=self.tokenizer.pad_token_id, eos_token_id=self.tokenizer.eos_token_id,
                               max_new_tokens=self.inputs['max_new_tokens'], decode=self.decode), edit
 
+    def fp64_model(self, arm):
+        """A temporary FP64 copy of the loaded arm, frozen, for the finite-difference reference (user decision
+        2026-11-16). The saved FP32 factors cast to FP64 exactly; the caller drops it and calls free_memory()."""
+        import copy
+        import torch
+        model = copy.deepcopy(self.load(arm)).to(torch.float64)
+        for p in model.parameters():
+            p.requires_grad_(False)
+        return model.eval()
+
     def free_memory(self):
         """Drop unreferenced tensors and return cached CUDA blocks to the device (between rehearsal steps)."""
         import gc

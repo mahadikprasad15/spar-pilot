@@ -71,3 +71,14 @@
   - online-grpo: median 0.029, max **1.92**.
   On the Pod the automatic sign-off would stop at qualification. **Not resolved and not loosened.**
 - **Diagnostic:** `finite_difference_check` now reports every comparison and the 10 worst, with an FP32 noise estimate (`d106108`; reporting only). A Colab diagnostic cell was given to the user. Pending: whether the large errors are rounding noise on tiny effects or a real error. Any change to the check is the user's decision.
+
+### 2026-11-16 — finite-difference diagnosis and method change (user decision)
+
+- **Diagnostic 2 (gold-sft):** the same FP32 attributions checked against FP32 ε=0.01 / FP32 ε=0.1 / FP64 ε=0.01 references. Max relative error 60.8 / 0.151 / 0.078; adapters agree to ≤ 0.0005 in FP64. The attribution is correct, and the FP32 reference could not resolve single-neuron effects. Full per-check table: `06a-r3-fd-diagnosis.md`.
+- **Decision (user):** the qualification's finite-difference reference runs in FP64 (ε = 0.01), with the tolerances unchanged.
+- **Implemented:**
+  - `finite_difference_check(reference_model=…)`: every perturbed forward pass (weights, activations, gates, log-softmax, metric means) runs on an FP64 copy of the arm; the attribution stays the FP32 instrument's. The reference is verified to be FP64 and to hold the same adapter weights. The result records its precision and which part ran in which precision.
+  - `Stages._fd_check` measures the check's peak memory on the device. `fd_memory:<arm>` is a qualification check, so a reference that doesn't fit stops the chain before production.
+  - The launch record must state `finite_difference.precision`.
+  - The 06a driver runs the same check.
+- **Pending:** online-grpo with the FP64 reference (diagnostic 3, given to the user). The FP64 check's memory on the Pod is measured by the supervised Pod run's qualification.

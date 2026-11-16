@@ -127,6 +127,13 @@ class TinyBackend:
     def parameter_count(self):
         return sum(p.numel() for p in make(0).parameters())
 
+    def fp64_model(self, arm):
+        import copy
+        return copy.deepcopy(self.load(arm)).double()
+
+    def free_memory(self):
+        pass
+
     def device_memory(self):
         return 10**9
 
@@ -189,7 +196,8 @@ def launch(tmp_path, **overrides):
         volume_identity='vol', export_repo='owner/private', hourly_cost_usd=1.0,
         caps_seconds=dict(total=3600, preflight=600, qualification=600, base_traces=600, attribution_and_freeze=600,
                           stage_c=600, stage_d=600, report=600),
-        tolerances=dict(finite_difference=dict(epsilon=1e-2, median_rel_err_max=0.05, max_rel_err_max=0.20),
+        tolerances=dict(finite_difference=dict(epsilon=1e-2, median_rel_err_max=0.05, max_rel_err_max=0.20,
+                                               precision='fp64'),
                         neuron_sum_identity=1e-4, batch_invariance=1e-4, resolution_floor='10x batch invariance'),
         minimums=dict(discovery=3, heldout=3),
         selection=dict(top_group=10, top_singles=5, tolerance=0.2, seed=20000, random_seeds=[1, 2, 3], read_size=4),
@@ -570,3 +578,75 @@ def test_06a_r3_finite_difference_check_reports_every_comparison_with_its_noise_
         assert item['fd_noise_estimate'] > 0
     assert max(i['rel_err'] for i in items) == pytest.approx(out['max_rel_err'])
     assert sorted(out['worst'], key=lambda i: -i['rel_err']) == out['worst'] and len(out['worst']) <= 10
+
+
+# --- FP64 finite-difference reference (user decision 2026-11-16) ---------------------------------------------
+
+def test_fd_reference_runs_every_perturbed_forward_in_fp64_and_leaves_the_fp32_model_untouched():
+    import copy
+    import torch
+    from pilot_eval import attribution_instrument as ai
+    from pilot_eval import attribution_metrics as am
+    from tests.test_attribution_instrument import rows as fixture_rows, tiny
+    model = tiny()
+    reference = copy.deepcopy(model).double()
+    inst = ai.Instrument(model, stop_ids=[31], pad_token_id=0, identity_rtol=1e-4)
+    dtypes, real = [], am.trace_loglik
+
+    def spy(logits, *a, **k):
+        dtypes.append(logits.dtype)
+        return real(logits, *a, **k)
+
+    am.trace_loglik = spy
+    try:
+        out = st.finite_difference_check(model, inst, fixture_rows(), [31], epsilon=1e-2, adapters=2, neurons=2,
+                                         reference_model=reference)
+    finally:
+        am.trace_loglik = real
+    assert set(dtypes) == {torch.float64} and out['precision'] == 'fp64'
+    assert all(p.dtype == torch.float32 for p in model.parameters())  # attribution model untouched
+    assert out['parts'] == dict(attribution='fp32 (instrument; FP64 accumulation of products)',
+                                finite_difference='fp64 weights, activations, gates, log-softmax and metric means')
+    # with the FP64 reference only the FP32 attribution's own rounding remains: every effect clearly above that
+    # floor (|attribution| >= 1e-6 on this fixture) agrees within 10%
+    clear = [i for i in out['items'] if abs(i['attribution']) >= 1e-6]
+    assert clear and max(i['rel_err'] for i in clear) < 0.1 and out['median_rel_err'] < 0.01
+
+
+def test_fd_reference_must_be_an_fp64_copy_of_the_same_arm():
+    import copy
+    from pilot_eval import attribution_instrument as ai
+    from tests.test_attribution_instrument import rows as fixture_rows, tiny
+    model = tiny()
+    inst = ai.Instrument(model, stop_ids=[31], pad_token_id=0, identity_rtol=1e-4)
+    with pytest.raises(ValueError, match='FP64'):
+        st.finite_difference_check(model, inst, fixture_rows(), [31], epsilon=1e-2, adapters=1, neurons=1,
+                                   reference_model=copy.deepcopy(model))
+    other = tiny(seed=9).double()
+    with pytest.raises(ValueError, match='same arm'):
+        st.finite_difference_check(model, inst, fixture_rows(), [31], epsilon=1e-2, adapters=1, neurons=1,
+                                   reference_model=other)
+
+
+def test_qualification_records_the_fd_check_peak_and_stops_when_it_does_not_fit(tmp_path):
+    record = launch(tmp_path)
+    chain(tmp_path, record, TinyBackend(tmp_path, strict_rehearsal=True), []).run()
+    details = json.loads((tmp_path / 'local' / st.QUAL_DIR / 'details.json').read_text())
+    fd = details['fd:gold-sft']
+    assert fd['precision'] == 'fp64' and fd['peak_bytes'] == 10**8 and fd['memory_fraction_of_device'] == 0.1
+    qual = json.loads((tmp_path / 'local' / st.QUAL_DIR / 'qualification.json').read_text())
+    assert qual['checks']['fd_memory:gold-sft'] is True
+    (tmp_path / 'b').mkdir()
+    backend = TinyBackend(tmp_path / 'b', strict_rehearsal=True)
+    state = dict(fp64=False)
+    real_fp64 = backend.fp64_model
+
+    def fp64_model(arm):  # only the FP64 check's peak is inflated: 90% of the device > memory_fraction 0.8
+        state['fp64'] = True
+        return real_fp64(arm)
+
+    backend.fp64_model = fp64_model
+    backend.free_memory = lambda: None
+    backend.peak_memory = lambda: 9 * 10**8 if state.pop('fp64', False) else 10**8
+    summary = chain(tmp_path / 'b', launch(tmp_path / 'b'), backend, []).run()
+    assert summary['state'] == 'stopped-before-production' and 'fd_memory:gold-sft' in summary['stop_reason']

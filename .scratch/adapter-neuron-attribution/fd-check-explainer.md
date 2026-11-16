@@ -114,3 +114,26 @@ Adapter-level rows act as a control: they already agree and should stay that way
   - check neurons with a larger ε;
   - exclude comparisons whose finite difference is below a measured noise floor (and report how many).
 - **H2 confirmed:** fix the neuron attribution and re-run 06a. Primary 3 cannot be trusted until then.
+
+## 10. Results and decision (2026-11-16)
+
+Diagnostic 2 on gold-sft (full table: `06a-r3-fd-diagnosis.md`):
+
+| Cross-check | Max relative error | Adapters |
+| --- | --- | --- |
+| FP32, ε = 0.01 | 60.8 | ≤ 0.025 |
+| FP32, ε = 0.1 | 0.151 | ≤ 0.001 |
+| FP64, ε = 0.01 | 0.078 | ≤ 0.0005 |
+
+This confirms H1: the attribution is correct, and the FP32 reference was noise-limited for single neurons. The
+few-percent residual in FP64 sits on the smallest effects (~1e-5) and matches the FP32 attribution's own rounding.
+
+**Decision (user):** the finite-difference reference runs in FP64 at ε = 0.01, with the tolerances unchanged.
+
+| Part | Precision |
+| --- | --- |
+| Attribution (forward, two backwards, neuron pass) | FP32, FP64 accumulation of products |
+| Finite-difference reference (weights, activations, gates, log-softmax, metric means) | FP64 |
+| All Stage C / Stage D measurements | FP32 |
+
+The FP64 copy's peak memory is measured in qualification and must fit the memory fraction.

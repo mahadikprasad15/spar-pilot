@@ -172,7 +172,7 @@ Precedent: the joint audit's approved unattended 03b → 04 chain (`frozen_plan_
 **Automatic sign-off after qualification** if every qualification check passes against the launch record's fixed tolerances and no review flag is raised; recorded as the rule's sign-off, not the user's. Any failure, flag, missing arm, unmet minimum or no feasible token budget stops the chain before production.
 
 **Tolerances fixed before launch** **[proposed values for the launch record]**:
-- Real-model finite differences (FP32, central difference on g with ε = 1e-2): median relative error ≤ 0.05 and maximum ≤ 0.20 over checked adapters and neurons.
+- Real-model finite differences (central difference on g with ε = 1e-2): median relative error ≤ 0.05 and maximum ≤ 0.20 over checked adapters and neurons. **Method change (user, 2026-11-16):** the finite-difference reference runs in **FP64** (an FP64 copy of the arm: weights, activations, gates, log-softmax and metric means); the attribution stays FP32; the tolerances are unchanged. The FP32 reference failed on single-neuron effects (~1e-5) because of rounding noise, not because of the attribution. Evidence: `06a-r3-fd-diagnosis.md`.
 - Σ_j attr_j = attr_i: relative error ≤ 1e-4 of Σ_j |attr_j|.
 - Batch invariance on calibration rows: per-example |Δattr| ≤ 1e-4 × max |attr| in that arm and metric.
 - Resolution floor for unavailable R and concentration: 10× the measured batch-invariance discrepancy.

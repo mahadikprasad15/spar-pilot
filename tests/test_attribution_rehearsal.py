@@ -114,3 +114,10 @@ def test_06a_r2_interventions_are_evaluated_in_bounded_batches(tmp_path, monkeyp
     out = reh._conditions('gold-sft', rows)
     assert len(seen) > 6 and max(seen) <= budget and set(out['conditions']) == {
         'noop', 'single', 'group', 'down_full', 'read64', 'constant'}
+
+
+def test_fd_step_uses_the_fp64_reference_and_keeps_every_comparison(tmp_path):
+    reh = rh.Rehearsal(record(tmp_path), tmp_path / 'local', TinyBackend(tmp_path, strict_rehearsal=True))
+    reh.step('calibration_traces', lambda: reh.stages._traces('calibration', 1, minimum=1)['counts'])
+    fd = reh._fd('gold-sft', rh.at.load_rows(reh.root, 'calibration'), reh.record['tolerances'])
+    assert fd['precision'] == 'fp64' and fd['items'] and len(fd['worst']) <= 10 and 'peak_bytes' in fd

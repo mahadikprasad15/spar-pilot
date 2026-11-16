@@ -30,20 +30,25 @@ def logit_positions(targets, *, length):
     return [t - 1 for t in targets]
 
 
+# FP32 for every measurement; FP64 only for the finite-difference reference (user decision 2026-11-16).
+# Half precision is always refused.
+ALLOWED = (torch.float32, torch.float64)
+
+
 def position_terms(logits_at, targets, stop_ids):
     """Per-position [n, 2] FP32 terms from FP32 logits [n, V]: log p(target), log sum_s p(s).
 
     The single formula used by the batch functions below and by the chunked output head (ticket 03)."""
-    if logits_at.dtype != torch.float32 or not bool(torch.isfinite(logits_at.detach()).all()):
-        raise ValueError('finite FP32 logits required')
+    if logits_at.dtype not in ALLOWED or not bool(torch.isfinite(logits_at.detach()).all()):
+        raise ValueError('finite FP32 (or FP64 reference) logits required')
     lp = torch.log_softmax(logits_at, dim=-1)
     stops = torch.as_tensor(list(stop_ids), device=logits_at.device)
     return torch.stack([lp.gather(-1, targets[:, None]).squeeze(-1), torch.logsumexp(lp[:, stops], dim=-1)], dim=-1)
 
 
 def _check(logits):
-    if logits.dtype != torch.float32 or logits.ndim != 3:
-        raise ValueError('FP32 [batch, seq, vocab] logits required')
+    if logits.dtype not in ALLOWED or logits.ndim != 3:
+        raise ValueError('FP32 (or FP64 reference) [batch, seq, vocab] logits required')
     if not bool(torch.isfinite(logits.detach()).all()):
         raise ValueError('nonfinite logits')
 

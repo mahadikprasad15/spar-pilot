@@ -116,12 +116,10 @@ class Rehearsal:
         return dict(units=len(rows), adapters=len(inst.adapters), padded_width=out['padded_width'] if out else None)
 
     def _fd(self, arm, rows, tol):
-        q = self.record['qualification']
+        """The Pod qualification's own check (``Stages._fd_check``): the record's precision (FP64 reference since
+        2026-11-16), the measured peak memory of that check, and the record's tolerances."""
         model = self.backend.load(arm)
-        inst = self.stages._instrument(model)
-        fd = st.finite_difference_check(model, inst, rows[:q['fd_rows']], self.stages._stop()['stop_ids'],
-                                        epsilon=tol['finite_difference']['epsilon'], adapters=q['fd_adapters'],
-                                        neurons=q['fd_neurons'])
+        fd = self.stages._fd_check(arm, model, self.stages._instrument(model), rows, tol)
         fd['within_record_tolerances'] = bool(fd['median_rel_err'] <= tol['finite_difference']['median_rel_err_max']
                                               and fd['max_rel_err'] <= tol['finite_difference']['max_rel_err_max'])
         return fd

@@ -25,7 +25,8 @@ def record(**overrides):
         volume_identity='sl-0:vol-uuid', export_repo='owner/private', hourly_cost_usd=2.0,
         caps_seconds=dict(total=1000, qualification=100, base_traces=100, attribution_and_freeze=300, stage_c=200,
                           stage_d=200, report=50, preflight=50),
-        tolerances=dict(finite_difference=dict(epsilon=1e-2, median_rel_err_max=0.05, max_rel_err_max=0.20),
+        tolerances=dict(finite_difference=dict(epsilon=1e-2, median_rel_err_max=0.05, max_rel_err_max=0.20,
+                                               precision='fp64'),
                         neuron_sum_identity=1e-4, batch_invariance=1e-4, resolution_floor='10x batch invariance'),
         minimums=dict(discovery=120, heldout=60), selection=dict(top_group=10, top_singles=5, tolerance=0.2,
                                                                  seed=20000, random_seeds=[1, 2, 3], read_size=64),
@@ -672,3 +673,12 @@ def test_r4_7_a_superseded_watchdog_stands_down_without_signalling_or_stopping(t
         assert not log.exists() and replacement.poll() is None  # nothing copied or stopped; the new writer lives
     finally:
         replacement.kill()
+
+
+
+def test_launch_record_must_state_the_finite_difference_precision(tmp_path):
+    for bad in ['fp32-noisy', None]:
+        tol = dict(record()['tolerances'])
+        tol['finite_difference'] = dict(tol['finite_difference'], precision=bad)
+        with pytest.raises(ch.LaunchRefused, match='precision|unresolved'):
+            ch.load_launch_record(sealed_record(tmp_path / str(bad), tolerances=tol), code_commit='abc123')

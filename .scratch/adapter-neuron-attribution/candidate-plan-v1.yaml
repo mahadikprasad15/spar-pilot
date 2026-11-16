@@ -58,7 +58,7 @@ gpu:
   generation_batch_rule: {items: 20, max_correctness_flips: 1, max_stop_reason_changes: 1}
   investigation_targets: {median_busy: 0.85, peak_memory_range: [0.50, 0.80]}   # not gates
 tolerances:   # fixed in the launch record before an unattended run
-  finite_difference: {method: central on g, epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20}
+  finite_difference: {method: central on g, epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20, precision: fp64}   # precision: user 2026-11-16 (06a r3)
   neuron_sum_identity: {rel_to_sum_abs: 1.0e-4}
   batch_invariance: {abs_diff_max_fraction_of_max_abs: 1.0e-4}
   resolution_floor: 10x measured batch-invariance discrepancy

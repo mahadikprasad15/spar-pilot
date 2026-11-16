@@ -144,6 +144,8 @@ def load_launch_record(path, *, code_commit):
             raise LaunchRefused('a rehearsal needs an explicit rehearsal label for its expected arm set')
     else:
         raise LaunchRefused('mode must be production or rehearsal')
+    if record['tolerances'].get('finite_difference', {}).get('precision') not in ('fp64', 'fp32'):
+        raise LaunchRefused('tolerances.finite_difference.precision must be fp64 (user decision 2026-11-16) or fp32')
     from pilot_eval.attribution_report import check_early_stop_rule
     try:
         check_early_stop_rule(record['stage_d'].get('early_stop_rule'))

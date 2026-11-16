@@ -40,7 +40,7 @@ timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_j
 
 # --- tolerances (qualification sign-off) ------------------------------------------------------------
 tolerances:
-  finite_difference: {epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20}   # [proposed]
+  finite_difference: {epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20, precision: fp64}   # values [proposed]; precision [approved 2026-11-16]
   neuron_sum_identity: 1.0e-4      # [proposed] relative to sum_j |attr_j|
   batch_invariance: 1.0e-4         # [proposed] fraction of max |attr| per arm and metric
   resolution_floor: 10x measured batch-invariance discrepancy   # [proposed] rule, evaluated in 06b

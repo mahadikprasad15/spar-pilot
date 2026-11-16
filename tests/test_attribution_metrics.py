@@ -144,7 +144,20 @@ def test_requires_fp32_finite_logits():
     ids, logits, masks = fixture()
     tid, tl = batch([(ids, logits)])
     with pytest.raises(ValueError):
-        am.trace_loglik(tl.double(), tid, [masks])
+        am.trace_loglik(tl.half(), tid, [masks])
     tl[0, 2, 0] = float('nan')
     with pytest.raises(ValueError):
         am.trace_loglik(tl, tid, [masks])
+
+
+def test_fp64_logits_accepted_for_the_finite_difference_reference_and_half_precision_refused():
+    ids, logits, masks = fixture()
+    tid, tl = batch([(ids, logits)])
+    fp32 = am.trace_loglik(tl, tid, [masks]).item()
+    fp64 = am.trace_loglik(tl.double(), tid, [masks]).item()
+    assert fp64 == pytest.approx(fp32, rel=1e-6)
+    assert am.stop_pull(tl.double(), [masks], stop_ids=[5])[0].item() == pytest.approx(
+        am.stop_pull(tl, [masks], stop_ids=[5])[0].item(), rel=1e-6)
+    for dtype in (torch.bfloat16, torch.float16):
+        with pytest.raises(ValueError):
+            am.trace_loglik(tl.to(dtype), tid, [masks])

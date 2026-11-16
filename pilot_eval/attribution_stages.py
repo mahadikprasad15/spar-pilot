@@ -187,13 +187,12 @@ class Stages:
                 continue
             arms.append(arm)
             if arm in self.q['fd_arms']:
-                fd = finite_difference_check(model, inst, rows[:self.q['fd_rows']], self._stop()['stop_ids'],
-                                             epsilon=tol['finite_difference']['epsilon'],
-                                             adapters=self.q['fd_adapters'], neurons=self.q['fd_neurons'])
+                fd = self._fd_check(arm, model, inst, rows, tol)
                 details[f'fd:{arm}'] = fd
                 checks[f'finite_differences:{arm}'] = bool(
                     fd['median_rel_err'] <= tol['finite_difference']['median_rel_err_max']
                     and fd['max_rel_err'] <= tol['finite_difference']['max_rel_err_max'])
+                checks[f'fd_memory:{arm}'] = bool(fd['fits'])
             ctx.boundary()
         sweep = self._sweep(rows)
         details['sweep'] = sweep
@@ -229,6 +228,23 @@ class Stages:
         peak = self.backend.peak_memory()
         fits = peak <= self.q['memory_fraction'] * self.backend.device_memory()
         return 'ok', dict(record, outcome='ok', peak_bytes=peak, fits=fits)
+
+    def _fd_check(self, arm, model, inst, rows, tol):
+        """Finite differences with the record's precision; FP64 builds a temporary FP64 copy of the arm whose peak
+        memory is measured on this device and must fit the qualification memory fraction."""
+        fd_tol = tol['finite_difference']
+        self.backend.reset_peak()
+        reference = self.backend.fp64_model(arm) if fd_tol['precision'] == 'fp64' else None
+        try:
+            fd = finite_difference_check(model, inst, rows[:self.q['fd_rows']], self._stop()['stop_ids'],
+                                         epsilon=fd_tol['epsilon'], adapters=self.q['fd_adapters'],
+                                         neurons=self.q['fd_neurons'], reference_model=reference)
+        finally:
+            del reference
+            getattr(self.backend, 'free_memory', lambda: None)()
+        peak, device = self.backend.peak_memory(), self.backend.device_memory()
+        return dict(fd, peak_bytes=peak, memory_fraction_of_device=peak / device,
+                    fits=peak <= self.q['memory_fraction'] * device)
 
     def _sweep(self, rows):
         """Each candidate budget is exercised by a batch that actually fills it: the longest calibration row
@@ -676,18 +692,35 @@ def batch_invariance(inst, rows, budgets):
     return dict(max_fraction=worst_fraction, max_abs=worst_abs, budgets=list(budgets))
 
 
-def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, neurons):
-    """Central differences on explicit branch/neuron gates vs the instrument, for the top adapters and neurons."""
+def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, neurons, reference_model=None):
+    """Central differences on explicit branch/neuron gates vs the instrument, for the top adapters and neurons.
+
+    The attribution is always the FP32 instrument's. With ``reference_model`` (an FP64 copy of the same arm; user
+    decision 2026-11-16) every perturbed forward pass runs in FP64: weights, activations, gates, log-softmax and
+    metric means. An FP32 central difference cannot resolve single-neuron effects (~1e-5): 06a r3 measured a max
+    relative error of 60.8 in FP32 and 0.078 in FP64 on gold-sft, with the same attributions."""
     import torch
     out = inst.attribute(rows)
     ids, attention, positions = inst.batch(rows)
     masks = [r['masks'] for r in rows]
     n, errors, checked = len(rows), [], []
+    reference = model if reference_model is None else reference_model
+    dtype = next(reference.parameters()).dtype
+    if reference_model is not None:
+        if any(p.dtype != torch.float64 for p in reference_model.parameters()):
+            raise ValueError('the finite-difference reference must be an FP64 copy of the arm')
+        for (_, _, mine), (_, _, theirs) in zip(ai.adapter_modules(model), ai.adapter_modules(reference_model)):
+            if not torch.equal(mine.lora_B[inst.adapter].weight.double().cpu(),
+                               theirs.lora_B[inst.adapter].weight.cpu()):
+                raise ValueError('the FP64 reference is not the same arm (adapter weights differ)')
+        ids, attention, positions = ids.to(next(reference.parameters()).device), \
+            attention.to(next(reference.parameters()).device), positions.to(next(reference.parameters()).device)
 
     def metric(name, gates=None, neuron=None):
-        with torch.no_grad(), ai.branch_gates(model, gates or {}, inst.adapter), \
-                ai.neuron_gate(model, neuron, inst.adapter):
-            logits = model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
+        with torch.no_grad(), ai.branch_gates(reference, gates or {}, inst.adapter), \
+                ai.neuron_gate(reference, neuron, inst.adapter):
+            logits = reference(input_ids=ids, attention_mask=attention, position_ids=positions,
+                               use_cache=False).logits
         if name == 'trace':  # CUDA tensors reach NumPy only through .cpu() (review r4, 1)
             return am.trace_loglik(logits, ids, masks).detach().cpu().numpy()
         return am.stop_pull(logits, masks, stop_ids=stop_ids)[0].detach().cpu().numpy()
@@ -705,31 +738,36 @@ def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, n
             items.append(dict(kind=kind, metric=name, target=target, row=rows[r]['id'], attribution=float(got[r]),
                               finite_difference=float(fd[r]), abs_err=float(abs(got[r] - fd[r])),
                               rel_err=float(rel[k]), metric_value=value,
-                              fd_noise_estimate=float(np.spacing(np.float32(abs(value)))) / (2 * epsilon)))
+                              fd_noise_estimate=float(np.spacing(np.dtype(str(dtype).split('.')[-1]).type(abs(value))))
+                              / (2 * epsilon)))
 
     for name in METRICS:
         mean = np.nanmean(out['attr'][name], 0)
         if np.isnan(mean).all():
             continue
         for index in ab.top_k(np.nan_to_num(mean), adapters):
-            compare(name, out['attr'][name][:, index], dict(gates={index: torch.full((n, 1, 1), 1 + epsilon, device=ids.device)}),
-                    dict(gates={index: torch.full((n, 1, 1), 1 - epsilon, device=ids.device)}),
+            compare(name, out['attr'][name][:, index], dict(gates={index: torch.full((n, 1, 1), 1 + epsilon, device=ids.device, dtype=dtype)}),
+                    dict(gates={index: torch.full((n, 1, 1), 1 - epsilon, device=ids.device, dtype=dtype)}),
                     kind='adapter', target=dict(adapter=int(index)))
             checked.append(dict(metric=name, adapter=int(index)))
         layer = max(inst.down_index, key=lambda l: abs(np.nan_to_num(mean[inst.down_index[l]])))
         values = np.nanmean(out['neuron'][name][layer], 0)
         for j in np.argsort(-np.abs(values))[:neurons]:
             compare(name, out['neuron'][name][layer][:, j],
-                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 + epsilon, device=ids.device))),
-                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 - epsilon, device=ids.device))),
+                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 + epsilon, device=ids.device, dtype=dtype))),
+                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 - epsilon, device=ids.device, dtype=dtype))),
                     kind='neuron', target=dict(layer=int(layer), neuron=int(j)))
             checked.append(dict(metric=name, layer=int(layer), neuron=int(j)))
     errors = np.asarray(errors, dtype=np.float64)
     return dict(median_rel_err=float(np.median(errors)) if len(errors) else float('inf'),
                 max_rel_err=float(errors.max()) if len(errors) else float('inf'), checked=checked, epsilon=epsilon,
                 items=items, worst=sorted(items, key=lambda i: -i['rel_err'])[:10],
-                note='FP32 central differences; fd_noise_estimate = ulp(|M|) / (2 epsilon), an estimate of the '
-                     'rounding floor of each finite difference')
+                precision='fp64' if dtype == torch.float64 else 'fp32',
+                parts=dict(attribution='fp32 (instrument; FP64 accumulation of products)',
+                           finite_difference='fp64 weights, activations, gates, log-softmax and metric means'
+                           if dtype == torch.float64 else 'fp32'),
+                note='central differences; fd_noise_estimate = ulp(|M|) / (2 epsilon) in the reference precision, '
+                     'an estimate of the rounding floor of each finite difference')
 
 
 def build(record, local_root, volume_root, *, backend=None, code_sha256=None):

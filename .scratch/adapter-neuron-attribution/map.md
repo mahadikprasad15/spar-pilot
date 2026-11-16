@@ -42,6 +42,8 @@
 
 - 2026-11-14 (user + Codex): review round 5 — fixed 5 and 6; 1–4 deferred until before an unattended overnight launch (open items on ticket 11). Next: the supervised 06a Colab rehearsal; fix only what it reveals.
 
+- 2026-11-16 (user): 06a r3 finite-difference failure diagnosed as FP32 noise in the reference (attribution correct; FP64 max 0.078 vs FP32 60.8 on gold-sft). Decision: FP64 finite-difference reference, ε = 0.01, tolerances unchanged; its memory is a qualification check. See `06a-r3-fd-diagnosis.md`.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.
