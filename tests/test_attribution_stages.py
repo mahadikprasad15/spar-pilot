@@ -669,3 +669,14 @@ def test_r6_2_invariance_uses_only_exercised_fitting_budgets():
     assert st.invariance_budgets(dict(candidates=[skipped, fit(4096)], selected=4096)) == [4096]
     rows = [dict(id='long', input_ids=list(range(2049)))]
     assert st.longest_probe(rows, 2048) is None  # the packer itself refuses it
+
+
+def test_deferred_pilot_comparison_is_reported_as_deferred(tmp_path):
+    record = launch(tmp_path, run_id='production-cpu-2', mode='production', expected_arms=PRODUCTION_ARMS)
+    record['stage_d'] = dict(record['stage_d'], pilot_results={}, pilot_comparison='deferred')
+    backend, stops = TinyBackend(tmp_path), []
+    summary = chain(tmp_path, record, backend, stops).run()
+    assert summary['state'] == 'complete', json.dumps(summary, default=str)[:2000]
+    report = json.loads((tmp_path / 'local' / st.REPORT_DIR / 'report.json').read_text())
+    comparison = report['stage_d']['pilot_comparison']
+    assert comparison['available'] is False and 'deferred' in comparison['reason']

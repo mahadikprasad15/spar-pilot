@@ -154,7 +154,7 @@ def unresolved(value, prefix=''):
 
 # Launch-record values that are text; every other value must be a number (int or float, never bool). PyYAML
 # reads an unsigned exponent such as ``19.5e12`` as text (Pod launch 2 failed 12 minutes in on exactly that).
-TEXT_FIELDS = ('schema', 'run_id', 'mode', 'rehearsal_label', 'code_commit', 'pod_id', 'volume_identity', 'export_repo',
+TEXT_FIELDS = ('stage_d.pilot_comparison', 'schema', 'run_id', 'mode', 'rehearsal_label', 'code_commit', 'pod_id', 'volume_identity', 'export_repo',
                'pod_stop_commands[*]', 'expected_arms[*]', 'tolerances.finite_difference.precision',
                'tolerances.resolution_floor', 'qualification.fd_arms[*]', 'stage_d.early_stop_rule.kind',
                'stage_d.pilot_results.*.path', 'inputs.*')
@@ -211,9 +211,14 @@ def load_launch_record(path, *, code_commit):
     if record['mode'] == 'production':
         if sorted(record['expected_arms']) != sorted(PRODUCTION_ARMS):
             raise LaunchRefused('production must expect all six arms; missing arms are refused')
-        if sorted(record['stage_d'].get('pilot_results', {})) != STAGE_D_ARMS:
+        deferral = record['stage_d'].get('pilot_comparison')
+        if deferral not in (None, 'deferred'):
+            raise LaunchRefused("stage_d.pilot_comparison must be 'deferred' or absent")
+        # User decision 2026-11-16: the item-level pilot comparison may be deferred (Stage D responses are sealed).
+        if deferral != 'deferred' and sorted(record['stage_d'].get('pilot_results', {})) != STAGE_D_ARMS:
             raise LaunchRefused('production needs saved pilot results for gold-sft and online-grpo '
-                                '(stage_d.pilot_results) for the item-level comparison')
+                                "(stage_d.pilot_results) for the item-level comparison, or "
+                                "stage_d.pilot_comparison: deferred")
     elif record['mode'] == 'rehearsal':
         if not str(record.get('rehearsal_label', '')).startswith('rehearsal'):
             raise LaunchRefused('a rehearsal needs an explicit rehearsal label for its expected arm set')

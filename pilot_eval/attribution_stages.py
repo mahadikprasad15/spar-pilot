@@ -493,6 +493,10 @@ class Stages:
         if self.rehearsal:
             out['pilot_comparison'] = dict(available=False, reason='rehearsal: no pilot items')
             return out
+        if self.record['stage_d'].get('pilot_comparison') == 'deferred':
+            out['pilot_comparison'] = dict(available=False, reason='deferred by the user (2026-11-16): every Stage D '
+                                                                   'response is sealed for a later comparison')
+            return out
         root = Path(self.record['inputs'].get('artifact_root', '.'))
         _, gold = self._cohort()
         for arm, spec in sorted(self.record['stage_d'].get('pilot_results', {}).items()):

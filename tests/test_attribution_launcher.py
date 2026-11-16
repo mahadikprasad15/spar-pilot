@@ -116,3 +116,33 @@ def test_r7_1_an_owned_startup_failure_still_stops_the_pod_promptly(pod):
     assert summary['reason'] == 'writer-exited-without-completing'
     assert deadline_summary['stop'] == 'requested' and time.time() - started < 60
     assert pod['stops'].read_text().split() == ['stop', 'pod', 'podtest1']
+
+
+AFTER = REPO / 'scripts' / 'attribution_after_rehearsal.sh'
+
+
+def after_rehearsal(tmp_path, state):
+    vol, bin_dir = tmp_path / 'vol', tmp_path / 'bin'
+    (vol / 'attribution/chain').mkdir(parents=True)
+    (vol / 'attribution/chain/done').write_text(state + '\n')
+    bin_dir.mkdir()
+    held = bin_dir / 'runpodctl.held'  # held aside during the rehearsal
+    held.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "stops.log"}\n')
+    held.chmod(0o755)
+    env = dict(os.environ, HF_TOKEN='x', RUNPOD_POD_ID='podtest1', VOL=str(vol), WORK=str(tmp_path),
+               REPO=str(tmp_path / 'not-a-repo'), RUNPODCTL=str(bin_dir / 'runpodctl'), POLL='1')
+    result = subprocess.run(['bash', str(AFTER)], env=env, capture_output=True, text=True, timeout=60)
+    return result, vol, tmp_path / 'stops.log', bin_dir
+
+
+def test_after_a_failed_rehearsal_production_never_starts_and_the_pod_stops(tmp_path):
+    result, vol, stops, bin_dir = after_rehearsal(tmp_path, 'failed')
+    assert result.returncode != 0 and 'production not started' in result.stdout
+    assert stops.read_text().split() == ['stop', 'pod', 'podtest1']
+    assert (vol / 'attribution').exists() and (bin_dir / 'runpodctl').exists()  # nothing moved; stop restored
+
+
+def test_after_a_complete_rehearsal_a_failed_handover_still_stops_the_pod(tmp_path):
+    result, vol, stops, bin_dir = after_rehearsal(tmp_path, 'complete')
+    assert 'git pull failed' in result.stdout and stops.read_text().split() == ['stop', 'pod', 'podtest1']
+    assert (vol / 'attribution-rehearsal').exists() and not (vol / 'attribution').exists()

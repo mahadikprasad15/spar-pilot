@@ -831,3 +831,36 @@ def test_r6_9_counts_seeds_and_budgets_must_be_integers(path, value):
         target = target[key]
     target[path[-1]] = value
     assert any(p.startswith('.'.join(path)) and 'integer' in p for p in ch.mistyped(rec))
+
+
+def test_production_with_the_pilot_comparison_deferred_loads_and_without_either_is_refused(tmp_path):
+    """User decision 2026-11-16: the production run may defer the item-level pilot comparison (all Stage D
+    responses are sealed, so it can be added later); without pilot files and without the deferral it is refused."""
+    deferred = dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item', ratio=0.5), pilot_results={},
+                    pilot_comparison='deferred')
+    assert ch.load_launch_record(sealed_record(tmp_path / 'a', stage_d=deferred), code_commit='abc123')
+    neither = dict(deferred, pilot_comparison=None)
+    neither.pop('pilot_comparison')
+    with pytest.raises(ch.LaunchRefused, match='pilot'):
+        ch.load_launch_record(sealed_record(tmp_path / 'b', stage_d=neither), code_commit='abc123')
+    with pytest.raises(ch.LaunchRefused, match='pilot_comparison'):
+        ch.load_launch_record(sealed_record(tmp_path / 'c', stage_d=dict(deferred, pilot_comparison='later')),
+                              code_commit='abc123')
+
+
+def test_the_production_record_seals_with_six_arms_and_the_approved_values(tmp_path):
+    import yaml
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-production.yaml'
+    rec = yaml.safe_load(draft.read_text())
+    assert rec['mode'] == 'production' and sorted(rec['expected_arms']) == sorted(ARMS)
+    assert rec['minimums'] == dict(discovery=120, heldout=60) and rec['stage_d']['pilot_comparison'] == 'deferred'
+    seq = tmp_path / 'prep' / rec['inputs']['sequences_dir']
+    seq.mkdir(parents=True)
+    (seq / 'manifest.json').write_text(json.dumps(dict(sources=dict(gsm8k=dict(test_parquet='t.parquet')))))
+    inputs = tmp_path / 'inputs.json'
+    inputs.write_text(json.dumps(dict(prep=str(tmp_path / 'prep'), model_dir='/m', tokenizer_dir='/t',
+                                      adapter_dirs={a: f'/{a}' for a in ARMS})))
+    path = ch.finalize_draft(draft, tmp_path / 'r.json', code_commit='abc', inputs_json=inputs, pod_id='pod1',
+                             work_dir='/root/attr')
+    sealed = ch.load_launch_record(path, code_commit='abc')
+    assert sorted(sealed['inputs']['adapter_dirs']) == sorted(ARMS)
