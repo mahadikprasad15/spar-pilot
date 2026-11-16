@@ -243,3 +243,39 @@ def test_gold_answers_read_from_the_pinned_parquet_checked_by_hash(tmp_path):
     (seq / 'manifest.json').write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match='hash'):
         at.load_gold(seq, root, rows)
+
+
+def sealed_inventory(tmp_path):
+    from pilot_eval.training import file_hash
+    run = tmp_path / 'inventory-v2'
+    (run / 'keys').mkdir(parents=True)
+    (run / 'inventory.json').write_text(json.dumps(dict(arms={})))
+    (run / 'sources.json').write_text(json.dumps(dict(sources=[])))
+    (run / 'keys/gold-sft.json').write_text('[]')
+    (run / 'complete.json').write_text(json.dumps(dict(
+        inventory_sha256=file_hash(run / 'inventory.json'), sources_sha256=file_hash(run / 'sources.json'),
+        key_lists={'keys/gold-sft.json': file_hash(run / 'keys/gold-sft.json')})))
+    return run
+
+
+def test_06a_inventory_checked_by_its_seal_not_by_rebuilding_from_original_sources(tmp_path):
+    """06a r1: a restored inventory cannot be rebuilt from the joint audit's original source files; it is
+    verified against its own seal, and the inputs actually used are bound by bind_sources."""
+    run = sealed_inventory(tmp_path)
+    assert at.inventory_integrity(run, tmp_path / 'no-original-sources') == dict(
+        ok=True, problems=[], scope='seal integrity (inputs used are bound separately by bind_sources)')
+    (run / 'keys/gold-sft.json').write_text('["tampered"]')
+    out = at.inventory_integrity(run, tmp_path)
+    assert out['ok'] is False and out['problems'] == ['keys/gold-sft.json integrity']
+    (run / 'complete.json').unlink()
+    assert at.inventory_integrity(run, tmp_path)['problems'] == ['inventory-v2 is not sealed']
+
+
+def test_06a_verify_sources_defaults_to_seal_integrity(tmp_path):
+    run = sealed_inventory(tmp_path)
+    seq = tmp_path / 'seq'
+    seq.mkdir()
+    (seq / 'complete.json').write_text(json.dumps(dict(files={})))
+    (seq / 'leakage_report.json').write_text(json.dumps(dict(arms={}, cleanliness='x')))
+    record = at.verify_sources(run, seq, tmp_path, sequences_verify=lambda d: dict(ok=True, problems=[]))
+    assert record['inventory_check'] == 'seal integrity (inputs used are bound separately by bind_sources)'

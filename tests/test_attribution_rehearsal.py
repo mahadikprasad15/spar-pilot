@@ -51,3 +51,22 @@ def test_a_failing_step_is_recorded_and_later_steps_still_run(tmp_path):
 def test_only_labelled_colab_rehearsal_records_are_accepted(tmp_path):
     with pytest.raises(ValueError, match='rehearsal-colab'):
         rh.Rehearsal(launch(tmp_path), tmp_path / 'local', TinyBackend(tmp_path))
+
+
+def test_06a_steps_that_need_calibration_rows_are_skipped_with_a_reason_when_traces_fail(tmp_path):
+    backend = TinyBackend(tmp_path, strict_rehearsal=True)
+    backend.sources = lambda: (_ for _ in ()).throw(ValueError('inventory-v2 failed verification'))
+    summary = rh.Rehearsal(record(tmp_path), tmp_path / 'local', backend).run()
+    steps = summary['steps']
+    assert steps['calibration_traces']['status'] == 'failed'
+    for name in ['attribution:gold-sft', 'finite_differences:gold-sft', 'conditions:gold-sft', 'generation:gold-sft',
+                 'token_budget_probe']:
+        assert steps[name]['status'] == 'skipped' and steps[name]['reason'] == 'needs calibration_traces'
+    assert steps['corrupt_and_interrupted_units']['status'] == 'ok'  # independent steps still run
+    assert summary['failed'] == ['calibration_traces'] and 'attribution:gold-sft' in summary['skipped']
+
+
+def test_06a_attribution_with_no_rows_fails_instead_of_passing(tmp_path):
+    reh = rh.Rehearsal(record(tmp_path), tmp_path / 'local', TinyBackend(tmp_path, strict_rehearsal=True))
+    with pytest.raises(ValueError, match='no calibration rows'):
+        reh._attribution('gold-sft', [])

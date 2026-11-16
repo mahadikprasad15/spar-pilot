@@ -211,10 +211,35 @@ def _sha_file(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+INVENTORY_CHECK = 'seal integrity (inputs used are bound separately by bind_sources)'
+
+
+def inventory_integrity(run_dir, artifact_root=None):
+    """inventory-v2 verified by hash against its own seal (the first half of ``neuron_audit_inventory.verify``).
+
+    The second half of that function rebuilds the inventory from the joint audit's original source files, which a
+    restored prep bundle does not contain (06a r1). This study binds the inputs it actually uses (adapters, base
+    model, test file) to the sealed inventory in ``attribution_backend.bind_sources`` instead."""
+    from pilot_eval.training import file_hash
+    run_dir = Path(run_dir)
+    seal_path = run_dir / 'complete.json'
+    if not seal_path.is_file():
+        return dict(ok=False, problems=['inventory-v2 is not sealed'], scope=INVENTORY_CHECK)
+    seal = json.loads(seal_path.read_text())
+    problems = []
+    for name, key in (('inventory.json', 'inventory_sha256'), ('sources.json', 'sources_sha256')):
+        if not (run_dir / name).is_file() or file_hash(run_dir / name) != seal.get(key):
+            problems.append(f'{name} integrity')
+    for rel, digest in sorted(seal.get('key_lists', {}).items()):
+        if not (run_dir / rel).is_file() or file_hash(run_dir / rel) != digest:
+            problems.append(f'{rel} integrity')
+    return dict(ok=not problems, problems=problems, scope=INVENTORY_CHECK)
+
+
 def verify_sources(inventory_dir, sequences_dir, artifact_root, *, inventory_verify=None, sequences_verify=None):
-    """Refuse unless inventory-v2 and sequences-v2 verify; record their seals and per-arm provenance."""
+    """Refuse unless inventory-v2 and sequences-v2 verify by hash; record their seals and per-arm provenance."""
     if inventory_verify is None:
-        from pilot_eval.neuron_audit_inventory import verify as inventory_verify
+        inventory_verify = inventory_integrity
     if sequences_verify is None:
         from pilot_eval.neuron_audit_sequences import verify as sequences_verify
     inventory = inventory_verify(inventory_dir, artifact_root)
@@ -225,6 +250,7 @@ def verify_sources(inventory_dir, sequences_dir, artifact_root, *, inventory_ver
         raise ValueError(f"sequences-v2 failed verification: {sequences['problems']}")
     leakage = json.loads((Path(sequences_dir) / 'leakage_report.json').read_text())
     return dict(inventory_dir=str(inventory_dir), sequences_dir=str(sequences_dir),
+                inventory_check=inventory.get('scope', 'custom verifier'),
                 inventory_seal_sha256=_sha_file(Path(inventory_dir) / 'complete.json'),
                 sequences_seal_sha256=_sha_file(Path(sequences_dir) / 'complete.json'),
                 provenance=leakage['arms'], provenance_statement='no overlap with available sources',

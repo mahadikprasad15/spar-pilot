@@ -36,3 +36,14 @@
 - Cells 1–6 passed on an A100-SXM4-40GB (FP32 peak 19.5e12 picked up automatically; rehearsal record sealed at `480234a`).
 - Cell 7 stopped in `bind_sources`: the GSM8K test parquet is absent from the prep snapshot, which the message wrongly called "differs". The evidence upload worked; it held 0 files because nothing had been written.
 - Fixed: the message now says "missing" (with a test), and new notebook cell 4b fetches both GSM8K parquets at the manifest's pinned revision with hash verification. Next: rerun all cells.
+
+### 2026-11-16 — run r1, second attempt (user)
+
+- **Run:** after the GSM8K fetch (hashes matched), the covering set ran on the A100. Export, readback and clean restore succeeded (`complete`, 6 files, revision `ea082b61`).
+- **Root failure:** `calibration_traces` failed because `verify_sources` used `neuron_audit_inventory.verify`, which rebuilds the inventory from the joint audit's original source files. A restored bundle can't satisfy that anywhere but the original disk.
+- **Cascade:** every dependent step then failed confusingly, and `attribution:*` reported ok with zero rows.
+- **Fixed:**
+  - inventory-v2 is now checked by hash against its own seal (`attribution_traces.inventory_integrity`), with the inputs actually used bound by `bind_sources`, as the ticket's "verify by hash" asks;
+  - dependent steps are `skipped` with "needs calibration_traces";
+  - attribution with no rows fails;
+  - skipped steps count as missing work and give a non-zero exit.

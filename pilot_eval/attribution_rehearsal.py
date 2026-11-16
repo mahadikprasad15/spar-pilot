@@ -44,7 +44,12 @@ class Rehearsal:
         total = caps.pop('total')
         self.budget = au.Budget(self.root / 'state/rehearsal_budget.json', stage_caps=caps, total_cap=total)
 
-    def step(self, name, fn):
+    def step(self, name, fn, *, needs=()):
+        blocked = [n for n in needs if self.steps.get(n, {}).get('status') != 'ok']
+        if blocked:  # a dependent step is skipped with its reason, never run into a confusing error
+            self.steps[name] = dict(status='skipped', seconds=0.0, reason='needs ' + ', '.join(blocked))
+            print(json.dumps(dict(step=name, status='skipped', reason=self.steps[name]['reason'])), flush=True)
+            return None
         self.budget.start('qualification')
         started = time.monotonic()
         try:
@@ -65,21 +70,24 @@ class Rehearsal:
                              lambda: self.stages._traces('calibration', 1, minimum=q['calibration_minimum'])['counts'])
         rows = at.load_rows(self.root, 'calibration') if manifest is not None else []
         for arm in self.record['expected_arms']:
-            self.step(f'attribution:{arm}', lambda arm=arm: self._attribution(arm, rows))
-            self.step(f'finite_differences:{arm}', lambda arm=arm: self._fd(arm, rows, tol))
-            self.step(f'conditions:{arm}', lambda arm=arm: self._conditions(arm, rows))
-            self.step(f'generation:{arm}', lambda arm=arm: self._generation(arm))
+            needs = ('calibration_traces',)
+            self.step(f'attribution:{arm}', lambda arm=arm: self._attribution(arm, rows), needs=needs)
+            self.step(f'finite_differences:{arm}', lambda arm=arm: self._fd(arm, rows, tol), needs=needs)
+            self.step(f'conditions:{arm}', lambda arm=arm: self._conditions(arm, rows), needs=needs)
+            self.step(f'generation:{arm}', lambda arm=arm: self._generation(arm), needs=needs)
         self.step('corrupt_and_interrupted_units', self._corruption)
-        self.step('token_budget_probe', lambda: self._probe(rows))
+        self.step('token_budget_probe', lambda: self._probe(rows), needs=('calibration_traces',))
         summary = dict(label=self.record['rehearsal_label'], code_commit=self.record['code_commit'],
                        steps={k: {kk: vv for kk, vv in v.items() if kk != 'traceback'} for k, v in self.steps.items()},
-                       failed=[k for k, v in self.steps.items() if v['status'] != 'ok'],
+                       failed=[k for k, v in self.steps.items() if v['status'] == 'failed'],
+                       skipped=[k for k, v in self.steps.items() if v['status'] == 'skipped'],
                        wall_seconds=time.monotonic() - self.started, runtime=self.backend.runtime(),
                        note='rehearsal: finds bugs, qualifies nothing; never feeds production')
         au.seal_run(self.root / 'attribution/rehearsal/tracebacks',
                     {'tracebacks.json': {k: v.get('traceback') for k, v in self.steps.items()}})
         self.summary_dir = au.write_summary(self.root, summary=summary, markdown=_markdown(summary),
-                                            missing_work=summary['failed'], attempt='rehearsal', phase='final')
+                                            missing_work=summary['failed'] + summary['skipped'], attempt='rehearsal',
+                                            phase='final')
         if self.client is not None:
             summary['export'] = self._export()
         return summary
@@ -87,6 +95,8 @@ class Rehearsal:
     # --- steps ------------------------------------------------------------------------------------
 
     def _attribution(self, arm, rows):
+        if not rows:
+            raise ValueError('no calibration rows to attribute')
         inst = self.stages._instrument(self.backend.load(arm))
         units = self.stages.units
         out, results = None, []
@@ -230,6 +240,8 @@ def _markdown(summary):
     lines += [f"| {k} | {v['status']} | {v['seconds']:.1f} |" for k, v in summary['steps'].items()]
     if summary['failed']:
         lines += ['', 'Failed steps (tracebacks in attribution/rehearsal/tracebacks): ' + ', '.join(summary['failed'])]
+    if summary.get('skipped'):
+        lines += ['', 'Skipped (a step they need failed): ' + ', '.join(summary['skipped'])]
     return '\n'.join(lines) + '\n'
 
 
@@ -246,8 +258,10 @@ def main(argv=None):
     backend = TransformersBackend(record, Path(args.work) / 'volume')
     summary = Rehearsal(record, Path(args.work) / 'local', backend, client=OnlineHubProcess(timeout=1800),
                         clean_root=args.clean_root).run()
-    print('REHEARSAL SUMMARY:', json.dumps(dict(failed=summary['failed'], export=summary.get('export')), default=str))
-    return 0 if not summary['failed'] and summary.get('export', {}).get('status') == 'ok' else 1
+    print('REHEARSAL SUMMARY:', json.dumps(dict(failed=summary['failed'], skipped=summary['skipped'],
+                                                export=summary.get('export')), default=str))
+    return 0 if not summary['failed'] and not summary['skipped'] and summary.get('export', {}).get('status') == 'ok' \
+        else 1
 
 
 if __name__ == '__main__':
