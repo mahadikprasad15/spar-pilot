@@ -49,7 +49,39 @@ Summary (gold-sft trace, 24 comparisons): FP64 reference max 0.078; FP32 at ε =
 - **The remaining few percent** sit on the smallest effects. They match the attribution's own FP32 rounding (absolute ~1e-6), which a CPU check also shows: with an FP64 reference only effects of ~1e-7 disagree.
 - **Decision (user, 2026-11-16):** FP64 finite-difference reference, ε = 0.01, tolerances unchanged.
 
-## Still to record
+## online-grpo (diagnostic 3, code `038c4da`): the Pod's own check, FP32 vs FP64 reference
 
-- online-grpo with the FP64 reference (diagnostic 3).
-- **Residual risk.** The gate is relative. A checked single-neuron effect of ~1e-6 on the Pod's calibration rows could still exceed 0.20 because of the attribution's own FP32 rounding. This is a measured limit, not a reason to loosen the tolerance. If it occurs, qualification stops and the decision returns to the user.
+| Reference | Median | Max | Passes | Peak GPU memory (A100-40GB) |
+| --- | --- | --- | --- | --- |
+| FP32, ε = 0.01 | 0.0291 | 1.925 | no | 15.0 GB |
+| FP64, ε = 0.01 | 0.0021 | **0.926** | **no** | 27.4 GB |
+
+Parts: attribution FP32 (instrument, FP64 accumulation of products); finite difference FP64 throughout.
+
+Comparisons that exceed 0.20 with the FP64 reference (all trace metric, single neurons, `down_proj` layer 14):
+
+| neuron | row | attribution (FP32) | FD (FP64) | abs error | rel error |
+| --- | --- | --- | --- | --- | --- |
+| 8178 | 3118 | +6.423e-08 | +8.700e-07 | 8.1e-07 | 0.926 |
+| 5801 | 3118 | −5.944e-07 | −1.213e-06 | 6.2e-07 | 0.510 |
+| 8178 | 3975 | +5.311e-06 | +3.875e-06 | 1.4e-06 | 0.371 |
+| 5801 | 3975 | +4.220e-06 | +3.220e-06 | 1.0e-06 | 0.311 |
+| 6622 | 3118 | −3.352e-06 | −2.738e-06 | 6.1e-07 | 0.224 |
+| 6622 | 3975 | +1.050e-05 | +1.316e-05 | 2.7e-06 | 0.202 |
+
+Every other comparison is ≤ 0.09: every adapter (trace and stop), and every stop-pull neuron (effects ~1e-3,
+≤ 0.066). The adapter-level trace comparisons show the same absolute floor: attribution +9.773e-04 vs FP64
++9.754e-04 (1.9e-6); −2.037e-04 vs −2.029e-04 (8e-7).
+
+**Reading.** The FP64 reference is effectively the exact slope; both models have identical weights (FP32 cast
+exactly to FP64). What remains is the FP32 attribution's own rounding: an absolute error of about 1e-6 to 3e-6 per
+row on the trace metric. That is invisible on adapters (~1e-3) and on stop-pull neurons (~1e-3), but it is the same
+size as online-grpo's trace neuron effects (~1e-7 to 1e-5), so their relative error is large. gold-sft passed only
+because its checked trace neurons are larger (~1e-5 to 7e-5).
+
+**Status.** The FP64 reference alone does not make the gate pass for online-grpo. On the Pod, qualification would
+stop before production. A decision is needed (see the 06a ticket).
+
+## Still to record
+- ~~online-grpo with the FP64 reference~~ (done above).
+- **Residual risk (now observed on online-grpo).** The gate is relative. A checked single-neuron effect of ~1e-6 on the Pod's calibration rows could still exceed 0.20 because of the attribution's own FP32 rounding. This is a measured limit, not a reason to loosen the tolerance. If it occurs, qualification stops and the decision returns to the user.

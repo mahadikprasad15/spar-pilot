@@ -82,3 +82,13 @@
   - The launch record must state `finite_difference.precision`.
   - The 06a driver runs the same check.
 - **Pending:** online-grpo with the FP64 reference (diagnostic 3, given to the user). The FP64 check's memory on the Pod is measured by the supervised Pod run's qualification.
+
+### 2026-11-16 — diagnostic 3 (online-grpo): the FP64 reference still fails; decision needed
+
+- **Pod check, FP64 reference:**
+  - median 0.0021, **max 0.926**, so it fails the proposed max of 0.20;
+  - peak memory 27.4 GB on the 40 GB card (fits the 80% rule);
+  - the FP32 reference gave median 0.029 and max 1.925.
+- **Where it fails:** all six failures are trace-metric single neurons with effects of 6e-8 to 1.3e-5. The absolute errors are 6e-7 to 2.7e-6. That is the FP32 attribution's own rounding floor, which adapter-level trace comparisons also show (~1e-6 to 2e-6 absolute).
+- **What is clean:** every adapter (trace and stop) and every stop-pull neuron is at ≤ 0.09. Full table: `06a-r3-fd-diagnosis.md`.
+- **Open decision (user):** how to handle checks whose true effect is at the FP32 attribution's precision floor. Options are on this ticket's thread in the conversation of 2026-11-16 and summarised in `06a-r3-fd-diagnosis.md`. No tolerance has been changed.
