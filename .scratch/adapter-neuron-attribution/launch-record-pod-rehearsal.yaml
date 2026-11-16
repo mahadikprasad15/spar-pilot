@@ -12,9 +12,9 @@
 #
 # Legend: [measured 06a] / [approved <date>] / [spec] / [approved 2026-11-16] / [user]
 schema: adapter-neuron-attribution/launch-record-v1
-run_id: rehearsal-pod-2
+run_id: rehearsal-pod-3
 mode: rehearsal
-rehearsal_label: rehearsal-pod-2
+rehearsal_label: rehearsal-pod-3
 code_commit: null                       # filled by `seal` from the checkout
 expected_arms: [gold-sft, online-grpo]  # spec: Pod rehearsal = 2 arms
 

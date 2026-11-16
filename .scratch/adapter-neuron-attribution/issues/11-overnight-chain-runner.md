@@ -32,6 +32,8 @@ The code needs these values, and the spec and candidate plan don't give them. Th
 
 - 2026-11-16 (agent): Review round 6 (`review-round-6.md`, `review-response-round-6.md`): points 1–5, 7–9 fixed test-first. Still open before an unattended launch, with round-5 items 1–3: **cap checks inside qualification loops** (round 6, 6) and the real-backend CPU integration test (in progress).
 
+- 2026-11-16 (agent): Review round 7 fixed (`710d2af`: launcher lock + precheck before ownership; boxed no-run message). Real-backend whole-chain CPU test done (`0f6d46c`). Next: supervised Pod rehearsal `rehearsal-pod-3` (move `$VOL/attribution` to `attribution-rehearsal-pod-2` first). Still open before unattended production: cap checks inside qualification (r6, 6) and round-5 items 1–3.
+
 ## Answer
 
 2026-11-13 — `pilot_eval/attribution_chain.py`, `pilot_eval/attribution_stages.py`, `pilot_eval/attribution_backend.py`, `scripts/attribution_watchdog.sh`, `scripts/attribution_overnight.sh`. Tests (CPU, every external call mocked): `tests/test_attribution_chain.py` (28), `tests/test_attribution_stages.py` (2), `tests/test_attribution_backend.py` (2).

@@ -67,7 +67,7 @@ aside first: the chain's volume paths are fixed, and a new record needs a new ru
 
 ```bash
 source /root/venv/bin/activate && which python
-[ -d $VOL/attribution ] && mv $VOL/attribution $VOL/attribution-<previous run_id>
+[ -d $VOL/attribution ] && mv $VOL/attribution $VOL/attribution-rehearsal-pod-2
 bash scripts/attribution_overnight.sh $WORK/launch_record.json $WORK/local $VOL 2>&1 | tee $WORK/launch.console.log
 ```
 
@@ -78,7 +78,7 @@ bash scripts/attribution_overnight.sh $WORK/launch_record.json $WORK/local $VOL 
 
 ## 6. Afterwards (the Pod is stopped)
 
-Results are on sl-0 (`$VOL/attribution/…`) and in the HF dataset (label `rehearsal-pod-2`). To read them, start a
+Results are on sl-0 (`$VOL/attribution/…`) and in the HF dataset (label `rehearsal-pod-3`). To read them, start a
 cheap CPU Pod with sl-0 attached and send back:
 
 ```bash

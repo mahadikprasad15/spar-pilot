@@ -18,7 +18,7 @@ attribution tests pass on CPU. Nothing here was run on a GPU.
 
 ## The real-path CPU test (Codex's "next step")
 
-Agreed; this is the test that would have caught Pod launches 1 and 2. Status: not built yet in this round. Plan:
+Agreed; this is the test that would have caught Pod launches 1 and 2. **Done in `0f6d46c`** (`tests/test_attribution_realpath.py`; the whole rehearsal chain completes in ~45 s on CPU, and putting back either Pod bug makes it fail with the Pod's exact error). Original plan, as built:
 a tiny random Qwen2 + rank-1 PEFT snapshot and a real `tokenizers` WordLevel tokenizer with a Qwen-shaped chat
 template, written to disk; a sealed inventory and a sequences-v2 run produced by the real
 `neuron_audit_sequences.prepare` with that tokenizer; a GSM8K-shaped test parquet; the launch record built from a fresh
