@@ -515,6 +515,8 @@ class Stages:
         items, gold = self._cohort()
         by_id = {r['id']: r for r in items}
         batches = [[r['id'] for r in items[i:i + size]] for i in range(0, len(items), size)]
+        # Edited-checkpoint verification runs on an allowed rehearsal prompt, never a cohort one (review r6, 5).
+        probe = self.backend.rehearsal_items()[0]['prompt_ids']
         runs = [('untuned', 'reference')] + [(arm, c) for arm, cs in STAGE_D_RUNS.items() if arm in self.arms
                                               for c in cs]
         out = {}
@@ -546,7 +548,7 @@ class Stages:
                 if generator is None:  # built only when some batch still needs generating
                     generator, edit = self.backend.stage_d_generator(
                         None if arm == 'untuned' else arm, adapters, size, self.root / EDITED_DIR / arm / condition,
-                        probe_ids=items[0]['prompt_ids'])
+                        probe_ids=probe)
                     if edit is not None:
                         ctx.expect(runs=[str((directory / 'edit').relative_to(self.root))])
                         if not (directory / 'edit' / 'complete.json').is_file():

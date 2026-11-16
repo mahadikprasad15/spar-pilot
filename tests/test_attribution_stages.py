@@ -298,6 +298,9 @@ def test_production_chain_runs_every_real_stage_end_to_end(tmp_path):
     sd = report['stage_d']
     assert sd['early_stop_reference']['rule']['ratio'] == 0.5 and 'untuned|reference' in sd['outcomes']
     assert set(sd['pilot_comparison']) == {'gold-sft', 'online-grpo'} and sd['pilot_comparison']['gold-sft']['n'] == 5
+    # review round 6 (5): edit verification never runs a cohort prompt, only an allowed rehearsal one
+    allowed = {tuple(r['prompt_ids']) for r in backend.rehearsal_items()}
+    assert backend.probes and all(tuple(p) in allowed for p in backend.probes)
     md = (local / st.REPORT_DIR / 'report.md').read_text()
     assert '## Stage D' in md and 'early-stop rate' in md and '## Concentration' in md and 'REHEARSAL' not in md
     qual = json.loads((local / st.QUAL_DIR / 'qualification.json').read_text())
