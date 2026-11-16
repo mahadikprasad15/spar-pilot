@@ -57,3 +57,17 @@
   - interventions are evaluated in batches packed to the smallest sweep budget;
   - the driver frees cached CUDA memory after every step.
 - Production is not affected: its selection is the frozen discovery freeze built from sealed units, and Stage C already runs in packed batches.
+
+### 2026-11-16 — run r3 (user): every step passed; the finite-difference gate would fail
+
+- **All 11 steps ok; export and clean restore `complete` (135 files, revision `c5ee6c08`).**
+  - No-op hook: ΔL = 0 and KL = 0 exactly.
+  - Edited checkpoints: logits bit-identical to the gate.
+  - Interventions ordered sensibly: group > single ≈ full `down_proj` > 64-neuron read > constant read.
+- **Attribution memory (A100-40GB):** about 15 GB fixed plus about 2.5 MB per token. 1,808 tokens used 21.4 GB; 4,068 used 31.6 GB; 8k and above ran out of memory. Throughput was about 1,100 tokens/s at 2–4k tokens.
+- **Time:** calibration traces (25 questions, batch 1) took 303 s; generation dominates.
+- **Finite differences against the proposed tolerances:**
+  - gold-sft: median 0.008, max **60.8**;
+  - online-grpo: median 0.029, max **1.92**.
+  On the Pod the automatic sign-off would stop at qualification. **Not resolved and not loosened.**
+- **Diagnostic:** `finite_difference_check` now reports every comparison and the 10 worst, with an FP32 noise estimate (`d106108`; reporting only). A Colab diagnostic cell was given to the user. Pending: whether the large errors are rounding noise on tiny effects or a real error. Any change to the check is the user's decision.
