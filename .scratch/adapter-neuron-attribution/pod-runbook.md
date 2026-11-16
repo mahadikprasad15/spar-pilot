@@ -24,6 +24,9 @@ $PY -m pip install -q torch==2.9.0 --index-url https://download.pytorch.org/whl/
 $PY -m pip install -q transformers==4.57.6 peft==0.18.0 accelerate==1.12.0 huggingface-hub==0.36.0 \
     tokenizers==0.22.1 safetensors pyyaml pyarrow jinja2 nvidia-ml-py
 export PYTHONUNBUFFERED=1 CUBLAS_WORKSPACE_CONFIG=:4096:8 HF_HUB_ENABLE_HF_TRANSFER=0 PYTHONPATH=$REPO
+# HF's cache must be on the container disk: through the sl-0 volume (/workspace, geesefs) downloads came back
+# empty without error (Pod rehearsal pod-1, docs/agents/experiment-lessons.md).
+export HF_HOME=/root/hf-home
 cd $REPO && mkdir -p $WORK
 ```
 
