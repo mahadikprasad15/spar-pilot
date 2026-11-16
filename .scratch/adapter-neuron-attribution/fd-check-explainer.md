@@ -137,3 +137,11 @@ few-percent residual in FP64 sits on the smallest effects (~1e-5) and matches th
 | All Stage C / Stage D measurements | FP32 |
 
 The FP64 copy's peak memory is measured in qualification and must fit the memory fraction.
+
+## 11. Resolution (diagnostic 4, 2026-11-16)
+
+The earlier "FP64" reference still computed Qwen2's attention softmax, RMSNorm and RoPE in FP32. A truly FP64
+reference (`full_fp64`) brings the ordinary FP32 attribution into agreement to within 5e-5 on both arms, including
+the single-neuron effects that had failed. The instrument was right throughout; the cross-check needed a genuinely
+FP64 model. Production keeps FP32 attribution with that FP64 reference, and the tolerances are unchanged. Numbers:
+`06a-r3-fd-diagnosis.md`.

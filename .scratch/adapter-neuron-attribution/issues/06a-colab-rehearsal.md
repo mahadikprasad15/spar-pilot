@@ -101,3 +101,9 @@
   - FP32 attribution against the full-FP64 reference;
   - FP64 attribution against the full-FP64 reference;
   with the peak memory and time of each.
+
+### 2026-11-16 — diagnostic 4: resolved
+
+- FP32 attribution vs the truly FP64 reference: online-grpo max **5e-5**, gold-sft max **1e-5**. Both pass the unchanged tolerances (median ≤ 0.05, max ≤ 0.20) by more than three orders of magnitude.
+- The old partial-FP64 reference reproduced the online-grpo failure (max 0.926).
+- FP64 attribution would agree exactly but costs about 9 GB more (36.1 vs 27.4 GB peak on 40 GB); it is not needed. Production keeps FP32 attribution, with the FP64 (`full_fp64`) finite-difference reference. Full table: `06a-r3-fd-diagnosis.md`.

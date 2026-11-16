@@ -44,6 +44,8 @@
 
 - 2026-11-16 (user): 06a r3 finite-difference failure diagnosed as FP32 noise in the reference (attribution correct; FP64 max 0.078 vs FP32 60.8 on gold-sft). Decision: FP64 finite-difference reference, ε = 0.01, tolerances unchanged; its memory is a qualification check. See `06a-r3-fd-diagnosis.md`.
 
+- 2026-11-16: diagnostic 4 — the FP64 reference was partly FP32 (Qwen2 softmax/RMSNorm/RoPE); with `full_fp64` the FP32 attribution agrees to ≤ 5e-5 on both arms. FP32 attribution kept; option A (FP64 attribution) not needed. See `06a-r3-fd-diagnosis.md`.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

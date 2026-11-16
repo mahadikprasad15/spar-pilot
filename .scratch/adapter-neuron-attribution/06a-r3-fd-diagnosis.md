@@ -97,3 +97,30 @@ The conclusion that the residual errors are the FP32 attribution's own rounding 
 established**. On the CPU fixture, a truly FP64 reference (`attribution_instrument.full_fp64`, which computes those
 three steps in FP64) brings even the ordinary FP32 attribution to agreement within 1.1e-4. The same comparisons had
 disagreed by up to 13× against the partly-FP32 reference. Diagnostic 4 repeats this on the real model.
+
+## Diagnostic 4 (code `419f9a3`, Colab A100-40GB): resolved
+
+Same 4 calibration rows, ε = 0.01, 48 comparisons per arm (3 adapters + 3 neurons × 2 metrics × 4 rows).
+
+| Arm | Check | Median | Max | Pass | Peak GPU | Time |
+| --- | --- | --- | --- | --- | --- | --- |
+| online-grpo | A: FP32 attribution vs old partial-FP64 reference | 0.00207 | 0.926 | no | 27.4 GB | 13 s |
+| online-grpo | **B: FP32 attribution vs full-FP64 reference** | 0.00000 | **0.00005** | **yes** | 27.4 GB | 13 s |
+| online-grpo | C: FP64 attribution vs full-FP64 reference | 0.00000 | 0.00000 | yes | 36.1 GB | 13 s |
+| gold-sft | A | 0.00051 | 0.078 | yes | 27.4 GB | 13 s |
+| gold-sft | **B** | 0.00000 | **0.00001** | **yes** | 27.4 GB | 13 s |
+| gold-sft | C | 0.00000 | 0.00000 | yes | 36.1 GB | 13 s |
+
+Attribution pass on 4 rows: FP32 27.4 GB / 1.6 s; FP64 36.1 GB / 1.8 s. Peaks include the resident FP32 arm, the
+untuned model and, where used, the FP64 copy.
+
+Under B the previously failing comparisons agree exactly to the printed precision. For example, online-grpo
+neuron 8178: attribution +6.423e-08, FD +6.423e-08; neuron 5801: −5.944e-07 vs −5.944e-07.
+
+**Conclusion.**
+- **The FP32 attribution is correct**, to ≤ 5e-5 relative, including effects down to ~1e-7.
+- The whole of the 06a r3 failure came from the finite-difference reference:
+  - first from FP32 central-difference noise;
+  - then from Qwen2's FP32 softmax, RMSNorm and RoPE inside the nominally FP64 copy.
+- With a truly FP64 reference (`full_fp64`) the gate passes with a large margin under the unchanged tolerances.
+- **FP64 attribution (option A) is not needed.** Production attribution stays FP32 as specified. The FP64 instrument mode stays available for diagnostics only.
