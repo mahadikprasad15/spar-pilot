@@ -692,10 +692,20 @@ def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, n
             return am.trace_loglik(logits, ids, masks).detach().cpu().numpy()
         return am.stop_pull(logits, masks, stop_ids=stop_ids)[0].detach().cpu().numpy()
 
-    def compare(name, got, kw_up, kw_down):
+    baseline = {name: metric(name) for name in METRICS}  # metric values at g = 1, for the noise estimate
+    items = []
+
+    def compare(name, got, kw_up, kw_down, *, kind, target):
         fd = -(metric(name, **kw_up) - metric(name, **kw_down)) / (2 * epsilon)
         ok = ~np.isnan(fd) & (np.abs(fd) > 0)
-        errors.extend(np.abs(got[ok] - fd[ok]) / np.abs(fd[ok]))
+        rel = np.abs(got[ok] - fd[ok]) / np.abs(fd[ok])
+        errors.extend(rel)
+        for k, r in enumerate(np.flatnonzero(ok)):  # reporting only (06a r3); the pass rule is unchanged
+            value = float(baseline[name][r])
+            items.append(dict(kind=kind, metric=name, target=target, row=rows[r]['id'], attribution=float(got[r]),
+                              finite_difference=float(fd[r]), abs_err=float(abs(got[r] - fd[r])),
+                              rel_err=float(rel[k]), metric_value=value,
+                              fd_noise_estimate=float(np.spacing(np.float32(abs(value)))) / (2 * epsilon)))
 
     for name in METRICS:
         mean = np.nanmean(out['attr'][name], 0)
@@ -703,19 +713,23 @@ def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, n
             continue
         for index in ab.top_k(np.nan_to_num(mean), adapters):
             compare(name, out['attr'][name][:, index], dict(gates={index: torch.full((n, 1, 1), 1 + epsilon, device=ids.device)}),
-                    dict(gates={index: torch.full((n, 1, 1), 1 - epsilon, device=ids.device)}))
+                    dict(gates={index: torch.full((n, 1, 1), 1 - epsilon, device=ids.device)}),
+                    kind='adapter', target=dict(adapter=int(index)))
             checked.append(dict(metric=name, adapter=int(index)))
         layer = max(inst.down_index, key=lambda l: abs(np.nan_to_num(mean[inst.down_index[l]])))
         values = np.nanmean(out['neuron'][name][layer], 0)
         for j in np.argsort(-np.abs(values))[:neurons]:
             compare(name, out['neuron'][name][layer][:, j],
                     dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 + epsilon, device=ids.device))),
-                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 - epsilon, device=ids.device))))
+                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 - epsilon, device=ids.device))),
+                    kind='neuron', target=dict(layer=int(layer), neuron=int(j)))
             checked.append(dict(metric=name, layer=int(layer), neuron=int(j)))
     errors = np.asarray(errors, dtype=np.float64)
     return dict(median_rel_err=float(np.median(errors)) if len(errors) else float('inf'),
                 max_rel_err=float(errors.max()) if len(errors) else float('inf'), checked=checked, epsilon=epsilon,
-                note='FP32 central differences; resolution about ulp(|M|)/epsilon')
+                items=items, worst=sorted(items, key=lambda i: -i['rel_err'])[:10],
+                note='FP32 central differences; fd_noise_estimate = ulp(|M|) / (2 epsilon), an estimate of the '
+                     'rounding floor of each finite difference')
 
 
 def build(record, local_root, volume_root, *, backend=None, code_sha256=None):

@@ -551,3 +551,22 @@ def test_r5_5_qualification_stops_when_even_the_batch_1_reference_does_not_fit(t
         st.Stages._traces = real_traces
     assert summary['state'] == 'stopped-before-production'
     assert 'batch size 1' in summary['stop_reason'] and summary.get('signoff') is None
+
+
+def test_06a_r3_finite_difference_check_reports_every_comparison_with_its_noise_estimate():
+    """06a r3: median 0.008 but max 60.8 on gold-sft; per-comparison detail is needed to tell FP32 rounding
+    noise on tiny effects from a real error. Reporting only: the pass rule is unchanged."""
+    from pilot_eval import attribution_instrument as ai
+    from tests.test_attribution_instrument import rows as fixture_rows, tiny
+    model = tiny()
+    inst = ai.Instrument(model, stop_ids=[31], pad_token_id=0, identity_rtol=1e-4)
+    out = st.finite_difference_check(model, inst, fixture_rows(), [31], epsilon=1e-2, adapters=2, neurons=2)
+    items = out['items']
+    assert {i['kind'] for i in items} == {'adapter', 'neuron'} and {i['metric'] for i in items} == {'trace', 'stop'}
+    for item in items:
+        assert set(item) >= {'kind', 'metric', 'target', 'row', 'attribution', 'finite_difference', 'abs_err',
+                             'rel_err', 'metric_value', 'fd_noise_estimate'}
+        assert item['abs_err'] == pytest.approx(abs(item['attribution'] - item['finite_difference']))
+        assert item['fd_noise_estimate'] > 0
+    assert max(i['rel_err'] for i in items) == pytest.approx(out['max_rel_err'])
+    assert sorted(out['worst'], key=lambda i: -i['rel_err']) == out['worst'] and len(out['worst']) <= 10
