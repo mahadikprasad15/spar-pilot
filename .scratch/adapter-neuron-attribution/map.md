@@ -48,6 +48,8 @@
 
 - 2026-11-16: supervised Pod rehearsal prepared — `pod-runbook.md`, `launch-record-pod-rehearsal.yaml` (values awaiting user approval); volume identity via the joint-audit sentinel; GSM8K fetch command; seal fills Pod facts and input paths.
 
+- 2026-11-16 (user): Pod rehearsal launch-record values approved as listed.
+
 ## Fog
 - Actual utilization of the joint audit's run (no NVML record exists).
 - How many base-correct rows survive.

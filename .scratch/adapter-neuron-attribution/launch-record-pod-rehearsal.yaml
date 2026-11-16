@@ -1,4 +1,4 @@
-# Adapter attribution — supervised Pod REHEARSAL launch record (draft; the user approves the values below).
+# Adapter attribution — supervised Pod REHEARSAL launch record. Values approved by the user 2026-11-16; unsealed until `seal` on the Pod.
 #
 # A machinery test on the Pod, not production: 2 arms, visible inputs only (calibration rows stand in for discovery
 # and confirmation; the 20 rehearsal GSM8K items stand in for the ADR 0001 cohort). One launch, no automatic
@@ -10,7 +10,7 @@
 # `seal` fills only empty fields: pod_id from RUNPOD_POD_ID, input paths from `neuron_audit_pod prepare`'s
 # inputs.json, the GSM8K test path from the sequences-v2 manifest. It refuses while anything else is empty.
 #
-# Legend: [measured 06a] / [approved <date>] / [spec] / [proposed: approve] / [user]
+# Legend: [measured 06a] / [approved <date>] / [spec] / [approved 2026-11-16] / [user]
 schema: adapter-neuron-attribution/launch-record-v1
 run_id: rehearsal-pod-1
 mode: rehearsal
@@ -26,7 +26,7 @@ hourly_cost_usd: null                   # [user] Pod price per hour (cost line i
 compute:
   fp32_peak_flops: 19.5e12              # A100 dense FP32 (spec sheet), MFU denominator
 
-caps_seconds:                           # [proposed: approve] from 06a timings (Colab 40 GB), with margin
+caps_seconds:                           # [approved 2026-11-16] from 06a timings (Colab 40 GB), with margin
   total: 10800                          # 3 h
   preflight: 900                        # 15 min
   qualification: 3600                   # 60 min: calibration traces ~5 min, FD 2 arms ~1 min, sweeps, batch rule
@@ -35,16 +35,16 @@ caps_seconds:                           # [proposed: approve] from 06a timings (
   stage_c: 2700                         # 2 arms x 2 metrics x <=19 conditions on ~20 rows
   stage_d: 3600                         # 9 runs x 20 items up to 1,024 tokens
   report: 1200
-watchdog_margin_seconds: 1800           # [proposed: approve]
+watchdog_margin_seconds: 1800           # [approved 2026-11-16]
 marker_stale_seconds: 900               # [approved 2026-11-14]
 timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_join: 300}   # [approved 2026-11-14]
 
 tolerances:
   finite_difference: {epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20, precision: fp64}
-  # values [proposed: approve]; precision [approved 2026-11-16]; 06a: max 5e-5 (online-grpo), 1e-5 (gold-sft)
-  neuron_sum_identity: 1.0e-4           # [proposed: approve]; enforced per example, held in 06a
-  batch_invariance: 1.0e-4              # [proposed: approve]; first real measurement is this run
-  resolution_floor: 10x measured batch-invariance discrepancy   # [proposed: approve] rule
+  # values [approved 2026-11-16]; precision [approved 2026-11-16]; 06a: max 5e-5 (online-grpo), 1e-5 (gold-sft)
+  neuron_sum_identity: 1.0e-4           # [approved 2026-11-16]; enforced per example, held in 06a
+  batch_invariance: 1.0e-4              # [approved 2026-11-16]; first real measurement is this run
+  resolution_floor: 10x measured batch-invariance discrepancy   # [approved 2026-11-16] rule
 minimums: {discovery: 10, heldout: 10}  # rehearsal: calibration stands in (06a kept 19 of 25 rows)
 qualification:
   calibration_minimum: 10               # [approved 2026-11-14]
@@ -53,27 +53,27 @@ qualification:
   fd_adapters: 5                        # spec
   fd_neurons: 3                         # spec
   head_chunk: 1024                      # [approved 2026-11-14]
-  memory_fraction: 0.80                 # [proposed: approve]; 06a FD check peak 27.4 GB on 40 GB
-token_budget_sweep: [2048, 4096, 8192, 16384, 32768, 65536]   # [proposed: approve]; 06a (40 GB): 4k fits, 8k OOM
+  memory_fraction: 0.80                 # [approved 2026-11-16]; 06a FD check peak 27.4 GB on 40 GB
+token_budget_sweep: [2048, 4096, 8192, 16384, 32768, 65536]   # [approved 2026-11-16]; 06a (40 GB): 4k fits, 8k OOM
 generation_batch_rule: {candidates: [1, 8, 16, 32, 64], items: 20, max_flips: 1, max_stop_changes: 1}
-  # [proposed: approve]; with 20 items 32 and 64 are recorded not-exercised (option A, 2026-11-14)
+  # [approved 2026-11-16]; with 20 items 32 and 64 are recorded not-exercised (option A, 2026-11-14)
 
 selection:
-  top_group: 10                         # [proposed: approve]
-  top_singles: 5                        # [proposed: approve]
-  tolerance: 0.20                       # [proposed: approve]
-  seed: 20000                           # [proposed: approve]
+  top_group: 10                         # [approved 2026-11-16]
+  top_singles: 5                        # [approved 2026-11-16]
+  tolerance: 0.20                       # [approved 2026-11-16]
+  seed: 20000                           # [approved 2026-11-16]
   random_seeds: [20001, 20002, 20003]   # [approved 2026-11-14]
-  read_size: 64                         # [proposed: approve]
+  read_size: 64                         # [approved 2026-11-16]
 statistics:
-  resamples: 10000                      # [proposed: approve]
-  seed: 1234                            # [proposed: approve]
-  alpha: 0.05                           # [proposed: approve]
-  margin: 0.25                          # [proposed: approve]
-  sparse_lower: 0.70                    # [proposed: approve]
-  dense_upper: 0.30                     # [proposed: approve]
-  gate_singles_min: 4                   # [proposed: approve]
-  null_orders: 1000                     # [proposed: approve]
+  resamples: 10000                      # [approved 2026-11-16]
+  seed: 1234                            # [approved 2026-11-16]
+  alpha: 0.05                           # [approved 2026-11-16]
+  margin: 0.25                          # [approved 2026-11-16]
+  sparse_lower: 0.70                    # [approved 2026-11-16]
+  dense_upper: 0.30                     # [approved 2026-11-16]
+  gate_singles_min: 4                   # [approved 2026-11-16]
+  null_orders: 1000                     # [approved 2026-11-16]
   null_seed: 20004                      # [approved 2026-11-14]
 
 stage_d:
