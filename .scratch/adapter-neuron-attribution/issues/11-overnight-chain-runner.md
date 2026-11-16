@@ -30,6 +30,8 @@ The code needs these values, and the spec and candidate plan don't give them. Th
 
 - 2026-11-16 (agent): Pod rehearsal launch 1 (`rehearsal-pod-1`, code `d5ab854`) failed in preflight after 24 s: `TransformersBackend.preflight` passed a path where `disk_problems` takes `local_disk(path)`. Fixed with a red/green CPU test that runs the real preflight body. Teardown ran fully on the real Pod: volume copy and HF export verified, final summary uploaded (HF `neuron-audit/rehearsal-pod-1/aff49aa4…`), Pod stopped. Setup findings: `HF_HOME` must be off the sl-0 volume (empty downloads); the launcher needs the venv active. A relaunch needs a new run ID with `$VOL/attribution` moved aside (fixed volume paths; lessons file). Relaunch named `rehearsal-pod-2` (a label only; all approved values unchanged).
 
+- 2026-11-16 (agent): Review round 6 (`review-round-6.md`, `review-response-round-6.md`): points 1–5, 7–9 fixed test-first. Still open before an unattended launch, with round-5 items 1–3: **cap checks inside qualification loops** (round 6, 6) and the real-backend CPU integration test (in progress).
+
 ## Answer
 
 2026-11-13 — `pilot_eval/attribution_chain.py`, `pilot_eval/attribution_stages.py`, `pilot_eval/attribution_backend.py`, `scripts/attribution_watchdog.sh`, `scripts/attribution_overnight.sh`. Tests (CPU, every external call mocked): `tests/test_attribution_chain.py` (28), `tests/test_attribution_stages.py` (2), `tests/test_attribution_backend.py` (2).
