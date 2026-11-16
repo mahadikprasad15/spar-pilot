@@ -40,6 +40,7 @@ class Rehearsal:
         self.stages = st.Stages(record, root, backend, code_sha256=record['code_commit'])
         self.client, self.clean_root = client, clean_root
         self.steps, self.started = {}, time.monotonic()
+        self._selections = {}
         caps = dict(record['caps_seconds'])
         total = caps.pop('total')
         self.budget = au.Budget(self.root / 'state/rehearsal_budget.json', stage_caps=caps, total_cap=total)
@@ -60,6 +61,9 @@ class Rehearsal:
                                     error=f'{type(exc).__name__}: {exc}', traceback=traceback.format_exc()[-6000:])
         print(json.dumps(dict(step=name, status=self.steps[name]['status'],
                               error=self.steps[name].get('error')), default=str), flush=True)
+        free = getattr(self.backend, 'free_memory', None)
+        if free is not None:  # a failed step must not starve the next one of GPU memory
+            free()
         self.budget.boundary('qualification')
         return self.steps[name].get('result')
 
@@ -123,17 +127,27 @@ class Rehearsal:
         return fd
 
     def _calibration_selection(self, arm, rows):
+        """Selection from the units the attribution step sealed (one per calibration row); no GPU work.
+
+        06a r2: recomputing attribution over all calibration rows in one batch ran out of memory on a 40 GB A100."""
+        if arm in self._selections:
+            return self._selections[arm]
         inst = self.stages._instrument(self.backend.load(arm))
-        out = inst.attribute(rows)
-        mean = np.nanmean(out['attr']['trace'], 0)
+        parts = [self.stages.units.read(au.unit_key('ab', arm, batch=i))[0] for i in range(len(rows))]
+
+        def cat(key):
+            return np.concatenate([p[key] for p in parts]).astype(np.float64)
+
+        mean = np.nanmean(cat(('examples', 0, 'attr_trace')), 0)
         down = max(inst.down_index.values(), key=lambda i: abs(mean[i]))
         layer = [l for l, i in inst.down_index.items() if i == down][0]
         position = sorted(inst.down_index).index(layer)
-        cbar = float(out['signed_sum_c'][:, position].sum() / out['token_count'].sum())
-        order = sorted(range(out['neuron']['trace'][layer].shape[1]),
-                       key=lambda j: -np.sign(mean[down]) * np.nanmean(out['neuron']['trace'][layer][:, j]))
-        return dict(top=ab.top_k(mean, self.record['selection']['top_group']), down=down, layer=layer, cbar=cbar,
-                    order=order)
+        cbar = float(cat(('examples', 0, 'signed_sum_c'))[:, position].sum() / cat(('examples', 0, 'token_count')).sum())
+        neuron = np.nanmean(cat(('examples', layer, 'neuron_trace')), 0)
+        order = sorted(range(len(neuron)), key=lambda j: -np.sign(mean[down]) * neuron[j])
+        self._selections[arm] = dict(top=ab.top_k(mean, self.record['selection']['top_group']), down=down,
+                                     layer=layer, cbar=cbar, order=order)
+        return self._selections[arm]
 
     def _conditions(self, arm, rows):
         sel = self._calibration_selection(arm, rows)
@@ -146,8 +160,14 @@ class Rehearsal:
                           read64=dict(kind='read', layer=sel['layer'], keep=sel['order'][:read]),
                           constant=dict(kind='constant', adapter=sel['down'], cbar=sel['cbar']))
         out = {}
+        batches = st.pack(rows, min(self.record['token_budget_sweep']))  # bounded batches, never all rows at once
         for name, condition in conditions.items():
-            result = stage.evaluate(rows, condition)
+            merged = {}
+            for batch in batches:
+                part = stage.evaluate(batch, condition)
+                for key in ('delta_trace', 'delta_stop', 'kl'):
+                    merged.setdefault(key, []).append(part[key])
+            result = {k: np.concatenate(v) for k, v in merged.items()}
             out[name] = dict(mean_delta_trace=float(np.nanmean(result['delta_trace'])),
                              mean_kl=float(np.nanmean(result['kl'])),
                              stop_defined=int(np.sum(~np.isnan(result['delta_stop']))))

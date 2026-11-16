@@ -1,6 +1,8 @@
 """Ticket 06a driver on CPU: the Colab covering set with a tiny backend and a mocked Hub (nothing run on a GPU)."""
 import json
 
+import numpy as np
+
 import pytest
 
 pytest.importorskip('torch', exc_type=ImportError)
@@ -70,3 +72,45 @@ def test_06a_attribution_with_no_rows_fails_instead_of_passing(tmp_path):
     reh = rh.Rehearsal(record(tmp_path), tmp_path / 'local', TinyBackend(tmp_path, strict_rehearsal=True))
     with pytest.raises(ValueError, match='no calibration rows'):
         reh._attribution('gold-sft', [])
+
+
+def test_06a_r2_selection_reads_the_sealed_attribution_units_and_never_recomputes_on_the_gpu(tmp_path, monkeypatch):
+    """06a r2: recomputing attribution over all calibration rows in one batch ran out of GPU memory; the
+    selection must come from the units the attribution step already sealed."""
+    from pilot_eval import attribution_instrument as ai
+    reh = rh.Rehearsal(record(tmp_path), tmp_path / 'local', TinyBackend(tmp_path, strict_rehearsal=True))
+    reh.step('calibration_traces', lambda: reh.stages._traces('calibration', 1, minimum=1)['counts'])
+    rows = rh.at.load_rows(reh.root, 'calibration')
+    reh._attribution('gold-sft', rows)
+    expected = None
+    original = ai.Instrument.attribute
+    expected = original(reh.stages._instrument(reh.backend.load('gold-sft')), rows)  # one batch, for reference
+
+    def forbidden(self, rows_, **kw):
+        raise AssertionError('selection must not run attribution on the GPU')
+
+    monkeypatch.setattr(ai.Instrument, 'attribute', forbidden)
+    sel = reh._calibration_selection('gold-sft', rows)
+    mean = np.nanmean(expected['attr']['trace'], 0)
+    assert sel['top'] == rh.ab.top_k(mean, reh.record['selection']['top_group'])
+    position = sorted(reh.stages._instrument(reh.backend.load('gold-sft')).down_index).index(sel['layer'])
+    assert sel['cbar'] == pytest.approx(expected['signed_sum_c'][:, position].sum() / expected['token_count'].sum(),
+                                        rel=1e-5)
+
+
+def test_06a_r2_interventions_are_evaluated_in_bounded_batches(tmp_path, monkeypatch):
+    reh = rh.Rehearsal(record(tmp_path), tmp_path / 'local', TinyBackend(tmp_path, strict_rehearsal=True))
+    reh.step('calibration_traces', lambda: reh.stages._traces('calibration', 1, minimum=1)['counts'])
+    rows = rh.at.load_rows(reh.root, 'calibration')
+    reh._attribution('gold-sft', rows)
+    budget = min(reh.record['token_budget_sweep'])
+    seen, original = [], rh.ab.StageC.evaluate
+
+    def evaluate(self, batch, condition):
+        seen.append(len(batch) * max(len(r['input_ids']) for r in batch))
+        return original(self, batch, condition)
+
+    monkeypatch.setattr(rh.ab.StageC, 'evaluate', evaluate)
+    out = reh._conditions('gold-sft', rows)
+    assert len(seen) > 6 and max(seen) <= budget and set(out['conditions']) == {
+        'noop', 'single', 'group', 'down_full', 'read64', 'constant'}

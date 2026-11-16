@@ -47,3 +47,13 @@
   - dependent steps are `skipped` with "needs calibration_traces";
   - attribution with no rows fails;
   - skipped steps count as missing work and give a non-zero exit.
+
+### 2026-11-16 — run r2 (user)
+
+- **Passed on the A100-40GB, both arms:** calibration traces; attribution (one row per unit); finite differences; corrupt/interrupted units; token-budget probe.
+- **Failed, out of GPU memory (36 GB held), both arms:** `conditions` and `generation`. Both started with a calibration-only selection that re-ran attribution (two backward passes) over all calibration rows in one batch.
+- **Fixed:**
+  - the selection reads the units the attribution step had sealed (no GPU work, cached per arm);
+  - interventions are evaluated in batches packed to the smallest sweep budget;
+  - the driver frees cached CUDA memory after every step.
+- Production is not affected: its selection is the frozen discovery freeze built from sealed units, and Stage C already runs in packed batches.
