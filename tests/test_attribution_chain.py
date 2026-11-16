@@ -36,7 +36,8 @@ def record(**overrides):
         token_budget_sweep=[2048, 4096, 8192, 16384, 32768, 65536], watchdog_margin_seconds=1800,
         marker_stale_seconds=600, compute=dict(fp32_peak_flops=19.5e12),
         stage_d=dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item', ratio=0.5),
-                     pilot_results={'gold-sft': 'p/gold.jsonl', 'online-grpo': 'p/online.jsonl'}),
+                     pilot_results={'gold-sft': dict(path='p/gold.jsonl', filters={}),
+                                    'online-grpo': dict(path='p/online.jsonl', filters=dict(step=64))}),
         timeouts_seconds=dict(copy=60, export_attempt=60, stop_attempt=30, writer_join=10))
     base.update(overrides)
     return base
@@ -801,3 +802,18 @@ def test_a_number_given_as_text_or_bool_is_refused_at_load(tmp_path, path, value
     target[path[-1]] = value
     with pytest.raises(ch.LaunchRefused, match='.'.join(path)):
         ch.load_launch_record(sealed_record(tmp_path, **{path[0]: rec[path[0]]}), code_commit='abc123')
+
+
+def test_r6_4_pilot_filter_values_keep_their_type_and_paths_must_be_text():
+    """Review round 6 (4): the production draft filters online-grpo pilot rows by ``step: 64`` (a number that must
+    equal the rows' numeric field); only the pilot file path is text."""
+    ok = dict(stage_d=dict(pilot_results={'online-grpo': dict(path='p.jsonl', filters=dict(step=64, run='v1'))}))
+    assert ch.mistyped(ok) == []
+    bad = dict(stage_d=dict(pilot_results={'online-grpo': dict(path=7, filters={})}))
+    assert ch.mistyped(bad) and 'pilot_results.online-grpo.path' in ch.mistyped(bad)[0]
+
+
+def test_r6_4_the_production_draft_has_no_type_errors():
+    import yaml
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-draft.yaml'
+    assert ch.mistyped(yaml.safe_load(draft.read_text())) == []

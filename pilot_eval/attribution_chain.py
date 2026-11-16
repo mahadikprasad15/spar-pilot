@@ -156,8 +156,10 @@ def unresolved(value, prefix=''):
 TEXT_FIELDS = ('schema', 'run_id', 'mode', 'rehearsal_label', 'code_commit', 'pod_id', 'volume_identity', 'export_repo',
                'pod_stop_commands[*]', 'expected_arms[*]', 'tolerances.finite_difference.precision',
                'tolerances.resolution_floor', 'qualification.fd_arms[*]', 'stage_d.early_stop_rule.kind',
-               'stage_d.pilot_results.*', 'inputs.*')
+               'stage_d.pilot_results.*.path', 'inputs.*')
 NUMBER_FIELDS = ('inputs.max_new_tokens',)
+# Pilot-row filters compare with the rows' own fields, so each keeps whatever type the row has (review r6, 4).
+SCALAR_FIELDS = ('stage_d.pilot_results.*.filters.*',)
 
 
 def mistyped(value, prefix=''):
@@ -169,6 +171,8 @@ def mistyped(value, prefix=''):
         return [p for v in value for p in mistyped(v, f'{prefix}[*]')]
     if value is None:
         return []  # reported by ``unresolved``
+    if any(fnmatch.fnmatchcase(prefix, f) for f in SCALAR_FIELDS):
+        return [] if isinstance(value, (str, int, float)) else [f'{prefix} ({value!r} is not a scalar)']
     text = prefix not in NUMBER_FIELDS and any(fnmatch.fnmatchcase(prefix, f.replace('[', '[[]')) for f in TEXT_FIELDS)
     if isinstance(value, bool) or (isinstance(value, str) != text) or not isinstance(value, (str, int, float)):
         return [f'{prefix} ({value!r} is {type(value).__name__}; expected {"text" if text else "a number"})']
