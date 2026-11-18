@@ -1,0 +1,28 @@
+# Question sets. ids_sha256 = sha256 of the sorted, newline-joined IDs (pilot_eval.catalog.ids_digest).
+# prior_uses: every place the set has already been used, so later work knows what is not held out.
+cohorts:
+  gsm8k-test-cohort150:
+    description: ADR 0001 frozen GSM8K test cohort ("test-150-seed-42"), 150 questions.
+    split: test
+    dataset: openai/gsm8k main, revision 740312add88f781978c0658806c59bc2815b9866
+    size: 150
+    source: {location: local, path: plans/pilot2-sft-fp32-l4-batch8-v1/evaluation.items.json, id_field: id}
+    ids_sha256: 79692f506e5c566cabdaabaa69f704692d8b182d7046f7d378ead1ef808170ea
+    prior_uses:
+      - Pilot 2/4 greedy evaluation of gold-sft and online-grpo
+      - Pilot 4 behaviour (greedy + 8 sampled draws) for online-grpo; offline GRPO behaviour likewise
+      - Stage 0 sampling-behaviour (greedy) for sampling-sft k0/k2/k5
+      - attribution production-1 Stage D greedy generation (gold-sft, online-grpo, untuned)
+    held_out_from: [gsm8k-train-512]
+
+  gsm8k-train-512:
+    description: The 512 GSM8K training problems (seed 42) every arm was trained on.
+    split: train
+    dataset: openai/gsm8k main, revision 740312add88f781978c0658806c59bc2815b9866
+    size: 512
+    source: {location: local, path: runs/stage0/a100-stage0-v1/dataset/inputs/memberships.json, json_path: [gold],
+             id_field: problem_id}
+    ids_sha256: e15548111c6ee7eb2035f1e7e9ad7e8df6af155b563819d1933ea73334f22b31
+    prior_uses:
+      - training data for all six arms (gold texts, sampling-SFT texts, GRPO rollouts/pool)
+      - not a held-out evaluation set

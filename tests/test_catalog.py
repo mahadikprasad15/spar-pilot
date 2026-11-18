@@ -172,6 +172,17 @@ def test_unverified_evidence_needs_a_note(world):
         cat.load(world['cdir'])
 
 
+def test_arm_training_data_must_name_a_response_set(world):
+    arms = yaml.safe_load((world['cdir'] / 'arms.yaml').read_text())
+    arms['arms']['arm-a']['training_data'] = 'arm-a.sampled'
+    dump(world['cdir'] / 'arms.yaml', arms)
+    cat.load(world['cdir'])
+    arms['arms']['arm-a']['training_data'] = 'missing-set'
+    dump(world['cdir'] / 'arms.yaml', arms)
+    with pytest.raises(cat.CatalogError, match='training_data'):
+        cat.load(world['cdir'])
+
+
 def test_aliases_resolve_to_canonical_arm(world):
     catalog = cat.load(world['cdir'])
     assert cat.resolve_arm(catalog, 'old-name') == 'arm-a'
@@ -189,6 +200,14 @@ def test_find_filters_response_sets(world):
     assert [e['id'] for e in cat.find(catalog, arm='old-name', mode='sampled')] == ['arm-a.sampled']
     assert [e['id'] for e in cat.find(catalog, c_suitability='greedy-only')] == ['arm-a.greedy']
     assert failures(verify(world)) == []
+
+
+def test_find_hides_replays_unless_asked(world):
+    dump(world['cdir'] / 'responses/arm-a.copy.yaml',
+         dict(world['base'], id='arm-a.copy', kind='replay', replay_of='arm-a.sampled'))
+    catalog = cat.load(world['cdir'])
+    assert [e['id'] for e in cat.find(catalog, arm='arm-a')] == ['arm-a.sampled']
+    assert [e['id'] for e in cat.find(catalog, arm='arm-a', include_replays=True)] == ['arm-a.copy', 'arm-a.sampled']
 
 
 def test_subset_coverage_allows_missing_but_not_extra_questions(world):
@@ -223,6 +242,13 @@ def test_json_cohort_source_with_path(world):
                                           'id_field': 'problem_id'}
     dump(world['cdir'] / 'cohorts.yaml', cohorts)
     assert failures(verify(world)) == []
+
+
+def test_local_artifacts_default_to_sibling_of_catalog(world):
+    # world: tmp/artifacts and tmp/catalog are siblings, as in the repository
+    assert cat.main(['verify', '--catalog', str(world['cdir'])]) == 0
+    report = cat.verify(cat.load(world['cdir']), roots=cat.default_roots(world['cdir']))
+    assert {c['status'] for c in report['checks'] if c['entry'] == 'responses:arm-a.sampled'} == {'pass'}
 
 
 def test_cli_verify_exit_code(world, capsys):

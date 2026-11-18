@@ -1,0 +1,32 @@
+kind: evaluation
+cohort: gsm8k-test-cohort150
+question_field: id
+scorer:
+  name: gsm8k (historical)
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+id: untuned.greedy.test150.pilot2
+arm: untuned
+checkpoint_step: null
+policy:
+  mode: greedy
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+draws_per_question: 1
+c_suitability: greedy-only
+files:
+- location: local
+  path: imports/pilot4-behaviour-breakdown-2026-10-22/sft-0/responses.jsonl
+  sha256: b809596e4d77fdbf4654044ad9c3c7af9bd4e3bb7ba73cbb37a7e524006a6c5a
+  rows_total: 150
+  rows_selected: 150
+evidence:
+  status: inferred
+  checked:
+  - file sha256, row count, cohort IDs
+  note: Pilot 2 checkpoint-0 evaluation; config adapter_sha256 71ee7a33... differs from the zero adapter b26c524a...
+    on disk.

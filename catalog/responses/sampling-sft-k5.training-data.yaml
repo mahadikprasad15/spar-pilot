@@ -1,0 +1,33 @@
+kind: training-data
+cohort: gsm8k-train-512
+question_field: source_id
+scorer:
+  name: automatic eligibility (gate l4-gate-v2)
+selection:
+  correctness_filtered: true
+  gold_access: true
+  all_groups_retained: false
+  best_of_n: false
+id: sampling-sft-k5.training-data
+arm: sampling-sft-k5
+checkpoint_step: null
+policy:
+  mode: none
+draws_per_question: 1
+cohort_coverage: subset
+c_suitability: fixed-text
+generator: gold-guided proposer + greedy likelihood search from the base model, k5
+files:
+- location: hf-sampling-sft-local
+  path: unpacked/runs/sampling-sft/sampling-sft-v1/gate/l4-gate-v2/results/answers.jsonl
+  sha256: 71f09f5cb4909d5b8ee1663e867584edcefc21abaf89d0b58258f973c6605268
+  rows_total: 1939
+  select:
+    method: k5
+  rows_selected: 472
+evidence:
+  status: inferred
+  checked:
+  - file sha256, rows, IDs subset of gsm8k-train-512
+  note: Generation recipe from docs/experiments/sampling-sft.md; eligibility_origin=automatic implies correctness
+    filtering. 40 problems had no eligible answer.

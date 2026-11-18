@@ -1,0 +1,35 @@
+kind: evaluation
+cohort: gsm8k-test-cohort150
+question_field: item_id
+scorer:
+  name: gsm8k-flexible-v3
+  code_sha256: c958d2de1a6212b49fcfa2f7ac1fd215117ca8d3dbfe3ace805576ce6937eb6c
+  cap_reward: 0
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+id: offline-grpo.s8.greedy.test150
+arm: offline-grpo
+checkpoint_step: 8
+policy:
+  mode: greedy
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+draws_per_question: 1
+c_suitability: greedy-only
+files:
+- location: local
+  path: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-behaviour/behaviour/results/responses.jsonl
+  sha256: a1cd79aa24e9cf7a87d0d8db3bd15588b97e830229db662892038f4b7437be94
+  rows_total: 3150
+  select:
+    step: 8
+    mode: greedy
+  rows_selected: 150
+evidence:
+  status: verified
+  checked:
+  - file sha256, rows selected, draws per question, cohort IDs, per-row adapter_sha256 (catalog verify)

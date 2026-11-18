@@ -1,0 +1,35 @@
+# Storage roots. File references in arms/cohorts/responses name one of these.
+# Local kinds are checked by `python -m pilot_eval.catalog verify`; override a path with --root NAME=PATH.
+locations:
+  local:
+    kind: local-artifacts
+    description: >-
+      The ignored artifact root of this checkout (<repo>/artifacts). The verifier defaults to
+      <catalog>/../artifacts. Persistent copy lives on Drive (see `drive`).
+  hf-sampling-sft-local:
+    kind: local-path
+    path: ~/spar/hf-sampling-sft
+    description: >-
+      Local unpacked download of the Sampling SFT HF exports (unpacked/runs/...), outside the repository.
+      Machine-specific: override with --root hf-sampling-sft-local=PATH.
+  drive:
+    kind: drive
+    path: My Drive/SPAR/spar-pilot/artifacts
+    description: >-
+      Persistent artifact root (Colab: /content/drive/MyDrive/SPAR/spar-pilot/artifacts; renamed from
+      SPAR/pilot1). Not checked by the verifier.
+  hf-sampling-sft:
+    kind: hf-dataset
+    repo: Prasadmahadik/spar-sampling-sft-artifacts
+    description: >-
+      Private HF dataset: Sampling SFT exports and backups, neuron-audit extracts, attribution
+      rehearsal and production-1 bundles.
+  hf-offline-grpo:
+    kind: hf-dataset
+    repo: Prasadmahadik/spar-offline-grpo-v1
+    description: Private HF dataset holding the offline GRPO v1 export (imported locally under imports/offline-grpo-v1).
+  sl-0:
+    kind: runpod-volume
+    description: >-
+      RunPod global volume sl-0 (identity file .neuron-audit-volume.json). Holds full attribution
+      production outputs, including Stage D responses, that are not in the HF bundles.

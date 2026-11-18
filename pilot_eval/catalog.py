@@ -94,6 +94,9 @@ def _validate(catalog):
             if key not in cohort:
                 raise CatalogError(f'cohort {name}: missing {key}')
         _check_file_ref(cohort['source'], locations, f'cohort {name}', need_sha=False)
+    for name, arm in arms.items():
+        if arm.get('training_data') and arm['training_data'] not in catalog['responses']:
+            raise CatalogError(f"arm {name}: training_data {arm['training_data']!r} is not a response-set id")
     for rid, entry in catalog['responses'].items():
         where = f"response set {rid!r} ({entry['_file']})"
         for key in REQUIRED:
@@ -146,10 +149,14 @@ def resolve_arm(catalog, name):
         raise CatalogError(f'unknown arm or alias {name!r}') from None
 
 
-def find(catalog, *, arm=None, mode=None, kind=None, cohort=None, c_suitability=None):
+def find(catalog, *, arm=None, mode=None, kind=None, cohort=None, c_suitability=None, include_replays=False):
+    """Response sets matching every given filter. Replays (copies of other sets) are hidden unless asked
+    for, so one set of draws is never listed, or counted, twice."""
     arm = resolve_arm(catalog, arm) if arm else None
     out = []
     for entry in catalog['responses'].values():
+        if entry['kind'] == 'replay' and not include_replays and kind != 'replay':
+            continue
         if (arm and entry['arm'] != arm) or (kind and entry['kind'] != kind) or \
                 (cohort and entry['cohort'] != cohort) or (c_suitability and entry['c_suitability'] != c_suitability) or \
                 (mode and (entry['policy'] or {}).get('mode') != mode):
@@ -284,6 +291,13 @@ def _check_rows(entry, ref, path, arm_sha, cohort_ids):
 
 # --- command line ------------------------------------------------------------------------------------
 
+def default_roots(catalog_dir):
+    """Every ``local-artifacts`` location defaults to ``<catalog>/../artifacts`` (the repository layout)."""
+    locations = _read(Path(catalog_dir) / 'locations.yaml').get('locations') or {}
+    root = (Path(catalog_dir).resolve().parent / 'artifacts')
+    return {name: str(root) for name, loc in locations.items() if loc.get('kind') == 'local-artifacts'}
+
+
 def _roots(values):
     out = {}
     for value in values or []:
@@ -304,17 +318,18 @@ def main(argv=None):
         p.add_argument('--root', action='append', help='NAME=PATH override for a local location')
     for opt in ('arm', 'mode', 'kind', 'cohort', 'c-suitability'):
         f.add_argument(f'--{opt}')
+    f.add_argument('--include-replays', action='store_true', help='also list copies of other sets')
     args = parser.parse_args(argv)
     catalog = load(args.catalog)
     if args.command == 'find':
         for e in find(catalog, arm=args.arm, mode=args.mode, kind=args.kind, cohort=args.cohort,
-                      c_suitability=args.c_suitability):
+                      c_suitability=args.c_suitability, include_replays=args.include_replays):
             pol = e['policy'] or {}
             print(f"{e['id']}\t{e['arm']}\tstep={e.get('checkpoint_step')}\t{pol.get('mode')}\t"
                   f"x{e['draws_per_question']}\t{e['c_suitability']}\t{e['evidence']['status']}\t"
                   f"{e['files'][0]['location']}:{e['files'][0]['path']}")
         return 0
-    report = verify(catalog, roots=_roots(args.root))
+    report = verify(catalog, roots={**default_roots(args.catalog), **_roots(args.root)})
     for c in report['checks']:
         print(f"{c['status'].upper():9s} {c['entry']}: {c['detail']}")
     counts = collections.Counter(c['status'] for c in report['checks'])
