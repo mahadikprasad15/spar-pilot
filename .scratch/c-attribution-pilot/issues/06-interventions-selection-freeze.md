@@ -14,4 +14,6 @@
 
 ## Comments
 
+- 2026-11-18 review: the existing sequential `matched_controls` can return an unavailable group even when a complete valid matching exists. Reproduced on a two-target synthetic fixture; no prior real-study failure is claimed. Use seeded whole-group feasibility/matching without relaxing eligibility, and add the regression case. See [review round 1](../review-round-1.md#f3-confirmed-false-unavailable-outcome-in-the-existing-matcher). Fix not yet implemented or verified.
+
 ## Answer
