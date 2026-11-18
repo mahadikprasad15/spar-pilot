@@ -278,7 +278,16 @@ They are accumulated in the attribution pass, so no separate run is needed.
 
 **Hot layers H.** H is the same list for both arms. It must come from a recorded prior effective-write study, with its layer IDs, source run, measurement, context and file hash bound in the freeze inputs **before** the new J rankings are examined. H is never selected from the new J results.
 
-No documented hot-layer list was found in this repository or in the local artifacts. The effective-write rankings differ by context. **This is open decision 1.**
+**H = {11, 15, 16, 24}** [user pointed to the source, 2026-11-18; the rule below is pending the user's confirmation]. The source is the step-64 effective-write figure on GSM8K solutions: the write ratio ‖ΔW·x‖ ÷ ‖W·x‖ per module, with the top 10 ranked per arm. Its values equal `artifacts/analysis/results-hub-v1/data/writes_modules.json` (sha256 `35747fda…`), context `gsm8k_solution`.
+
+Rule: H is the set of layers whose `down_proj` is among that arm's top-10 modules, unioned over the two GRPO arms.
+
+| Arm | Layers with `down_proj` in the top 10 (rank) |
+|---|---|
+| online | 15 (3), 16 (4), 11 (9) |
+| offline | 16 (4), 15 (5), 24 (8) |
+
+This gives 4 layers and 256 reads.
 
 ### Matched controls [user]
 
@@ -406,7 +415,6 @@ artifacts/runs/c-attribution/<run-id>/
 ```
 
 - Units are sealed and resumable, and duplicates are refused.
-- Caps come from the launch record and are enforced at unit boundaries.
 - Export and verified copy follow the production-1 chain. The Pod is stopped at the end.
 - Every generation run, the freeze, and the new prior uses of cohort150 (including the exact rehearsal question IDs) are registered in `catalog/`.
 
@@ -421,7 +429,7 @@ artifacts/runs/c-attribution/<run-id>/
 | Export and copy | — | production-1 | 10–15 min |
 | **Total** | | | **≈ 2.5–3.5 h, unconfirmed** |
 
-Caps are proposed only after the rehearsal measures:
+The rehearsal still measures these, for planning (there are no time caps, per the user's decision):
 
 - attribution throughput;
 - bootstrap wall time and peak CPU and GPU memory;
@@ -449,7 +457,7 @@ The route is **CPU tickets 01–10 → one attended Pod rehearsal (11) → a fre
 
 1. **CPU tickets 01–10**, red/green. Report the full suite at session start.
 2. **Attended Pod rehearsal (11)**, with approval. It measures floors, throughput and bootstrap cost, records the exact rehearsal question IDs, and exercises interruption and resume, export and a real Pod stop.
-3. **Production launch record**, with approval. It contains a new run ID; caps from the measured rehearsal; tolerances set from the measured floors, with historical ones unchanged; seeds; the hot layers and their provenance; and the resolved open decisions.
+3. **Production launch record**, with approval. It contains a new run ID; tolerances set from the measured floors, with historical ones unchanged; seeds; the hot layers and their provenance; and the resolved open decisions.
 4. **Production (12).** The order is qualification → rows → attribution → aggregate, split and freeze → greedy ablation → report → verified copy and export → Pod stop. Analysis outcomes never stop the chain. Failed qualification or input integrity does.
 5. **Report and catalog (13)**, then a separate decision on the held-out follow-up (14).
 
@@ -473,18 +481,20 @@ A short preregistration before step 4 is recommended.
 - B-type fixed-text contrasts.
 - Importance weighting of off-policy sets.
 
+## Decisions recorded 2026-11-18 (user)
+
+- **Hot layers:** from the effective-write figure (see Selection). The derived list {11, 15, 16, 24} awaits the user's confirmation.
+- **Tolerances:** accepted. Production-1's tolerances carry over unchanged. The cached-against-forced rule is set from the rehearsal's measurements.
+- **No time caps.** The run is not stopped for elapsed time. The watchdog, the crash stop and the end-of-run Pod stop remain; ticket 09's budget enforcement is removed.
+- **Seeds:** the user has no preference, so the proposed defaults are used and recorded: split 20261118, bootstrap 1234, and one matching seed per group from the launch record.
+
 ## Open decisions (for review round 2)
 
-1. **Hot layers H.** No documented list exists. A candidate is the union over both arms of the top-k `down_proj` layers by per-module effective write in one recorded context. The source would be `artifacts/analysis/results-hub-v1/data/writes_modules.json` (sha256 `35747fda…`), built from the Stage 0 fixed-context runs and the offline-GRPO internals report. Top 5 per arm in context `gsm8k_solution`:
-   - online: 15, 16, 11, 10, 24;
-   - offline: 16, 15, 24, 12, 13;
-   - union: {10, 11, 12, 13, 15, 16, 24}, which is 7 layers and 448 reads.
-
-   The ranking changes with context. On `fineweb`, online's top layer is 11 and offline's is 24. The user chooses the source, context and k, or names the intended prior list.
+1. Resolved above (pending confirmation of {11, 15, 16, 24}).
 2. **Positive shortfall.** If a scope has fewer positive scores than requested, the proposal is to freeze the smaller positive group, record the shortfall, and match its control to the actual size. The alternative is to drop that condition.
 3. **Infeasible `layer64` control in some layer.** The proposal is to still run the `layer64-reads` target and report the control contrast as unavailable. The alternative is to remove the infeasible layers from both target and control, which changes the group.
-4. **Tolerances.** Production-1's finite-difference, identity and batch-invariance tolerances carry over. The cached-against-forced rule (per-token and per-sequence) is set by the user from the rehearsal's measured errors, before production.
+4. Resolved above (tolerances).
 5. **Intact repeat** (+300 greedy) as a nondeterminism floor: yes (proposed) or no.
-6. **Caps**, set from the rehearsal measurements.
+6. Resolved above (no time caps).
 7. **Draw-split stability** (CPU only): drop (proposed, per the user's question-split decision) or keep in addition.
-8. **Seeds:** split 20261118, bootstrap 1234, matching seeds per group (proposed).
+8. Resolved above (seeds).

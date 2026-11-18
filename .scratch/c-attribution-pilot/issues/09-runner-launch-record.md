@@ -21,7 +21,6 @@
 Reuse the production-1 chain, units, watchdog and launcher where they fit. Run under the pilot's own volume subtree, `$VOL/c-attribution/<run-id>/`.
 
 - [ ] **Launch record.** Every value is type-checked at `seal`, nested leaves included (lessons pod-2 and round 6). It fixes:
-  - caps (from the rehearsal measurements; spec open decision 6);
   - the Pod ID and stop command;
   - tolerances (production-1 tolerances unchanged; the new ones set by the user);
   - seeds;
@@ -37,7 +36,7 @@ Reuse the production-1 chain, units, watchdog and launcher where they fit. Run u
   - CUDA available;
   - the export repo is private;
   - the catalog is present.
-- [ ] **Budget.** Checked at unit boundaries, export time included. Elapsed time persists across resumes (lesson 2026-11-11).
+- [ ] **No time caps** (user, 2026-11-18). Elapsed time is still logged and persisted across resumes, for planning only.
 - [ ] **Intervention safety.**
   - Each generation unit applies exactly one frozen group and verifies the restored adapter hash.
   - A hash mismatch stops the chain.

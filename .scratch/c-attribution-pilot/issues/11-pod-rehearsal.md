@@ -28,7 +28,7 @@
   - peak GPU memory;
   - export and readback time.
 - [ ] **Failures.** Every failure gets a lesson entry and a red/green fix before ticket 12.
-- [ ] **Measurements only.** The rehearsal proposes tolerance values and caps for the user's decision; it does not set them.
+- [ ] **Measurements only.** The rehearsal proposes tolerance values for the user's decision; it does not set them.
 
 ## Comments
 

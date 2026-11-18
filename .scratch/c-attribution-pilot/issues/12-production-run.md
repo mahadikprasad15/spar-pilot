@@ -7,7 +7,6 @@
 **This needs the user's approval** of the production launch record:
 
 - a new run ID;
-- caps from ticket 11's measurements;
 - tolerances (production-1 tolerances unchanged; new ones set from the measured floors);
 - seeds;
 - the hot-layer list and its provenance;
