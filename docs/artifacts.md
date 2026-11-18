@@ -19,11 +19,18 @@ Local result snapshots may be smaller than Drive runs. Absolute paths in recorde
 logs describe their original environment. Resolve artifact-relative paths against
 the chosen root; do not edit frozen files to make paths appear compatible.
 
+## Catalog
+
+`catalog/` (in Git) is the index across runs: canonical arm names and aliases, checkpoint hashes,
+cohorts with their prior uses, storage locations, and every response set with its generator, policy,
+selection and evidence status. Find artifacts there first (`python -m pilot_eval.catalog find`), and
+register new ones before a run counts as finished. See [catalog/README.md](../catalog/README.md).
+
 ## Layout
 
 ```text
 artifacts/
-  cohorts/           frozen selections and item identities
+  cohorts/           frozen selections and item identities (planned; current cohorts are listed in catalog/cohorts.yaml)
   plans/<name>/      prepared, reviewed and frozen workflow configs
   runs/              responses, adapters, arrays, logs and completion evidence
   reports/<name>/    derived results, tables, figures and provenance
