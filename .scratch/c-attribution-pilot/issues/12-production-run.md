@@ -4,11 +4,25 @@
 **Type:** task
 **Blocked by:** 11
 
-**Needs the user's approval** of the production launch record: new run ID, caps (proposed 3 h total), budgets from 11, tolerances, seeds and the resolved open decisions.
+**This needs the user's approval** of the production launch record:
 
-- [ ] Fresh launch under the new run ID (no handover from the rehearsal). Attended start through qualification sign-off; unattended afterwards with the watchdog.
-- [ ] Full scope: 2 × 1,200 rows attribution; aggregate, stability and freeze; 15 greedy runs × 150 on cohort150; report; verified copy and export; Pod stop.
+- a new run ID;
+- caps from ticket 11's measurements;
+- tolerances (production-1 tolerances unchanged; new ones set from the measured floors);
+- seeds;
+- the hot-layer list and its provenance;
+- the resolved open decisions.
+
+- [ ] **Launch.** A fresh launch under the new run ID, with no handover from the rehearsal. Attended from the start through qualification sign-off; unattended afterwards, with the watchdog.
+- [ ] **Scope.**
+  - Attribution over 2 × 1,200 rows.
+  - Aggregate, split, bootstrap and freeze.
+  - **Greedy only, on cohort150:** 2 × 9 × 150 = 2,700 answers, + 150 untuned (proposed), + 300 intact repeat (open decision 5).
+  - Report, verified copy and export, Pod stop.
+- [ ] **Not in this launch:** sampled ablations, top-10 read ablations, held-out questions.
 
 ## Comments
+
+- 2026-11-18 (round 1): the scope was updated from 15 × 150 to 9 conditions per arm, greedy only. The budget comes from the rehearsal (F5, decision 2).
 
 ## Answer

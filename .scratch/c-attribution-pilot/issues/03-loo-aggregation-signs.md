@@ -4,14 +4,30 @@
 **Type:** task
 **Blocked by:** 01, 02
 
-**What to build:** `pilot_eval/c_attribution.py` (pure numpy; no torch import at module level).
+**What to build:** `pilot_eval/c_attribution.py`. It is pure numpy, with no torch import at module level.
 
-- [ ] `loo_weights(groups)`: w_qk = (R_qk − b_qk)/(Q·n_q), b_qk = (Σ R − R_qk)/(n_q − 1); refuse n_q < 2; all-same groups → exactly 0; Σ_k w_qk = 0.
-- [ ] `aggregate(attr, weights)` over sealed per-response units: `removal_J` = Σ w·attr and `dJdλ` = −`removal_J`, for 196 adapters and for each `down_proj` layer's 8,960 neuron reads.
-- [ ] The sign-convention table from the spec appears verbatim in the module docstring and in every output's `sign_convention` field.
-- [ ] Aggregated neuron identity: Σ_j dJdλ_j = dJdλ_i per `down_proj` layer at `identity_rtol`, written to `identity.json`.
-- [ ] Tests: hand-computed weights; exact-enumeration fixture (2-token vocabulary, length-2 responses) where the exact ∇J equals the estimator's expectation over all responses; a synthetic helpful adapter gives dJdλ > 0 and removal_J < 0; question equal-weighting with unequal group sizes refused or handled as specified; mutations fail (sign flip, GRPO std-normalized advantages, token-mean metric).
+- [ ] **Weights.** `loo_weights(groups)` computes w_qk = (R_qk − b_qk)/(Q·n_q) with b_qk = (Σ R − R_qk)/(n_q − 1).
+  - n_q < 2 is refused.
+  - All-same groups give exactly 0.
+  - Σ_k w_qk = 0.
+  - It also returns the per-question coefficients (R_qk − b_qk)/n_q used by ticket 01's pre-aggregation.
+- [ ] **Aggregation.** `aggregate(S, Q)` computes removal_J = (1/Q) Σ_q S_q and dJdλ = −removal_J. It does this for the 196 adapters and for every `down_proj` layer's 8,960 reads, reading the sealed units.
+- [ ] **Totals and group predictions.**
+  - The gross total Σ_c |dJdλ_c| and the net total |Σ_c dJdλ_c|, per scope.
+  - Shares always use the gross total.
+  - `group_prediction(selection)` = Σ removal_J over the group.
+- [ ] **Sign convention.** The table from the spec appears verbatim in the module docstring and in every output's `sign_convention` field.
+- [ ] **Aggregated neuron identity.** Σ_j dJdλ_j = dJdλ_i per `down_proj` layer, under production-1's rule (relative to Σ_j |dJdλ_j|), with the net error also recorded. Written to `identity.json`.
+- [ ] **Tests:**
+  - hand-computed weights;
+  - pre-aggregated and direct aggregation are equal;
+  - an exact-enumeration fixture (2-token vocabulary, length-2 responses) where the exact ∇J equals the estimator's expectation over all responses;
+  - a synthetic helpful adapter gives dJdλ > 0 and removal_J < 0;
+  - a cancellation fixture whose net total is about 0 while its gross total is large: shares stay finite and correct;
+  - mutations fail: a sign flip, GRPO std-normalized advantages, a token-mean metric.
 
 ## Comments
+
+- 2026-11-18 (round 1): the estimator and signs were confirmed sound under the stated assumptions. Pre-aggregation, the gross and net denominators and group predictions were added (F2, F6, decisions 9–11).
 
 ## Answer

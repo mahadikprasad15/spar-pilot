@@ -1,223 +1,490 @@
 # Correctness (J) attribution pilot — online and offline GRPO
 
-**Status:** needs-triage. Draft v1 (2026-11-18). Design only: no code, GPU run, threshold or budget is approved by this file. Proposed values are marked **[proposed]**; open decisions are listed at the end.
+**Status:** needs-triage. Draft v2 (2026-11-18), revised after [review round 1](review-round-1.md); the response is in [review-response-round-1.md](review-response-round-1.md). Design only: no code, GPU run, threshold or budget is approved by this file. Values marked **[user]** are decisions recorded in review round 1. **[proposed]** marks a value not yet approved. Open decisions are listed at the end.
 
-Builds on `.scratch/adapter-neuron-attribution/` (instrument, gates, matched controls, units, chain). Where they differ, this file governs this pilot only; the production-1 study and its trace/stop metrics are unchanged.
+This pilot builds on `.scratch/adapter-neuron-attribution/` (instrument, gates, units, chain). Where the two differ, this file governs this pilot only. The production-1 study and its trace and stop metrics are unchanged.
 
 ## Problem
 
-The production-1 attribution ranked adapters by first-order effects on two teacher-forced proxies measured on the untuned model's own correct traces. Removing the top-10 adapters raised trace log-likelihood in every arm, so that metric mostly measures distance from base-model text. The stop-pull proxy did not predict generated length. Neither targets correctness.
+Production-1 ranked adapters by first-order effects on two teacher-forced proxies, both measured on the untuned model's own correct traces:
 
-This pilot attributes the **sampled probability of a correct answer**, J, to the 196 rank-1 adapters and to the `down_proj` neuron-read terms of online and offline GRPO. It then checks the rankings by removing the selected components and measuring greedy accuracy.
+- **Trace log-likelihood.** Removing the top-10 adapters raised it in every arm, so it mostly measures distance from base-model text.
+- **Stop pull.** It did not predict generated length.
+
+Neither proxy targets correctness.
+
+This pilot ranks the 196 rank-1 adapters, and the `down_proj` neuron-read terms of online and offline GRPO, by their local first-order effect on the **sampled probability of a correct answer**, J. It then removes the selected components and measures **greedy** accuracy on the same 150 questions, as an exploratory behavioural check.
 
 ## Questions
 
-1. **Adapter ranking.** For each arm, what is dJ/dλ_i for every adapter gate at λ = 1, with uncertainty?
-2. **Neuron-read ranking.** For each `down_proj` adapter, how does that gradient split across its 8,960 read terms?
-3. **Stability.** Is the 196-vector stable across draw halves and question halves?
-4. **Behaviour (exploratory).** On the same 150 questions, does removing the top-10 adapters, the top-10 neuron reads or the top-64 neuron reads lower greedy accuracy more than size-matched controls?
+1. **Adapter ranking.** For each arm, what is dJ/dλ_i at λ = 1 for every adapter gate, and how uncertain is it?
+2. **Neuron-read ranking.** For each `down_proj` adapter, how does that gradient split across its 8,960 read terms? Which reads rank highest within three scopes: global, hot layers and every layer?
+3. **Stability (descriptive).** How similar are the rankings across two seeded halves of 75 questions each?
+4. **Behaviour (exploratory, greedy).** On the same 150 questions, how does greedy accuracy change when each selected group is removed? Each group is compared with its intact model and with a matched control.
+5. **Comparison.** How do online and offline GRPO differ in signed scores, top-set overlap and layer or module distribution? The answer is descriptive, from one seed per arm.
 
-Non-goals: the four SFT arms (no final-checkpoint sampled draws exist; see Deferred), causal claims beyond the tested removals, held-out generalization (prepared as a follow-up stage, not run in the initial launch), and changing the production-1 metrics or results.
+### Scope
 
-## Data (verified 2026-11-18 unless marked)
+| In this launch | Not in this launch |
+|---|---|
+| Greedy ablations on the full cohort150 | Sampled-ablation runs (deferred) |
+| Top-10 adapter removal with a matched control | Top-10 neuron-read ablations **[user]** |
+| Three top-64 neuron-read groups, each with a matched control | Combined adapter and neuron removals |
+| | Removing harmful components |
+| | The four SFT arms |
+| | Held-out generalization (prepared as ticket 14, not launched) |
+| | Changing production-1 metrics or results |
 
-Catalog ids from `catalog/` on `main`. Both files: 150 questions × 8 draws, step 64, policy T = 1.0, top_k 0, top_p 1.0, repetition penalty 1.0, max 1,024 new tokens, EOS 151645, seed 42 + ordered batch index (4 prompts × 8 draws per batch), FP32, A100, eager attention, PEFT 0.18.0, transformers 4.57.6.
+### How to read the results
 
-| Arm | Catalog id | File (under `artifacts/`) | sha256 | Adapter (per row) | Groups all-correct / all-wrong / mixed | Mean reward | Capped | Invalid |
-|---|---|---|---|---|---|---|---|---|
-| online-grpo | `online-grpo.s64.sampled-x8.test150` | `imports/pilot4-behaviour-breakdown-2026-10-22/grpo/responses.jsonl` (select step 64, mode sampled) | `4af7926a…` | `70d2d56c…` | 49 / 12 / 89 | 0.675 | 0 | 46 |
-| offline-grpo | `offline-grpo.s64.sampled-x8.test150` | `imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-behaviour/behaviour/results/responses.jsonl` (same select) | `a1cd79aa…` | `66015518…` | 57 / 13 / 80 | 0.693 | 1 | 39 |
+- **Targets.** Attribution targets sampled J. The behavioural check measures greedy accuracy. A greedy result neither confirms nor refutes the sampled-J gradient. A direct test of J would need sampled intervention runs under the same policy, which is deferred.
+- **Removal is not local.** Removing a whole adapter or a group of reads is a finite intervention, and its parts can interact. The sum of local predicted effects is only a first-order reference, reported beside the measured outcome under a distinct label.
+- **Helpful and harmful.** These words are local and estimated. A positive dJ/dλ predicts that slightly strengthening the component near λ = 1 raises J. A negative value does not prove that full removal would raise accuracy. A component whose selected score is not positive is never labelled helpful.
+- **Same-cohort results.** The 150 questions were used for selection and for earlier evaluations. Every behavioural result is labelled exploratory and is never described as held-out.
+- **One seed per arm.** The two arms are scored on their own sampled responses, so their difficulty weighting differs. One seed per arm cannot establish an objective-specific or general mechanism.
 
-- **Rewards.** Re-scored on CPU with `scoring.score_gsm8k_flexible_v3(text, gold, capped=capped)`. The scorer source on `main` and on this branch hashes to `c958d2de…`, the hash the behaviour configs record. Stored `reward` and stored `flexible.correct` agree with the re-score on 1,350/1,350 step-64 rows per arm (sampled + greedy). Capped rows score 0 (`cap_reward 0`); invalid rows score 0. **These rewards are reused; no re-scoring is needed for attribution.**
-- **Tokens.** Each row stores `generated_token_ids`: the sampled tokens with the final EOS for EOS-terminated rows, all 1,024 for capped rows. `token_ids` equals `generated_token_ids` without EOS on every EOS row. Token 151643 never appears inside a generation. Prompts are the stored templated strings, tokenized with `add_special_tokens=False` (mean 115, max 216 tokens). Teacher-forced input = prompt IDs + `generated_token_ids`: 422k tokens online and 405k offline, longest sequence 1,151.
-- **Cohort.** `gsm8k-test-cohort150` (ADR 0001). Its prior uses are listed in `catalog/cohorts.yaml`, including production-1 Stage D. No overlap with the 512 training questions. Attribution and the initial ablation both use this cohort, so **the ablation results are exploratory** (selection and test on the same questions).
-- **Untuned greedy baseline.** `untuned.s0.greedy.test150` exists under the same settings (acc 0.68). The intact step-64 greedy runs exist too (online 0.76, offline 0.7267). They are consistency references only. The ablation stage regenerates intact and untuned greedy runs in its own runtime and batching, and compares within that run.
+## Data and provenance
+
+Catalog ids come from `catalog/`. This branch now contains the catalog, merged from local `main` in `a43dca0` with the catalog commits `6444345`, `f3ebb9d`, `271acf3` and `6f6e2f0`. `python -m pilot_eval.catalog verify --root local=<artifacts>` reports 51 pass and 4 not-local.
+
+**[user]** Attribution reuses the existing final-checkpoint sampled responses: 150 questions × 8 draws per arm, every draw and every outcome type kept. Reuse is conditional on the provenance checks below.
+
+| Arm | Catalog id | sha256 | Adapter (per row) | Groups: all-correct / all-wrong / mixed | Mean reward | Capped | Invalid |
+|---|---|---|---|---|---|---|---|
+| online-grpo | `online-grpo.s64.sampled-x8.test150` | `4af7926a…` | `70d2d56c…` | 49 / 12 / 89 | 0.675 | 0 | 46 |
+| offline-grpo | `offline-grpo.s64.sampled-x8.test150` | `a1cd79aa…` | `66015518…` | 57 / 13 / 80 | 0.693 | 1 | 39 |
+
+### What the source run records say (checked 2026-11-18 against the local imports)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Base and tokenizer revision | Recorded | `989aa798…` in both configs |
+| Prompt and chat template | Recorded | chat template sha256 `2e2d2512…`; dataset revision `740312ad…` |
+| Checkpoint | Recorded | step-64 adapter and seal hashes; the per-row `adapter_sha256` matches |
+| Runtime | Recorded | FP32 base and adapter; A100-SXM4-80GB; torch 2.9.0, transformers 4.57.6, PEFT 0.18.0; `use_cache` |
+| Sampled policy | Recorded | `do_sample`, temperature 1.0, top_k 0, top_p 1.0, `num_beams` 1, cap 1,024, EOS 151645, 8 draws, `batch_size` 4 |
+| Seeds | Recorded | 42 + ordered batch index |
+| Generation engine | Recorded | `implementation.engine` = `e33ea870…`, byte-identical to `pilot_eval/grpo_eval_engine.py` on this branch |
+| Repetition penalty and `no_repeat_ngram_size` | Inferred | Not in the configs. The engine calls `grpo_gpu._generate`, which passes `repetition_penalty=1.0` and `no_repeat_ngram_size=0` explicitly. The run configs do not hash `grpo_gpu.py`. Git shows its last change on 2026-10-09 (`3c859a6`), before both behaviour runs. |
+| Resolved logits processors | Not verified | To be checked as described below |
+| Per-token generation log-probs | Not saved | — |
+
+Ticket 05 settles the two unverified rows on CPU. It loads the pinned `generation_config.json` (revision `989aa798…`), builds the processor and warper list that `generate` resolves from `_generate`'s explicit arguments, and checks that nothing modifies the logits. That means no repetition penalty, temperature, top-k or top-p processor; if any appears, its effect must be shown to be the identity.
+
+The bundle records the inferred items as `inferred` with this evidence; they are not marked verified.
+
+**If a policy or checkpoint mismatch is confirmed, it is material.** It is repaired, other suitable samples are used, or the report states that the on-policy interpretation is not established. It is never silently accepted.
+
+### Rewards, tokens, cohort and baselines
+
+- **Rewards.** Re-scored on CPU with `score_gsm8k_flexible_v3(text, gold, capped=capped)`; the scorer hashes to `c958d2de…`. The stored values agree with the re-score on 1,350 of 1,350 rows per arm. Capped and invalid rows score 0.
+- **Tokens.** Each row stores `generated_token_ids`. An EOS row ends with the sampled EOS; a capped row has all 1,024 tokens. Prompts are the stored templated strings, tokenized with `add_special_tokens=False` (mean 115 tokens, max 216). Teacher-forced input is the prompt IDs followed by `generated_token_ids`: 422k tokens online and 405k offline, with the longest sequence 1,151 tokens.
+- **Cohort.** `gsm8k-test-cohort150` (ADR 0001); its prior uses are in `catalog/cohorts.yaml`. Selection and the behavioural test use the same questions, so the behavioural results are exploratory.
+- **Baselines.** Stored greedy runs: untuned 0.68, online step 64 0.76, offline step 64 0.7267. These are consistency references only. The ablation stage regenerates the intact and untuned greedy runs in its own qualified runtime and batching, and compares conditions within that run **[proposed: regenerate untuned, 150 answers]**.
 
 ## Estimand and estimator
 
-For arm θ with adapter gates λ (λ_i = 1 intact; the branch is λ_i · s · B_i(A_i x)):
+For arm θ with adapter gates λ (λ_i = 1 is intact; the branch computes λ_i · s · B_i(A_i x)):
 
     J(λ) = (1/Q) Σ_q E_{y ~ π_λ(·|q)} [R(q, y)],   R ∈ {0, 1} = flexible-v3 correct (capped → 0)
 
-**Per-response metric (new, `seqlogp`).** M(q, y) = Σ_{t ∈ G} log p_θ(y_t | q, y_<t), summed (not averaged) over G = every generated position: every sampled content token plus the sampled EOS when the row stopped at EOS, and all 1,024 sampled tokens with no EOS term when capped. Raw log-softmax of the FP32 logits matches the sampling distribution, because T = 1, no top-k or top-p truncation, repetition penalty 1.0, and `grpo_gpu._generate` passes these explicitly over Qwen's `generation_config` defaults (rep 1.1, T 0.7, top_p 0.8, top_k 20).
+### Per-response metric `seqlogp`
 
-**Positions.** The scored outputs are the generated positions G. The attributed positions are all unpadded positions, prompt prefill included, because the existing contraction attr_i(e) = −Σ_t c_t ∂M/∂c_t already sums over every unpadded position. A gate changes prompt computations that influence later tokens; restricting to response positions would be incomplete, and the existing response-only mutation test fails for that reason.
+M(q, y) = Σ_{t ∈ G} log p_θ(y_t | q, y_<t), a **sum** over G, the generated positions:
 
-**Per-response attribution (existing machinery, new metric).** attr_i(q, k) = −Σ_t c_t ∂M_qk/∂c_t = −∂M_qk/∂λ_i at λ = 1. Neuron reads: attr_j(q, k) = −a_j Σ_t z_{j,t} ∂M_qk/∂c_t, with Σ_j attr_j = attr_i per response.
+- every sampled content token;
+- plus the sampled EOS when the row stopped at EOS;
+- or, for a capped row, all 1,024 tokens with no EOS term.
 
-**Leave-one-out weights (detached).** For question q with n_q draws (n_q = 8 here):
+The sum is accumulated in FP64.
+
+M uses the raw log-softmax of the FP32 logits. That equals the sampling distribution only under the recorded policy (T = 1, no truncation, no repetition penalty) and if no logits processor is active; the processor check above verifies the second condition.
+
+### Positions
+
+- **Scored positions:** G only.
+- **Attributed positions:** every unpadded position, prompt prefill included. The existing contraction attr_i(e) = −Σ_t c_t ∂M/∂c_t already sums over them, and a gate changes prompt computations that affect later tokens.
+
+### Per-response attribution
+
+    attr_i(q, k) = −Σ_t c_t ∂M_qk/∂c_t = −∂M_qk/∂λ_i at λ = 1
+    attr_j(q, k) = −a_j Σ_t z_{j,t} ∂M_qk/∂c_t          (neuron read j of a down_proj adapter)
+
+with Σ_j attr_j = attr_i for each response.
+
+### Leave-one-out weights (detached)
+
+For question q with n_q = 8 draws:
 
     b_qk = (Σ_k' R_qk' − R_qk) / (n_q − 1),   w_qk = (R_qk − b_qk) / (Q · n_q)
 
-Questions are weighted equally and draws equally within a question. All-correct and all-wrong groups stay in Q and contribute exactly 0. n_q = 1 is refused (no leave-one-out baseline). Rewards and weights never enter the graph.
+- Questions are weighted equally, and draws are weighted equally within a question.
+- All-correct and all-wrong groups stay in Q and contribute exactly 0.
+- n_q = 1 is refused.
+- Rewards and weights never enter the graph.
 
-**Aggregation (offline, no loss and no optimizer step).**
+### Aggregation
 
-    removal_J_i = Σ_qk w_qk · attr_i(q, k)     # first-order predicted change in J when gate i goes 1 → 0
-    dJdλ_i      = −removal_J_i                 # gradient for strengthening gate i at λ = 1
+No loss is formed and no optimizer step is taken.
 
-The same holds for every neuron read j: Σ_j dJdλ_j = dJdλ_i for each `down_proj` adapter. Because aggregation is linear, the identity holds whenever it holds per response; the pilot still checks it on the aggregates.
+    removal_J_c = Σ_qk w_qk · attr_c(q, k)     # first-order predicted ΔJ when component c goes 1 → 0
+    dJdλ_c      = −removal_J_c                 # local gradient for strengthening c at λ = 1
 
-Under on-policy sampling, Σ w ∇M is an unbiased estimate of ∇J (the score-function identity with a leave-one-out baseline). It is local: it says nothing exact about removing a whole gate, which the ablation stage tests.
+Here c is an adapter or a neuron read.
 
-### Sign convention (must appear in code docstrings, outputs and report headers)
+**Per-question pre-aggregation.** Define S_q,c = Σ_k ((R_qk − b_qk)/n_q) · attr_c(q, k). Then removal_J_c = (1/Q) Σ_q S_q,c. Resampling whole questions keeps every group intact, so a question bootstrap on S_q is exactly the same as recomputing the leave-one-out weights inside each resample. This makes neuron-level uncertainty feasible without per-response neuron arrays (see Storage).
+
+**Unbiasedness.** Under on-policy sampling, Σ w ∇M is an unbiased estimate of ∇J: this is the score-function identity with a leave-one-out baseline. The estimate is local and says nothing exact about full removal.
+
+### Sign convention
+
+This table must appear in code docstrings, outputs and report headers.
 
 | Quantity | Meaning | Positive means |
 |---|---|---|
-| `attr_i(e)` (existing) | first-order Δ metric when gate i is removed (1 → 0) | removing raises the metric |
-| `removal_J_i` | first-order ΔJ when gate i is removed | removing is predicted to **raise** J (component hurts correctness) |
-| `dJdλ_i` | ∂J/∂λ_i at λ = 1 | strengthening raises J (component **helps** correctness) |
+| `attr_c(e)` (existing) | first-order Δ metric when c is removed (1 → 0) | removing raises the metric |
+| `removal_J_c` | first-order ΔJ when c is removed | removal is predicted to **raise** J locally |
+| `dJdλ_c` | ∂J/∂λ_c at λ = 1 | slightly strengthening c is predicted to raise J (**helpful**, locally) |
 
-"Positive-attribution" components, the ones selected for removal, are those with the largest `dJdλ` (most helpful). Their removal is predicted to lower J. No code path minimizes a loss; if one is ever written as L = −Σ w·M, its gradient is −dJdλ.
+### Group prediction
 
-## Uncertainty and stability (descriptive)
+For a removed group S, the "first-order sampled-J predicted removal effect" is Σ_{c∈S} removal_J_c, in J units, also shown as percentage points. It is a local sampled-J approximation. It is not a numerical prediction of greedy accuracy, and not a guarantee about full removal.
 
-- **Bootstrap.** 10,000 resamples of questions, seed 1234 **[proposed]**; per adapter and per neuron, a percentile interval on dJdλ, recomputing leave-one-out weights within each resample.
-- **Split-half by draws.** Draws 0–3 vs 4–7, leave-one-out within each half (n = 4). Report Spearman of the two 196-vectors, top-10 overlap, and sign agreement among the top 20.
-- **Split-half by questions.** Two halves fixed by sorted ID parity. Same summaries.
-- **Report also:** J̄, the number of informative (mixed) questions (89 / 80), and the fraction of |Σ dJdλ| coming from the top-10.
-- **Rule for proceeding.** Not a gate. If draw-split Spearman is < 0.5 **[proposed]**, the report states that the ranking is unstable and the ablation is interpreted as a test of a noisy selection.
+### Denominators
+
+- **Concentration** is reported as a share of the **gross** total, Σ_c |dJdλ_c|.
+- The **net** total, |Σ_c dJdλ_c|, is reported separately. It can approach 0 through cancellation and is never used as a denominator for shares.
+- Both are stated wherever a share appears.
+
+## Uncertainty and stability (descriptive; never a gate) [user]
+
+### Question split
+
+- The 150 question IDs are split into two groups of 75 with a recorded seed **[proposed: 20261118]**.
+- All 8 draws of a question stay together, and the same split is used for both arms.
+- The split's ID lists are sealed in the freeze inputs.
+
+Per arm, from each half's S_q, report:
+
+| Ranking | Summaries |
+|---|---|
+| Adapters (196) | Spearman; top-10 overlap; sign agreement among each half's top 20 |
+| Global top-64 neuron reads | overlap count; sign agreement; layer distribution of each half's top 64 |
+| Per hot layer and per down_proj layer: top-64 reads | overlap count and sign agreement, per layer and as an equal-layer mean |
+
+Stability is descriptive. No threshold blocks or alters the pilot. After the split analysis, selection uses all 150 questions.
+
+The draw split from v1 (draws 0–3 against 4–7) is dropped, because the user specified a question split. Reinstating it costs only CPU; see open decision 7.
+
+### Bootstrap
+
+**Adapters.** 10,000 resamples of whole question groups, seed 1234 **[proposed]**.
+
+- Percentile intervals for dJdλ and rank intervals.
+- Resampled question indices are shared by both arms (paired by question ID), so between-arm differences get paired intervals. Each arm keeps its own response groups.
+
+**Neurons.**
+
+1. Benchmark a chunked bootstrap first: a count matrix [B, 150] times S [150, columns], chunked over columns, with peak memory and wall time measured.
+2. Priority order:
+   - intervals for every selected read and its control;
+   - the question-split summaries;
+   - per-layer sums;
+   - all-read intervals, only if the benchmark shows they are feasible within the cap.
+
+All neuron and adapter intervals for candidates selected on this cohort are exploratory, pointwise intervals. They are not simultaneous or post-selection-confirmatory.
+
+**Also reported:** J̄; informative (mixed) questions, 89 online and 80 offline; the top-10 adapter share of gross Σ|dJdλ|.
+
+## Numerical precision: what is verified, measured, or open
+
+| Item | Status | Source |
+|---|---|---|
+| FP32 attribution with an FP64 finite-difference reference (`full_fp64`, since `model.double()` leaves Qwen2's softmax, RMSNorm and RoPE in FP32) | Reproduced: agreement within 5e-5 on the CPU fixture and on Colab | lessons, 06a diagnostic 4; production-1 spec (user, 2026-11-16) |
+| FP32 finite-difference floor ≈ ulp(\|M\|)/ε | Rule, measured in 06a r3: 60× disagreement on effects of about 1e-5 | lessons |
+| Production-1 qualification | Passed: finite differences on gold-sft and online-grpo; batch invariance on all six arms; measured batch-invariance discrepancy 2.2e-6 (`trace` mean metric); resolution floor = 10× that | `attribution-production-1/.../qualification.json` |
+| Production-1 tolerances | Finite differences: median relative error ≤ 0.05, max ≤ 0.20 (FP64 reference). Identity: \|Σ_j attr_j − attr_i\| ≤ 1e-4 · Σ_j \|attr_j\| (gross denominator). Batch invariance: ≤ 1e-4 × max\|attr\| | production-1 spec |
+| Scale of `seqlogp` | **New risk.** \|M\| can reach hundreds of nats, against a mean of order 1 for `trace`. The FP32 finite-difference floor at ε = 1e-2 rises to about 1e-3 or more, so FP64 references are mandatory, not optional. | derived; to be measured |
+| Signed cancellation in aggregates | **New risk.** Per-question S_q mixes signs; dJdλ_c can be much smaller than its gross contributions. | to be measured: report the gross/net ratio per component |
+| Cached (generation) against teacher-forced (instrument) log p | **Unmeasured on real arms.** A per-token bound of 1e-3 would permit up to 1.024 nats per sequence over 1,024 tokens. That is a bound, not an observation. | rehearsal (ticket 11) |
+| Storage precision | Per-question S stored as FP64; per-response adapter attributions as FP64; FP32 only for activation-derived term sizes | this spec |
+
+**Process.** CPU tests and the rehearsal measure the floors and errors. The user then fixes the production tolerances in the launch record, before production. Production-1's finite-difference, identity and batch-invariance tolerances carry over unchanged. They are not loosened to pass: a failure stops the chain and is reported.
+
+The user's no-gate decision covers statistical stability only. Input integrity and numerical qualification remain hard stops.
 
 ## Checks
 
-**CPU (tiny random Qwen2 + PEFT 0.18.0, no downloads), before any GPU run:**
+### CPU, before any GPU run
 
-1. The `seqlogp` mask includes the final EOS target. A capped row includes all 1,024 targets with no EOS term. An EOS-only response has one target. A sum, not a mean (the mean-not-sum mutation fails).
-2. Row builder: the counts in the Data table are reproduced from real-format fixtures; no filtering (wrong, invalid, capped, all-correct and all-wrong rows kept); refuses a row whose `adapter_sha256` ≠ the arm checkpoint, a duplicate `draw_id`, an EOS before the end of an EOS row, a capped row without exactly 1,024 tokens, or a reward that disagrees with the scorer re-score.
-3. Leave-one-out weights: hand-computed fixtures; all-same groups give exactly 0; n_q = 1 refused; Σ_k w_qk = 0 per question.
-4. Sign: a synthetic arm in which one adapter is constructed to raise P(correct) gives dJdλ > 0 and removal_J < 0. Exact enumeration on a 2-token vocabulary: the exact ∇J matches the estimator's expectation.
-5. Finite differences on the fixed-sample surrogate F(λ) = Σ w_qk M_qk(λ) (weights frozen): the central difference over gates (`branch_gates`, `neuron_gate`) matches dJdλ for 5 adapters and 3 neurons. This checks the implementation, not whether the samples estimate the true ∇J.
-6. Neuron identity: Σ_j dJdλ_j = dJdλ_i at `identity_rtol`, per response and aggregated.
-7. Old metrics unchanged: every existing `test_attribution_instrument.py` / `test_attribution_metrics.py` test passes unmodified, and `trace` + `stop` outputs are bit-identical with and without `seqlogp` requested.
-8. Cached vs teacher-forced: incremental KV-cache decoding with left padding (the generation path) and right-padded full teacher forcing (the instrument path) agree on per-token log-probs of the same tokens within tolerance on the tiny model.
-9. Interventions: zeroing lora_B (adapter) and zeroing a_j in lora_A (neuron read) equal the `removal` hook and `neuron_gate(g = 0)` on logits, and multi-neuron removal across layers is exact.
+Tiny random Qwen2 with PEFT 0.18.0, no downloads.
 
-**GPU qualification (real arms, a few rows; recorded, then automatic sign-off as in production-1):**
+1. **`seqlogp` targets.** The mask includes the final EOS target. A capped row has 1,024 targets and no EOS term. An EOS-only response has one target. The value is a sum; the mean-not-sum mutation fails.
+2. **Row builder.** It reproduces the counts from real-format fixtures and keeps every row. It refuses the following:
+   - an adapter hash mismatch;
+   - a duplicate `draw_id`;
+   - an early EOS;
+   - a malformed capped row;
+   - a reward that disagrees with the scorer;
+   - a scorer-hash mismatch.
+3. **Leave-one-out weights.** Hand-computed fixtures. All-same groups give exactly 0. n_q = 1 is refused. Σ_k w_qk = 0 per question. Per-question pre-aggregation equals direct aggregation.
+4. **Signs.** A synthetic helpful adapter gives dJdλ > 0 and removal_J < 0. On a 2-token-vocabulary exact enumeration, the exact ∇J equals the estimator's expectation.
+5. **Surrogate finite differences.** F(λ) = Σ w_qk M_qk(λ), with the weights frozen, matches dJdλ for 5 adapters and 3 neurons, against an FP64 reference. This checks the implementation, not the estimator.
+6. **Neuron identity.** Holds per response and on aggregates, with the gross denominator.
+7. **Old metrics unchanged.** Existing instrument and metric tests pass unmodified. `trace` and `stop` outputs are bit-identical with and without `seqlogp`.
+8. **Cached against teacher-forced log-probs.** Left-padded prefill with incremental KV-cache decoding of the saved tokens, against right-padded full forcing. Both per-token and per-sequence errors are reported.
+9. **Logits processors.** With the pinned `generation_config.json`, `_generate`'s explicit sampled arguments resolve to processors that leave the logits unchanged.
+10. **Interventions.** Zeroing lora_B, and zeroing a_j in lora_A, equal the `removal` hook and `neuron_gate(g = 0)` on logits, at prefill and at decode with a cache. Multi-read removal across layers is exact. Restore is bit-exact (weight hash).
+11. **Matching.** The review's counterexample is a regression fixture: targets 0 and 1 with writes 1.00 and 1.40; candidates 2 and 3 with writes 1.16 and 0.85; tolerance 0.20. The new matcher finds 0→3 and 1→2. Infeasible groups are reported as unavailable, with the deficient targets named. Results are deterministic under a seed.
 
-- (a) Cached vs teacher-forced log-prob agreement on 16 real rows per arm: report max and median |Δ log p| per token and |Δ M| per row. **[proposed]** tolerance: max |Δ log p| ≤ 1e-3.
-- (b) Replay of one sealed sampled batch (same seed, batch composition, left padding): token-identical? **Report-only**; hardware and runtime differences can break identity without invalidating the scoring.
-- (c) Surrogate finite differences with an FP64 reference (`full_fp64`, as decided 2026-11-16): 5 adapters + 3 neurons, existing tolerances (median relative error ≤ 0.05, max ≤ 0.20).
-- (d) Batch invariance at the chosen token budget: per-response |Δattr| ≤ 1e-4 × max |attr|.
-- (e) Identity at `identity_rtol` = 1e-4 **[proposed, as production-1]**.
+### GPU qualification
 
-## Selection (frozen and hashed before any generation)
+Real arms, a few rows each. The values are recorded, then compared with the launch record's fixed tolerances (automatic sign-off as in production-1).
 
-Per arm, from the full-cohort aggregates:
+- **(a) Cached against teacher-forced**, on 16 rows per arm chosen to include short, long and capped rows. Report max and median |Δ log p| per token and |Δ M| per row. Also report representative per-adapter attribution differences when attributions use cached or forced log-probs, if feasible.
+- **(b) Replay** of one sealed sampled batch with the same seed, batch membership and padding. **Report-only.** A divergence is recorded with its first position; it becomes material only if it points to a policy or checkpoint mismatch.
+- **(c) Surrogate finite differences** with the FP64 reference: 5 adapters and 3 neurons, at production-1's tolerances.
+- **(d) Batch invariance** at the qualified token budget, at production-1's tolerance, reported together with the absolute floor.
+- **(e) Identity** at production-1's rule (gross denominator).
+- **(f) No-op.** The intervention machinery with an empty removal set gives logits bit-identical to intact, and greedy tokens identical on a qualification subset. After every condition the restored adapter hash equals the original.
 
-- **Top-10 adapters** by dJdλ (largest positive). Ties broken by layer, then module order.
-- **Matched adapter controls:** existing `attribution_ablation.matched_controls` — same module type, discovery write within ±20%, seeded, drawn from outside the arm's top-10. Here the write is ‖s·b‖ · mean |c_t| over these rows. Unavailable matches are recorded, not loosened.
-- **Top-10 and top-64 neuron reads** by dJdλ_j, **pooled across all 28 `down_proj` adapters** **[proposed; open decision 1]**.
-- **Matched neuron controls:** same layer as each target, term size |a_j| · mean |z_j| within ±20%, outside the top-64, seeded **[proposed; open decision 3]**.
-- **Also frozen:** the most harmful adapters (most negative dJdλ). They are reported but not ablated in this launch.
+## Selection
+
+Selection is frozen and hashed before any generation unit exists.
+
+### Measures
+
+Both are computed from each arm's own 1,200 attribution rows, over every unpadded position, token-weighted:
+
+- **adapter write** = ‖s·b‖ · mean_t |c_t|;
+- **neuron-read size** = |a_j| · mean_t |z_{j,t}|.
+
+They are accumulated in the attribution pass, so no separate run is needed.
+
+### Targets per arm
+
+| Group | Rule | Size |
+|---|---|---|
+| `top10-adapters` | the 10 largest positive dJdλ among the 196 adapters | 10 |
+| `global64-reads` | the 64 largest positive dJdλ_j across all 28 × 8,960 `down_proj` reads | 64 |
+| `hot64-reads` | the 64 largest positive dJdλ_j within each hot layer, removed together | 64 × \|H\| |
+| `layer64-reads` | the 64 largest positive dJdλ_j within each of the 28 `down_proj` layers, removed together | up to 1,792 |
+
+**Ties** are broken by layer, then module order or neuron index.
+
+**Selection is positive only.** If a scope has fewer positive scores than the requested count, the shortfall is surfaced; open decision 2 governs it. It is never silently padded with non-positive scores.
+
+**Read removals.** These remove read terms from the LoRA `down_proj` branch, by zeroing a_j in lora_A. They do not delete pretrained neurons, and they are separate from adapter removals.
+
+**Hot layers H.** H is the same list for both arms. It must come from a recorded prior effective-write study, with its layer IDs, source run, measurement, context and file hash bound in the freeze inputs **before** the new J rankings are examined. H is never selected from the new J results.
+
+No documented hot-layer list was found in this repository or in the local artifacts. The effective-write rankings differ by context. **This is open decision 1.**
+
+### Matched controls [user]
+
+| Targets | Control eligibility |
+|---|---|
+| Adapters | same module type; write within ±20% of the target's **[proposed]** |
+| Reads | same layer; read size within ±20% of the target's **[proposed]** |
+
+- **Excluded from candidacy:** every target of the arm in any group of the same kind (adapters or reads).
+- **No rescaling** of targets or controls.
+
+**Matching algorithm.** It is group-wise, not sequential:
+
+1. Within each stratum (module type, or layer), build the bipartite graph of targets and eligible candidates.
+2. Permute the candidate order with the recorded seed.
+3. Run a deterministic maximum-cardinality matching (augmenting paths in target-rank order over the permuted candidates).
+
+A group's control is "unavailable" only if the maximum matching is smaller than the group. Then the report names the deficient targets, the eligible-candidate count per target, and the largest feasible matching. Eligibility is never loosened. Matching is checked layer by layer, so an infeasible layer in `layer64-reads` never blocks the global or hot comparisons; open decision 3 governs that case.
+
+**Reported per control:**
+
+- the achieved match ratios (min, median, max of control size over target size);
+- the layer and module distribution;
+- the control's own Σ removal_J.
+
+**Also frozen and reported, not ablated:** the most harmful adapters (most negative dJdλ).
 
 ## Interventions
 
-- **Adapter removal:** lora_B of the chosen adapters set to 0, either as an edited checkpoint verified against the `removal` gate on probe logits (as Stage D) or as an in-memory weight edit with save and restore.
-- **Neuron-read removal:** a_j set to 0 in the chosen `down_proj` adapters' lora_A. This is exactly c′ = c − a_j z_j, i.e. `neuron_gate` at g = 0, applied at prefill and every decode step.
-- Adapter and neuron removals are not combined in this launch.
-
-## Generation-ablation stage
-
-**Initial launch (exploratory; greedy; same 150 questions):**
-
-| Arm | Conditions |
+| Removal | Method |
 |---|---|
-| online-grpo | intact; top10-adapters; match10-adapters; top10-neurons; match10-neurons; top64-neurons; match64-neurons |
-| offline-grpo | same 7 |
-| untuned | greedy reference |
+| Adapter | lora_B of the chosen adapters set to 0, in memory, with save, restore and a restored-hash check (equal to the `removal` gate on logits) |
+| Neuron read | a_j set to 0 in the chosen `down_proj` adapters' lora_A, i.e. c′ = c − a_j z_j at prefill and at every decode step. This is a weight edit, so it adds no runtime cost. |
 
-That is 15 runs × 150 = 2,250 greedy responses: FP32, the qualified batch rule from production-1, 1,024 cap, EOS 151645, repetition penalty 1.0. Every response is saved as JSONL with a config file (AGENTS.md).
+Each condition applies exactly one group. Adapter and read removals are never combined.
 
-Per condition, report:
-- greedy accuracy with a Wilson interval;
-- change vs the arm's intact run in percentage points;
-- percentage of intact accuracy remaining (100 × ablated / intact);
-- the top-condition minus its matched-control difference, with a paired bootstrap interval over questions;
-- gains and losses (paired) and the exact McNemar p (descriptive);
-- invalid and capped counts, and mean and median response tokens.
+## Generation-ablation stage (greedy only; same 150 questions; exploratory)
 
-The untuned row is reported alongside. **Labels:** "exploratory — components were selected on the same questions", and "greedy accuracy is a different target from the sampled J used for attribution".
+### Conditions per arm: 9
 
-**Prepared follow-up (not launched):** the same conditions on other GSM8K test questions. That means the 1,319 test questions minus the 150-question cohort minus the 20 rehearsal items: a seeded 150 **[proposed]**. Measure sampled accuracy (8 draws, the attribution policy) and greedy accuracy separately, with the same summaries. This stage is the non-exploratory test.
+1. intact
+2. `top10-adapters`
+3. `match10-adapters`
+4. `global64-reads`
+5. `match-global64`
+6. `hot64-reads`
+7. `match-hot64`
+8. `layer64-reads`
+9. `match-layer64`
+
+### Volume
+
+| Item | Answers |
+|---|---|
+| Arms: 2 × 9 × 150 | 2,700 |
+| Untuned, regenerated **[proposed]** | +150 |
+| Second intact pass per arm, measuring greedy nondeterminism **[proposed; open decision 5]** | +300 |
+| **Total** | **up to 3,150** |
+
+Skipped conditions (an unavailable control) reduce the count.
+
+### Settings
+
+- FP32, cap 1,024, EOS 151645, repetition penalty 1.0, explicit arguments over `generation_config`.
+- One fixed question order and one fixed batch membership, identical across every condition and arm, at the qualified greedy batch size.
+- Every unit saves responses JSONL and a config file (AGENTS.md).
+
+### Report per condition
+
+Bootstrap intervals use 10,000 resamples of questions, paired by question ID across conditions and arms.
+
+- raw greedy accuracy;
+- **paired** Δpp versus the same arm's intact run, with its interval;
+- 100 × ablated/intact accuracy, undefined if intact is 0;
+- target minus control (per-question paired difference), with its interval;
+- gains and losses, and the exact McNemar p (descriptive);
+- invalid and capped counts, and mean and median response tokens;
+- the group's first-order sampled-J predicted removal effect, and the control's, side by side under their own label.
+
+The untuned row is reported alongside. If an intact repeat is run, its flip count is reported as the nondeterminism floor.
+
+### Labels
+
+Every table carries these labels:
+
+- "exploratory: components were selected on these questions";
+- "greedy accuracy is a different target from the sampled J used for attribution";
+- "predicted effects are local first-order sampled-J approximations".
+
+## Comparative reporting
+
+- Online against offline signed adapter scores: scatter, and paired-bootstrap intervals on differences.
+- Top-10 adapter overlap; layer × module distribution of the top sets.
+- Global top-64 overlap; per-layer top-64 overlaps; the layer distribution of each arm's global top 64.
+- Stability summaries for both arms side by side.
+- The caveat: one seed per arm, own sampled responses, different difficulty weighting; no mechanism claim.
+
+## Storage
+
+Attribution units hold whole questions, so all 8 draws of a question are in the same unit. Inside a unit, micro-batches respect the qualified token budget.
+
+| Contents | Size per arm |
+|---|---|
+| Per-response adapter attributions [n, 196], FP64 | small |
+| Per-question S_q for adapters [q, 196], FP64 | small |
+| Per-question S_q for reads [q, 28, 8,960], FP64 | about 300 MB |
+| Per-unit Σ\|c_t\|, Σ\|z_j\|, token counts | small |
+| Per-response identity errors, gross and net | small |
+
+Per-response neuron arrays are not stored: 1,200 × 250,880 would be about 1.2 GB in FP32. The identity is checked inside each unit instead.
 
 ## Outputs and operations
 
 ```text
 artifacts/runs/c-attribution/<run-id>/
   config.json  launch.json  status.json  logs/
-  rows/<arm>/rows.jsonl + manifest (source sha256, selects, counts)
-  attribution/units/        BlockStore per (arm, batch): attr_seqlogp [n, 196], neuron reads per down_proj layer, sum|c|, token counts
-  aggregate/<arm>/          adapters.json (dJdλ, removal_J, intervals, ranks), neurons.npz, stability.json, identity.json
-  qualification/            checks (a)–(e)
-  freeze/<arm>.json         hashed selections and controls
-  generation/<arm>/<condition>/<mode>/units + responses.jsonl + config.json
+  inputs/                   sealed bundle manifest (ticket 08)
+  rows/<arm>/rows.jsonl + manifest (source sha256, selects, counts, provenance status)
+  attribution/units/        BlockStore per (arm, question block)
+  aggregate/<arm>/          adapters.json, neurons.npz, split.json, bootstrap/, identity.json, numerics.json
+  qualification/            checks (a)–(f), measured floors
+  freeze/<arm>.json         hashed selections, hot-layer provenance, controls, split IDs, shortfalls
+  generation/<arm>/<condition>/greedy/units + responses.jsonl + config.json
   report/                   report.md, report.json, figures
 ```
 
-- Units are sealed and resumable (existing `attribution_units` / BlockStore); duplicates are refused.
-- Caps come from the launch record. Export and verified copy follow the production-1 chain; the Pod is stopped at the end.
-- Every generation run and selection is registered in `catalog/` (response sets, plus the cohort's `prior_uses`). This branch does not yet contain `catalog/`: merge `main` first (open decision 8).
+- Units are sealed and resumable, and duplicates are refused.
+- Caps come from the launch record and are enforced at unit boundaries.
+- Export and verified copy follow the production-1 chain. The Pod is stopped at the end.
+- Every generation run, the freeze, and the new prior uses of cohort150 (including the exact rehearsal question IDs) are registered in `catalog/`.
 
-## GPU workload estimate (A100-SXM4-80GB)
+## GPU workload (provisional; to be measured in the rehearsal)
 
-| Stage | Size | Basis | Estimate |
+| Stage | Size | Basis | Provisional |
 |---|---|---|---|
-| Qualification (a)–(e) | 16 rows per arm, FP64 finite-difference copy | production-1 qualification took 12 min | 15–25 min |
-| Attribution (one metric) | 2,400 rows, 827k tokens | production-1 attribution ran 975 tokens/s for two metrics (1 forward, 2 backward, pass 2); one metric should be at least that fast | 12–15 min |
-| Aggregation, bootstrap, freeze | CPU-side | — | < 5 min |
-| Greedy ablation | 2,250 responses | production-1 Stage D ran 1,350 greedy in 45 min at the qualified batch (≈ 30 per minute) | 75–90 min |
+| Qualification (a)–(f) | 16 rows per arm + FP64 copy | production-1 qualification: 12 min | 20–30 min |
+| Attribution | 2,400 rows, 827k tokens, with per-question read accumulation | production-1: 975 tokens/s for two metrics | 15–25 min |
+| Aggregate, split, bootstrap, freeze | CPU | not measured | benchmark in rehearsal |
+| Greedy ablation | up to 3,150 answers | Stage D: 1,350 in 45 min (≈ 30 per minute) | 90–110 min |
 | Export and copy | — | production-1 | 10–15 min |
-| **Total** | | | **≈ 2–2.5 GPU-hours**; proposed caps: 3 h total, 45 min attribution, 2 h generation |
+| **Total** | | | **≈ 2.5–3.5 h, unconfirmed** |
 
-Follow-up held-out stage at full size: 2 arms × 7 conditions × 150 × 8 sampled + greedy ≈ 19,000 responses, about 5–10 h. A reduced version (intact, top10-adapters and match10-adapters; 100 questions × 8) is about 4,800 sampled + 600 greedy, roughly 2–3 h.
+Caps are proposed only after the rehearsal measures:
 
-## Run tier: Pod only, no Colab stage [proposed]
+- attribution throughput;
+- bootstrap wall time and peak CPU and GPU memory;
+- greedy throughput at the fixed batch;
+- export and readback time.
 
-Production-1 went CPU → Colab rehearsal (06a) → Pod rehearsals → production. Most Colab findings were Colab-specific (hidden child-process stderr, preinstalled torchvision, a 40 GB device) or numerical issues now settled: the FP64 finite-difference reference and the token-budget bounds. Every failure that cost a Pod launch was a boundary bug that no earlier tier exercised: a wrong preflight argument, a YAML number read as text, the HF cache on the volume, the stop command syntax, the container disk size, and per-volume chain state. Ticket 10 (a CPU whole-chain test through the real backend, with each recorded Pod failure put back) is designed to catch that class. This pilot reuses the qualified Pod tooling and is about 2 GPU-hours.
+The v1 estimate (2–2.5 h, 3 h cap) is withdrawn. There is no automatic handover.
 
-Proposed route: **CPU tickets 01–10 → one attended Pod rehearsal (11) → a fresh production launch (12)**. Colab is a fallback only, if no Pod is available.
+## Run tier: Pod only, no Colab stage
 
-Pod lessons built into the tickets:
+The route is **CPU tickets 01–10 → one attended Pod rehearsal (11) → a fresh production launch (12)**. Colab is a fallback only, if no Pod is available. The reasons, and the Pod lessons built into tickets 08–11, are unchanged from v1:
 
-- 120 GB container disk; preflight's real body checks free space, mount and volume identity (09).
-- `HF_HOME` on the container disk, and every download hashed (08, 09).
-- A sealed input bundle covering every bound input, verified against its seal (08).
-- Launch-record values type-checked, nested leaves included (09).
-- A new run ID and a separate volume subtree per launch (09).
-- The stop command tries both syntaxes and logs its output, and the rehearsal exercises a real stop (09, 11).
-- Watchdog ownership only after lock and precheck; a bounded recovery before stopping; no automatic rehearsal → production handover (09).
-- Empty-disk resume, with expected work reconstructed before any stage is skipped (09, 10, 11).
-- Budget enforced at unit boundaries, export time included (09).
+- 120 GB disk;
+- `HF_HOME` off the volume;
+- hashed downloads;
+- a sealed bundle verified against its seal;
+- typed launch-record leaves;
+- a new run ID and subtree per launch;
+- a stop command that tries both syntaxes;
+- watchdog ownership only after lock and precheck;
+- empty-disk resume;
+- budget at unit boundaries.
 
 ## Launch plan
 
-1. **CPU tickets 01–10**, red/green, committed after each green step; the full suite is run and reported at session start. Baseline on 2026-11-18: 804 passed, 42 skipped, 1 failed in `test_sampling_sft_sources.py` (the sampling-SFT notebook test; unrelated, pre-existing).
-2. **Attended Pod rehearsal** (11; needs approval): 2 arms × 32 rows, qualification, freeze, small greedy and sampled generation, interruption and resume from an empty disk, export, clean restore, a real Pod stop.
-3. **Production launch record** (approval): new run ID, caps, Pod ID and stop command, tolerances, seeds, resolved decisions.
-4. **Production** (12): qualification → rows → attribution → aggregate and freeze → greedy ablation → report → verified copy and export → Pod stop. Analysis outcomes never stop the chain; failed qualification does.
-5. **Report and catalog registration** (13), then a decision on the held-out follow-up (14).
+1. **CPU tickets 01–10**, red/green. Report the full suite at session start.
+2. **Attended Pod rehearsal (11)**, with approval. It measures floors, throughput and bootstrap cost, records the exact rehearsal question IDs, and exercises interruption and resume, export and a real Pod stop.
+3. **Production launch record**, with approval. It contains a new run ID; caps from the measured rehearsal; tolerances set from the measured floors, with historical ones unchanged; seeds; the hot layers and their provenance; and the resolved open decisions.
+4. **Production (12).** The order is qualification → rows → attribution → aggregate, split and freeze → greedy ablation → report → verified copy and export → Pod stop. Analysis outcomes never stop the chain. Failed qualification or input integrity does.
+5. **Report and catalog (13)**, then a separate decision on the held-out follow-up (14).
 
-Recommended before step 4: a short prereg recording predicted directions, e.g. top10 lowers accuracy more than match10, and the expected stability (the `preregister-experiment` skill).
+A short preregistration before step 4 is recommended.
 
 ## Review process
 
-As for production-1:
-
-- **Spec rounds:** `review-round-N.md` and `review-response-round-N.md` in this folder, until the open decisions are resolved and the status moves to ready-for-agent.
-- **Implementation:** one review per ticket group (01–05, 06–07, 08–10) before the rehearsal, recorded the same way.
-- **Lessons:** each review finding confirmed by a test or a run gets an entry in `docs/agents/experiment-lessons.md`.
+- Spec rounds: `review-round-N.md` and `review-response-round-N.md`.
+- One implementation review per ticket group: 01–05, 06–07, and 08–10.
+- Each confirmed finding gets an entry in `docs/agents/experiment-lessons.md`.
 
 ## Deferred
 
-The four SFT arms (they need 150 × 8 sampled draws from each final checkpoint: about 4,800 generations, roughly 1.5–3 h); integrated gradients along λ (several strengths); combined adapter + neuron removals; removing harmful components; B-type fixed-text contrasts on the untuned draws; importance weighting of off-policy sets.
+- Sampled intervention runs: the direct test of J.
+- The held-out follow-up (ticket 14).
+- Top-10 neuron-read ablations.
+- The four SFT arms.
+- Integrated gradients along λ.
+- Combined removals.
+- Removing harmful components.
+- B-type fixed-text contrasts.
+- Importance weighting of off-policy sets.
 
-## Open decisions
+## Open decisions (for review round 2)
 
-1. Neuron-read selection: pooled across all 28 `down_proj` adapters (proposed) or within each arm's top `down_proj` adapter only?
-2. Ranking direction for this launch: helpful only (proposed), or also a harmful-removal condition?
-3. Matched neuron control: same layer and term size ±20% (proposed), or same adapter only?
-4. Qualification tolerances: keep production-1's finite-difference tolerances and identity rtol; cached-vs-forced max |Δ log p| ≤ 1e-3?
-5. Replay token identity: report-only (proposed) or a gate?
-6. Run tier: Pod only, after the CPU real-path test (proposed), or Colab first; caps (proposed: 3 h total).
-7. Follow-up held-out stage: size (150 questions, 8 draws), and which conditions.
-8. Merge `main` (catalog) into this branch before implementation (proposed: yes; no file overlap except `pyproject.toml`).
+1. **Hot layers H.** No documented list exists. A candidate is the union over both arms of the top-k `down_proj` layers by per-module effective write in one recorded context. The source would be `artifacts/analysis/results-hub-v1/data/writes_modules.json` (sha256 `35747fda…`), built from the Stage 0 fixed-context runs and the offline-GRPO internals report. Top 5 per arm in context `gsm8k_solution`:
+   - online: 15, 16, 11, 10, 24;
+   - offline: 16, 15, 24, 12, 13;
+   - union: {10, 11, 12, 13, 15, 16, 24}, which is 7 layers and 448 reads.
+
+   The ranking changes with context. On `fineweb`, online's top layer is 11 and offline's is 24. The user chooses the source, context and k, or names the intended prior list.
+2. **Positive shortfall.** If a scope has fewer positive scores than requested, the proposal is to freeze the smaller positive group, record the shortfall, and match its control to the actual size. The alternative is to drop that condition.
+3. **Infeasible `layer64` control in some layer.** The proposal is to still run the `layer64-reads` target and report the control contrast as unavailable. The alternative is to remove the infeasible layers from both target and control, which changes the group.
+4. **Tolerances.** Production-1's finite-difference, identity and batch-invariance tolerances carry over. The cached-against-forced rule (per-token and per-sequence) is set by the user from the rehearsal's measured errors, before production.
+5. **Intact repeat** (+300 greedy) as a nondeterminism floor: yes (proposed) or no.
+6. **Caps**, set from the rehearsal measurements.
+7. **Draw-split stability** (CPU only): drop (proposed, per the user's question-split decision) or keep in addition.
+8. **Seeds:** split 20261118, bootstrap 1234, matching seeds per group (proposed).

@@ -1,17 +1,50 @@
-# 05: Implementation and policy checks
+# 05: Implementation, policy and numerical checks
 
 **Status:** needs-triage
 **Type:** task
 **Blocked by:** 01, 02, 03
 
-**What to build:** check functions used by CPU tests and by GPU qualification (reusing `full_fp64`, `branch_gates`, `neuron_gate`, `finite_difference_check` patterns).
+**What to build:** check functions used both by CPU tests and by GPU qualification. They reuse the patterns of `full_fp64`, `branch_gates`, `neuron_gate` and `finite_difference_check`.
 
-- [ ] **Surrogate finite differences:** F(λ) = Σ w·M(λ) with frozen weights; a central difference over gates for chosen adapters and neurons vs the aggregated dJdλ; FP64 reference model (lessons 06a r3 and diagnostic 4: never an FP32 finite difference near FP32 resolution; `model.double()` alone is not FP64 for Qwen2). Report it as an implementation check, not a check of the estimator.
-- [ ] **Cached vs teacher-forced:** for given rows, per-token log p from left-padded prefill plus incremental KV-cache decoding of the saved tokens (the generation path) vs the right-padded full forward (the instrument path); report max and median |Δ log p| and |Δ M| per row.
-- [ ] **Replay (report-only):** regenerate one sealed sampled batch with its recorded seed, batch composition and `grpo_gpu._generate` settings; report token identity and the first divergence position.
-- [ ] **Batch invariance** of `seqlogp` attributions at the qualified token budget; note the rounding-floor caveat (lesson 2026-11-16: relative to the largest attribution).
-- [ ] Tests (CPU): finite differences agree on the tiny model; cached vs forced agree within tolerance on the tiny model; mutations (detached weights not frozen, a weights sign flip) make the finite-difference check fail.
+- [ ] **Logits-processor resolution (CPU).**
+  - Load the pinned `generation_config.json` (revision `989aa798…`; downloaded into the bundle in ticket 08; a recorded copy as the test fixture).
+  - Build the processor and warper list that transformers 4.57.6 resolves from `_generate`'s explicit sampled arguments.
+  - Assert that nothing modifies the logits.
+  - When this passes, the provenance item moves from unverified to verified.
+- [ ] **Surrogate finite differences.**
+  - F(λ) = Σ w·M(λ), with frozen weights.
+  - A central difference over gates, for chosen adapters and neurons, compared with the aggregated dJdλ.
+  - The reference is always FP64 (`full_fp64`), because of the `seqlogp` scale.
+  - The FP32 floor ulp(|M|)/ε is reported.
+  - Production-1 tolerances apply. This is an implementation check, not a check of the estimator.
+- [ ] **Cached against teacher-forced.**
+  - Per-token log p from left-padded prefill plus incremental KV-cache decoding of the saved tokens, compared with the right-padded full forward.
+  - Report max, median and p99 of |Δ log p| per token, and |Δ M| per row.
+  - Row selection must include short, long and capped rows.
+- [ ] **Numerics record** (`numerics.json`):
+  - batch-invariance absolute and relative discrepancies;
+  - identity errors, gross and net;
+  - the per-component gross/net ratio distribution;
+  - the finite-difference floors.
+
+  These measurements inform the launch-record tolerances. They never loosen historical ones.
+- [ ] **Replay (report-only).**
+  - Regenerate one sealed sampled batch with its recorded seed, batch membership and `_generate` settings.
+  - Report token identity and the first divergence position.
+  - Flag it for review only if it suggests a policy or checkpoint mismatch.
+- [ ] **No-op.**
+  - The intervention context with an empty removal set gives logits bit-identical to intact, and identical greedy tokens on a subset.
+  - The restored adapter hash equals the original after every edit.
+- [ ] **Batch invariance** of `seqlogp` attributions at the qualified token budget, at production-1's tolerance, with the absolute floor reported (lesson 2026-11-16).
+- [ ] **Tests (CPU):**
+  - finite differences agree on the tiny model;
+  - cached and forced agree on the tiny model;
+  - the processor check fails if `repetition_penalty=1.1` is injected;
+  - the no-op check fails if a weight is left modified;
+  - mutations (weights not detached, a sign flip of the weights) make the finite-difference check fail.
 
 ## Comments
+
+- 2026-11-18 (round 1): processor resolution, numerics floors and the no-op check were added. The cached-against-forced tolerance is no longer pre-set; it is decided after the rehearsal (F4, decision 9).
 
 ## Answer
