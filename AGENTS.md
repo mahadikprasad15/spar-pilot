@@ -14,9 +14,13 @@ The code is a measurement instrument: correctness of scoring matters more than s
   decoding settings, scorer, seed. Every run saves all responses as JSONL.
 - Commit after each green step, with a short message.
 - If a decision is not in spec.md or docs/adr/, ask. Do not choose silently.
+- A run that produces checkpoints, responses or a question set is not finished until it is
+  registered in `catalog/` (see `catalog/README.md`) and `python -m pilot_eval.catalog verify`
+  reports OK. Look artifacts up there before searching directories.
 
 ## Commands
 - Tests: `pytest -q`
+- Artifact catalog: `python -m pilot_eval.catalog verify` / `python -m pilot_eval.catalog find --arm <arm>`
 
 ## Agent skills
 

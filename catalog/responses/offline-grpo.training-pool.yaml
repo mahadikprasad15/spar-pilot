@@ -1,0 +1,38 @@
+kind: training-data
+cohort: gsm8k-train-512
+question_field: prompt_id
+scorer:
+  name: gsm8k-flexible-v3
+  code_sha256: c958d2de1a6212b49fcfa2f7ac1fd215117ca8d3dbfe3ace805576ce6937eb6c
+  cap_reward: 0
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+id: offline-grpo.training-pool
+arm: offline-grpo
+checkpoint_step: null
+policy:
+  mode: sampled
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+draws_per_question: 8
+c_suitability: off-policy
+generator: untuned (zero adapter b26c524a...) per offline.training.json; 128 historical + 384 new groups
+files:
+- location: local
+  path: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/results/responses.jsonl
+  sha256: 378dd74a95894e034d2d7008503688fdbb2fddbaaa5fdda8f59519098ac4cc33
+  rows_total: 4096
+  rows_selected: 4096
+evidence:
+  status: inferred
+  checked:
+  - file sha256, rows, draws per question, cohort IDs
+  note: Generator stated by the training plan, not by per-row adapter hashes; the 128 historical groups were reused
+    from an earlier pool whose generator was not independently verified.

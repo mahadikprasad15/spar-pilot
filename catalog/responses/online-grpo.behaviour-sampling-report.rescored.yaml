@@ -1,0 +1,47 @@
+kind: replay
+cohort: gsm8k-test-cohort150
+question_field: item_id
+scorer:
+  name: gsm8k-flexible-v3
+  code_sha256: c958d2de1a6212b49fcfa2f7ac1fd215117ca8d3dbfe3ace805576ce6937eb6c
+  cap_reward: 0
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+id: online-grpo.behaviour-sampling-report.rescored
+replay_of: online-grpo.s64.sampled-x8.test150
+arm: online-grpo
+policy:
+  mode: sampled
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+draws_per_question: 8
+c_suitability: on-policy
+files:
+- location: local
+  path: reports/pilot4-behaviour-sampling-2026-10-22-v1/results/responses.jsonl
+  sha256: 5eb67102fb1373b316ba5186d01268bfeb4b2d3c29a612e4e23273cadc08fe04
+  rows_total: 2400
+  select:
+    step: 64
+  rows_selected: 1200
+- location: local
+  path: reports/pilot4-behaviour-sampling-2026-10-22-v2/results/responses.jsonl
+  sha256: 5eb67102fb1373b316ba5186d01268bfeb4b2d3c29a612e4e23273cadc08fe04
+  rows_total: 2400
+  select:
+    step: 64
+  rows_selected: 1200
+evidence:
+  status: verified
+  checked:
+  - file sha256 (v1 and v2 byte-identical)
+  - rows carry source_record pointing at the original draws
+notes: Re-scored copies of the step 0 and step 64 sampled draws (fields generated_text, scores, source_record);
+  not new samples.
