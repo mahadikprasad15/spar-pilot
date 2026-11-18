@@ -191,6 +191,40 @@ def test_find_filters_response_sets(world):
     assert failures(verify(world)) == []
 
 
+def test_subset_coverage_allows_missing_but_not_extra_questions(world):
+    rows = [json.loads(line) for line in world['responses'].read_text().splitlines()]
+    kept = [r for r in rows if r['item_id'] != 'q2']
+    write_jsonl(world['responses'], kept)
+    entry = dict(world['base'], id='arm-a.sampled', cohort_coverage='subset')
+    entry['files'] = [dict(entry['files'][0], sha256=sha(world['responses']), rows_total=len(kept), rows_selected=4)]
+    dump(world['cdir'] / 'responses/arm-a.sampled.yaml', entry)
+    assert failures(verify(world)) == []
+    kept[0]['item_id'] = kept[1]['item_id'] = 'q99'
+    write_jsonl(world['responses'], kept)
+    entry['files'] = [dict(entry['files'][0], sha256=sha(world['responses']))]
+    dump(world['cdir'] / 'responses/arm-a.sampled.yaml', entry)
+    assert any('not in cohort' in c['detail'] for c in failures(verify(world)))
+
+
+def test_unknown_hash_only_for_unverified_remote_entries(world):
+    entry = dict(world['base'], id='arm-a.remote', evidence={'status': 'unknown', 'note': 'path not confirmed'})
+    entry['files'] = [{'location': 'hf', 'path': 'x/somewhere', 'sha256': 'unknown'}]
+    dump(world['cdir'] / 'responses/arm-a.remote.yaml', entry)
+    assert cat.load(world['cdir'])['responses']['arm-a.remote']['files'][0]['sha256'] == 'unknown'
+    dump(world['cdir'] / 'responses/arm-a.remote.yaml', dict(entry, evidence={'status': 'verified', 'checked': []}))
+    with pytest.raises(cat.CatalogError, match='unknown'):
+        cat.load(world['cdir'])
+
+
+def test_json_cohort_source_with_path(world):
+    (world['root'] / 'cohort/members.json').write_text(json.dumps({'gold': [{'problem_id': f'q{q}'} for q in range(3)]}))
+    cohorts = yaml.safe_load((world['cdir'] / 'cohorts.yaml').read_text())
+    cohorts['cohorts']['c3']['source'] = {'location': 'local', 'path': 'cohort/members.json', 'json_path': ['gold'],
+                                          'id_field': 'problem_id'}
+    dump(world['cdir'] / 'cohorts.yaml', cohorts)
+    assert failures(verify(world)) == []
+
+
 def test_cli_verify_exit_code(world, capsys):
     args = ['verify', '--catalog', str(world['cdir']), '--root', f"local={world['root']}"]
     assert cat.main(args) == 0

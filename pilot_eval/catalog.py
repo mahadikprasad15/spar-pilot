@@ -119,8 +119,15 @@ def _validate(catalog):
             raise CatalogError(f'{where}: evidence that is not verified needs a note saying what is missing')
         if not entry['files']:
             raise CatalogError(f'{where}: at least one file is required')
+        if entry.get('cohort_coverage', 'full') not in ('full', 'subset'):
+            raise CatalogError(f'{where}: cohort_coverage must be full or subset')
         for f in entry['files']:
             _check_file_ref(f, locations, where)
+            if f['sha256'] == 'unknown':
+                if evidence['status'] == 'verified':
+                    raise CatalogError(f'{where}: a verified entry cannot have an unknown sha256')
+                if locations[f['location']]['kind'] in LOCAL_KINDS:
+                    raise CatalogError(f'{where}: local files must record their sha256, not unknown')
 
 
 def _check_file_ref(ref, locations, where, need_sha=True):
@@ -258,10 +265,14 @@ def _check_rows(entry, ref, path, arm_sha, cohort_ids):
     want = entry['draws_per_question']
     if want is not None and set(per_q.values()) != {want}:
         problems.append(f'draws per question {sorted(set(per_q.values()))} != {want}')
-    if entry['cohort'] in cohort_ids and set(per_q) != cohort_ids[entry['cohort']]:
-        problems.append(f'question IDs differ from cohort {entry["cohort"]} '
-                        f'({len(set(per_q) - cohort_ids[entry["cohort"]])} extra, '
-                        f'{len(cohort_ids[entry["cohort"]] - set(per_q))} missing)')
+    if entry['cohort'] in cohort_ids:
+        cohort = cohort_ids[entry['cohort']]
+        extra, missing = set(per_q) - cohort, cohort - set(per_q)
+        if extra:
+            problems.append(f'{len(extra)} question IDs not in cohort {entry["cohort"]}')
+        if missing and entry.get('cohort_coverage', 'full') == 'full':
+            problems.append(f'{len(missing)} cohort {entry["cohort"]} questions missing (declare '
+                            f'cohort_coverage: subset if intended)')
     expected = entry.get('row_adapter_sha256') or arm_sha.get((entry['arm'], entry.get('checkpoint_step')))
     adapter_field = entry.get('adapter_field', 'adapter_sha256')
     if expected and rows and adapter_field in rows[0]:
