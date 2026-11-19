@@ -219,3 +219,37 @@ def test_processor_check_reaches_resolution_through_a_peft_model():
     result = cc.processor_check(model, tok, settings=SETTINGS, generation_config_path=FIXTURES / 'generation_config.json')
     assert result['passed'], result
     assert result['bases'][0]['resolved_generation_config']['repetition_penalty'] == 1.0
+
+
+def test_noop_greedy_prompt_is_built_on_the_model_device(monkeypatch):
+    """Review P1: the greedy prompt must be created on the model's device (CPU cannot show the CUDA mismatch,
+    so the device argument of the tensor that becomes the prompt is recorded)."""
+    model = tiny()
+    rows, _ = _rows(q=1, n=2)
+    created = []
+    real = torch.tensor
+
+    def spy(*args, **kw):
+        created.append(kw.get('device'))
+        return real(*args, **kw)
+    monkeypatch.setattr(cc.torch if hasattr(cc, 'torch') else torch, 'tensor', spy)
+    assert cc.noop_check(model, rows, cc.empty_context)['passed']
+    device = next(model.parameters()).device
+    assert created and all(d is not None and torch.device(d) == device for d in created)
+
+
+def test_zero_signal_fd_is_refused_as_uninformative_not_failed():
+    """Review P1: all-same groups give all-zero weights; that diagnostic says nothing and must not fail the gate."""
+    model = tiny()
+    rows, _ = _rows()
+    inst = instrument(model, metric_order=('seqlogp',))
+    with pytest.raises(cc.CheckFailure, match='uninformative'):
+        cc.surrogate_finite_difference(inst, _fp64(model), rows, np.zeros(len(rows)), epsilon=1e-3,
+                                       median_tol=0.05, max_tol=0.20)
+
+
+def test_fd_items_where_both_values_are_exactly_zero_are_uninformative():
+    record = cc._fd_item('adapter', {'adapter': 0}, 0.0, 0.0, 0.0, epsilon=1e-3)
+    assert record['informative'] is False and record['rel_err'] is None
+    record = cc._fd_item('adapter', {'adapter': 0}, 1.0, 0.0, 0.0, epsilon=1e-3)
+    assert record['informative'] is True and record['rel_err'] == float('inf')

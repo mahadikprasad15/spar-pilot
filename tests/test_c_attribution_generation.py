@@ -208,3 +208,21 @@ def test_an_unrestored_adapter_stops_before_the_unit_is_sealed(tmp_path, monkeyp
     with pytest.raises(cg.GenerationError, match='adapter not restored'):
         cg.run_condition(tmp_path, 'online-grpo', condition, model, QUESTIONS, plan, **KW)
     assert not (cg.unit_dir(tmp_path, 'online-grpo', condition['name'], 0) / 'complete.json').exists()
+
+
+def test_a_sealed_unit_is_not_reused_after_its_cap_or_adapter_changes(tmp_path):
+    """Review P1: reuse is bound to the unit's identity, not only to its seal and question IDs."""
+    model = _model()
+    plan = cg.batches(list(QUESTIONS), 2)
+    intact = cg.conditions(_freeze())[0]
+    cg.run_condition(tmp_path, 'online-grpo', intact, model, QUESTIONS, plan, **KW)
+    assert cg.run_condition(tmp_path, 'online-grpo', intact, model, QUESTIONS, plan, **KW)['units'] == ['reused'] * 3
+    with pytest.raises(cg.GenerationError, match='identity'):
+        cg.run_condition(tmp_path, 'online-grpo', intact, model, QUESTIONS, plan, **dict(KW, cap=1))
+    other = {q: dict(v, gold='#### 9') for q, v in QUESTIONS.items()}
+    with pytest.raises(cg.GenerationError, match='identity'):
+        cg.run_condition(tmp_path, 'online-grpo', intact, model, other, plan, **KW)
+    with torch.no_grad():
+        model.get_base_model().model.layers[0].mlp.down_proj.lora_B['default'].weight.add_(0.01)
+    with pytest.raises(cg.GenerationError, match='identity'):
+        cg.run_condition(tmp_path, 'online-grpo', intact, model, QUESTIONS, plan, **KW)

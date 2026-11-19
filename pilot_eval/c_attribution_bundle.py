@@ -96,8 +96,12 @@ def _check(root, entry, expected=None):
     return actual
 
 
-def build(artifact_root, entries, *, repo_root=REPO, expected=None, model_dir=None):
-    """Hash every entry (refusing missing files and any mismatch against ``expected`` {role: sha256})."""
+def build(artifact_root, entries, *, repo_root=REPO, expected=None, model_dir=None, base_model='required'):
+    """Hash every entry (refusing missing files and any mismatch against ``expected`` {role: sha256}).
+
+    Every base-model file in ``MODEL_FILES`` must exist in ``model_dir`` and is hashed (fail closed). A CPU
+    fixture without a model says ``base_model='not-bundled-fixture'``; such a bundle is refused by
+    ``check_base_model``, so it can never pass on the Pod."""
     root = Path(artifact_root)
     roles = [e['role'] for e in entries]
     if len(set(roles)) != len(roles):
@@ -107,12 +111,17 @@ def build(artifact_root, entries, *, repo_root=REPO, expected=None, model_dir=No
         files.append(dict(entry, sha256=_check(root, entry, (expected or {}).get(entry['role'])),
                           bytes=(root / entry['path']).stat().st_size))
     model = {}
-    model_dir = Path(model_dir) if model_dir else root / MODEL_DIR
-    for name in MODEL_FILES:
-        if (model_dir / name).is_file():
+    if base_model == 'required':
+        model_dir = Path(model_dir) if model_dir else root / MODEL_DIR
+        for name in MODEL_FILES:
+            if not (model_dir / name).is_file():
+                raise BundleError(f'missing: base model {name} ({model_dir})')
             model[name] = sha256(model_dir / name)
+    elif base_model != 'not-bundled-fixture':
+        raise BundleError(f"base_model must be 'required' or 'not-bundled-fixture', not {base_model!r}")
     body = {'schema': SCHEMA, 'files': files, 'catalog': catalog_revision(repo_root),
             'base_model': {'repo': 'Qwen/Qwen2.5-1.5B-Instruct', 'revision': MODEL_REVISION, 'file_sha256': model,
+                           'mode': base_model,
                            'note': 'downloaded from HF at this revision on the Pod (HF_HOME on the container disk); '
                                    'each file is checked against these hashes'}}
     body['sha256'] = _canonical({k: v for k, v in body.items() if k != 'sha256'})
@@ -129,8 +138,12 @@ def verify(restored_root, bundle):
 
 
 def check_base_model(model_dir, bundle):
-    """After the HF download on the Pod: every recorded base-model file must match."""
-    for name, expected in bundle['base_model']['file_sha256'].items():
+    """After the HF download on the Pod: every required base-model file must be recorded and match."""
+    recorded = bundle['base_model'].get('file_sha256') or {}
+    if bundle['base_model'].get('mode', 'required') != 'required' or sorted(recorded) != sorted(MODEL_FILES):
+        raise BundleError(f'no base-model hashes for {sorted(set(MODEL_FILES) - set(recorded))}: this bundle '
+                          'cannot verify a model')
+    for name, expected in recorded.items():
         path = Path(model_dir) / name
         if not path.is_file():
             raise BundleError(f'missing: base model {name}')

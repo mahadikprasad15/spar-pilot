@@ -129,6 +129,25 @@ def score(text, gold, capped):
 
 # --- units ----------------------------------------------------------------------------------------
 
+def _digest(value):
+    import hashlib
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def unit_identity(arm, condition, batch_index, members, questions, *, cap, eos_token_id, pad_token_id, lora_hash):
+    """Everything a sealed unit's responses depend on; reuse requires it to be equal.
+
+    The model enters through the adapter hash taken before the condition is applied (the base model, code and
+    runtime are bound by the run's launch record and bundle)."""
+    return {'arm': arm, 'condition_sha256': _digest({k: v for k, v in condition.items() if k != 'prediction'}),
+            'batch_index': batch_index, 'question_ids': list(members),
+            'prompts_sha256': _digest([questions[q]['prompt_ids'] for q in members]),
+            'gold_sha256': _digest([questions[q]['gold'] for q in members]),
+            'cap': cap, 'eos_token_id': eos_token_id, 'pad_token_id': pad_token_id,
+            'greedy_args_sha256': _digest(GREEDY_ARGS), 'padding': 'left', 'scorer': 'gsm8k_flexible_v3',
+            'lora_hash': lora_hash}
+
+
 def unit_dir(root, arm, condition, batch_index):
     return Path(root) / GENERATION_DIR / arm / condition / f'batch-{batch_index:04d}'
 
@@ -146,11 +165,17 @@ def run_condition(root, arm, condition, model, questions, plan, *, decode, pad_t
     statuses = []
     for b, members in enumerate(plan):
         directory = unit_dir(root, arm, condition['name'], b)
+        identity = unit_identity(arm, condition, b, members, questions, cap=cap, eos_token_id=eos_token_id,
+                                 pad_token_id=pad_token_id, lora_hash=before)
         if (directory / 'complete.json').is_file():
             au.verify_run(directory)
             config = json.loads((directory / 'config.json').read_text())
             if config['question_ids'] != members:
                 raise GenerationError(f'{directory}: sealed batch membership differs from the plan')
+            if config.get('identity') != identity:
+                stored = config.get('identity') or {}
+                changed = sorted(k for k in set(stored) | set(identity) if stored.get(k) != identity.get(k))
+                raise GenerationError(f'{directory}: sealed unit identity differs in {changed}; refusing to reuse it')
             statuses.append('reused')
             continue
         with intervention(model, condition):  # exactly one frozen group per unit
@@ -169,7 +194,7 @@ def run_condition(root, arm, condition, model, questions, plan, *, decode, pad_t
         config = {'arm': arm, 'condition': {k: v for k, v in condition.items() if k != 'prediction'},
                   'batch_index': b, 'question_ids': members, 'cap': cap, 'eos_token_id': eos_token_id,
                   'pad_token_id': pad_token_id, 'greedy_args': GREEDY_ARGS, 'padding': 'left',
-                  'lora_hash_before': before, 'lora_hash_after': before}
+                  'lora_hash_before': before, 'lora_hash_after': before, 'identity': identity}
         statuses.append(au.seal_run(directory, {'responses.jsonl': ''.join(json.dumps(r) + '\n' for r in rows),
                                                 'config.json': config}))
     return {'status': 'run', 'units': statuses}

@@ -124,12 +124,30 @@ def processor_check(model, tokenizer, *, settings, generation_config_path):
 # --- surrogate finite differences --------------------------------------------------------------------
 
 def _f(reference, ids, attention, positions, masks, weights, gates=None, neuron=None, adapter='default'):
+    """F = sum_k w_k M_k on the FP64 reference, one row at a time (F is a sum over rows), so peak memory is one
+    row's full-vocabulary logits rather than the whole batch's. Gates are sliced to the row."""
     import torch
-    with torch.no_grad(), ai.full_fp64(reference), ai.branch_gates(reference, gates or {}, adapter), \
-            ai.neuron_gate(reference, neuron, adapter):
-        logits = reference(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
-    m = am.seqlogp(logits, ids, masks).detach().cpu().numpy()
+    m = []
+    for k in range(ids.shape[0]):
+        row_gates = {i: g[k:k + 1] for i, g in (gates or {}).items()}
+        row_neuron = None if neuron is None else (neuron[0], neuron[1], neuron[2][k:k + 1])
+        with torch.no_grad(), ai.full_fp64(reference), ai.branch_gates(reference, row_gates, adapter), \
+                ai.neuron_gate(reference, row_neuron, adapter):
+            logits = reference(input_ids=ids[k:k + 1], attention_mask=attention[k:k + 1],
+                               position_ids=positions[k:k + 1], use_cache=False).logits
+        m.append(am.seqlogp(logits, ids[k:k + 1], masks[k:k + 1]).detach().cpu().numpy()[0])
+        del logits
+    m = np.asarray(m, dtype=np.float64)
     return float(np.dot(weights, m)), m
+
+
+def _fd_item(kind, target, got, up, down, *, epsilon):
+    """One FD comparison. Both values exactly 0 carries no information: reported, never an error."""
+    fd = (up - down) / (2 * epsilon)
+    informative = not (fd == 0 and got == 0)
+    rel = (abs(got - fd) / abs(fd) if fd != 0 else float('inf')) if informative else None
+    return {'kind': kind, 'target': target, 'dJdlambda': float(got), 'finite_difference': float(fd),
+            'rel_err': None if rel is None else float(rel), 'informative': informative}
 
 
 def surrogate_finite_difference(inst, reference, rows, weights, *, epsilon, adapters=5, neurons=3,
@@ -139,6 +157,9 @@ def surrogate_finite_difference(inst, reference, rows, weights, *, epsilon, adap
     if any(p.dtype != torch.float64 for p in reference.parameters()):
         raise CheckFailure('the finite-difference reference must be an FP64 copy of the arm')
     weights = np.asarray(weights, dtype=np.float64)
+    if not np.any(weights):
+        raise CheckFailure('uninformative finite-difference input: every weight is 0 (all-same reward groups); '
+                           'choose rows from mixed-reward questions')
     out = inst.attribute(rows)
     attr = out['attr']['seqlogp']
     d_adapter = -(weights[:, None] * attr).sum(0)
@@ -153,10 +174,7 @@ def surrogate_finite_difference(inst, reference, rows, weights, *, epsilon, adap
         return torch.full((n, 1, 1), value, dtype=torch.float64, device=device)
 
     def record(kind, target, got, up, down):
-        fd = (up - down) / (2 * epsilon)
-        rel = abs(got - fd) / abs(fd) if fd != 0 else float('inf')
-        items.append({'kind': kind, 'target': target, 'dJdlambda': float(got), 'finite_difference': float(fd),
-                      'rel_err': float(rel)})
+        items.append(_fd_item(kind, target, got, up, down, epsilon=epsilon))
 
     for index in np.argsort(-np.abs(d_adapter), kind='mergesort')[:adapters]:
         up = _f(reference, ids, attention, positions, masks, weights, {int(index): gate(1 + epsilon)}, adapter=inst.adapter)[0]
@@ -168,11 +186,13 @@ def surrogate_finite_difference(inst, reference, rows, weights, *, epsilon, adap
         up = _f(reference, ids, attention, positions, masks, weights, neuron=(layer, int(j), gate(1 + epsilon)), adapter=inst.adapter)[0]
         down = _f(reference, ids, attention, positions, masks, weights, neuron=(layer, int(j), gate(1 - epsilon)), adapter=inst.adapter)[0]
         record('neuron', {'layer': int(layer), 'neuron': int(j)}, d_neuron[j], up, down)
-    errors = np.array([i['rel_err'] for i in items])
+    errors = np.array([i['rel_err'] for i in items if i['informative']])
+    if errors.size == 0:
+        raise CheckFailure('uninformative finite-difference check: every compared value is exactly 0')
     floors = {'fp32_ulp_M_over_eps': float(np.max(np.spacing(np.abs(base_m).astype(np.float32)))) / epsilon,
               'fp64_ulp_M_over_eps': float(np.max(np.spacing(np.abs(base_m)))) / epsilon,
               'max_abs_M': float(np.max(np.abs(base_m)))}
-    result = {'epsilon': epsilon, 'F': base_f, 'median_rel_err': float(np.median(errors)),
+    result = {'epsilon': epsilon, 'F': base_f, 'uninformative_items': sum(not i['informative'] for i in items), 'median_rel_err': float(np.median(errors)),
               'max_rel_err': float(errors.max()), 'items': items, 'floors': floors,
               'reference': 'fp64 via full_fp64', 'note': 'implementation check of dJdλ, not of the estimator'}
     if median_tol is not None and max_tol is not None:
@@ -276,7 +296,7 @@ def noop_check(model, rows, context_factory, *, greedy_tokens=4, pad_token_id=0)
             return model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
 
     def greedy():
-        prompt = torch.tensor([rows[0]['input_ids'][:4]])
+        prompt = torch.tensor([rows[0]['input_ids'][:4]], device=ids.device)  # on the model's device
         with torch.no_grad():
             return model.generate(input_ids=prompt, attention_mask=torch.ones_like(prompt), do_sample=False,
                                   max_new_tokens=greedy_tokens, min_new_tokens=greedy_tokens,

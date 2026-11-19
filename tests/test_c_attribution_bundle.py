@@ -27,7 +27,7 @@ def _root(tmp_path):
 
 def test_export_clean_restore_and_verify_against_the_seal(tmp_path):
     root, entries = _root(tmp_path)
-    bundle = cb.build(root, entries, repo_root=REPO, model_dir=tmp_path / 'no-model')
+    bundle = cb.build(root, entries, repo_root=REPO, base_model='not-bundled-fixture')
     assert bundle['catalog']['commit'] and bundle['catalog']['files']
     hub = FakeHub()
     receipt = cb.export(root, bundle, label='test', client=hub, temp_dir=tmp_path, on_event=lambda e: None)
@@ -40,7 +40,7 @@ def test_export_clean_restore_and_verify_against_the_seal(tmp_path):
 
 def test_missing_and_differing_files_are_named_distinctly(tmp_path):
     root, entries = _root(tmp_path)
-    bundle = cb.build(root, entries, repo_root=REPO, model_dir=tmp_path / 'no-model')
+    bundle = cb.build(root, entries, repo_root=REPO, base_model='not-bundled-fixture')
     (root / entries[1]['path']).unlink()
     with pytest.raises(cb.BundleError, match='^missing: run-config:online-grpo'):
         cb.verify(root, bundle)
@@ -48,9 +48,9 @@ def test_missing_and_differing_files_are_named_distinctly(tmp_path):
     with pytest.raises(cb.BundleError, match='^differs: run-config:online-grpo'):
         cb.verify(root, bundle)
     with pytest.raises(cb.BundleError, match='^missing'):
-        cb.build(root, entries + [{'role': 'tokenizer:x', 'path': 'nope.json'}], repo_root=REPO)
+        cb.build(root, entries + [{'role': 'tokenizer:x', 'path': 'nope.json'}], repo_root=REPO, base_model='not-bundled-fixture')
     with pytest.raises(cb.BundleError, match='^differs'):
-        cb.build(root, entries, repo_root=REPO, expected={'generation-config': '0' * 64})
+        cb.build(root, entries, repo_root=REPO, expected={'generation-config': '0' * 64}, base_model='not-bundled-fixture')
     tampered = dict(bundle, files=bundle['files'][:-1])
     with pytest.raises(cb.BundleError, match='seal'):
         cb.verify(root, tampered)
@@ -59,7 +59,7 @@ def test_missing_and_differing_files_are_named_distinctly(tmp_path):
 def test_missing_catalog_revision_is_refused(tmp_path):
     root, entries = _root(tmp_path)
     with pytest.raises(cb.BundleError, match='missing catalog revision'):
-        cb.build(root, entries, repo_root=tmp_path / 'not-a-checkout')
+        cb.build(root, entries, repo_root=tmp_path / 'not-a-checkout', base_model='not-bundled-fixture')
     plain = tmp_path / 'plain'
     (plain / 'catalog').mkdir(parents=True)
     (plain / 'catalog' / 'arms.yaml').write_text('arms: {}\n')
@@ -81,6 +81,7 @@ def test_base_model_files_are_checked_after_download(tmp_path):
     (model / 'model.safetensors').write_bytes(b'other')
     with pytest.raises(cb.BundleError, match='differs: base model'):
         cb.check_base_model(model, bundle)
+    (model / 'model.safetensors').write_bytes(b'weights')
     (model / 'config.json').unlink()
     with pytest.raises(cb.BundleError, match='missing: base model'):
         cb.check_base_model(model, bundle)
@@ -88,7 +89,8 @@ def test_base_model_files_are_checked_after_download(tmp_path):
 
 def test_real_inputs_build_and_match_the_catalog():
     entries = cb.default_entries()
-    if not all((ARTIFACTS / e['path']).is_file() for e in entries):
+    if not all((ARTIFACTS / e['path']).is_file() for e in entries) or \
+            not (ARTIFACTS / cb.MODEL_DIR / 'model.safetensors').is_file():
         pytest.skip('real C-attribution inputs are not all local')
     pytest.importorskip('yaml')
     expected = {'responses:online-grpo': '4af7926a3def742d9eef128f3b7306b783aada413f785624054dacb16ee971ec',
@@ -98,9 +100,28 @@ def test_real_inputs_build_and_match_the_catalog():
                 'adapter:untuned-zero:0:adapter_model.safetensors': 'b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5',
                 'hot-layer-source': '35747fda0615032d996e3671833ed656a4eebf7a9b047a5a27656f6002ffd30d',
                 'generation-config': 'e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6'}
-    bundle = cb.build(ARTIFACTS, entries, repo_root=REPO, expected=expected, model_dir=ARTIFACTS / 'none')
+    bundle = cb.build(ARTIFACTS, entries, repo_root=REPO, expected=expected)  # the pinned base model is hashed (about 3 GB)
     assert cb.verify(ARTIFACTS, bundle)['verified_files'] == len(entries)
+    assert cb.check_base_model(ARTIFACTS / cb.MODEL_DIR, bundle)
     report = cb.pod_catalog_check(REPO, bundle, ARTIFACTS, ['responses:online-grpo.s64.sampled-x8.test150',
                                                             'responses:offline-grpo.s64.sampled-x8.test150',
                                                             'cohort:gsm8k-test-cohort150'])
     assert set(report.values()) == {'pass'}
+
+
+def test_base_model_hashes_are_required_and_fail_closed(tmp_path):
+    """Review P1: an empty base-model hash map verified nothing; it now fails closed."""
+    root, entries = _root(tmp_path)
+    with pytest.raises(cb.BundleError, match='missing: base model'):
+        cb.build(root, entries, repo_root=REPO, model_dir=tmp_path / 'nonexistent')
+    partial = tmp_path / 'partial'
+    partial.mkdir()
+    (partial / 'config.json').write_text('{}')
+    with pytest.raises(cb.BundleError, match='missing: base model model.safetensors'):
+        cb.build(root, entries, repo_root=REPO, model_dir=partial)
+    fixture = cb.build(root, entries, repo_root=REPO, base_model='not-bundled-fixture')
+    with pytest.raises(cb.BundleError, match='no base-model hashes'):
+        cb.check_base_model(tmp_path / 'nonexistent', fixture)
+    tampered = dict(fixture, base_model=dict(fixture['base_model'], file_sha256={}))
+    with pytest.raises(cb.BundleError, match='no base-model hashes'):
+        cb.check_base_model(tmp_path / 'nonexistent', tampered)

@@ -86,18 +86,14 @@ def top(d, k):
     return np.argsort(-d, kind='mergesort')[:k]
 
 
-def top_abs(d, k):
-    d = np.asarray(d, dtype=np.float64).ravel()
-    return np.argsort(-np.abs(d), kind='mergesort')[:k]
-
-
 def overlap(a, b, k):
     return int(len(set(top(a, k).tolist()) & set(top(b, k).tolist())))
 
 
 def sign_agreement(a, b, k):
+    """Share of the union of each half's top k by signed dJdλ (the selection order) whose signs agree."""
     a, b = np.asarray(a).ravel(), np.asarray(b).ravel()
-    union = sorted(set(top_abs(a, k).tolist()) | set(top_abs(b, k).tolist()))
+    union = sorted(set(top(a, k).tolist()) | set(top(b, k).tolist()))
     agree = np.sign(a[union]) == np.sign(b[union])
     return {'share': float(agree.mean()), 'n': len(union)}
 

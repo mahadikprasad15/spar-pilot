@@ -45,9 +45,15 @@ def test_overlap_and_sign_agreement():
     a = np.array([5.0, 4.0, -9.0, 1.0, 0.5])
     b = np.array([4.0, -1.0, -8.0, 3.0, 0.1])
     assert cs.overlap(a, b, 2) == 1                   # top-2 by dJdλ: {0, 1} and {0, 3}
-    agree = cs.sign_agreement(a, b, 2)               # top-2 by |dJdλ|: {2, 0} and {2, 0}
-    assert agree == {'share': 1.0, 'n': 2}
-    assert cs.sign_agreement(a, b, 3)['share'] == pytest.approx(3 / 4)  # union {0,1,2,3}: index 1 disagrees
+    agree = cs.sign_agreement(a, b, 2)               # signed top-2: {0, 1} and {0, 3}; index 1 disagrees
+    assert agree == {'share': pytest.approx(2 / 3), 'n': 3}
+    assert cs.sign_agreement(a, b, 3)['share'] == pytest.approx(3 / 4)  # union {0,1,3,4}: index 1 disagrees
+
+
+def test_sign_agreement_uses_the_signed_top_sets_review_counterexample():
+    # Review P2: by |dJdλ| the large negatives {2, 3} dominate and agree 100%; the helpful sets {0,1} disagree.
+    a, b = np.array([4.0, 3.0, -100.0, -90.0]), np.array([-1.0, -2.0, -100.0, -90.0])
+    assert cs.sign_agreement(a, b, 2)['share'] == 0.0
 
 
 def test_planted_signal_agrees_and_noise_does_not():
