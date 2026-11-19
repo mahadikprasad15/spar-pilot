@@ -1,0 +1,285 @@
+{
+ "cap_reward": 0,
+ "checkpoints": {
+  "64": {
+   "adapter_sha256": "70d2d56cd4636933020b107d6fb344ed451bc879b4a694e725c8608181f07226",
+   "path": "runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints/checkpoint-64",
+   "seal_sha256": "3496bfd3cb19e74deaa4826384938239a1198e723a24ca0eeedbc3c32b8909c6"
+  }
+ },
+ "dtype": "float32",
+ "implementation": {
+  "engine": "e33ea870d3973f5c1505c02529ad2f53afc2802f3ab5b4a38953cb67c0564d33",
+  "scorer": "c958d2de1a6212b49fcfa2f7ac1fd215117ca8d3dbfe3ace805576ce6937eb6c",
+  "workflow": "6e9092ecba11e403f1e86500e4a09ce94d1f0fccc252dcdb0d848b34d984bace"
+ },
+ "items": [
+  {
+   "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+   "dev_source_indices": [],
+   "gold": "If Seattle has 20 sheep, Charleston has 4 * 20 sheep = <<20*4=80>>80 sheep\nToulouse has twice as many sheep as Charleston, which is 2 * 80 sheep = <<2*80=160>>160 sheep\nTogether, the three has 20 sheep + 160 sheep + 80 sheep = <<20+160+80=260>>260 sheep\n#### 260",
+   "id": "gsm8k:test:6",
+   "prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nSolve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: Toulouse has twice as many sheep as Charleston. Charleston has 4 times as many sheep as Seattle. How many sheep do Toulouse, Charleston, and Seattle have together if Seattle has 20 sheep?<|im_end|>\n<|im_start|>assistant\n",
+   "prompt_tokens": 96,
+   "source_index": 6,
+   "source_split": "test"
+  },
+  {
+   "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+   "dev_source_indices": [],
+   "gold": "He was travelling at full speed for 4-1=<<4-1=3>>3 hours\nSo he went 3*10=<<3*10=30>>30 miles\nThat means it takes 30/6=<<30/6=5>>5 hours to get back\n#### 5",
+   "id": "gsm8k:test:51",
+   "prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nSolve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: Tom's ship can travel at 10 miles per hour.  He is sailing from 1 to 4 PM.  He then travels back at a rate of 6 mph.  How long does it take him to get back?<|im_end|>\n<|im_start|>assistant\n",
+   "prompt_tokens": 103,
+   "source_index": 51,
+   "source_split": "test"
+  }
+ ],
+ "margin": 0.1,
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+ "policies": [
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 0,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 8,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 16,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 32,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 64,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 4,
+   "completion_limit": 1024,
+   "do_sample": true,
+   "draws": 8,
+   "mode": "sampled",
+   "num_beams": 1,
+   "step": 0,
+   "temperature": 1.0,
+   "top_k": 0,
+   "top_p": 1.0,
+   "use_cache": true
+  },
+  {
+   "batch_size": 4,
+   "completion_limit": 1024,
+   "do_sample": true,
+   "draws": 8,
+   "mode": "sampled",
+   "num_beams": 1,
+   "step": 64,
+   "temperature": 1.0,
+   "top_k": 0,
+   "top_p": 1.0,
+   "use_cache": true
+  }
+ ],
+ "prompt_template": {
+  "attention_implementation": "eager",
+  "chat_template_sha256": "2e2d2512cfe46af53dc1eed45368ecaab26ac4461c480e6b69fe571cf0ceaa75",
+  "dataset_config": "main",
+  "dataset_path": "openai/gsm8k",
+  "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+  "decoding": {
+   "do_sample": false,
+   "eos_token_id": 151645,
+   "max_new_tokens": 1024,
+   "num_beams": 1,
+   "num_return_sequences": 1,
+   "pad_token_id": 151643
+  },
+  "prompt_template": "gsm8k-v1"
+ },
+ "protocol_version": "pilot4-behaviour-v1",
+ "run_path": "runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/behaviour/pilot4-grpo-fp32-v1-behaviour-v1",
+ "runtime": {
+  "adapter_dtype": "float32",
+  "adapter_targets": 196,
+  "attention_implementation": "eager",
+  "compute_capability": [
+   8,
+   0
+  ],
+  "cublas_workspace_config": ":16:8",
+  "cuda": "12.8",
+  "deterministic_algorithms": true,
+  "device": "NVIDIA A100-SXM4-80GB",
+  "dtype": "float32",
+  "eos_token_id": 151645,
+  "generation_use_cache": true,
+  "gradient_checkpointing": true,
+  "gradient_checkpointing_kwargs": {
+   "use_reentrant": false
+  },
+  "pad_token_id": 151643,
+  "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+  "tf32": false,
+  "total_memory_bytes": 85094825984,
+  "versions": {
+   "accelerate": "1.12.0",
+   "datasets": "4.4.1",
+   "huggingface-hub": "0.36.0",
+   "peft": "0.18.0",
+   "torch": "2.9.0",
+   "transformers": "4.57.6",
+   "trl": "0.26.2"
+  }
+ },
+ "scorer": "gsm8k-flexible-v3",
+ "seed": 42,
+ "seed_rule": "42 + ordered batch index; same schedule across checkpoints; reseed each sealed batch",
+ "settings": {
+  "backward_groups": 1,
+  "cap_rule": {
+   "extra_tokens": 461,
+   "method": "ceil-p99-plus"
+  },
+  "completion_limit": 1024,
+  "diagnostic_seed": 42,
+  "evaluation_batch_size": 8,
+  "generation_groups": 4,
+  "gradient_checkpointing": true,
+  "loss": "dapo",
+  "memory_margin_gib": 8,
+  "scorer": "gsm8k-flexible-v3",
+  "top_k": 0,
+  "top_p": 1.0
+ },
+ "strict_scorer": "gsm8k-strict",
+ "tokenizer_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+ "training_path": "plans/pilot4-grpo-fp32-v1-arm-v1/grpo.training.json",
+ "training_seal_sha256": "6508e04fe9b25c391f9ea12fc4cc9235385a7446c9d395c85893ca510880141d",
+ "training_sha256": "958123b24611e667e474b1d1d87e4d68ab03d63128ef0c8a2028c2cedd712958",
+ "units": [
+  {
+   "ids": [
+    "gsm8k:test:1",
+    "gsm8k:test:6",
+    "gsm8k:test:13",
+    "gsm8k:test:23",
+    "gsm8k:test:39",
+    "gsm8k:test:51",
+    "gsm8k:test:54",
+    "gsm8k:test:61"
+   ],
+   "key": "greedy-64-batch-0000",
+   "policy": {
+    "batch_size": 8,
+    "completion_limit": 1024,
+    "do_sample": false,
+    "draws": 1,
+    "mode": "greedy",
+    "num_beams": 1,
+    "step": 64,
+    "temperature": null,
+    "top_k": null,
+    "top_p": null,
+    "use_cache": true
+   },
+   "seed": 42
+  },
+  {
+   "ids": [
+    "gsm8k:test:1",
+    "gsm8k:test:6",
+    "gsm8k:test:13",
+    "gsm8k:test:23"
+   ],
+   "key": "sampled-64-batch-0000",
+   "policy": {
+    "batch_size": 4,
+    "completion_limit": 1024,
+    "do_sample": true,
+    "draws": 8,
+    "mode": "sampled",
+    "num_beams": 1,
+    "step": 64,
+    "temperature": 1.0,
+    "top_k": 0,
+    "top_p": 1.0,
+    "use_cache": true
+   },
+   "seed": 42
+  },
+  {
+   "ids": [
+    "gsm8k:test:39",
+    "gsm8k:test:51",
+    "gsm8k:test:54",
+    "gsm8k:test:61"
+   ],
+   "key": "sampled-64-batch-0001",
+   "policy": {
+    "batch_size": 4,
+    "completion_limit": 1024,
+    "do_sample": true,
+    "draws": 8,
+    "mode": "sampled",
+    "num_beams": 1,
+    "step": 64,
+    "temperature": 1.0,
+    "top_k": 0,
+    "top_p": 1.0,
+    "use_cache": true
+   },
+   "seed": 43
+  }
+ ]
+}

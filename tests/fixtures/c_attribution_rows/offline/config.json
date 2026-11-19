@@ -1,0 +1,319 @@
+{
+ "cap_reward": 0,
+ "checkpoints": {
+  "64": {
+   "adapter_sha256": "6601551812ab754ccf35c0fbd5f6cf181786636683e9367b24c4f92451a1c93f",
+   "path": "runs/offline-grpo/offline-grpo-v1-training/training/checkpoints/checkpoint-64",
+   "seal_sha256": "8ddc7f2b6b7aff7daf2766165e89be49bf5a9344d1bdeeb2dec9058c927b7469"
+  }
+ },
+ "dtype": "float32",
+ "implementation": {
+  "engine": "e33ea870d3973f5c1505c02529ad2f53afc2802f3ab5b4a38953cb67c0564d33",
+  "evaluator": "6e9092ecba11e403f1e86500e4a09ce94d1f0fccc252dcdb0d848b34d984bace",
+  "report": "124dc2ace5ad32cc0b82850041c3ad4918f2856e047c2ca97e21ec0b6e6d4017",
+  "scorer": "c958d2de1a6212b49fcfa2f7ac1fd215117ca8d3dbfe3ace805576ce6937eb6c",
+  "wrapper": "21348a80eaae0afc8caa48bd6a90f897195bc27f5054dcd9ac749bfa102a9253"
+ },
+ "items": [
+  {
+   "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+   "dev_source_indices": [],
+   "gold": "He reads for 2/2=<<2/2=1>>1 hour a night\nSo he spends 2+1=<<2+1=3>>3 hours on these activities\nThat means he spends 3*3=<<3*3=9>>9 hours a week on them\nSo in 4 weeks, he spends 9*4=<<9*4=36>>36 hours on these activities\n#### 36",
+   "id": "gsm8k:test:65",
+   "prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nSolve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: Jim spends 2 hours watching TV and then decides to go to bed and reads for half as long.  He does this 3 times a week.  How many hours does he spend on TV and reading in 4 weeks?<|im_end|>\n<|im_start|>assistant\n",
+   "prompt_tokens": 101,
+   "source_index": 65,
+   "source_split": "test"
+  },
+  {
+   "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+   "dev_source_indices": [],
+   "gold": "The research ended up taking 5*10=<<5*10=50>>50 months\nSo he paid for expensive research for 50-5=<<50-5=45>>45 months\nEach month of research at the cheaper stage cost 100,000/5=$<<100000/5=20000>>20,000\nSo the more expensive research cost 20,000*1.5=$<<20000*1.5=30000>>30,000\nSo that research cost 45*30,000=$<<45*30000=1350000>>1,350,000\nSo the total cost was 1,350,000+100,000=$<<1350000+100000=1450000>>1,450,000\n#### 1,450,000",
+   "id": "gsm8k:test:611",
+   "prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nSolve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: John decides to build a program capable of identifying cancer cells.  He gets initial funding of $100,000 for the first 5 months of research.  His research ends up taking 10 times that long and every month after those first 5 took 50% more funding per month.  How much did his research cost?<|im_end|>\n<|im_start|>assistant\n",
+   "prompt_tokens": 127,
+   "source_index": 611,
+   "source_split": "test"
+  }
+ ],
+ "margin": 0.1,
+ "model": "Qwen/Qwen2.5-1.5B-Instruct",
+ "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+ "policies": [
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 0,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 8,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 16,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 32,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 8,
+   "completion_limit": 1024,
+   "do_sample": false,
+   "draws": 1,
+   "mode": "greedy",
+   "num_beams": 1,
+   "step": 64,
+   "temperature": null,
+   "top_k": null,
+   "top_p": null,
+   "use_cache": true
+  },
+  {
+   "batch_size": 4,
+   "completion_limit": 1024,
+   "do_sample": true,
+   "draws": 8,
+   "mode": "sampled",
+   "num_beams": 1,
+   "step": 0,
+   "temperature": 1.0,
+   "top_k": 0,
+   "top_p": 1.0,
+   "use_cache": true
+  },
+  {
+   "batch_size": 4,
+   "completion_limit": 1024,
+   "do_sample": true,
+   "draws": 8,
+   "mode": "sampled",
+   "num_beams": 1,
+   "step": 64,
+   "temperature": 1.0,
+   "top_k": 0,
+   "top_p": 1.0,
+   "use_cache": true
+  }
+ ],
+ "prompt_template": {
+  "attention_implementation": "eager",
+  "chat_template_sha256": "2e2d2512cfe46af53dc1eed45368ecaab26ac4461c480e6b69fe571cf0ceaa75",
+  "dataset_config": "main",
+  "dataset_path": "openai/gsm8k",
+  "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+  "decoding": {
+   "do_sample": false,
+   "eos_token_id": 151645,
+   "max_new_tokens": 1024,
+   "num_beams": 1,
+   "num_return_sequences": 1,
+   "pad_token_id": 151643
+  },
+  "prompt_template": "gsm8k-v1"
+ },
+ "protocol": "offline-grpo-behaviour-v1",
+ "reference_zero": {
+  "adapter_sha256": "b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5",
+  "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/checkpoints/checkpoint-0",
+  "seal_sha256": "f68112ac3d512ab7f87c9ca29b9b0c8433746d85fea4a76c2e49f3d6c6562704"
+ },
+ "run_path": "runs/offline-grpo/offline-grpo-v1-behaviour/behaviour",
+ "runtime": {
+  "adapter_dtype": "float32",
+  "adapter_targets": 196,
+  "attention_implementation": "eager",
+  "compute_capability": [
+   8,
+   0
+  ],
+  "cublas_workspace_config": ":16:8",
+  "cuda": "12.8",
+  "deterministic_algorithms": true,
+  "device": "NVIDIA A100-SXM4-80GB",
+  "dtype": "float32",
+  "eos_token_id": 151645,
+  "generation_use_cache": true,
+  "gradient_checkpointing": true,
+  "gradient_checkpointing_kwargs": {
+   "use_reentrant": false
+  },
+  "pad_token_id": 151643,
+  "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "tf32": false,
+  "total_memory_bytes": 85094825984,
+  "versions": {
+   "accelerate": "1.12.0",
+   "datasets": "4.4.1",
+   "huggingface-hub": "0.36.0",
+   "peft": "0.18.0",
+   "torch": "2.9.0",
+   "transformers": "4.57.6",
+   "trl": "0.26.2"
+  }
+ },
+ "scorer": "gsm8k-flexible-v3",
+ "seed": 42,
+ "seed_rule": "42 + ordered batch index; same schedule across checkpoints; reseed each sealed batch",
+ "settings": {
+  "backward_groups": 1,
+  "cap_rule": {
+   "extra_tokens": 461,
+   "method": "ceil-p99-plus"
+  },
+  "completion_limit": 1024,
+  "diagnostic_seed": 42,
+  "evaluation_batch_size": 8,
+  "generation_groups": 4,
+  "gradient_checkpointing": true,
+  "loss": "dapo",
+  "memory_margin_gib": 8,
+  "scorer": "gsm8k-flexible-v3",
+  "top_k": 0,
+  "top_p": 1.0
+ },
+ "strict_scorer": "gsm8k-strict",
+ "tokenizer_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+ "training_path": "plans/offline-grpo-v1-training/offline.training.json",
+ "training_seal_sha256": "3cfe72c90651d46317d426ab5726f231e988ec47234e387fe1f9f8e565c07837",
+ "training_sha256": "be47cc1961865255e8e80e52866ac614090e873d9716f0f93f62932bb0f8cd81",
+ "units": [
+  {
+   "ids": [
+    "gsm8k:test:65",
+    "gsm8k:test:88",
+    "gsm8k:test:93",
+    "gsm8k:test:96",
+    "gsm8k:test:114",
+    "gsm8k:test:130",
+    "gsm8k:test:135",
+    "gsm8k:test:142"
+   ],
+   "key": "greedy-64-batch-0001",
+   "policy": {
+    "batch_size": 8,
+    "completion_limit": 1024,
+    "do_sample": false,
+    "draws": 1,
+    "mode": "greedy",
+    "num_beams": 1,
+    "step": 64,
+    "temperature": null,
+    "top_k": null,
+    "top_p": null,
+    "use_cache": true
+   },
+   "seed": 43
+  },
+  {
+   "ids": [
+    "gsm8k:test:601",
+    "gsm8k:test:611",
+    "gsm8k:test:644",
+    "gsm8k:test:646",
+    "gsm8k:test:663",
+    "gsm8k:test:664",
+    "gsm8k:test:689",
+    "gsm8k:test:696"
+   ],
+   "key": "greedy-64-batch-0009",
+   "policy": {
+    "batch_size": 8,
+    "completion_limit": 1024,
+    "do_sample": false,
+    "draws": 1,
+    "mode": "greedy",
+    "num_beams": 1,
+    "step": 64,
+    "temperature": null,
+    "top_k": null,
+    "top_p": null,
+    "use_cache": true
+   },
+   "seed": 51
+  },
+  {
+   "ids": [
+    "gsm8k:test:65",
+    "gsm8k:test:88",
+    "gsm8k:test:93",
+    "gsm8k:test:96"
+   ],
+   "key": "sampled-64-batch-0002",
+   "policy": {
+    "batch_size": 4,
+    "completion_limit": 1024,
+    "do_sample": true,
+    "draws": 8,
+    "mode": "sampled",
+    "num_beams": 1,
+    "step": 64,
+    "temperature": 1.0,
+    "top_k": 0,
+    "top_p": 1.0,
+    "use_cache": true
+   },
+   "seed": 44
+  },
+  {
+   "ids": [
+    "gsm8k:test:601",
+    "gsm8k:test:611",
+    "gsm8k:test:644",
+    "gsm8k:test:646"
+   ],
+   "key": "sampled-64-batch-0018",
+   "policy": {
+    "batch_size": 4,
+    "completion_limit": 1024,
+    "do_sample": true,
+    "draws": 8,
+    "mode": "sampled",
+    "num_beams": 1,
+    "step": 64,
+    "temperature": 1.0,
+    "top_k": 0,
+    "top_p": 1.0,
+    "use_cache": true
+   },
+   "seed": 60
+  }
+ ]
+}
