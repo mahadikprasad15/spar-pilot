@@ -11,7 +11,7 @@
   - One tmux window, one launch, no automatic restart.
   - Follow a runbook derived from `.scratch/adapter-neuron-attribution/pod-runbook.md` with the lessons applied.
 - [ ] **Scope.**
-  - 2 arms × 32 rows, i.e. 4 whole questions × 8 draws per arm, chosen to cover short, long, EOS, capped and invalid rows and all-same groups.
+  - 2 arms × 32 rows, i.e. 4 whole questions × 8 draws per arm, chosen to cover short, long, EOS and invalid rows and all-same groups where available. Include the offline capped row. Online has no capped rows; record this rather than requiring one.
   - Qualification checks (a)–(f).
   - Aggregation on the subset; a split; a freeze.
   - **Greedy only:** 3 conditions × 8 questions.

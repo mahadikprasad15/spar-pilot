@@ -249,7 +249,7 @@ Tiny random Qwen2 with PEFT 0.18.0, no downloads.
 
 Real arms, a few rows each. The values are recorded, then compared with the launch record's fixed tolerances (automatic sign-off as in production-1).
 
-- **(a) Cached against teacher-forced**, on 16 rows per arm chosen to include short, long and capped rows. Report max and median |Δ log p| per token and |Δ M| per row. Also report representative per-adapter attribution differences when attributions use cached or forced log-probs, if feasible.
+- **(a) Cached against teacher-forced**, on 16 rows per arm chosen to include short and long rows and, where that arm has one, a capped row. Online GRPO has no capped rows, so record that absence rather than failing or fabricating one; include the available offline capped row, and cover capped sequences in the CPU fixture. Report max and median |Δ log p| per token and |Δ M| per row. This reconstructs cached decoding on the current runtime: the original generation log-probabilities were not saved, so it does not directly validate those original scores. Also report representative per-adapter attribution differences when attributions use cached or forced log-probs, if feasible.
 - **(b) Replay** of one sealed sampled batch with the same seed, batch membership and padding. **Report-only.** A divergence is recorded with its first position; it becomes material only if it points to a policy or checkpoint mismatch.
 - **(c) Surrogate finite differences** with the FP64 reference: 5 adapters and 3 neurons, at production-1's tolerances.
 - **(d) Batch invariance** at the qualified token budget, at production-1's tolerance, reported together with the absolute floor.

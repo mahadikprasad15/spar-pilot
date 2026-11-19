@@ -23,7 +23,9 @@
 - [ ] **Cached against teacher-forced.**
   - Per-token log p from left-padded prefill plus incremental KV-cache decoding of the saved tokens, compared with the right-padded full forward.
   - Report max, median and p99 of |Δ log p| per token, and |Δ M| per row.
-  - Row selection must include short, long and capped rows.
+  - Select short and long rows per arm and a capped row where available. Online GRPO has zero
+    capped rows: report that absence; include the available offline capped row and a capped CPU
+    fixture. Compare reconstructed cached decoding, not unavailable original generation scores.
 - [ ] **Numerics record** (`numerics.json`):
   - batch-invariance absolute and relative discrepancies;
   - identity errors, gross and net;
