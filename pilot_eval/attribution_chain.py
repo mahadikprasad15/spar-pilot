@@ -314,8 +314,9 @@ def watchdog_deadline(budget, *, margin_seconds, wall_now=None):
     return wall_now + max(0.0, budget.remaining_total()) + margin_seconds
 
 
-def copy_sealed(local_root, volume_root, *, sealed_only=True):
-    """Copy only sealed, hash-verified units and run directories to the volume and re-verify the copies."""
+def copy_sealed(local_root, volume_root, *, sealed_only=True, subtree='attribution'):
+    """Copy only sealed, hash-verified units and run directories (under ``subtree``) to the volume and
+    re-verify the copies."""
     if not sealed_only:
         raise ValueError('only sealed outputs are copied')
     local, volume = Path(local_root), Path(volume_root)
@@ -334,7 +335,7 @@ def copy_sealed(local_root, volume_root, *, sealed_only=True):
             copied += [f'unit:{k}' for k in mirror_store(store_root, volume / au.UNITS_DIR, keys=sealed)]
         except CorruptUnit as exc:
             problems.append(str(exc))
-    for seal in sorted((local / 'attribution').rglob('complete.json')) if (local / 'attribution').is_dir() else []:
+    for seal in sorted((local / subtree).rglob('complete.json')) if (local / subtree).is_dir() else []:
         directory = seal.parent
         if directory.is_relative_to(store_root):
             continue
@@ -371,7 +372,7 @@ def _sealed_matching(units, key, identity):
     return True
 
 
-def restore_from_volume(volume_root, local_root):
+def restore_from_volume(volume_root, local_root, *, subtree='attribution'):
     """Bring back to local disk every sealed unit and run directory the volume holds but local disk lacks (a
     fresh Pod); each copy is re-verified by hash. Local sealed work is never overwritten."""
     volume, local = Path(volume_root), Path(local_root)
@@ -384,7 +385,7 @@ def restore_from_volume(volume_root, local_root):
         if keys:
             mirror_store(store, local / au.UNITS_DIR, keys=keys, source_listing=False)
             restored['units'] = sorted(keys)
-    for seal in sorted((volume / 'attribution').rglob('complete.json')) if (volume / 'attribution').is_dir() else []:
+    for seal in sorted((volume / subtree).rglob('complete.json')) if (volume / subtree).is_dir() else []:
         directory = seal.parent
         if directory.is_relative_to(store):
             continue
