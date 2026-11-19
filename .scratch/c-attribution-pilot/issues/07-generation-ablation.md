@@ -17,7 +17,7 @@
   8. `layer64-reads`
   9. `match-layer64`
 
-  Plus untuned (regenerated, proposed) and an optional intact repeat (open decision 5). Adapter and read removals are never combined. A condition whose control is unavailable is recorded as skipped, with the reason.
+  Plus untuned (regenerated, proposed) and a second intact pass per arm on the same questions and batches [user, 2026-11-19]. Adapter and read removals are never combined. A condition whose control is unavailable is recorded as skipped, with the reason.
 - [ ] **Greedy only.** The settings:
   - FP32, cap 1,024, EOS 151645, repetition penalty 1.0, left padding;
   - explicit arguments over `generation_config`;
@@ -33,7 +33,7 @@
   - gains and losses, and the exact McNemar p;
   - invalid and capped counts, and mean and median tokens;
   - the group's and the control's first-order sampled-J predicted removal effect, labelled;
-  - the intact-repeat flip count, if run.
+  - the intact-repeat flip count per arm (the nondeterminism floor).
 - [ ] **Labels:** "exploratory (selected on these questions)", "greedy ≠ sampled J", and "predicted effects are local first-order sampled-J approximations".
 - [ ] **Tests:**
   - tiny-model greedy runs reproduce;

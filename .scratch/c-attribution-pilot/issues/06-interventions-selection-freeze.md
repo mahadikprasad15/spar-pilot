@@ -39,7 +39,7 @@
   Each group:
   - is **positive dJdλ only**;
   - has ties broken by layer, then module or index;
-  - surfaces any shortfall, handled per spec open decision 2, never padded.
+  - on a shortfall, is frozen at its actual positive size with the control matched to that size and the shortfall recorded; never padded, never dropped [user, 2026-11-19].
 
   Each group gets its own matched control:
   - adapters: same module type, write ±20%;

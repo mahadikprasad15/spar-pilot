@@ -226,4 +226,6 @@ These are listed in full in spec v2. In short:
 - 3 (infeasible `layer64` control): run the target, report the control unavailable.
 - 7 (draw split): kept in addition, with within-half leave-one-out weights.
 - 8 (seeds): defaults confirmed.
-- Still open: 2 (positive shortfall) and 5 (intact repeat).
+- 2 (positive shortfall): freeze the smaller positive group with a size-matched control; never pad or drop.
+- 5 (intact repeat): yes, +300 greedy answers.
+- No round-1 decision remains open.

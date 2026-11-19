@@ -280,7 +280,7 @@ They are accumulated in the attribution pass, so no separate run is needed.
 
 **Ties** are broken by layer, then module order or neuron index.
 
-**Selection is positive only.** If a scope has fewer positive scores than the requested count, the shortfall is surfaced; open decision 2 governs it. It is never silently padded with non-positive scores.
+**Selection is positive only.** If a scope has fewer positive scores than the requested count, the shortfall is surfaced and the smaller positive group is frozen as it is, with its control matched to the actual size and the shortfall recorded in the freeze and the report [user, 2026-11-19]. It is never padded with non-positive scores, and the condition is not dropped.
 
 **Read removals.** These remove read terms from the LoRA `down_proj` branch, by zeroing a_j in lora_A. They do not delete pretrained neurons, and they are separate from adapter removals.
 
@@ -369,8 +369,8 @@ Each condition applies exactly one group. Adapter and read removals are never co
 |---|---|
 | Arms: 2 × 9 × 150 | 2,700 |
 | Untuned, regenerated **[proposed]** | +150 |
-| Second intact pass per arm, measuring greedy nondeterminism **[proposed; open decision 5]** | +300 |
-| **Total** | **up to 3,150** |
+| Second intact pass per arm, measuring greedy nondeterminism **[user, 2026-11-19]** | +300 |
+| **Total** | **3,150** |
 
 Skipped conditions (an unavailable control) reduce the count.
 
@@ -392,7 +392,7 @@ Bootstrap intervals use 10,000 resamples of questions, paired by question ID acr
 - invalid and capped counts, and mean and median response tokens;
 - the group's first-order sampled-J predicted removal effect, and the control's, side by side under their own label.
 
-The untuned row is reported alongside. If an intact repeat is run, its flip count is reported as the nondeterminism floor.
+The untuned row is reported alongside. The intact repeat's flip count (questions whose greedy answer or correctness differs between the two identical intact passes) is reported per arm as the nondeterminism floor, next to every condition's gains and losses.
 
 ### Labels
 
@@ -520,14 +520,18 @@ A short preregistration before step 4 is recommended.
 - **Draw split:** kept in addition to the question split (see Uncertainty and stability).
 - **Seeds:** the defaults above are confirmed.
 - **Hot layers:** confirmed, computed by code (see Selection).
+- **Positive shortfall:** freeze the smaller positive group, match its control to the actual size, record the shortfall; never pad, never drop.
+- **Intact repeat:** yes, one second intact greedy pass per arm (+300 answers).
 
 ## Open decisions (for review round 2)
 
 1. Resolved above (hot layers).
-2. **Positive shortfall.** If a scope has fewer positive scores than requested, the proposal is to freeze the smaller positive group, record the shortfall, and match its control to the actual size. The alternative is to drop that condition.
+2. Resolved above (positive shortfall).
 3. Resolved above (infeasible `layer64` control).
 4. Resolved above (tolerances).
-5. **Intact repeat** (+300 greedy) as a nondeterminism floor: yes (proposed) or no.
+5. Resolved above (intact repeat).
+
+All open decisions from round 1 are resolved.
 6. Resolved above (no time caps).
 7. Resolved above (draw split kept).
 8. Resolved above (seeds).
