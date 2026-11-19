@@ -343,3 +343,92 @@ class StageC:
         result['reference'] = 'same arm, unablated (full)'
         result['kl_direction'] = 'KL(full arm || condition)'
         return result
+
+
+# --- C-attribution interventions (ticket 06 of the correctness pilot) ----------------------------------
+
+def lora_hash(model, adapter='default'):
+    """sha256 over every LoRA parameter (name and bytes), to prove a restore is bit-exact."""
+    digest = hashlib.sha256()
+    for name, p in sorted(model.named_parameters()):
+        if 'lora_' in name:
+            digest.update(name.encode())
+            digest.update(p.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _down_proj(model, layer):
+    return model.get_base_model().model.layers[layer].mlp.down_proj
+
+
+@contextmanager
+def neuron_read_removal(model, reads, adapter='default'):
+    """Zero a_j in each named layer's ``down_proj`` lora_A (r = 1): c' = c - sum_{j in S} a_j z_j.
+
+    ``reads`` = {layer: [j, ...]}. A weight edit, so it acts at prefill and at every cached decode step.
+    The saved values are restored on exit and the LoRA hash must equal the original.
+    """
+    import torch
+    before = lora_hash(model, adapter)
+    saved = []
+    try:
+        with torch.no_grad():
+            for layer, js in sorted(reads.items()):
+                js = sorted(set(int(j) for j in js))
+                if not js:
+                    continue
+                weight = _down_proj(model, int(layer)).lora_A[adapter].weight
+                if weight.shape[0] != 1:
+                    raise ValueError('neuron-read removal assumes rank-1 LoRA')
+                index = torch.tensor(js, device=weight.device)
+                saved.append((weight, index, weight[0, index].clone()))
+                weight[0, index] = 0.0
+        yield
+    finally:
+        with torch.no_grad():
+            for weight, index, values in reversed(saved):
+                weight[0, index] = values
+        if lora_hash(model, adapter) != before:
+            raise RuntimeError('neuron-read removal did not restore the adapter exactly')
+
+
+def neuron_read_removal_hook(model, reads, adapter='default'):
+    """Hook form of ``neuron_read_removal``: subtract sum_{j in S} a_j x_j from each lora_A output."""
+    import torch
+    registrations = []
+    for layer, js in sorted(reads.items()):
+        js = sorted(set(int(j) for j in js))
+        if not js:
+            continue
+        module = _down_proj(model, int(layer)).lora_A[adapter]
+        index = torch.tensor(js)
+
+        def hook(m, args, output, index=index):
+            x = args[0]
+            a = m.weight[0, index.to(x.device)]
+            return output - (x[..., index.to(x.device)] * a).sum(-1, keepdim=True)
+
+        registrations.append((module, 'register_forward_hook', hook))
+    return _hooks(registrations)
+
+
+@contextmanager
+def adapter_zeroing(model, indices, adapter='default'):
+    """Zero lora_B of the chosen adapters in memory; restore on exit with a LoRA-hash check."""
+    import torch
+    before = lora_hash(model, adapter)
+    modules = adapter_modules(model)
+    saved = []
+    try:
+        with torch.no_grad():
+            for i in sorted(set(int(i) for i in indices)):
+                weight = modules[i][2].lora_B[adapter].weight
+                saved.append((weight, weight.clone()))
+                weight.zero_()
+        yield
+    finally:
+        with torch.no_grad():
+            for weight, values in reversed(saved):
+                weight.copy_(values)
+        if lora_hash(model, adapter) != before:
+            raise RuntimeError('adapter zeroing did not restore the adapter exactly')
