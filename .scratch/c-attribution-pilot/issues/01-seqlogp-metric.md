@@ -1,6 +1,6 @@
 # 01: Sequence log-probability metric
 
-**Status:** needs-triage
+**Status:** claimed
 **Type:** task
 **Blocked by:** —
 
@@ -25,6 +25,8 @@
   - every existing instrument and metrics test passes unmodified.
 
 ## Comments
+
+- 2026-11-19: Implementation started. The standalone sequence-log-probability metric and its initial CPU tests are the first slice; instrument wiring and the remaining acceptance tests are still open.
 
 - 2026-11-18 (round 1): FP64 accumulation, per-question pre-aggregation and the gross-denominator identity were added for review findings F2, F4, F5 and decision 9.
 

@@ -78,6 +78,17 @@ def trace_loglik(logits, input_ids, masks):
     return torch.stack(values)
 
 
+def seqlogp(logits, input_ids, masks):
+    """Sum generated-token log probabilities per row, including any generated EOS (FP64)."""
+    _check(logits)
+    values = []
+    for r, positions in enumerate(_selected(logits, masks, 'seq_targets', allow_empty=False)):
+        index = torch.tensor(positions, device=logits.device)
+        terms = position_terms(logits[r, index], input_ids[r, index + 1], [0])
+        values.append(terms[:, 0].double().sum())
+    return torch.stack(values)
+
+
 def stop_pull(logits, masks, *, stop_ids):
     """Per-example stop pull [batch] (FP64) and reasons; an empty mask is NaN, never 0."""
     _check(logits)
