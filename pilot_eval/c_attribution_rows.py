@@ -69,7 +69,7 @@ def _bound(ref, name):
     return path
 
 
-def _provenance(config, select, policy, adapter, repo):
+def _provenance(config, select, policy, adapter, repo, eos=EOS):
     implementation = config.get('implementation') or {}
     engine = file_sha256(repo / 'pilot_eval' / 'grpo_eval_engine.py')
     if implementation.get('engine') != engine:
@@ -90,8 +90,8 @@ def _provenance(config, select, policy, adapter, repo):
         raise RowsError(f"checkpoint adapter {checkpoint.get('adapter_sha256')} != bound {adapter}")
     template = config.get('prompt_template') or {}
     runtime = config.get('runtime') or {}
-    if runtime.get('eos_token_id') != EOS:
-        raise RowsError(f"runtime eos_token_id {runtime.get('eos_token_id')} != {EOS}")
+    if runtime.get('eos_token_id') != eos:
+        raise RowsError(f"runtime eos_token_id {runtime.get('eos_token_id')} != {eos}")
     return {
         'recorded': {
             'model': config.get('model'),
@@ -101,7 +101,7 @@ def _provenance(config, select, policy, adapter, repo):
             'chat_template_sha256': template.get('chat_template_sha256'),
             'prompt_template': template.get('prompt_template'),
             'policy': dict(matches[0]),
-            'eos_token_id': EOS,
+            'eos_token_id': eos,
             'seed_rule': config.get('seed_rule'),
             'runtime': {k: runtime.get(k) for k in ('versions', 'device', 'dtype', 'adapter_dtype', 'tf32',
                                                     'deterministic_algorithms', 'attention_implementation',
@@ -115,7 +115,7 @@ def _provenance(config, select, policy, adapter, repo):
     }
 
 
-def _check_row(row, adapter, units, items):
+def _check_row(row, adapter, units, items, *, cap=POLICY['completion_limit'], eos=EOS):
     rid = row['draw_id']
     if row.get('adapter_sha256') != adapter:
         raise RowsError(f"{rid}: adapter_sha256 {row.get('adapter_sha256')} != {adapter}")
@@ -123,13 +123,12 @@ def _check_row(row, adapter, units, items):
     if not isinstance(tokens, list) or not tokens:
         raise RowsError(f'{rid}: empty generated sequence')
     capped, stop = row.get('capped'), row.get('stop_reason')
-    cap = POLICY['completion_limit']
     if capped is True:
-        if stop != 'cap' or len(tokens) != cap or EOS in tokens:
+        if stop != 'cap' or len(tokens) != cap or eos in tokens:
             raise RowsError(f'{rid}: a capped row needs stop_reason cap, exactly {cap} tokens and no EOS')
     elif capped is False:
-        if stop != 'eos' or tokens[-1] != EOS or EOS in tokens[:-1] or len(tokens) > cap:
-            raise RowsError(f'{rid}: an EOS row must end with its only {EOS} within {cap} tokens')
+        if stop != 'eos' or tokens[-1] != eos or eos in tokens[:-1] or len(tokens) > cap:
+            raise RowsError(f'{rid}: an EOS row must end with its only {eos} within {cap} tokens')
     else:
         raise RowsError(f'{rid}: capped must be a boolean')
     if row.get('scorer') != SCORER:
@@ -152,10 +151,11 @@ def load(source, *, repo=REPO):
     select = dict(source.get('select') or SELECT)
     policy = dict(source.get('policy') or POLICY)
     adapter = source['adapter_sha256']
+    eos = int(source.get('eos_token_id', EOS))  # the real runs: 151645; the CPU chain world: its own EOS
     responses = _bound(source['responses'], 'responses')
     config_path = _bound(source['config'], 'config')
     config = json.loads(config_path.read_text())
-    provenance = _provenance(config, select, policy, adapter, Path(repo))
+    provenance = _provenance(config, select, policy, adapter, Path(repo), eos)
     units = {u['key']: u for u in config.get('units', []) if u.get('policy') == policy}
     items = {i['id']: i for i in config.get('items', [])}
     order = [i['id'] for i in config.get('items', [])]
@@ -170,7 +170,7 @@ def load(source, *, repo=REPO):
             if row['draw_id'] in seen:
                 raise RowsError(f"duplicate draw_id {row['draw_id']}")
             seen.add(row['draw_id'])
-            row['_invalid'] = _check_row(row, adapter, units, items)
+            row['_invalid'] = _check_row(row, adapter, units, items, cap=policy['completion_limit'], eos=eos)
             groups[row['group_id']].append(row)
 
     questions = []

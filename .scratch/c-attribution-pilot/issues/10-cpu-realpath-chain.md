@@ -1,6 +1,6 @@
 # 10: CPU whole-chain test through the real backend
 
-**Status:** needs-triage
+**Status:** resolved (2026-11-19; awaiting the pre-GPU review)
 **Type:** task
 **Blocked by:** 09
 
@@ -31,3 +31,29 @@
 - 2026-11-18 (round 1): the review asks that the real dependencies actually execute rather than being skipped, and that old-metric behaviour is preserved.
 
 ## Answer
+- 2026-11-19 (implementation): built; it found one real bug (below).
+
+## Answer
+
+`tests/test_c_attribution_realpath.py` (11 tests) on `tests/c_attribution_realpath_fixture.py`: a 28-layer saved
+Qwen2, two saved PEFT arms, a `tokenizers` tokenizer with a chat template, the pinned `generation_config.json`,
+real-format behaviour rows and configs (EOS, capped, invalid, all-same and mixed groups), an effective-write table
+giving {11, 15, 16, 24}, a git-committed catalog that `catalog verify` passes, the bundle exported and restored
+through the fake Hub, and the record sealed from the actual rehearsal YAML with CPU sizes (cap 12, budget 256,
+500 resamples). torch, transformers, PEFT and tokenizers are hard imports (fail, never skip).
+
+- Whole chain completes through the real backend in about 16 s; trace and stop are bit-identical with and
+  without seqlogp on this world.
+- Recorded failures stop before GPU work: wrong CLI argument; YAML number as text; nested wrong type; wrong stop
+  syntax (seal refused); HF cache on the volume; missing catalog; adapter modified after restore; the real
+  volume check without its identity file (preflight stops; the Pod stop is still requested).
+- Resume: an interruption after the first sealed unit, then the local root deleted, resumes from the volume
+  (take-over of a dead writer), reuses the restored unit and completes.
+- Bug found: `c_attribution_checks.resolve_processors` patched `_get_logits_processor` on the PeftModel, but
+  generate resolves processors on the inner transformers model, so on any real arm (check 9 / (f)) it raised.
+  Fixed, with a PEFT regression test. Also: the row loader now takes the cap and EOS from the bound policy
+  (it used the module constant for the cap); production requires 1024 / 151645.
+- Stubbed only: CUDA availability and memory counters, the volume mount/identity and disk facts, the Hub, the
+  stop command. The world's controls are mostly unavailable (28 x 32 reads; layer64 takes every positive read):
+  reported as analysis, as the rule says.
+

@@ -1,6 +1,6 @@
 # 09: Runner, launch record and teardown
 
-**Status:** needs-triage
+**Status:** resolved (2026-11-19; awaiting the pre-GPU review)
 **Type:** task
 **Blocked by:** 05, 07, 08
 
@@ -65,3 +65,25 @@ Reuse the production-1 chain, units, watchdog and launcher where they fit. Run u
 - 2026-11-18 (round 1): caps now come from rehearsal measurements. Restore-hash and fixed-batch safety were added (F4, F5).
 
 ## Answer
+- 2026-11-19 (implementation): built and committed; see Answer.
+
+## Answer
+
+- `pilot_eval/c_attribution_chain.py`: typed launch record (`SCHEMA`: every leaf, nested ones included, is
+  type-checked at seal and load; unknown keys, bools, text-for-number, non-integer counts and `[proposed]`
+  are refused); per-run volume state `$VOL/c-attribution/<run-id>/`; a finished run ID is refused and a
+  different record under the same run ID is refused; no caps (elapsed per stage logged and persisted);
+  automatic sign-off; resume from an empty local disk, skipping a stage only after its outputs re-verify;
+  teardown copy -> pre-export summary -> export -> final summary -> stop with both syntaxes.
+- `pilot_eval/c_attribution_stages.py` and `pilot_eval/c_attribution_backend.py`: the seven stage bodies
+  composed from tickets 01-08 and the real backend.
+- `scripts/c_attribution_launch.sh`; `scripts/attribution_watchdog.sh` accepts the deadline `none` and prints
+  the writer's last progress update (`progress.json`) so a stalled writer is visible.
+- Generation applies one frozen group per unit, checks the restored adapter hash after each unit (a mismatch
+  raises before the unit is sealed), and refuses a batch plan other than the frozen one.
+- Rehearsal record draft: `.scratch/c-attribution-pilot/launch-record-rehearsal.yaml` (values tagged
+  [for approval] need the user's approval at ticket 11).
+- Open for review: check (b) replay is recorded as not run (needs the source sampled path); cached-against-
+  forced is `measure-only` in the rehearsal by design.
+- Tests: test_c_attribution_chain.py (19), test_c_attribution_launcher.py (8), generation (+2).
+

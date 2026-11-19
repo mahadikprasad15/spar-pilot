@@ -170,6 +170,8 @@ def validate(record, *, code_commit):
     if record['mode'] == 'rehearsal' and not record['label'].startswith('rehearsal'):
         raise LaunchRefused('a rehearsal needs a label starting with "rehearsal"')
     if record['mode'] == 'production':
+        if (record['generation']['cap'], record['generation']['eos_token_id']) != (1024, 151645):
+            raise LaunchRefused('production uses the runs\' cap 1024 and EOS 151645 (spec: Settings)')
         if record['label'] != 'production':
             raise LaunchRefused('a production record is labelled "production"')
         scope = record['scope']

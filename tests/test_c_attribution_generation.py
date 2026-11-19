@@ -180,3 +180,31 @@ def test_zero_intact_accuracy_leaves_the_ratio_undefined():
     results = {'intact': {q: _row(0) for q in ids}, 'top10-adapters': {q: _row(1) for q in ids}}
     out = cg.summarize_arm(results, ids, conds, counts=np.ones((2, 2)))
     assert out['conditions']['top10-adapters']['percent_of_intact'] is None
+
+
+def test_a_plan_other_than_the_frozen_one_is_refused(tmp_path):
+    model = _model()
+    plan = cg.batches(list(QUESTIONS), 2)
+    sel.seal_freeze(tmp_path, 'online-grpo', dict(sel.build_freeze('online-grpo', _freeze(), launch_record_sha256='L',
+                                                                   hot={'layers': [1]}, split={}, inputs={}),
+                                                  generation_plan=plan))
+    with pytest.raises(cg.GenerationError, match='frozen generation plan'):
+        cg.run_arm(tmp_path, 'online-grpo', model, QUESTIONS, cg.batches(list(QUESTIONS), 3), **KW)
+
+
+def test_an_unrestored_adapter_stops_before_the_unit_is_sealed(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    model = _model()
+    plan = cg.batches(list(QUESTIONS), 2)
+
+    @contextmanager
+    def leaky(model_, condition):  # zeroes a lora_B and never puts it back
+        module = model_.get_base_model().model.layers[0].mlp.down_proj
+        module.lora_B['default'].weight.data.zero_()
+        yield
+
+    monkeypatch.setattr(cg, 'intervention', leaky)
+    condition = cg.conditions(_freeze())[1]
+    with pytest.raises(cg.GenerationError, match='adapter not restored'):
+        cg.run_condition(tmp_path, 'online-grpo', condition, model, QUESTIONS, plan, **KW)
+    assert not (cg.unit_dir(tmp_path, 'online-grpo', condition['name'], 0) / 'complete.json').exists()

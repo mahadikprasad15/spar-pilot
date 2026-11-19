@@ -144,40 +144,43 @@ def run_condition(root, arm, condition, model, questions, plan, *, decode, pad_t
         return {'status': 'skipped', 'reason': condition['reason']}
     before = ab.lora_hash(model, adapter)
     statuses = []
-    with intervention(model, condition):
-        for b, members in enumerate(plan):
-            directory = unit_dir(root, arm, condition['name'], b)
-            if (directory / 'complete.json').is_file():
-                au.verify_run(directory)
-                config = json.loads((directory / 'config.json').read_text())
-                if config['question_ids'] != members:
-                    raise GenerationError(f'{directory}: sealed batch membership differs from the plan')
-                statuses.append('reused')
-                continue
+    for b, members in enumerate(plan):
+        directory = unit_dir(root, arm, condition['name'], b)
+        if (directory / 'complete.json').is_file():
+            au.verify_run(directory)
+            config = json.loads((directory / 'config.json').read_text())
+            if config['question_ids'] != members:
+                raise GenerationError(f'{directory}: sealed batch membership differs from the plan')
+            statuses.append('reused')
+            continue
+        with intervention(model, condition):  # exactly one frozen group per unit
             outputs = greedy(model, [questions[q]['prompt_ids'] for q in members], pad_token_id=pad_token_id,
                              eos_token_id=eos_token_id, cap=cap)
-            rows = []
-            for q, o in zip(members, outputs):
-                capped = o['stop_reason'] == 'cap'
-                text = decode(o['content_token_ids'])
-                rows.append({'arm': arm, 'condition': condition['name'], 'question_id': q,
-                             'prompt': questions[q]['prompt'], 'generated_token_ids': o['generated_token_ids'],
-                             'text': text, 'stop_reason': o['stop_reason'], 'capped': capped,
-                             'n_tokens': len(o['generated_token_ids']), **score(text, questions[q]['gold'], capped)})
-            config = {'arm': arm, 'condition': {k: v for k, v in condition.items() if k != 'prediction'},
-                      'batch_index': b, 'question_ids': members, 'cap': cap, 'eos_token_id': eos_token_id,
-                      'pad_token_id': pad_token_id, 'greedy_args': GREEDY_ARGS, 'padding': 'left',
-                      'lora_hash_before': before}
-            statuses.append(au.seal_run(directory, {'responses.jsonl': ''.join(json.dumps(r) + '\n' for r in rows),
-                                                    'config.json': config}))
-    if ab.lora_hash(model, adapter) != before:
-        raise GenerationError(f"{arm} {condition['name']}: adapter not restored")
+        if ab.lora_hash(model, adapter) != before:  # checked after every unit, before it is sealed
+            raise GenerationError(f"{arm} {condition['name']} batch {b}: adapter not restored")
+        rows = []
+        for q, o in zip(members, outputs):
+            capped = o['stop_reason'] == 'cap'
+            text = decode(o['content_token_ids'])
+            rows.append({'arm': arm, 'condition': condition['name'], 'question_id': q,
+                         'prompt': questions[q]['prompt'], 'generated_token_ids': o['generated_token_ids'],
+                         'text': text, 'stop_reason': o['stop_reason'], 'capped': capped,
+                         'n_tokens': len(o['generated_token_ids']), **score(text, questions[q]['gold'], capped)})
+        config = {'arm': arm, 'condition': {k: v for k, v in condition.items() if k != 'prediction'},
+                  'batch_index': b, 'question_ids': members, 'cap': cap, 'eos_token_id': eos_token_id,
+                  'pad_token_id': pad_token_id, 'greedy_args': GREEDY_ARGS, 'padding': 'left',
+                  'lora_hash_before': before, 'lora_hash_after': before}
+        statuses.append(au.seal_run(directory, {'responses.jsonl': ''.join(json.dumps(r) + '\n' for r in rows),
+                                                'config.json': config}))
     return {'status': 'run', 'units': statuses}
 
 
 def run_arm(root, arm, model, questions, plan, **kw):
-    """All conditions for one arm, from its sealed freeze; refuses to start without it."""
+    """All conditions for one arm, from its sealed freeze; refuses to start without it, or with a batch plan
+    other than the frozen one."""
     freeze = read_freeze(root, arm)
+    if 'generation_plan' in freeze and freeze['generation_plan'] != [list(b) for b in plan]:
+        raise GenerationError(f'{arm}: the batch plan differs from the frozen generation plan')
     return {c['name']: run_condition(root, arm, c, model, questions, plan, **kw) for c in conditions(freeze)}
 
 

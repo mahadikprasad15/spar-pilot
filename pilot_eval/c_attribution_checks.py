@@ -60,17 +60,19 @@ def resolve_processors(model, tokenizer, *, settings, base, generation_config_pa
     import torch
     from transformers import GenerationConfig
     from pilot_eval.grpo_gpu import GPUPreflight
+    # A PEFT model's generate runs the transformers model's generate: capture there (and set its config there).
+    inner = model.get_base_model() if hasattr(model, 'get_base_model') else model
     if base == 'pinned-file':
-        model.generation_config = GenerationConfig.from_pretrained(Path(generation_config_path).parent,
+        inner.generation_config = GenerationConfig.from_pretrained(Path(generation_config_path).parent,
                                                                    Path(generation_config_path).name)
     elif base == 'fresh-defaults':
-        model.generation_config = GenerationConfig(
+        inner.generation_config = GenerationConfig(
             do_sample=False, num_beams=1, num_return_sequences=1, eos_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id, repetition_penalty=1.0, no_repeat_ngram_size=0)
     else:
         raise ValueError(f'unknown base {base!r}')
     captured = {}
-    original_get = model._get_logits_processor
+    original_get = inner._get_logits_processor
     original_generate = model.generate
 
     def get(*args, **kwargs):
@@ -85,14 +87,14 @@ def resolve_processors(model, tokenizer, *, settings, base, generation_config_pa
         return original_generate(**merged)
 
     fake = types.SimpleNamespace(torch=torch, tokenizer=tokenizer, model=model)
-    model._get_logits_processor = get
+    inner._get_logits_processor = get
     model.generate = generate
     try:
         GPUPreflight._generate(fake, [{'prompt': 'Question: 1 + 1?'}], settings, 42, draws=2)
     except _Captured:
         pass
     finally:
-        model._get_logits_processor = original_get
+        inner._get_logits_processor = original_get
         model.generate = original_generate
     if 'processors' not in captured:
         raise CheckFailure('generate did not reach logits-processor resolution')

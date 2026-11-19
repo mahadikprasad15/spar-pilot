@@ -209,3 +209,13 @@ def test_numerics_record_keeps_historical_tolerances(tmp_path):
     assert record['gross_net_ratio']['median'] == pytest.approx(0.5)
     cc.write_numerics(tmp_path / 'numerics.json', record)
     assert cc.json.loads((tmp_path / 'numerics.json').read_text())['batch_invariance']['max_fraction'] == 1e-6
+
+
+def test_processor_check_reaches_resolution_through_a_peft_model():
+    """Found by the ticket 10 real path: a PeftModel's generate resolves processors on the inner model."""
+    from peft import LoraConfig, get_peft_model
+    tok = _tokenizer()
+    model = get_peft_model(_qwen_vocab_model(), LoraConfig(r=1, lora_alpha=1, target_modules=['down_proj'])).eval()
+    result = cc.processor_check(model, tok, settings=SETTINGS, generation_config_path=FIXTURES / 'generation_config.json')
+    assert result['passed'], result
+    assert result['bases'][0]['resolved_generation_config']['repetition_penalty'] == 1.0
