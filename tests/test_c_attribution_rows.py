@@ -257,13 +257,14 @@ def test_seal_is_idempotent_and_refuses_a_different_existing_seal(tmp_path):
         cr.verify(out)
 
 
-# --- a cached Qwen2.5 tokenizer (stand-in for the pinned revision) ----------------------------
+# --- the pinned tokenizer (local artifacts), else a cached Qwen2.5 tokenizer with the same template ------
 
 def test_cached_qwen_tokenizer_reproduces_recorded_prompt_lengths():
     transformers = pytest.importorskip('transformers')
     os.environ.setdefault('HF_HUB_OFFLINE', '1')
     tokenizer = None
-    for name in ('Qwen/Qwen2.5-1.5B-Instruct', 'Qwen/Qwen2.5-0.5B-Instruct'):
+    pinned = ARTIFACTS / 'inputs/models/989aa7980e4cf806f80c7fef2b1adb7bc71aa306'
+    for name in (str(pinned), 'Qwen/Qwen2.5-1.5B-Instruct', 'Qwen/Qwen2.5-0.5B-Instruct'):
         try:
             tokenizer = transformers.AutoTokenizer.from_pretrained(name, local_files_only=True)
             break
@@ -271,10 +272,13 @@ def test_cached_qwen_tokenizer_reproduces_recorded_prompt_lengths():
             continue
     if tokenizer is None:
         pytest.skip('no cached Qwen2.5 tokenizer')
+    from pilot_eval.workflow import _hash
+    identity = {'revision': '989aa7980e4cf806f80c7fef2b1adb7bc71aa306', 'chat_template_sha256': _hash(tokenizer.chat_template)}
     for arm in ('online', 'offline'):
         loaded = cr.load(_source(FIXTURES / arm, arm))
-        rows, _ = cr.instrument_rows(loaded, lambda p: tokenizer(p, add_special_tokens=False)['input_ids'])
-        assert len(rows) == 16
+        rows, manifest = cr.instrument_rows(loaded, lambda p: tokenizer(p, add_special_tokens=False)['input_ids'],
+                                            tokenizer_identity=identity)
+        assert len(rows) == 16 and manifest['tokenization']['tokenizer_identity'] == identity
 
 
 # --- the real local files ---------------------------------------------------------------------
