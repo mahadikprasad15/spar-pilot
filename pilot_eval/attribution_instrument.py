@@ -278,23 +278,53 @@ class Instrument:
 
     # --- passes ------------------------------------------------------------------------------
 
-    def attribute(self, rows, *, raw=False, untuned=False, _corrupt_pass2=False):
+    def _reduction(self, request, n):
+        """Validate detached per-row coefficients before the model is evaluated."""
+        if request is None:
+            return None
+        if self.order != ('seqlogp',):
+            raise InstrumentFailure('question reduction requires seqlogp as the only metric')
+        try:
+            ids = list(request['question_ids'])
+            coefficients = np.array(request['coefficients'], dtype=np.float64, copy=True)
+            halves = np.array(request['half_coefficients'], dtype=np.float64, copy=True)
+            unique = list(dict.fromkeys(ids))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise InstrumentFailure('invalid neuron reduction request') from exc
+        if len(ids) != n or coefficients.shape != (n,) or halves.shape != (n, 2):
+            raise InstrumentFailure('neuron reduction coefficients must match the batch')
+        if not np.isfinite(coefficients).all() or not np.isfinite(halves).all():
+            raise InstrumentFailure('neuron reduction coefficients must be finite')
+        return dict(ids=ids, unique=unique, coefficients=coefficients, halves=halves)
+
+    def attribute(self, rows, *, raw=False, untuned=False, neuron_reduction=None, _corrupt_pass2=False):
+        """Attribute selected metrics; optionally reduce seqlogp reads inside each layer.
+
+        neuron_reduction supplies question_ids, per-row coefficients (R - LOO baseline) / n_q,
+        and per-row half_coefficients for the two draw halves, with the half-specific baselines.
+        These coefficients exclude the final 1/Q factor. Results include FP64 per-question
+        sums and draw-half sums, plus per-response identity error, gross, and signed net.
+        No per-response neuron matrix is retained by this reduced path.
+        """
         torch = self.torch
         self.check_routing(untuned=untuned)
         ids, attention, positions = self.batch(rows)
         unpadded = attention.to(torch.float64)
         n, count = len(rows), len(self.modules)
+        reduction = self._reduction(neuron_reduction, n)
+        if reduction is not None and untuned:
+            raise InstrumentFailure('question reduction requires an active adapter')
         captured, calls = {}, {}
         precision_scope = full_fp64(self.model) if self.precision == 'fp64' else ExitStack()
         precision_scope.__enter__()
         try:
             return self._attribute(rows, ids, attention, positions, unpadded, n, count, captured, calls,
-                                   raw=raw, untuned=untuned, corrupt=_corrupt_pass2)
+                                   raw=raw, untuned=untuned, corrupt=_corrupt_pass2, reduction=reduction)
         finally:
             precision_scope.__exit__(None, None, None)
 
     def _attribute(self, rows, ids, attention, positions, unpadded, n, count, captured, calls, *, raw, untuned,
-                   corrupt):
+                   corrupt, reduction):
         torch = self.torch
         context = frozen_disable_adapter(self.model) if untuned else ExitStack()
         with context, torch.enable_grad(), torch.autocast(ids.device.type, enabled=False), \
@@ -335,26 +365,32 @@ class Instrument:
         g_down = {name: {layer: (grads[name][i][..., 0].detach().double() if grads[name] is not None else None)
                          for layer, i in self.down_index.items()} for name in self.order}
         neuron = self._pass2(ids, attention, positions, g_down, attr, metrics, untuned=untuned,
-                             corrupt=corrupt)
+                             corrupt=corrupt, reduction=reduction)
         term_size = neuron.pop('term_size')
+        sum_abs_z = neuron.pop('sum_abs_z', None)
         out = dict(example_ids=[r['id'] for r in rows], adapters=list(self.adapters),
                    metrics={k: v.detach().cpu().numpy() for k, v in metrics.items()}, stop_reasons=reasons,
                    attr=attr, neuron=neuron, term_size=term_size, sum_abs_c=abs_c.cpu().numpy(),
                    token_count=attention.sum(1).cpu().numpy(), signed_sum_c=signed.cpu().numpy(),
                    routing=dict(lora_a_calls=sum(calls.values())), padded_width=int(ids.shape[1]))
+        if reduction is not None:
+            out['neuron_question_ids'] = reduction['unique']
+            out['sum_abs_z'] = sum_abs_z
         if raw:
             out['raw'] = dict(c={i: reads[i].detach() for i in range(len(reads))},
                               g={name: ({i: grads[name][i].detach() for i in range(count)} if grads[name] else {})
                                  for name in self.order})
         return out
 
-    def _pass2(self, ids, attention, positions, g_down, attr, metrics, *, untuned, corrupt):
+    def _pass2(self, ids, attention, positions, g_down, attr, metrics, *, untuned, corrupt, reduction):
         torch = self.torch
         width = self.model.config.intermediate_size
         n = ids.shape[0]
         unpadded = attention.to(torch.float64)
         result = {name: {} for name in self.order}
         result['term_size'] = {}
+        if reduction is not None:
+            result['sum_abs_z'] = {}
         if untuned:
             out = {name: {l: np.zeros((n, width)) for l in self.down_index} for name in self.order}
             out['term_size'] = {l: np.zeros((n, width)) for l in self.down_index}
@@ -367,14 +403,36 @@ class Instrument:
             fired[layer] = fired.get(layer, 0) + 1
             z = args[0].detach().double()
             a = module.lora_A[self.adapter].weight[0].detach().double()
-            result['term_size'][layer] = (a.abs() * (z.abs() * unpadded[..., None]).sum(1)).cpu().numpy()
+            abs_z = (z.abs() * unpadded[..., None]).sum(1)
+            term_size = (a.abs() * abs_z).cpu().numpy()
+            result['term_size'][layer] = term_size.sum(0) if reduction is not None else term_size
+            if reduction is not None:
+                result['sum_abs_z'][layer] = abs_z.sum(0).cpu().numpy()
             for name in self.order:
                 g = g_down[name][layer]
                 if g is None:
+                    if reduction is not None:
+                        raise InstrumentFailure('cannot reduce undefined sequence attribution')
                     result[name][layer] = np.full((n, width), np.nan)
                     continue
                 value = -(a * torch.einsum('btj,bt->bj', z, g * unpadded))
-                result[name][layer] = (value * (1.01 if corrupt else 1.0)).cpu().numpy()
+                value = (value * (1.01 if corrupt else 1.0)).cpu().numpy()
+                if reduction is None:
+                    result[name][layer] = value
+                    continue
+                net = value.sum(1)
+                gross = np.abs(value).sum(1)
+                error = net - attr[name][:, self.down_index[layer]]
+                if not np.all(np.abs(error) <= self.rtol * gross):
+                    raise InstrumentFailure(f'neuron-sum identity failed for {name} layer {layer}')
+                by_question = []
+                for question in reduction['unique']:
+                    selected = np.asarray([qid == question for qid in reduction['ids']])
+                    by_question.append((value[selected] * reduction['coefficients'][selected, None]).sum(0))
+                result[name][layer] = dict(
+                    by_question=np.stack(by_question),
+                    half_sums=reduction['halves'].T @ value,
+                    identity=dict(error=error, gross=gross, net=net))
 
         try:
             for layer in self.down_index:
@@ -387,6 +445,8 @@ class Instrument:
                 handle.remove()
         if any(fired.get(l) != 1 for l in self.down_index):
             raise InstrumentFailure('down_proj pre-hook did not fire once per layer in pass 2')
+        if reduction is not None:
+            return result
         for name in self.order:
             undefined = np.isnan(metrics[name].detach().cpu().numpy())
             for layer, i in self.down_index.items():

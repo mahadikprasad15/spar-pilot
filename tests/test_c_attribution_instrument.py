@@ -32,7 +32,14 @@ def test_seq_only_values_and_removal_attribution_match_independent_gate_oracle()
     assert set(out['metrics']) == {'seqlogp'}
     assert np.allclose(out['metrics']['seqlogp'], expected.detach().numpy(), rtol=1e-6)
     assert np.allclose(out['attr']['seqlogp'][:, 0], oracle, rtol=1e-5, atol=1e-7)
+    all_oracle = ai.branch_oracle(model, batch, 'seqlogp', stop_ids=STOP, pad_token_id=0)
+    assert np.allclose(out['attr']['seqlogp'], all_oracle, rtol=1e-5, atol=1e-7)
     assert out['raw']['g']['seqlogp'][0][:, :4].abs().sum() > 0
+    # A response-only contraction misses the prompt-prefill contribution.
+    c = out['raw']['c'][0][..., 0].double()
+    g = out['raw']['g']['seqlogp'][0][..., 0].double()
+    response_only = -(c[:, 4:] * g[:, 4:]).sum(1).numpy()
+    assert not np.allclose(response_only, out['attr']['seqlogp'][:, 0], rtol=1e-5, atol=1e-8)
     for layer, index in inst.down_index.items():
         assert np.allclose(out['neuron']['seqlogp'][layer].sum(1),
                            out['attr']['seqlogp'][:, index], rtol=1e-4, atol=1e-10)

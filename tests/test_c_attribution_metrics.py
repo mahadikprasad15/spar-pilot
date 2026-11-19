@@ -30,3 +30,10 @@ def test_seqlogp_rejects_empty_duplicate_and_out_of_range_targets():
     for targets in ([], [0], [1, 1], [3]):
         with pytest.raises(ValueError):
             am.seqlogp(logits, ids, [dict(seq_targets=targets)])
+
+
+def test_seqlogp_capped_row_includes_all_1024_tokens():
+    logits = torch.zeros((1, 1025, 2))
+    ids = torch.zeros((1, 1025), dtype=torch.long)
+    value = am.seqlogp(logits, ids, [dict(seq_targets=list(range(1, 1025)))])
+    assert value.item() == pytest.approx(-1024 * math.log(2), abs=1e-4)
