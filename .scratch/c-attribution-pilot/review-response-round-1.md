@@ -219,3 +219,11 @@ These are listed in full in spec v2. In short:
 6. Caps.
 7. Whether to drop the draw split.
 8. Seeds.
+
+## Update 2026-11-19 (user answers)
+
+- 1 (hot layers): {11, 15, 16, 24} confirmed; derived by code with the union rule, with a k-sensitivity table.
+- 3 (infeasible `layer64` control): run the target, report the control unavailable.
+- 7 (draw split): kept in addition, with within-half leave-one-out weights.
+- 8 (seeds): defaults confirmed.
+- Still open: 2 (positive shortfall) and 5 (intact repeat).

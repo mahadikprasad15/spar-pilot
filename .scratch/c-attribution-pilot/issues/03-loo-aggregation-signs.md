@@ -11,6 +11,7 @@
   - All-same groups give exactly 0.
   - Σ_k w_qk = 0.
   - It also returns the per-question coefficients (R_qk − b_qk)/n_q used by ticket 01's pre-aggregation.
+- [ ] **Draw-half sums.** The pass also accumulates, per arm, Σ_q S_q^A and Σ_q S_q^B for the reads ([2, 28, 8,960], FP64), with leave-one-out weights recomputed within draws 0–3 and draws 4–7 (n = 4). Test: on a fixture, these equal the sums recomputed from per-response attributions.
 - [ ] **Aggregation.** `aggregate(S, Q)` computes removal_J = (1/Q) Σ_q S_q and dJdλ = −removal_J. It does this for the 196 adapters and for every `down_proj` layer's 8,960 reads, reading the sealed units.
 - [ ] **Totals and group predictions.**
   - The gross total Σ_c |dJdλ_c| and the net total |Σ_c dJdλ_c|, per scope.

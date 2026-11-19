@@ -46,8 +46,9 @@
   - reads: same layer, read size ±20%;
   - exclusion: all same-kind targets of the arm.
 
-  Infeasible layers in `layer64` follow open decision 3 and never block other groups. The most harmful adapters are frozen and reported only.
+  Infeasible layers in `layer64` never block other groups. If any layer is infeasible, the `layer64-reads` target still runs unchanged and `match-layer64` is recorded as unavailable, naming the deficient layers and targets [user, 2026-11-19]. The most harmful adapters are frozen and reported only.
 - [ ] **Measures.** Adapter write is ‖s·b‖·mean|c|, and read size is |a_j|·mean|z_j|. Both come from ticket 01's accumulations over the arm's 1,200 rows, all unpadded positions, token-weighted.
+- [ ] **Hot layers computed by code.** `hot_layers(source, sha256, *, context, step, k, module, arms, combine)` reads the effective-write table, refuses a hash mismatch, ranks each arm's modules by write, keeps the layers whose `down_proj` is in the top k, and combines them ("union" here). Test: on the real file with `gsm8k_solution`, step 64, k 10, union, it returns {11, 15, 16, 24}; it also writes the k-sensitivity table (k = 5, 10, 15, 20) for the report.
 - [ ] **Hot-layer provenance.** The freeze input binds:
   - the layer IDs;
   - the source file path and sha256;
@@ -68,5 +69,6 @@
 
 - 2026-11-18 review: the existing sequential `matched_controls` can return an unavailable group even when a complete valid matching exists. Reproduced on a two-target synthetic fixture; no prior real-study failure is claimed. Use seeded whole-group feasibility/matching without relaxing eligibility, and add the regression case. See [review round 1](../review-round-1.md#f3-confirmed-false-unavailable-outcome-in-the-existing-matcher). Fix not yet implemented or verified.
 - 2026-11-18 (response round 1): scope revised to the three top-64 read groups, with no top-10 read ablations [user]. The matcher above is specified. The hot-layer list content is open (spec open decision 1).
+- 2026-11-19: hot layers {11, 15, 16, 24} confirmed, derived by `hot_layers` with the union rule. Infeasible `layer64` control: run the target, report the control unavailable.
 
 ## Answer

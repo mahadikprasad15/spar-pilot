@@ -174,7 +174,15 @@ Per arm, from each half's S_q, report:
 
 Stability is descriptive. No threshold blocks or alters the pilot. After the split analysis, selection uses all 150 questions.
 
-The draw split from v1 (draws 0–3 against 4–7) is dropped, because the user specified a question split. Reinstating it costs only CPU; see open decision 7.
+### Draw split [user, 2026-11-19]
+
+Kept in addition to the question split. It asks a different question: for the same 150 questions, does the ranking depend on which samples the model happened to draw?
+
+- Half A is draws 0–3 and half B is draws 4–7 of every question.
+- Leave-one-out weights are recomputed **within each half** (n = 4, baseline from the other 3 draws of that half). A half whose 4 rewards are all equal contributes zero.
+- Adapters: computed on CPU from the stored per-response attributions.
+- Reads: the attribution pass also accumulates the two half-sums Σ_q S_q^A and Σ_q S_q^B, shape [2, 28, 8,960] per arm (small). Per-question half arrays are not stored, so there is no bootstrap on the draw split.
+- The same summaries as the question split are reported, labelled "noisier: 4 draws per question per half".
 
 ### Bootstrap
 
@@ -278,7 +286,7 @@ They are accumulated in the attribution pass, so no separate run is needed.
 
 **Hot layers H.** H is the same list for both arms. It must come from a recorded prior effective-write study, with its layer IDs, source run, measurement, context and file hash bound in the freeze inputs **before** the new J rankings are examined. H is never selected from the new J results.
 
-**H = {11, 15, 16, 24}** [user pointed to the source, 2026-11-18; the rule below is pending the user's confirmation]. The source is the step-64 effective-write figure on GSM8K solutions: the write ratio ‖ΔW·x‖ ÷ ‖W·x‖ per module, with the top 10 ranked per arm. Its values equal `artifacts/analysis/results-hub-v1/data/writes_modules.json` (sha256 `35747fda…`), context `gsm8k_solution`.
+**H = {11, 15, 16, 24}** [user, confirmed 2026-11-19]. The source is the step-64 effective-write figure on GSM8K solutions: the write ratio ‖ΔW·x‖ ÷ ‖W·x‖ per module, with the top 10 ranked per arm. Its values equal `artifacts/analysis/results-hub-v1/data/writes_modules.json` (sha256 `35747fda…`), context `gsm8k_solution`.
 
 Rule: H is the set of layers whose `down_proj` is among that arm's top-10 modules, unioned over the two GRPO arms.
 
@@ -288,6 +296,21 @@ Rule: H is the set of layers whose `down_proj` is among that arm's top-10 module
 | offline | 16 (4), 15 (5), 24 (8) |
 
 This gives 4 layers and 256 reads.
+
+**Computed, not transcribed.** Selection derives H with `hot_layers(source, sha256, context="gsm8k_solution", step=64, k=10, module="down", arms=("online", "offline"), combine="union")`. It refuses a file whose hash differs, and writes H with every parameter into the launch record. The spec's list is the expected output, checked by a test.
+
+**Why the union.** The same scope in both arms keeps the online-against-offline comparison of `hot64` free of a difference in layers, and the union contains each arm's own hot set. The cost is that each arm's group includes one layer that was not hot for that arm (24 for online, 11 for offline).
+
+**Sensitivity to k (same file, recorded for the report):**
+
+| k | online | offline | union | intersection |
+|---|---|---|---|---|
+| 5 | 15, 16 | 15, 16 | 15, 16 | 15, 16 |
+| 10 (used) | 11, 15, 16 | 15, 16, 24 | 11, 15, 16, 24 | 15, 16 |
+| 15 | 11, 15, 16 | 12, 15, 16, 24 | 11, 12, 15, 16, 24 | 15, 16 |
+| 20 | 10, 11, 15, 16, 24 | 12–16, 24 | 10–16, 24 | 15, 16, 24 |
+
+Layers 15 and 16 are hot at every k; 11 and 24 depend on the cutoff. The report therefore gives attribution summaries for `hot64` per layer, so the per-arm and intersection views can be read on CPU. The ablation removes all 256 reads together, so its effect is not split by layer.
 
 ### Matched controls [user]
 
@@ -305,7 +328,9 @@ This gives 4 layers and 256 reads.
 2. Permute the candidate order with the recorded seed.
 3. Run a deterministic maximum-cardinality matching (augmenting paths in target-rank order over the permuted candidates).
 
-A group's control is "unavailable" only if the maximum matching is smaller than the group. Then the report names the deficient targets, the eligible-candidate count per target, and the largest feasible matching. Eligibility is never loosened. Matching is checked layer by layer, so an infeasible layer in `layer64-reads` never blocks the global or hot comparisons; open decision 3 governs that case.
+A group's control is "unavailable" only if the maximum matching is smaller than the group. Then the report names the deficient targets, the eligible-candidate count per target, and the largest feasible matching. Eligibility is never loosened. Matching is checked layer by layer, so an infeasible layer in `layer64-reads` never blocks the global or hot comparisons.
+
+**Infeasible `layer64` control [user, 2026-11-19].** If any layer cannot supply a full matched control, the `layer64-reads` target is still run unchanged, and `match-layer64` is recorded as unavailable with the deficient layers and targets named. The target-minus-control contrast for `layer64` is then not reported; its paired Δ against intact is.
 
 **Reported per control:**
 
@@ -394,6 +419,7 @@ Attribution units hold whole questions, so all 8 draws of a question are in the 
 | Per-response adapter attributions [n, 196], FP64 | small |
 | Per-question S_q for adapters [q, 196], FP64 | small |
 | Per-question S_q for reads [q, 28, 8,960], FP64 | about 300 MB |
+| Draw-half read sums [2, 28, 8,960], FP64 | about 4 MB |
 | Per-unit Σ\|c_t\|, Σ\|z_j\|, token counts | small |
 | Per-response identity errors, gross and net | small |
 
@@ -483,18 +509,25 @@ A short preregistration before step 4 is recommended.
 
 ## Decisions recorded 2026-11-18 (user)
 
-- **Hot layers:** from the effective-write figure (see Selection). The derived list {11, 15, 16, 24} awaits the user's confirmation.
+- **Hot layers:** from the effective-write figure (see Selection). {11, 15, 16, 24} confirmed on 2026-11-19, computed by code from the hashed source with the union rule.
 - **Tolerances:** accepted. Production-1's tolerances carry over unchanged. The cached-against-forced rule is set from the rehearsal's measurements.
 - **No time caps.** The run is not stopped for elapsed time. The watchdog, the crash stop and the end-of-run Pod stop remain; ticket 09's budget enforcement is removed.
 - **Seeds:** the user has no preference, so the proposed defaults are used and recorded: split 20261118, bootstrap 1234, and one matching seed per group from the launch record.
 
+## Decisions recorded 2026-11-19 (user)
+
+- **Infeasible `layer64` control:** run the target anyway; report the control as unavailable (see Matched controls).
+- **Draw split:** kept in addition to the question split (see Uncertainty and stability).
+- **Seeds:** the defaults above are confirmed.
+- **Hot layers:** confirmed, computed by code (see Selection).
+
 ## Open decisions (for review round 2)
 
-1. Resolved above (pending confirmation of {11, 15, 16, 24}).
+1. Resolved above (hot layers).
 2. **Positive shortfall.** If a scope has fewer positive scores than requested, the proposal is to freeze the smaller positive group, record the shortfall, and match its control to the actual size. The alternative is to drop that condition.
-3. **Infeasible `layer64` control in some layer.** The proposal is to still run the `layer64-reads` target and report the control contrast as unavailable. The alternative is to remove the infeasible layers from both target and control, which changes the group.
+3. Resolved above (infeasible `layer64` control).
 4. Resolved above (tolerances).
 5. **Intact repeat** (+300 greedy) as a nondeterminism floor: yes (proposed) or no.
 6. Resolved above (no time caps).
-7. **Draw-split stability** (CPU only): drop (proposed, per the user's question-split decision) or keep in addition.
+7. Resolved above (draw split kept).
 8. Resolved above (seeds).

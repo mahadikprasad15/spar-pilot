@@ -13,6 +13,7 @@
     - adapters: Spearman of the 196-vectors, top-10 overlap, and sign agreement within each half's top 20;
     - global top-64 reads: overlap, sign agreement, and the layer distribution;
     - hot-layer and per-layer top-64 reads: overlap and sign agreement per layer, plus the equal-layer mean.
+- [ ] **Draw split** [user, 2026-11-19]. Draws 0–3 against 4–7, with within-half leave-one-out weights (n = 4). Adapters from the stored per-response rows; reads from ticket 03's half-sums. The same summaries as the question split, labelled "noisier: 4 draws per question per half". No bootstrap.
 - [ ] **Adapter bootstrap.**
   - 10,000 resamples of whole questions, seed 1234 (proposed).
   - The same resampled indices for both arms.
@@ -34,5 +35,6 @@
 ## Comments
 
 - 2026-11-18 (round 1): the user chose a seeded 75/75 question split with no gate. The v1 draw split is dropped, pending the user's confirmation (spec open decision 7). The neuron bootstrap is chunked and benchmarked (F2, F5, decisions 7–8).
+- 2026-11-19: the user kept the draw split in addition to the question split.
 
 ## Answer
