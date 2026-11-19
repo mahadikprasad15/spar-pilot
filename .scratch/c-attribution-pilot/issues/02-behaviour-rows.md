@@ -20,6 +20,10 @@
 - [ ] **Row construction.**
   - Prompt IDs: the pinned tokenizer applied to the stored templated `prompt`, with `add_special_tokens=False`.
   - `input_ids`: the prompt IDs followed by `generated_token_ids`.
+  - `masks.seq_targets`: every generated token's position in `input_ids`, in order: from
+    `len(prompt_ids)` through `len(input_ids) - 1` inclusive. This includes the sampled EOS,
+    and on capped rows all 1,024 generated tokens. Refuse an empty prompt or generated sequence.
+    Supply `masks.length = len(input_ids)`; these are target positions, not shifted logit positions.
   - Row id: `draw_id`.
   - Rows are grouped by question, so a unit always holds all 8 draws of a question.
 - [ ] **Refusals.** Refuse any of the following:
@@ -33,6 +37,8 @@
 - [ ] **Per-row manifest fields:** reward, group id, draw index, seed and source unit or batch identity (for the replay in ticket 05).
 - [ ] **Tests:**
   - real-format fixtures, including copies of 2 real groups per arm, checked against the committed counts;
+  - exact target masks for a multi-token prompt with an EOS response, an EOS-only response,
+    and a capped response, including their final target in each case;
   - every refusal above;
   - the provenance block, with a mutated engine hash and a mutated policy field each refused;
   - a CPU check against the real local files (skipped if absent) that reproduces 1,200 rows and the Data-table group counts for both arms.
