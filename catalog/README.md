@@ -60,6 +60,10 @@ notes: free text (group counts, caveats)
 that exact checkpoint under the target policy, unselected; `off-policy` = sampled from another policy;
 `fixed-text` = usable for fixed-text contrasts only; `greedy-only` = one greedy response per question.
 
+A suitability label is provisional when `evidence.status` is `inferred` or `unknown`. Matching file
+hashes and a checkpoint alone do not verify the exact sampling distribution: check the resolved
+logits processors and source-run provenance before calling a score-function estimate on-policy.
+
 ## Convention: a run is not finished until it is catalogued
 
 When a run produces checkpoints, responses or a question set:

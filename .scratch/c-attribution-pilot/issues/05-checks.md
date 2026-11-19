@@ -11,6 +11,9 @@
   - Build the processor and warper list that transformers 4.57.6 resolves from `_generate`'s explicit sampled arguments.
   - Assert that nothing modifies the logits.
   - When this passes, the provenance item moves from unverified to verified.
+  - The catalog's `on-policy` label is provisional while its evidence is inferred. Do not treat
+    that label or file-hash verification alone as proof that the original sampling distribution
+    matches the score-function metric; report remaining source-run uncertainty explicitly.
 - [ ] **Surrogate finite differences.**
   - F(λ) = Σ w·M(λ), with frozen weights.
   - A central difference over gates, for chosen adapters and neurons, compared with the aggregated dJdλ.

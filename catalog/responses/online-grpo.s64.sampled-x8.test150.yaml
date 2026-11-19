@@ -34,7 +34,10 @@ files:
   rows_selected: 1200
 seeds: 42 + ordered batch index (4 prompts x 8 draws per batch)
 evidence:
-  status: verified
+  status: inferred
+  note: >-
+    On-policy suitability is provisional: resolved logits processors have not been
+    verified and repetition settings are inferred from unhashed generation code.
   checked:
   - file sha256, rows selected, draws per question, cohort IDs, per-row adapter_sha256 (catalog verify)
   - policy from config.json policies (do_sample, T=1, top_k 0, top_p 1)
