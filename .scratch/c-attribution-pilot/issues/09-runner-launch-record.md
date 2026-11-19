@@ -52,6 +52,10 @@ Reuse the production-1 chain, units, watchdog and launcher where they fit. Run u
   - A rejected second launch stops nothing (round 7).
   - A startup crash is covered (round 6).
   - Stop is never requested while a copy is in flight; there is a bounded fallback.
+  - Adapt the old watchdog's required absolute deadline explicitly: in this pilot, a live writer is
+    never stopped merely because elapsed time has passed. CPU-test the real watchdog with the
+    deadline disabled, including a writer crash and a still-running writer. Keep visible progress
+    and last-update timestamps so an alive but stalled writer can be recognized.
   - **No automatic rehearsal → production handover.**
 - [ ] **Resume.** With an empty local disk, the run restores from the volume, and expected work is reconstructed and compared with verified artifacts before any stage is skipped.
 - [ ] **What stops the chain.** Analysis outcomes, including stability or unavailable controls, never stop it. Failed qualification or input integrity does.
