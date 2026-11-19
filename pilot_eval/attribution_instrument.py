@@ -28,6 +28,7 @@ from pilot_eval import attribution_metrics as am
 
 PROJECTIONS = ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
 METRICS = ('trace', 'stop')
+AVAILABLE_METRICS = METRICS + ('seqlogp',)
 
 
 class InstrumentFailure(ValueError):
@@ -144,8 +145,8 @@ class Instrument:
             raise InstrumentFailure('explicit pad token required')
         if not isinstance(identity_rtol, float):
             raise InstrumentFailure('the neuron-sum identity tolerance must come from the launch record')
-        if sorted(metric_order) != sorted(METRICS):
-            raise InstrumentFailure('metric order must name both metrics once')
+        if not metric_order or len(set(metric_order)) != len(metric_order) or not set(metric_order) <= set(AVAILABLE_METRICS):
+            raise InstrumentFailure('metric order must name a nonempty set of known metrics once each')
         if precision not in ('fp32', 'fp64'):  # fp64: diagnostic 4 toward option A (user 2026-11-16)
             raise InstrumentFailure(f'precision must be fp32 or fp64, not {precision!r}')
         self.precision = precision
@@ -234,31 +235,45 @@ class Instrument:
     def _metrics(self, hidden, ids, rows):
         torch = self.torch
         from torch.utils.checkpoint import checkpoint
-        values = {'trace': [], 'stop': []}
+        values = {name: [] for name in self.order}
         reasons = []
 
         def terms(h, targets):
             return am.position_terms(self.head(h), targets, self.stop_ids)
 
-        for r, row in enumerate(rows):
-            length = len(row['input_ids'])
-            trace = am.logit_positions(row['masks']['trace_targets'], length=length)
-            stop = am.logit_positions(row['masks']['stop_targets'], length=length)
-            if not trace:
-                raise InstrumentFailure(f"{row['id']}: empty trace mask")
-            positions = sorted(set(trace) | set(stop))
-            where = {p: k for k, p in enumerate(positions)}
+        def read_positions(r, positions):
             index = torch.tensor(positions, device=hidden.device)
             parts = [checkpoint(terms, hidden[r, index[s:s + self.chunk]], ids[r, index[s:s + self.chunk] + 1],
                                 use_reentrant=False) for s in range(0, len(positions), self.chunk)]
-            out = torch.cat(parts)
-            values['trace'].append(out[[where[p] for p in trace], 0].double().sum() / len(trace))
-            if stop:
-                values['stop'].append(out[[where[p] for p in stop], 1].double().sum() / len(stop))
-                reasons.append(None)
+            return torch.cat(parts)
+
+        for r, row in enumerate(rows):
+            length = len(row['input_ids'])
+            masks = row['masks']
+            trace = am.logit_positions(masks['trace_targets'], length=length) if 'trace' in self.order else []
+            stop = am.logit_positions(masks['stop_targets'], length=length) if 'stop' in self.order else []
+            if 'trace' in self.order and not trace:
+                raise InstrumentFailure(f"{row['id']}: empty trace mask")
+            positions = sorted(set(trace) | set(stop))
+            where = {p: k for k, p in enumerate(positions)}
+            out = read_positions(r, positions) if positions else None
+            if 'trace' in self.order:
+                values['trace'].append(out[[where[p] for p in trace], 0].double().sum() / len(trace))
+            if 'stop' in self.order:
+                if stop:
+                    values['stop'].append(out[[where[p] for p in stop], 1].double().sum() / len(stop))
+                    reasons.append(None)
+                else:
+                    values['stop'].append(torch.tensor(float('nan'), dtype=torch.float64, device=hidden.device))
+                    reasons.append(am.EMPTY_STOP)
             else:
-                values['stop'].append(torch.tensor(float('nan'), dtype=torch.float64, device=hidden.device))
-                reasons.append(am.EMPTY_STOP)
+                reasons.append(None)
+            if 'seqlogp' in self.order:
+                seq = am.logit_positions(masks['seq_targets'], length=length)
+                if not seq:
+                    raise InstrumentFailure(f"{row['id']}: empty sequence target mask")
+                # Keep the legacy trace/stop head batches unchanged when this metric is added.
+                values['seqlogp'].append(read_positions(r, seq)[:, 0].double().sum())
         return {k: torch.stack(v) for k, v in values.items()}, reasons
 
     # --- passes ------------------------------------------------------------------------------
@@ -300,9 +315,9 @@ class Instrument:
                 if not reads or not bool(defined.any()):
                     grads[name] = None
                     continue
-                grads[name] = torch.autograd.grad(value[defined].sum(), reads, retain_graph=k == 0)
+                grads[name] = torch.autograd.grad(value[defined].sum(), reads, retain_graph=k < len(self.order) - 1)
         attr = {}
-        for name in METRICS:
+        for name in self.order:
             if grads[name] is None:
                 a = torch.zeros((n, count), dtype=torch.float64)
             else:
@@ -318,7 +333,7 @@ class Instrument:
             abs_c = torch.zeros((n, count), dtype=torch.float64)
             signed = torch.zeros((n, len(self.down_index)), dtype=torch.float64)
         g_down = {name: {layer: (grads[name][i][..., 0].detach().double() if grads[name] is not None else None)
-                         for layer, i in self.down_index.items()} for name in METRICS}
+                         for layer, i in self.down_index.items()} for name in self.order}
         neuron = self._pass2(ids, attention, positions, g_down, attr, metrics, untuned=untuned,
                              corrupt=corrupt)
         term_size = neuron.pop('term_size')
@@ -330,7 +345,7 @@ class Instrument:
         if raw:
             out['raw'] = dict(c={i: reads[i].detach() for i in range(len(reads))},
                               g={name: ({i: grads[name][i].detach() for i in range(count)} if grads[name] else {})
-                                 for name in METRICS})
+                                 for name in self.order})
         return out
 
     def _pass2(self, ids, attention, positions, g_down, attr, metrics, *, untuned, corrupt):
@@ -338,10 +353,10 @@ class Instrument:
         width = self.model.config.intermediate_size
         n = ids.shape[0]
         unpadded = attention.to(torch.float64)
-        result = {name: {} for name in METRICS}
+        result = {name: {} for name in self.order}
         result['term_size'] = {}
         if untuned:
-            out = {name: {l: np.zeros((n, width)) for l in self.down_index} for name in METRICS}
+            out = {name: {l: np.zeros((n, width)) for l in self.down_index} for name in self.order}
             out['term_size'] = {l: np.zeros((n, width)) for l in self.down_index}
             return out
         layers = self.body.layers
@@ -353,7 +368,7 @@ class Instrument:
             z = args[0].detach().double()
             a = module.lora_A[self.adapter].weight[0].detach().double()
             result['term_size'][layer] = (a.abs() * (z.abs() * unpadded[..., None]).sum(1)).cpu().numpy()
-            for name in METRICS:
+            for name in self.order:
                 g = g_down[name][layer]
                 if g is None:
                     result[name][layer] = np.full((n, width), np.nan)
@@ -372,7 +387,7 @@ class Instrument:
                 handle.remove()
         if any(fired.get(l) != 1 for l in self.down_index):
             raise InstrumentFailure('down_proj pre-hook did not fire once per layer in pass 2')
-        for name in METRICS:
+        for name in self.order:
             undefined = np.isnan(metrics[name].detach().cpu().numpy())
             for layer, i in self.down_index.items():
                 result[name][layer][undefined] = np.nan
@@ -457,8 +472,12 @@ def branch_oracle(model, rows, name, *, stop_ids, pad_token_id, adapter='default
         logits = model(input_ids=ids, attention_mask=attention, position_ids=positions, use_cache=False).logits
         if name == 'trace':
             value = am.trace_loglik(logits, ids, masks)
-        else:
+        elif name == 'stop':
             value = am.stop_pull(logits, masks, stop_ids=stop_ids)[0]
+        elif name == 'seqlogp':
+            value = am.seqlogp(logits, ids, masks)
+        else:
+            raise ValueError(f'unknown metric: {name}')
         defined = ~torch.isnan(value)
         grads = torch.autograd.grad(value[defined].sum(), [gates[i] for i in range(len(gates))])
     out = -torch.stack([g.reshape(-1).double() for g in grads], dim=1).cpu().numpy()
