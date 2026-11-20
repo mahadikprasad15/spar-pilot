@@ -235,3 +235,52 @@ def restore(receipt, clean_root, *, client=None, on_event=print):
     if bundle['sha256'] != receipt['bundle_sha256']:
         raise BundleError('restored bundle manifest differs from the receipt')
     return dict(verify(clean_root, bundle), bundle=bundle)
+
+
+BOUND_CATALOG_IDS = ('responses:online-grpo.s64.sampled-x8.test150', 'responses:offline-grpo.s64.sampled-x8.test150',
+                     'cohort:gsm8k-test-cohort150')
+
+
+def main(argv=None, *, client=None, entries=None, catalog_ids=BOUND_CATALOG_IDS):
+    """``export`` (local: build, check the catalog, upload with readback, write the receipt) and ``restore`` (Pod:
+    clean-root restore and verification against the bundle seal). Hub calls run in an online child process."""
+    import argparse
+    parser = argparse.ArgumentParser(description='C-attribution input bundle')
+    sub = parser.add_subparsers(dest='command', required=True)
+    e = sub.add_parser('export')
+    e.add_argument('--artifact-root', required=True)
+    e.add_argument('--label', required=True)
+    e.add_argument('--receipt', required=True, help='receipt JSON to write (commit it: the Pod restores from it)')
+    e.add_argument('--repo', default=ex.DEFAULT_REPO)
+    e.add_argument('--fixture-without-model', action='store_true', help=argparse.SUPPRESS)
+    r = sub.add_parser('restore')
+    r.add_argument('--receipt', required=True)
+    r.add_argument('--clean-root', required=True)
+    args = parser.parse_args(argv)
+    if client is None:
+        client = ex.OnlineHubProcess(timeout=3600)
+    if args.command == 'export':
+        receipt_path = Path(args.receipt)
+        if receipt_path.exists():
+            raise BundleError(f'{receipt_path} exists; use a new label (receipts are never overwritten)')
+        root = Path(args.artifact_root)
+        bundle = build(root, entries or default_entries(),
+                       base_model='not-bundled-fixture' if args.fixture_without_model else 'required')
+        if catalog_ids:
+            pod_catalog_check(REPO, bundle, root, list(catalog_ids))  # the Pod runs the same check
+        temp = root / 'tmp' / 'bundle-export'
+        temp.mkdir(parents=True, exist_ok=True)
+        receipt = export(root, bundle, label=args.label, client=client, repo=args.repo, temp_dir=temp)
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True, default=str) + '\n')
+        print(f"exported bundle {bundle['sha256'][:16]} ({len(bundle['files'])} files); receipt {receipt_path}")
+        return 0
+    receipt = json.loads(Path(args.receipt).read_text())
+    out = restore(receipt, args.clean_root, client=client)
+    print(json.dumps(dict(verified_files=out['verified_files'], bundle_sha256=out['bundle_sha256'],
+                          bundle_manifest=str(Path(args.clean_root) / receipt['bundle_manifest']))))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

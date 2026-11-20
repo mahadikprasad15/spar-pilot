@@ -9,7 +9,7 @@
 - [ ] **Setup.**
   - One Pod: A100-SXM4-80GB, 120 GB container disk, sl-0 attached, `HF_TOKEN` secret.
   - One tmux window, one launch, no automatic restart.
-  - Follow a runbook derived from `.scratch/adapter-neuron-attribution/pod-runbook.md` with the lessons applied.
+  - Follow `.scratch/c-attribution-pilot/pod-runbook.md` (written 2026-11-20 from the neuron-attribution runbook, lessons applied).
 - [ ] **Scope.**
   - 2 arms × 32 rows, i.e. 4 whole questions × 8 draws per arm, chosen to cover short, long, EOS and invalid rows and all-same groups where available. Include the offline capped row. Online has no capped rows; record this rather than requiring one.
   - Qualification checks (a)–(f).

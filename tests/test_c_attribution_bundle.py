@@ -161,3 +161,22 @@ def test_the_local_pinned_model_matches_hf_identities():
     if not (model / 'model.safetensors').is_file():
         pytest.skip('the pinned base model is not local')
     assert cb.pinned_identities(model) == cb.PINNED_BASE_MODEL  # hashes about 3 GB
+
+
+def test_the_export_and_restore_commands_round_trip_through_a_receipt_file(tmp_path):
+    """Runbook: export locally writes a receipt file; restore on the Pod reads it and verifies the seal."""
+    root, entries = _root(tmp_path)
+    hub = FakeHub()
+    receipt_path = tmp_path / 'receipt.json'
+    rc = cb.main(['export', '--artifact-root', str(root), '--label', 'cli-test', '--receipt', str(receipt_path),
+                  '--fixture-without-model'], client=hub, entries=entries, catalog_ids=[])
+    assert rc == 0
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt['bundle_manifest'].startswith('bundles/c-attribution/cli-test/')
+    clean = tmp_path / 'clean'
+    assert cb.main(['restore', '--receipt', str(receipt_path), '--clean-root', str(clean)], client=hub) == 0
+    assert (clean / receipt['bundle_manifest']).is_file()
+    assert cb.verify(clean, json.loads((clean / receipt['bundle_manifest']).read_text()))['verified_files'] == len(entries)
+    with pytest.raises(cb.BundleError, match='exists'):  # a receipt is never overwritten silently
+        cb.main(['export', '--artifact-root', str(root), '--label', 'cli-test', '--receipt', str(receipt_path),
+                 '--fixture-without-model'], client=hub, entries=entries, catalog_ids=[])
