@@ -49,3 +49,28 @@ Not done in this pass:
 - **CUDA driver and cuDNN build are not yet in the runtime fingerprint.**
 - **Same-run-ID resume on a replacement Pod.** It is blocked by the Pod binding, and is your decision.
 - **A withheld stop keeps the Pod billing until someone acts.** Nothing pages you; the notice is on the volume, the local disk and the console.
+
+## Setup fingerprint and replacement-Pod resume (user, 2026-11-20)
+
+- **Fingerprint.**
+  - The runtime fingerprint now includes the CUDA runtime, the cuDNN version and every installed `nvidia-*` pip
+    library (cuBLAS, cuDNN, …).
+  - A resume refusal now lists each differing field with its qualified and current value, and the remedy:
+    `pip install <pkg>==<version>`, "reinstall the qualified torch build", or "rent the same GPU type".
+  - The NVIDIA driver is recorded in `preflight.json` (`host`) and never refuses a resume.
+  - Tests: `test_a_resume_refusal_names_what_to_install_or_rent`,
+    `test_the_driver_is_recorded_but_does_not_refuse_a_resume`,
+    `test_the_runtime_fingerprint_holds_the_cuda_libraries_and_the_driver_is_recorded_apart`.
+- **Rebind.**
+  - Chain state and every sealed artifact now bind to `run_sha256`: the launch record without its Pod binding
+    (`pod_id` and the four local input paths; the bundle hash still binds the inputs' contents).
+  - `c_attribution_chain rebind` reseals the old record for the current `RUNPOD_POD_ID` and changes nothing
+    else.
+  - A rebound record continues the same run ID, and the stop targets only the new Pod.
+  - Each record of the run is sealed under its own hash in `c-attribution/launch/`, and `state.json` lists the
+    Pod bindings.
+  - A fresh heartbeat from the old Pod still refuses the takeover.
+  - Tests: `test_a_rebound_record_continues_the_run_on_a_replacement_pod`, `test_rebind_changes_only_the_pod_binding`,
+    `test_rebind_on_a_pod_whose_old_writer_may_still_be_alive_is_refused`.
+- **Decision taken.** The local input paths are binding fields, alongside the Pod ID. A new Pod may use other
+  folders; the sealed bundle hash still pins their contents.

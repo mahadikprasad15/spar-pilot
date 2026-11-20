@@ -16,6 +16,27 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
+def cuda_libraries():
+    """Installed ``nvidia-*`` pip distributions (the CUDA libraries torch's wheel pins) and their versions."""
+    from importlib import metadata
+    names = {}
+    for dist in metadata.distributions():
+        name = (dist.metadata['Name'] or '').lower()
+        if name.startswith('nvidia-') and name != 'nvidia-ml-py':
+            names[name] = dist.version
+    return dict(sorted(names.items()))
+
+
+def nvidia_driver():
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        version = pynvml.nvmlSystemGetDriverVersion()
+        return version.decode() if isinstance(version, bytes) else str(version)
+    except Exception:  # no GPU or no NVML: recorded as unknown
+        return None
+
+
 class TransformersBackend:
     def __init__(self, record, volume_root, *, device='cuda', probes=None, repo_root=REPO):
         self.record, self.volume_root, self.device = record, Path(volume_root), device
@@ -73,10 +94,20 @@ class TransformersBackend:
         import peft
         import torch
         import transformers
+        cudnn = torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None
         return dict(torch=torch.__version__, transformers=transformers.__version__, peft=peft.__version__,
                     python=sys.version.split()[0], dtype='float32', attention='eager', device=self.device,
                     device_name=torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu',
+                    # the CUDA runtime, cuDNN and the pip-installed CUDA libraries torch brings (cuBLAS, cuDNN, ...):
+                    # they choose kernels, so a resume on another Pod must match them (user, 2026-11-20)
+                    cuda_runtime=torch.version.cuda, cudnn=cudnn, cuda_libraries=cuda_libraries(),
                     tokenizer=self.tokenizer_identity(), autocast=False, precision=self.precision_readback())
+
+    def host(self):
+        """Facts of the machine, recorded but not part of the resume fingerprint: the NVIDIA driver belongs to the
+        RunPod host and cannot be installed from the Pod; it rarely changes the numbers (user, 2026-11-20)."""
+        probe = self.probes.get('driver')
+        return {'driver': probe() if probe else nvidia_driver()}
 
     def precision_readback(self):
         from pilot_eval.neuron_audit_collector import _legacy_matmul_precision, precision_backends

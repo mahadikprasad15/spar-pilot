@@ -35,7 +35,7 @@ from pilot_eval import c_attribution_rows as cr
 from pilot_eval import c_attribution_selection as sel
 from pilot_eval import c_attribution_stability as st
 from pilot_eval.attribution_chain import StopBeforeProduction
-from pilot_eval.c_attribution_chain import SUBTREE, record_sha256
+from pilot_eval.c_attribution_chain import SUBTREE, run_sha256
 from pilot_eval.neuron_audit_qualify import pack
 
 PREFLIGHT_DIR = f'{SUBTREE}/preflight'
@@ -77,7 +77,8 @@ class Stages:
     def __init__(self, record, local_root, backend):
         self.record, self.backend = record, backend
         self.root = Path(local_root)
-        self.record_sha256 = record_sha256(record)
+        # The run's hash (launch record minus its Pod binding), so artifacts stay valid after a rebind.
+        self.record_sha256 = run_sha256(record)
         self.arms = list(record['arms'])
         self.artifacts = Path(record['inputs']['artifact_root'])
         self._bundle = None
@@ -178,9 +179,10 @@ class Stages:
         identity = dict(runtime=record['runtime'], bundle_sha256=self.bundle()['sha256'],
                         base_model=self.bundle()['base_model']['file_sha256'], code_commit=self.record['code_commit'])
         record['identity'] = identity
+        record['host'] = self.backend.host()  # recorded only: the driver never refuses a resume
         directory = f'{PREFLIGHT_DIR}/{ctx.attempt}'  # every attempt checks today's inputs and runtime again
         au.seal_run(self.root / directory, {'preflight.json': record})
-        return dict(outputs=[directory], identity=identity)
+        return dict(outputs=[directory], identity=identity, host=record['host'])
 
     # --- qualification ------------------------------------------------------------------------------
 

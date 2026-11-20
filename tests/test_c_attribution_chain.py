@@ -169,7 +169,7 @@ def test_a_complete_run_tears_down_in_order_and_stops_with_the_second_syntax(tmp
     # everything sealed reached the volume under this run's subtree
     for name in cc.STAGES:
         au.verify_run(root / cc.SUBTREE / name)
-    au.verify_run(root / cc.LAUNCH_DIR)
+    au.verify_run(root / cc.launch_dir(chain.record))
 
 
 def test_integrity_failure_stops_before_later_stages_and_still_tears_down(tmp_path):
@@ -479,3 +479,96 @@ def test_unsealed_local_work_counts_for_the_stop_decision(tmp_path):
                        current_pod='podtest1').run()
     assert f'{cc.SUBTREE}/attribution/unit-0000' in summary['backups']['volume_copy']['missing']
     assert runner.commands == []
+
+
+# --- setup fingerprint and rebind (user, 2026-11-20) ----------------------------------------------------
+
+QUALIFIED = {'runtime': {'device_name': 'NVIDIA A100-SXM4-80GB', 'torch': '2.9.0+cu128', 'cuda_runtime': '12.8',
+                         'cudnn': 91002, 'cuda_libraries': {'nvidia-cudnn-cu12': '9.10.2.21',
+                                                            'nvidia-cublas-cu12': '12.8.4.1'}},
+             'bundle_sha256': 'b' * 64}
+
+
+def _with(identity, dotted, value):
+    out = json.loads(json.dumps(identity))
+    parent, keys = out, dotted.split('.')
+    for k in keys[:-1]:
+        parent = parent[k]
+    parent[keys[-1]] = value
+    return out
+
+
+@pytest.mark.parametrize('dotted,value,remedy', [
+    ('runtime.cuda_libraries.nvidia-cudnn-cu12', '9.1.0.70', 'pip install nvidia-cudnn-cu12==9.10.2.21'),
+    ('runtime.torch', '2.9.1+cu128', 'pip install torch==2.9.0+cu128'),
+    ('runtime.device_name', 'NVIDIA A40', 'the same GPU type (NVIDIA A100-SXM4-80GB)'),
+])
+def test_a_resume_refusal_names_what_to_install_or_rent(tmp_path, dotted, value, remedy):
+    log = []
+    assert _chain(tmp_path, _identity_stages(log, QUALIFIED, fail='attribution')).run()['state'] == 'failed'
+    summary = _chain(tmp_path, _identity_stages([], _with(QUALIFIED, dotted, value)), local='l2').run()
+    assert summary['state'] == 'stopped' and remedy in summary['stop_reason'], summary['stop_reason']
+
+
+def test_the_driver_is_recorded_but_does_not_refuse_a_resume(tmp_path):
+    log = []
+    stages = _identity_stages(log, QUALIFIED, fail='attribution')
+    assert _chain(tmp_path, stages).run()['state'] == 'failed'
+    log.clear()
+    inner = _identity_stages(log, QUALIFIED)
+    first = inner['preflight']
+    inner['preflight'] = lambda ctx: dict(first(ctx), host={'driver': '570.86.10'})  # another host's driver
+    summary = _chain(tmp_path, inner, local='l2').run()
+    assert summary['state'] == 'complete'
+    assert summary['stages']['preflight']['host'] == {'driver': '570.86.10'}
+
+
+def test_a_rebound_record_continues_the_run_on_a_replacement_pod(tmp_path):
+    """The old Pod died; on the new Pod one command reseals the record for it and the run continues."""
+    log = []
+    assert _chain(tmp_path, _stages(log, fail='attribution')).run()['state'] == 'failed'
+    old = tmp_path / 'launch_record.json'
+    new = cc.rebind(old, tmp_path / 'rebound.json', code_commit='c0ffee', pod_id='podnew2',
+                    fill={'inputs.work_dir': '/new/work'})
+    record = cc.load_launch_record(new, code_commit='c0ffee')
+    assert record['pod_id'] == 'podnew2' and record['inputs']['work_dir'] == '/new/work'
+    assert cc.run_sha256(record) == cc.run_sha256(cc.load_launch_record(old, code_commit='c0ffee'))
+    log.clear()
+    runner = Runner(codes=(0,))
+    summary = cc.Chain(record, local_root=tmp_path / 'new-local', volume=tmp_path / 'vol', stages=_stages(log),
+                       exporter=Exporter(), runner=runner, volume_identity='sl-0', current_pod='podnew2').run()
+    assert summary['state'] == 'complete', summary['failures']
+    assert log == ['preflight', 'attribution', 'aggregate_freeze', 'generation', 'report']   # nothing redone
+    assert summary['stages']['rows'] == {'status': 'complete', 'resumed': True}
+    assert [' '.join(c) for c in runner.commands] == ['runpodctl stop pod podnew2']      # never the old Pod
+    state = json.loads((cc.run_root(tmp_path / 'vol', record['run_id']) / cc.STATE_FILE).read_text())
+    assert [b['pod_id'] for b in state['bindings']] == ['podtest1', 'podnew2']
+
+
+def test_rebind_changes_only_the_pod_binding(tmp_path):
+    _chain(tmp_path, _stages([], fail='attribution')).run()
+    old = tmp_path / 'launch_record.json'
+    with pytest.raises(LaunchRefused, match='not a binding field'):
+        cc.rebind(old, tmp_path / 'r.json', code_commit='c0ffee', pod_id='podnew2', fill={'hourly_cost_usd': 9})
+    with pytest.raises(LaunchRefused, match='code commit'):
+        cc.rebind(old, tmp_path / 'r.json', code_commit='other', pod_id='podnew2')
+    with pytest.raises(LaunchRefused, match='RUNPOD_POD_ID'):
+        cc.rebind(old, tmp_path / 'r.json', code_commit='c0ffee', pod_id='')
+    # a record changed in anything else is still refused under the same run ID, on any Pod
+    record = cc.load_launch_record(sealed(tmp_path, hourly_cost_usd=9.0, pod_id='podnew2'), code_commit='c0ffee')
+    chain = cc.Chain(record, local_root=tmp_path / 'l2', volume=tmp_path / 'vol', stages=_stages([]),
+                     exporter=Exporter(), runner=Runner(), volume_identity='sl-0', current_pod='podnew2')
+    with pytest.raises(ResumeRefused, match='different launch record'):
+        chain._start()
+
+
+def test_rebind_on_a_pod_whose_old_writer_may_still_be_alive_is_refused(tmp_path):
+    """A replacement Pod never takes over a writer whose heartbeat is fresh: the old Pod may still be running."""
+    _chain(tmp_path, _stages([], fail='attribution')).run()
+    root = cc.run_root(tmp_path / 'vol', 'c-rehearsal-pod-1')
+    marker = json.loads((root / cc.MARKER_FILE).read_text())
+    (root / cc.MARKER_FILE).write_text(json.dumps(dict(marker, state='running', host='old-pod-host',
+                                                       heartbeat_unix=time.time())))
+    new = cc.rebind(tmp_path / 'launch_record.json', tmp_path / 'r.json', code_commit='c0ffee', pod_id='podnew2')
+    with pytest.raises(ResumeRefused, match='ambiguous writer'):
+        cc.precheck(cc.load_launch_record(new, code_commit='c0ffee'), tmp_path / 'vol', current_pod='podnew2')

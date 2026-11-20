@@ -35,3 +35,25 @@
 - 2026-11-18 (round 1): greedy only. Rehearsal IDs are recorded. The rehearsal measures the budget and floors instead of assuming them (F4, F5, F7).
 
 ## Answer
+
+## Notes for the runbook (2026-11-20, from the 06–10 review fixes)
+
+- **Install exactly the pinned packages.** `torch==2.9.0` from the cu128 index brings its own CUDA runtime,
+  cuDNN and the other `nvidia-*` libraries, and those are part of the resume fingerprint. On a replacement Pod,
+  install the same way. A resume refusal names any package that differs and the `pip install` that fixes it.
+  The NVIDIA driver is recorded in `preflight.json` (`host.driver`) but never refuses a resume.
+- **Replacement Pod.** Use this if the Pod is lost mid-run. The sealed work is on the volume, mirrored at every
+  unit.
+  1. Make sure the old Pod is really gone. A fresh heartbeat refuses the takeover, and the marker must be older
+     than `marker_stale_seconds`.
+  2. On the new Pod, set up as usual (same GPU type, same install, `HF_HOME` on the container disk).
+  3. Reseal the record for this Pod:
+     `python -m pilot_eval.c_attribution_chain rebind --record OLD.json --out NEW.json [--work-dir ...]`
+     (it reads `RUNPOD_POD_ID`).
+  4. Launch with `NEW.json`. Completed stages are re-verified and skipped. Preflight must match the qualified
+     setup, or it refuses and names what to install or rent.
+- **Stop withheld.** If the chain prints `STOP WITHHELD`, no backup holds all the local work and the Pod is left
+  running (billing). Fix the volume or Hub problem, then relaunch with the same record on the same Pod; or stop
+  it by hand. Details are in `chain/stop_withheld.json`.
+- **Exercise in the rehearsal:** one rebind onto a second Pod after the deliberate interruption, if the budget
+  allows; it costs one extra Pod setup (about 10 minutes).

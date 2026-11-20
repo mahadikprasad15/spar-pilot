@@ -150,6 +150,27 @@ def record_sha256(record):
     return hashlib.sha256(pc._canonical(record).encode()).hexdigest()
 
 
+# Where a run executes, not what it computes: a replacement Pod reseals only these (``rebind``).
+BINDING_FIELDS = ('pod_id', 'inputs.artifact_root', 'inputs.bundle', 'inputs.model_dir', 'inputs.work_dir')
+
+
+def run_sha256(record):
+    """The run's identity: the launch record without its Pod binding. Chain state and every sealed artifact bind
+    to this, so a rebound record on a replacement Pod continues the same run; any other change does not."""
+    body = json.loads(json.dumps(record))
+    for dotted in BINDING_FIELDS:
+        parent, keys = body, dotted.split('.')
+        for k in keys[:-1]:
+            parent = parent.get(k, {})
+        parent.pop(keys[-1], None)
+    return hashlib.sha256(pc._canonical(body).encode()).hexdigest()
+
+
+def launch_dir(record):
+    """Each sealed record of the run (the original and any rebinds) under its own hash."""
+    return f'{LAUNCH_DIR}/{record_sha256(record)[:16]}'
+
+
 def stop_commands(record):
     commands = pc.stop_commands(record)
     texts = [' '.join(c) for c in commands]
@@ -197,6 +218,25 @@ def validate(record, *, code_commit):
         raise LaunchRefused(f"run_id {record['run_id']!r} must be a simple name")
     stop_commands(record)
     return record
+
+
+def rebind(record_path, out_path, *, code_commit, pod_id, fill=None):
+    """On a replacement Pod: the old record resealed for this Pod (and, optionally, new local paths). Nothing
+    else may change, so the run continues under the same run ID once preflight matches the qualified setup."""
+    if not pod_id:
+        raise LaunchRefused('RUNPOD_POD_ID is not set: run rebind on the replacement Pod')
+    record = load_launch_record(record_path, code_commit=code_commit)
+    record = json.loads(json.dumps(record))
+    record['pod_id'] = pod_id
+    for dotted, value in (fill or {}).items():
+        if dotted not in BINDING_FIELDS or dotted == 'pod_id':
+            raise LaunchRefused(f'{dotted} is not a binding field; only the Pod and local paths change on rebind')
+        if value is not None:
+            record['inputs'][dotted.split('.')[1]] = str(value)
+    validate(record, code_commit=code_commit)
+    path = seal_launch_record(record, out_path)
+    load_launch_record(path, code_commit=code_commit)
+    return path
 
 
 def seal_launch_record(record, path):
@@ -296,6 +336,7 @@ class Chain:
                  volume_identity=None, host=None, copier=None, current_pod=None):
         self.record, self.stages = record, stages
         self.record_sha256 = record_sha256(record)
+        self.run_sha256 = run_sha256(record)
         self.local_root = Path(local_root)
         self.volume_root = run_root(volume, record['run_id'])
         self.timeouts = record['timeouts_seconds']
@@ -309,7 +350,7 @@ class Chain:
         self.pod_confirmed = False
         self.volume_identity, self.host = volume_identity, host or socket.gethostname()
         self.timeouts = record['timeouts_seconds']
-        self.expected_runs = {LAUNCH_DIR}
+        self.expected_runs = {launch_dir(record)}
         self.attempt = None
         self.identity = None
         self._threads = []
@@ -350,19 +391,22 @@ class Chain:
         decision = precheck(self.record, self.volume_root.parent.parent, host=self.host, current_pod=self.current_pod)
         state_path = self.volume_root / STATE_FILE
         state = json.loads(state_path.read_text()) if state_path.is_file() else dict(
-            run_id=self.record['run_id'], launch_record_sha256=self.record_sha256, completed={}, elapsed={})
+            run_id=self.record['run_id'], run_sha256=self.run_sha256, completed={}, elapsed={}, bindings=[])
         if state['run_id'] != self.record['run_id']:
             raise ResumeRefused('chain state belongs to another run ID')
-        if state.get('launch_record_sha256') != self.record_sha256:
-            raise ResumeRefused('chain state was written under a different launch record; a new launch needs a '
-                                'new run ID')
+        if state.get('run_sha256') != self.run_sha256:
+            raise ResumeRefused('chain state was written under a different launch record (beyond its Pod binding); '
+                                'a new launch needs a new run ID')
+        binding = dict(record_sha256=self.record_sha256, pod_id=self.record['pod_id'])
+        if binding not in [{k: b[k] for k in binding} for b in state.setdefault('bindings', [])]:
+            state['bindings'].append(dict(binding, first_attempt=state.get('attempts', 0) + 1))
         self.restored = pc.restore_from_volume(self.volume_root, self.local_root, subtree=SUBTREE)
         state['attempts'] = state.get('attempts', 0) + 1
         self.attempt = f"attempt-{state['attempts']:03d}"
         self._marker = dict(run_id=self.record['run_id'], host=self.host, pid=os.getpid(), started_unix=time.time())
         self._beat('running')
         self._save(state)
-        au.seal_run(self.local_root / LAUNCH_DIR, {'launch_record.json': self.record})  # refuses a different record
+        au.seal_run(self.local_root / launch_dir(self.record), {'launch_record.json': self.record})
         return state, decision
 
     # --- resume: a completed stage is skipped only if its outputs re-verify -------------------------
@@ -384,8 +428,10 @@ class Chain:
         qualified = state.get('qualified_identity')
         if qualified != self.identity:
             fields = sorted(_differing(qualified, self.identity))
+            details = '; '.join(f'{f}: qualified {_lookup(qualified, f)!r}, now {_lookup(self.identity, f)!r} -> '
+                                f'{_remedy(f, _lookup(qualified, f))}' for f in fields)
             return (f'this attempt runs under a runtime/inputs other than the run was qualified under '
-                    f'(fields {fields}); a new run ID is needed to requalify')
+                    f'(fields {fields}). {details}. Fix that and relaunch, or use a new run ID to requalify')
         return None
 
     # --- sign-off (production-1's automatic rule) ---------------------------------------------------
@@ -422,7 +468,8 @@ class Chain:
     def run(self):
         started = time.time()
         summary = dict(run_id=self.record['run_id'], mode=self.record['mode'], label=self.record['label'],
-                       stages={}, failures=[], state='running', launch_record_sha256=self.record_sha256)
+                       stages={}, failures=[], state='running', launch_record_sha256=self.record_sha256,
+                       run_sha256=self.run_sha256, pod_id=self.record['pod_id'])
         state = None
         try:
             state, decision = self._start()
@@ -457,7 +504,7 @@ class Chain:
                     self.log(f'stage {name} elapsed {elapsed:.1f}s (total {state["elapsed"][name]:.1f}s; '
                              'logged for planning only, no caps)')
                 summary['stages'][name] = dict(status='complete', **{k: v for k, v in result.items()
-                                                                     if k in ('analysis', 'counts', 'notes')})
+                                                                     if k in ('analysis', 'counts', 'notes', 'host')})
                 if name == 'preflight':
                     self.identity = result.get('identity')
                     problem = self._identity_problem(state)
@@ -744,6 +791,31 @@ def _verifies(directory):
         return False
 
 
+PIP_FIELDS = ('torch', 'transformers', 'peft')
+
+
+def _lookup(value, dotted):
+    for key in dotted.split('.'):
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def _remedy(field, qualified):
+    """What makes a resume possible again: reinstall the qualified package, or rent the same GPU type."""
+    parts = field.split('.')
+    if parts[:2] == ['runtime', 'cuda_libraries'] and len(parts) == 3:
+        return f'pip install {parts[2]}=={qualified}' if qualified else f'pip uninstall {parts[2]}'
+    if parts[0] == 'runtime' and len(parts) == 2 and parts[1] in PIP_FIELDS:
+        return f'pip install {parts[1]}=={qualified}' + (' (from the cu128 index)' if parts[1] == 'torch' else '')
+    if field == 'runtime.device_name':
+        return f'rent the same GPU type ({qualified})'
+    if parts[0] == 'runtime' and parts[1] in ('cuda_runtime', 'cudnn'):
+        return 'reinstall the qualified torch build, which brings this version'
+    return 'not fixable on this Pod; a new run ID requalifies'
+
+
 def _differing(a, b, prefix=''):
     if isinstance(a, dict) and isinstance(b, dict):
         out = set()
@@ -792,6 +864,11 @@ def main(argv=None):
     seal.add_argument('--out', required=True)
     for key in ('artifact-root', 'bundle', 'model-dir', 'work-dir'):
         seal.add_argument(f'--{key}')
+    rb = sub.add_parser('rebind', help='on a replacement Pod: reseal the old record for this Pod (RUNPOD_POD_ID)')
+    rb.add_argument('--record', required=True)
+    rb.add_argument('--out', required=True)
+    for key in ('artifact-root', 'bundle', 'model-dir', 'work-dir'):
+        rb.add_argument(f'--{key}')
     for name in ['run', 'precheck', 'watchdog-copy', 'paths']:
         p = sub.add_parser(name)
         p.add_argument('--local', required=True)
@@ -803,6 +880,12 @@ def main(argv=None):
                 'inputs.model_dir': args.model_dir, 'inputs.work_dir': args.work_dir}
         print(finalize_draft(args.draft, args.out, code_commit=pc._commit(),
                              pod_id=os.environ.get('RUNPOD_POD_ID'), fill=fill))
+        return 0
+    if args.command == 'rebind':
+        fill = {'inputs.artifact_root': args.artifact_root, 'inputs.bundle': args.bundle,
+                'inputs.model_dir': args.model_dir, 'inputs.work_dir': args.work_dir}
+        print(rebind(args.record, args.out, code_commit=pc._commit(), pod_id=os.environ.get('RUNPOD_POD_ID', ''),
+                     fill=fill))
         return 0
     record = load_launch_record(args.record, code_commit=pc._commit())
     root = run_root(args.volume, record['run_id'])

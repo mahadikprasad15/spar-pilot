@@ -350,3 +350,17 @@ def test_the_pod_preflight_checks_the_base_model_against_the_codes_pins(built, t
                                repo_root=built['code']).pinned_base_model == cb.PINNED_BASE_MODEL
     be.pinned_base_model = cb.PINNED_BASE_MODEL
     assert 'differs from HF revision 989aa798' in _stopped_at_preflight(built, tmp_path, be=be)
+
+
+def test_the_runtime_fingerprint_holds_the_cuda_libraries_and_the_driver_is_recorded_apart(built, tmp_path, env):
+    be = backend(built, tmp_path / 'vol', driver=lambda: '570.86.10')
+    runtime = be.runtime()
+    assert {'cuda_runtime', 'cudnn', 'cuda_libraries'} <= set(runtime) and 'driver' not in runtime
+    assert all(name.startswith('nvidia-') for name in runtime['cuda_libraries'])
+    assert be.host() == {'driver': '570.86.10'}
+    stages = cs.Stages(built['record'], tmp_path / 'local', be)
+
+    class Ctx(_Ctx):
+        attempt = 'attempt-001'
+    result = stages.preflight(Ctx())
+    assert result['host'] == {'driver': '570.86.10'} and 'driver' not in json.dumps(result['identity'])
