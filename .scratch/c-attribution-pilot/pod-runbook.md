@@ -155,3 +155,13 @@ cat /root/dry-stop/log 2>/dev/null   # only on the first Pod
 
 Check that the summary lists every stage and that both backups are "verified, complete" before trusting anything.
 The measurements in ticket 11's list then go into the production record, by your decision.
+
+## 9. Locally, after the run (ticket 13)
+
+1. Restore the export from HF into the local artifact root, for example `artifacts/imports/c-attribution-<label>/`.
+2. Make the figures:
+   `python -m pilot_eval.c_attribution_report figures --report <restored>/c-attribution/report/report.json --out <restored>/figures`.
+3. Register the run:
+   `python -m pilot_eval.c_attribution_report register --root <restored> --label <label> --location local --prefix imports/c-attribution-<label>`.
+4. Run `python -m pilot_eval.catalog verify` and commit the catalog only when it reports OK.
+

@@ -1,6 +1,6 @@
 # 13: Report and catalog registration
 
-**Status:** needs-triage
+**Status:** resolved (2026-11-20, CPU); runs for real after ticket 12
 **Type:** task
 **Blocked by:** 07, 04
 
@@ -51,3 +51,40 @@
 - 2026-11-18 (round 1): predicted effects, paired deltas, control feasibility, cross-arm comparison, stability and labels were added (F1, F2, F6, decision 10).
 
 ## Answer
+
+- 2026-11-20: implemented in `pilot_eval/c_attribution_report.py`, tested in `tests/test_c_attribution_report.py`
+  on a real CPU chain run. Every number in the report is checked against the sealed artifact it comes from.
+- **Where each part runs.**
+  - `report.json` (schema `c-attribution-report-v2`) and `report.md` are built by the chain's report stage, on the
+    Pod, from sealed artifacts only.
+  - Figures (`figures`) and catalog registration (`register`) run locally after the export is restored. The Pod
+    needs no matplotlib and cannot commit the catalog.
+- **Report sections.**
+  - Header: how to read the results, the sign convention, labels.
+  - Attribution per arm: J̄, informative questions, the adapter table with exploratory intervals and rank
+    intervals, gross and net totals, the top-10 share of gross, per-layer read sums with intervals and
+    distributions, the identity, harmful adapters (reported only).
+  - Stability: question split and draw split.
+  - Qualification and numerics: every check, FD against FP64 with its floors, cached vs forced, batch
+    invariance, identity, no-op, processors, memory, replay (not run).
+  - Provenance per arm: verified, recorded, inferred.
+  - Selection: per group and its control, hot-layer provenance.
+  - Ablation: every condition, the untuned row, the nondeterminism floor.
+  - Selected-read and matched-control intervals.
+  - Online vs offline: paired adapter intervals, top-10 and read overlaps, distributions, stability side by side,
+    the one-seed caveat.
+  - The three labels head every results section.
+- **Figures** (palette and conventions from `attribution-production-1/build_figures.py`), from `report.json` only:
+  - a layer × module dJdλ heatmap per arm;
+  - an online vs offline scatter;
+  - per-layer read-score distributions;
+  - ablation Δpp bars per arm, with each matched control beside its target.
+- **Catalog registration.**
+  - One `greedy-only` evaluation entry per arm and condition, plus untuned once. Each lists one file per fixed
+    batch with its sha256 and row count, with `cohort_coverage: subset`, because `verify` checks each file on its
+    own.
+  - Two new `prior_uses` of cohort150: attribution and selection with the freeze hashes, and the greedy ablation,
+    each with the exact question IDs.
+  - It refuses to overwrite an existing entry. Run `python -m pilot_eval.catalog verify` and commit only when it
+    reports OK.
+- **Dependency.** The figures need matplotlib (the project's `report` extra).

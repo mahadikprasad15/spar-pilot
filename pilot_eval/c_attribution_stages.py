@@ -583,22 +583,10 @@ class Stages:
                 arms[arm]['untuned_note'] = untuned_note
             headline[arm] = {name: {k: v.get(k) for k in ('accuracy', 'delta_pp_vs_intact')}
                              for name, v in arms[arm]['conditions'].items() if isinstance(v, dict) and 'accuracy' in v}
-        comparison = json.loads((_sealed(self.root / AGG_DIR / 'comparison') / 'comparison.json').read_text())
-        selected = {arm: self._report_intervals(arm) for arm in self.arms}
-        body = dict(schema='c-attribution-report-v1', mode=self.record['mode'], label=self.record['label'],
-                    launch_record_sha256=self.record_sha256, arms=arms, comparison=comparison,
-                    selected_intervals=selected, labels=list(cg.LABELS))
-        title = 'REHEARSAL — machinery test; numbers are not results' if self.record['mode'] == 'rehearsal' else \
-            'C-attribution pilot report'
-        lines = [f'# {title}', '', *[f'- {label}' for label in cg.LABELS], '', '```',
-                 json.dumps(headline, indent=2), '```', '', '## Selected reads and matched controls', '']
-        for arm, block in selected.items():
-            lines += [f'### {arm} ({block["label"]})', '', '| group | role | layer | neuron | p2.5 | p97.5 |',
-                      '|---|---|---|---|---|---|']
-            lines += [f"| {r['group']} | {r['role']} | {r['layer']} | {r['j']} | {r['p2.5']:.4g} | {r['p97.5']:.4g} |"
-                      for r in block['reads']]
-            lines.append('')
-        markdown = '\n'.join(lines)
+        from pilot_eval import c_attribution_report as crep
+        # ticket 13: every section from the sealed artifacts; figures and catalog entries are made locally
+        body = crep.build(self.root, self.record, arms=self.arms, ablation=arms, run_sha256=self.record_sha256)
+        markdown = crep.markdown(body)
         au.seal_run(self.root / REPORT_DIR, {'report.json': body, 'report.md': markdown})
         return dict(outputs=[REPORT_DIR], headline=headline)
 
