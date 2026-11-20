@@ -124,22 +124,23 @@ def test_the_whole_chain_runs_through_the_real_backend(built, tmp_path, env):
             assert row['p2.5'] == intervals['p2.5'][i] and row['p97.5'] == intervals['p97.5'][i]
             assert isinstance(row['p2.5'], float) and row['arm'] == arm
     assert 'Selected reads and matched controls' in (local / cs.REPORT_DIR / 'report.md').read_text()
-    for arm in ('online-grpo', 'offline-grpo'):  # the rehearsal record's conditions leave untuned out: said so
-        assert report['arms'][arm]['untuned_note'] == 'untuned not in the record scope'
+    for arm in ('online-grpo', 'offline-grpo'):  # untuned is in the approved rehearsal scope (user 2026-11-20)
+        untuned = report['arms'][arm]['conditions']['untuned']
+        assert untuned['status'] == 'run' and isinstance(untuned['accuracy'], float)
+        assert set(untuned['delta_pp_vs_intact']) == {'estimate', 'p2.5', 'p97.5'}  # paired with intact
+        assert 'untuned_note' not in report['arms'][arm]
 
 
-def test_the_untuned_row_is_reported_alongside_when_in_scope(tmp_path, env):
+def test_a_scope_without_untuned_says_so_in_the_report(tmp_path, env):
     w = world.build(tmp_path / 'world', record_changes={
-        'scope.generation_conditions': ['intact', 'top10-adapters', 'global64-reads', 'untuned']})
+        'scope.generation_conditions': ['intact', 'top10-adapters', 'global64-reads']})
     c, _ = chain(w, tmp_path)
     summary = c.run()
     assert summary['state'] == 'complete', (summary['failures'], summary.get('stop_reason'))
     report = json.loads((tmp_path / 'local' / cs.REPORT_DIR / 'report.json').read_text())
     for arm in ('online-grpo', 'offline-grpo'):
-        untuned = report['arms'][arm]['conditions']['untuned']
-        assert untuned['status'] == 'run' and isinstance(untuned['accuracy'], float)
-        assert set(untuned['delta_pp_vs_intact']) == {'estimate', 'p2.5', 'p97.5'}  # paired with intact
-        assert 'untuned_note' not in report['arms'][arm]
+        assert report['arms'][arm]['untuned_note'] == 'untuned not in the record scope'
+        assert 'untuned' not in report['arms'][arm]['conditions']
 
 
 def test_old_metrics_are_bit_identical_with_and_without_seqlogp(built, tmp_path, env):

@@ -62,11 +62,12 @@ MEASURE_ONLY = 'measure-only'
 # or 'measure-only' in a rehearsal), 'ids' ('all' or a list of text). A dict is a fixed set of keys; {'*': spec}
 # is a map with free keys; [spec] is a nonempty list.
 
-NUM, INT, TEXT, TOL, IDS = 'number', 'int', 'text', 'tolerance', 'ids'
+NUM, INT, TEXT, TOL, IDS, COST = 'number', 'int', 'text', 'tolerance', 'ids', 'cost'
+NOT_TRACKED = 'not-tracked'  # user 2026-11-20: the Pod price is not tracked; the summary then has no cost line
 SCHEMA = {
     'schema': TEXT, 'run_id': TEXT, 'mode': TEXT, 'label': TEXT, 'code_commit': TEXT,
     'pod_id': TEXT, 'pod_stop_commands': [TEXT], 'volume_identity': TEXT, 'export_repo': TEXT,
-    'hourly_cost_usd': NUM, 'arms': [TEXT],
+    'hourly_cost_usd': COST, 'arms': [TEXT],
     'timeouts_seconds': {'copy': NUM, 'export_attempt': NUM, 'stop_attempt': NUM, 'writer_join': NUM},
     'marker_stale_seconds': NUM,
     'disk': {'min_free_gb': NUM, 'container_total_gb': NUM},
@@ -105,6 +106,8 @@ def _leaf_problem(value, kind, path, mode):
         ok = isinstance(value, (int, float)) or (value == MEASURE_ONLY and mode == 'rehearsal')
         if value == MEASURE_ONLY and mode != 'rehearsal':
             return f"{path} ('{MEASURE_ONLY}' is allowed only in a rehearsal; production needs a number)"
+    elif kind == COST:
+        ok = isinstance(value, (int, float)) or value == NOT_TRACKED
     elif kind == IDS:
         ok = value == 'all' or (isinstance(value, list) and value and all(isinstance(v, str) and v for v in value))
     else:
@@ -539,7 +542,8 @@ class Chain:
                 self._save(state)
                 summary['elapsed_seconds'] = dict(state['elapsed'])
             summary['wall_seconds'] = time.time() - started
-            summary['cost_estimate_usd'] = summary['wall_seconds'] / 3600 * self.record['hourly_cost_usd']
+            cost = self.record['hourly_cost_usd']
+            summary['cost_estimate_usd'] = None if cost == NOT_TRACKED else summary['wall_seconds'] / 3600 * cost
             if getattr(self, '_marker', None) is None:
                 self._marker = dict(run_id=self.record['run_id'], host=self.host, pid=os.getpid(),
                                     started_unix=started)
@@ -828,7 +832,9 @@ def _differing(a, b, prefix=''):
 def _markdown(summary):
     lines = [f"# Run summary — {summary['run_id']} ({summary['mode']}, {summary.get('label')})", '',
              f"State: **{summary['state']}**",
-             f"Wall time: {summary.get('wall_seconds', 0):.0f} s; cost estimate: ${summary.get('cost_estimate_usd', 0):.2f}",
+             f"Wall time: {summary.get('wall_seconds', 0):.0f} s; " + (
+                 'cost not tracked' if summary.get('cost_estimate_usd') is None
+                 else f"cost estimate: ${summary['cost_estimate_usd']:.2f}"),
              f"Elapsed per stage (planning only, no caps): {summary.get('elapsed_seconds', {})}", '', '## Stages', '']
     lines += [f'- {name}: {info}' for name, info in summary['stages'].items()]
     if summary.get('stop_reason'):

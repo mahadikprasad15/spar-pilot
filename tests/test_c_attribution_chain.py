@@ -51,8 +51,9 @@ def test_the_actual_rehearsal_draft_seals_and_every_leaf_is_typed(tmp_path):
 
 
 def test_unfilled_draft_is_refused(tmp_path):
-    with pytest.raises(LaunchRefused, match='hourly_cost_usd|inputs.bundle'):
-        cc.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='p1', fill=FILL)
+    with pytest.raises(LaunchRefused, match='inputs.bundle'):
+        cc.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='p1',
+                          fill={k: v for k, v in FILL.items() if k != 'inputs.bundle'})
 
 
 @pytest.mark.parametrize('dotted,value,match', [
@@ -572,3 +573,20 @@ def test_rebind_on_a_pod_whose_old_writer_may_still_be_alive_is_refused(tmp_path
     new = cc.rebind(tmp_path / 'launch_record.json', tmp_path / 'r.json', code_commit='c0ffee', pod_id='podnew2')
     with pytest.raises(ResumeRefused, match='ambiguous writer'):
         cc.precheck(cc.load_launch_record(new, code_commit='c0ffee'), tmp_path / 'vol', current_pod='podnew2')
+
+
+def test_the_approved_rehearsal_draft_seals_with_cost_not_tracked_and_untuned(tmp_path):
+    """User 2026-11-20: cost is not tracked; untuned is a rehearsal condition; the [for approval] values stand."""
+    path = cc.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='podtest1', fill=FILL)
+    record = cc.load_launch_record(path, code_commit='c0ffee')
+    assert record['hourly_cost_usd'] == 'not-tracked'
+    assert record['scope']['generation_conditions'] == ['intact', 'top10-adapters', 'global64-reads', 'untuned']
+    assert record['qualification']['noop_greedy_tokens'] == 16
+    assert '[for approval]' not in DRAFT.read_text()
+    summary = cc.Chain(record, local_root=tmp_path / 'local', volume=tmp_path / 'vol', stages=_stages([]),
+                       exporter=Exporter(), runner=Runner(), volume_identity='sl-0', current_pod='podtest1').run()
+    assert summary['cost_estimate_usd'] is None
+    assert 'cost not tracked' in (tmp_path / 'local' / cc.SUMMARY_DIR / summary['attempt'] / 'final' /
+                                  'run_summary.md').read_text()
+    with pytest.raises(LaunchRefused, match='hourly_cost_usd'):
+        sealed(tmp_path, hourly_cost_usd='free')

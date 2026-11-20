@@ -10,8 +10,8 @@
 # `seal` fills only empty fields (the code commit, pod_id from RUNPOD_POD_ID, the four input paths) and refuses
 # anything else that is empty, any '[proposed]' value, unknown keys and wrong types (every leaf is typed).
 #
-# Legend: [production-1] carried over unchanged / [user <date>] / [spec] / [for approval] value chosen here for
-# the user to approve with this record.
+# Legend: [production-1] carried over unchanged / [user <date>] / [spec]. Every value chosen for this record was
+# approved by the user on 2026-11-20.
 schema: c-attribution/launch-record-v1
 run_id: c-rehearsal-pod-1                # ticket 11
 mode: rehearsal
@@ -23,7 +23,7 @@ pod_id: null                             # filled from RUNPOD_POD_ID by `seal`
 pod_stop_commands: ['runpodctl stop pod {id}', 'runpodctl pod stop {id}']   # lesson pod-v1: both syntaxes
 volume_identity: sl-0                    # ticket 11: sl-0 attached
 export_repo: Prasadmahadik/spar-sampling-sft-artifacts   # [production-1] private export repo
-hourly_cost_usd: null                    # [user] Pod price per hour (summary cost line only)
+hourly_cost_usd: not-tracked             # [user 2026-11-20] cost not tracked (summary cost line only)
 timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_join: 300}   # [production-1]
 marker_stale_seconds: 900                # [production-1]
 disk: {min_free_gb: 60, container_total_gb: 120}   # ticket 09 preflight
@@ -41,10 +41,10 @@ qualification:
   fd_adapters: 5                         # [spec]
   fd_neurons: 3                          # [spec]
   head_chunk: 1024                       # [production-1]
-  noop_greedy_tokens: 16                 # [for approval] check (f) greedy-token comparison length
+  noop_greedy_tokens: 16                 # [user 2026-11-20] check (f) greedy-token comparison length
   batch_invariance_budgets: [8192]       # [production-1] qualified token budget
 
-scope:                                   # [for approval] cohort150 IDs; recorded as prior uses (ticket 11)
+scope:                                   # [user 2026-11-20] cohort150 IDs; recorded as prior uses (ticket 11)
   # 817 short, all-correct in both arms; 611 longest (offline: the capped and invalid row; online: all-wrong);
   # 285 invalid rows, mixed in both; 186 long, online mixed with an invalid row, offline all-wrong.
   attribution_questions:
@@ -55,7 +55,9 @@ scope:                                   # [for approval] cohort150 IDs; recorde
                   'gsm8k:test:13', 'gsm8k:test:1116', 'gsm8k:test:538', 'gsm8k:test:1300']
     offline-grpo: ['gsm8k:test:817', 'gsm8k:test:611', 'gsm8k:test:285', 'gsm8k:test:186',
                    'gsm8k:test:13', 'gsm8k:test:1116', 'gsm8k:test:538', 'gsm8k:test:1300']
-  generation_conditions: [intact, top10-adapters, global64-reads]   # ticket 11: 3 conditions; one per removal kind
+  generation_conditions: [intact, top10-adapters, global64-reads, untuned]
+                                         # [user 2026-11-20] one per removal kind, plus untuned (its GPU path,
+                                         # the adapter switched off, is otherwise first run in production)
 
 attribution: {token_budget: 8192, questions_per_unit: 2}   # budget [production-1]; 2 units per arm to test resume
 generation: {batch_size: 16, cap: 1024, eos_token_id: 151645}   # batch [production-1 qualified]; cap, EOS [spec]
@@ -65,7 +67,7 @@ selection:
   k_harmful: 10                          # [spec] reported only
   tolerance: 0.20                        # [spec] matched-control write tolerance
   seeds: {top10-adapters: 20261121, global64-reads: 20261122, hot64-reads: 20261123, layer64-reads: 20261124}
-                                         # [user 2026-11-19] one matching seed per group; values [for approval]
+                                         # [user 2026-11-19] one matching seed per group; values [user 2026-11-20]
 statistics: {split_seed: 20261118, bootstrap_seed: 1234, resamples: 10000}   # [user 2026-11-19]
 
 hot_layers:                              # [user 2026-11-19] computed by code with the union rule; re-derived at

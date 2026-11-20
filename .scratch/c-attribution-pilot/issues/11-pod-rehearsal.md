@@ -14,7 +14,7 @@
   - 2 arms × 32 rows, i.e. 4 whole questions × 8 draws per arm, chosen to cover short, long, EOS and invalid rows and all-same groups where available. Include the offline capped row. Online has no capped rows; record this rather than requiring one.
   - Qualification checks (a)–(f).
   - Aggregation on the subset; a split; a freeze.
-  - **Greedy only:** 3 conditions × 8 questions.
+  - **Greedy only:** 4 conditions × 8 questions (intact, top10-adapters, global64-reads, untuned).
   - One deliberate interruption, with the local root deleted, then resumed.
   - Export and clean restore, and a **real Pod stop** by the chain.
 - [ ] **Question IDs.** All rehearsal questions are drawn from cohort150, and their exact IDs are recorded and added to the cohort's `prior_uses` in the catalog.
@@ -35,6 +35,14 @@
 - 2026-11-18 (round 1): greedy only. Rehearsal IDs are recorded. The rehearsal measures the budget and floors instead of assuming them (F4, F5, F7).
 
 ## Answer
+
+- 2026-11-20 (user): the rehearsal record is approved.
+  - Questions: attribution 817, 611, 285 and 186 for both arms; generation adds 13, 1116, 538 and 1300.
+  - Matching seeds 20261121–24.
+  - `noop_greedy_tokens` 16.
+  - Conditions: intact, top10-adapters, global64-reads and untuned. Untuned was added so the adapter-off
+    path runs on a GPU before production.
+  - Cost is not tracked (`hourly_cost_usd: not-tracked`).
 
 ## Notes for the runbook (2026-11-20, from the 06–10 review fixes)
 

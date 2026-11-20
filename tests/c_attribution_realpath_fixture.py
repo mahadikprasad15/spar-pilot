@@ -188,7 +188,6 @@ def build(tmp, *, record_changes=None, export_client=None):
     bundle_path = restored / receipt['bundle_manifest']
 
     body = yaml.safe_load(DRAFT.read_text())
-    body['hourly_cost_usd'] = 1.0
     body['generation'] = dict(body['generation'], cap=CAP, eos_token_id=eos, batch_size=4)
     body['attribution'] = dict(body['attribution'], token_budget=256)
     body['qualification'] = dict(body['qualification'], batch_invariance_budgets=[256], noop_greedy_tokens=4)
