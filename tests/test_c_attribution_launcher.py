@@ -169,3 +169,71 @@ def test_an_owned_startup_crash_still_stops_the_pod_promptly(pod):
     summary = json.loads(summary_path.read_text())
     assert summary['reason'] == 'writer-exited-without-completing' and summary['stop'] == 'requested'
     assert pod['stops'].read_text().split() == ['stop', 'pod', 'podtest1'] and time.time() - started < 60
+
+
+def test_an_attempt_the_runner_handled_is_left_alone_by_the_watchdog(tmp_path):
+    """Follow-up: a handled failure exits without ``done``; the runner already stopped (or withheld the stop)."""
+    import threading
+    handled = tmp_path / 'last_attempt_end.json'
+    writer = subprocess.Popen([sys.executable, '-c',
+                               'import json,os,sys,time; time.sleep(2); '
+                               'json.dump(dict(state="failed", stop="withheld", writer_pid=os.getpid()), '
+                               f'open({str(handled)!r}, "w")); sys.exit(0)'])
+    threading.Thread(target=writer.wait, daemon=True).start()
+    os.environ['WATCHDOG_HANDLED'] = str(handled)
+    try:
+        proc, log = _watchdog(tmp_path, writer.pid)
+        out, _ = proc.communicate(timeout=60)
+    finally:
+        del os.environ['WATCHDOG_HANDLED']
+    assert 'attempt handled by the runner' in out and not log.exists()
+
+
+def test_a_stale_handled_record_from_an_earlier_writer_does_not_cancel_the_watchdog(tmp_path):
+    import threading
+    handled = tmp_path / 'last_attempt_end.json'
+    handled.write_text(json.dumps(dict(state='failed', stop='requested', writer_pid=1)))
+    writer = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2); raise SystemExit(1)'])
+    threading.Thread(target=writer.wait, daemon=True).start()
+    os.environ['WATCHDOG_HANDLED'] = str(handled)
+    try:
+        proc, log = _watchdog(tmp_path, writer.pid)
+        proc.communicate(timeout=60)
+    finally:
+        del os.environ['WATCHDOG_HANDLED']
+    assert log.read_text().split() == ['copy', 'stop1', 'stop2']
+
+
+def test_the_watchdog_withholds_its_stop_when_its_copy_fails(tmp_path):
+    """Follow-up P1, crash path: with WATCHDOG_STOP_REQUIRES_COPY a failed rescue copy leaves the Pod running."""
+    import threading
+    writer = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2); raise SystemExit(1)'])
+    threading.Thread(target=writer.wait, daemon=True).start()
+    log = tmp_path / 'actions.log'
+    env = dict(os.environ, PATH=_path(), WATCHDOG_COPY=f'echo copy >> {log}; exit 1',
+               WATCHDOG_STOP_1=f'echo stop1 >> {log}', WATCHDOG_STOP_2=f'echo stop2 >> {log}',
+               WATCHDOG_SUMMARY=str(tmp_path / 'summary.json'), WATCHDOG_STOP_REQUIRES_COPY='1')
+    (tmp_path / 'owner').write_text('a\n')
+    out = subprocess.run(['bash', str(WATCHDOG), 'none', str(writer.pid), str(tmp_path / 'done'), '2', '5', '5',
+                          str(tmp_path / 'owner'), 'a'], env=env, capture_output=True, text=True, timeout=60).stdout
+    assert log.read_text().split() == ['copy'] and 'STOP WITHHELD' in out
+    assert json.loads((tmp_path / 'summary.json').read_text())['stop'] == 'withheld'
+
+
+def test_watchdog_copy_exits_nonzero_when_the_copy_is_not_verified(tmp_path, monkeypatch):
+    record = cc.load_launch_record(cc.finalize_draft(
+        _yaml_draft(tmp_path), tmp_path / 'r.json', code_commit=pc._commit(), pod_id='podtest1',
+        fill={'inputs.artifact_root': str(tmp_path), 'inputs.bundle': str(tmp_path / 'b.json'),
+              'inputs.model_dir': str(tmp_path / 'm'), 'inputs.work_dir': str(tmp_path)}), code_commit=pc._commit())
+    monkeypatch.setattr(cc, 'copy_sealed', lambda local, vol: dict(verified=False, copied=[], problems=['x']))
+    assert cc.main(['watchdog-copy', '--record', str(tmp_path / 'r.json'), '--local', str(tmp_path / 'l'),
+                    '--volume', str(tmp_path / 'v')]) == 1
+    assert record['run_id']
+
+
+def _yaml_draft(tmp_path):
+    body = yaml.safe_load(DRAFT.read_text())
+    body['hourly_cost_usd'] = 1.0
+    path = tmp_path / 'draft.yaml'
+    path.write_text(yaml.safe_dump(body))
+    return path

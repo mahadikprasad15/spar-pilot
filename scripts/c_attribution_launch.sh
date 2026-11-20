@@ -55,6 +55,7 @@ chain_pid=$!
 WATCHDOG_COPY="$PY -m pilot_eval.c_attribution_chain watchdog-copy --record '$record' --local '$local_dir' --volume '$volume'" \
 WATCHDOG_STOP_1="${stop1//$'\x1f'/ }" WATCHDOG_STOP_2="${stop2//$'\x1f'/ }" \
 WATCHDOG_SUMMARY="$chain_dir/watchdog_summary.json" WATCHDOG_PROGRESS="$chain_dir/progress.json" \
+WATCHDOG_HANDLED="$chain_dir/last_attempt_end.json" WATCHDOG_STOP_REQUIRES_COPY=1 \
   setsid nohup bash scripts/attribution_watchdog.sh none "$chain_pid" "$chain_dir/done" \
   120 "$copy_t" "$stop_t" "$owner" "$token" >> "$chain_dir/watchdog.log" 2>&1 < /dev/null &
 echo "chain pid $chain_pid; watchdog deadline disabled (no time caps); volume state $chain_dir"

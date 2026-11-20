@@ -1,5 +1,6 @@
 """Ticket 09: the C-attribution launch record, runner, teardown and resume (fake stages, CPU)."""
 import json
+import os
 import socket
 import subprocess
 import time
@@ -428,3 +429,53 @@ def test_the_record_pod_id_must_be_the_pod_running_the_launch(tmp_path):
     assert summary['state'] == 'failed' and 'current-pod-other' in summary['failures'][0]['error']
     assert runner.commands == []  # never stop a Pod the record names when it is not this one
     assert summary['stop'] == dict(requested=False, reason=summary['stop']['reason'], attempts=[])
+
+
+# --- review 06-10 follow-up -------------------------------------------------------------------------------
+
+def test_no_complete_backup_withholds_the_stop_and_a_relaunch_backs_up_and_closes_the_run(tmp_path):
+    """Follow-up P1: every stage succeeded, both backups failed, and the Pod was still stopped and `done` written."""
+    from c_attribution_teardown_fakes import empty_copy
+    record = cc.load_launch_record(sealed(tmp_path), code_commit='c0ffee')
+    log, runner = [], Runner(codes=(0,))
+    chain = cc.Chain(record, local_root=tmp_path / 'local', volume=tmp_path / 'vol', stages=_stages(log),
+                     exporter=Exporter(fail=True), runner=runner, volume_identity='sl-0', copier=empty_copy,
+                     current_pod='podtest1')
+    summary = chain.run()
+    root = cc.run_root(tmp_path / 'vol', 'c-rehearsal-pod-1')
+    assert summary['state'] == 'complete' and summary['backups']['safe'] == []
+    assert runner.commands == [] and summary['stop']['requested'] is False and summary['stop']['withheld'] is True
+    assert not (root / cc.DONE_FILE).exists()             # the run stays open for backup recovery
+    withheld = json.loads((root / cc.STOP_WITHHELD_FILE).read_text())
+    assert 'no complete verified backup' in withheld['reason'] and 'c_attribution_launch.sh' in withheld['next']
+    assert 'STOP WITHHELD' in summary['backups']['statement']
+    end = json.loads((root / cc.ATTEMPT_END_FILE).read_text())
+    assert end['stop'] == 'withheld' and end['writer_pid'] == os.getpid()
+    # the Pod is still up with its local disk: relaunch with working backups; nothing is computed again
+    log.clear()
+    runner = Runner(codes=(0,))
+    again = cc.Chain(record, local_root=tmp_path / 'local', volume=tmp_path / 'vol', stages=_stages(log),
+                     exporter=Exporter(), runner=runner, volume_identity='sl-0', current_pod='podtest1')
+    summary = again.run()
+    assert summary['state'] == 'complete' and log == ['preflight']
+    assert summary['backups']['safe'] == ['volume copy', 'HF export'] and runner.commands
+    assert (root / cc.DONE_FILE).read_text() == 'complete\n' and not (root / cc.STOP_WITHHELD_FILE).exists()
+
+
+def test_unsealed_local_work_counts_for_the_stop_decision(tmp_path):
+    """A sealed unit of an unfinished stage is not in the expected outputs, but stopping would still lose it."""
+    log = []
+    stages = _stages(log)
+
+    def attribution(ctx):
+        au.seal_run(ctx.local_root / cc.SUBTREE / 'attribution/unit-0000', {'meta.json': {'unit': 0}})
+        raise RuntimeError('crash after one unit')
+    stages['attribution'] = attribution
+    from c_attribution_teardown_fakes import empty_copy
+    record = cc.load_launch_record(sealed(tmp_path), code_commit='c0ffee')
+    runner = Runner(codes=(0,))
+    summary = cc.Chain(record, local_root=tmp_path / 'local', volume=tmp_path / 'vol', stages=stages,
+                       exporter=Exporter(fail=True), runner=runner, volume_identity='sl-0', copier=empty_copy,
+                       current_pod='podtest1').run()
+    assert f'{cc.SUBTREE}/attribution/unit-0000' in summary['backups']['volume_copy']['missing']
+    assert runner.commands == []

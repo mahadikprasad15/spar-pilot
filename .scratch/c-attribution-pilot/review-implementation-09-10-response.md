@@ -32,3 +32,20 @@ nothing here is verified on a GPU or a Pod.
   `untuned`, so the rehearsal will not exercise the untuned row unless you add it.
 - Not verified until the rehearsal: actual IEEE settings on the A100, peak memory after the release fix, a real
   copy/export timeout, and a real Pod stop.
+
+## Follow-up (`review-implementation-09-10-follow-up.md`, at `6dfc11a`)
+
+Both findings were accepted, plus a related gap found while checking them. Each fix has a test that was seen
+failing first. User decision (2026-11-20): when no backup is complete, leave the Pod running.
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| P1 | The Pod was stopped and `done` written with no complete backup | Teardown requests the stop only when one destination holds a verified copy of **all local work**. That means the expected outputs plus every run sealed on local disk, including units of an unfinished stage. Otherwise it withholds the stop and writes `chain/stop_withheld.json` (reason, what is missing, the relaunch command, the manual stop command) to the volume and local disk. It also prints `STOP WITHHELD` and puts it in the summary statement. `done` is written only for a finished study that is backed up. Relaunching on the same Pod re-verifies and skips every completed stage, re-runs only preflight, retries the backups, and then stops and closes the run. Backups now report `safe` (all work so far) separately from `complete` (a finished study). | `test_no_complete_backup_withholds_the_stop_and_a_relaunch_backs_up_and_closes_the_run`, `test_unsealed_local_work_counts_for_the_stop_decision` |
+| P1 (crash path) | The watchdog's rescue copy could fail and it would still stop | With `WATCHDOG_STOP_REQUIRES_COPY=1` (set by the C-attribution launcher), a failed rescue copy means the watchdog withholds the stop and says so. `watchdog-copy` now exits 1 when its copy is not verified. The shared script's default behaviour is unchanged for the neuron-attribution chain. | `test_the_watchdog_withholds_its_stop_when_its_copy_fails`, `test_watchdog_copy_exits_nonzero_when_the_copy_is_not_verified` |
+| gap | After a handled failure (no `done`), the watchdog treated the exit as a crash and copied and stopped again; with a withheld stop it would have stopped the Pod anyway | The runner's `last_attempt_end.json` now records its PID and the stop outcome. With `WATCHDOG_HANDLED` set by the launcher, the watchdog stands down when that record names its writer. A record left by an earlier writer does not cancel it. | `test_an_attempt_the_runner_handled_is_left_alone_by_the_watchdog`, `test_a_stale_handled_record_from_an_earlier_writer_does_not_cancel_the_watchdog` |
+| P2 | Selected-read intervals missing from the final report | `report.json` has `selected_intervals[arm]`, one row per read (arm, group, target or control role, layer, neuron, p2.5, p97.5) with the exploratory label, read from the sealed `bootstrap.json`. `report.md` has a table of them. | The whole-chain test compares every report row, value and type with the sealed aggregate artifact |
+
+Not done in this pass:
+- **CUDA driver and cuDNN build are not yet in the runtime fingerprint.**
+- **Same-run-ID resume on a replacement Pod.** It is blocked by the Pod binding, and is your decision.
+- **A withheld stop keeps the Pod billing until someone acts.** Nothing pages you; the notice is on the volume, the local disk and the console.

@@ -49,6 +49,7 @@ MARKER_FILE = f'{CHAIN_DIR}/writer_marker.json'
 PROGRESS_FILE = f'{CHAIN_DIR}/progress.json'
 DONE_FILE = f'{CHAIN_DIR}/done'            # the study finished (state complete): the run ID is closed
 ATTEMPT_END_FILE = f'{CHAIN_DIR}/last_attempt_end.json'  # an attempt ended (any state); resumable unless done
+STOP_WITHHELD_FILE = f'{CHAIN_DIR}/stop_withheld.json'  # no complete verified backup: the Pod was left running
 LOG_FILE = f'{SUBTREE}/logs/chain.log'
 LAUNCH_DIR = f'{SUBTREE}/launch'
 SIGNOFF_DIR = f'{SUBTREE}/signoff'
@@ -535,18 +536,22 @@ class Chain:
             copy = dict(value, outcome='ok', verified=bool(value.get('verified')) and not value.get('problems'))
         copy['ended'] = ended  # the copy process has exited before anything later runs
         copied = {c.split(':', 1)[1] for c in copy.get('copied', []) if c.startswith('run:')}
-        # what is on the volume counts, whether this copy or an earlier mirror put it there
-        present = {r for r in self.expected_runs if r in copied or _verifies(self.volume_root / r)}
-        copy['missing'] = sorted(self.expected_runs - present)
+        # Everything a Pod stop would lose: the expected outputs and every run sealed on local disk (a sealed unit
+        # of an unfinished stage is not an expected output yet). What is on the volume counts, whether this copy
+        # or an earlier mirror put it there.
+        self.local_work = self.expected_runs | _local_sealed(self.local_root)
+        present = {r for r in self.local_work if r in copied or _verifies(self.volume_root / r)}
+        copy['missing'] = sorted(self.local_work - present)
         copy['coverage'] = 'complete' if copy['verified'] and not copy['missing'] else 'partial'
         return copy
 
     def _statement(self, summary, backups):
-        """Verified bytes and complete coverage are reported separately (review 06-10, P1)."""
+        """Verified bytes and complete coverage are reported separately (review 06-10, P1). ``safe``: verified
+        copies of all local work (the Pod may be stopped); ``complete``: safe and the study finished."""
         not_completed = [s for s in STAGES if summary['stages'].get(s, {}).get('status') != 'complete']
         run_complete = summary['state'] == 'complete'
-        complete = [name for name, b in backups if b['verified'] is True and b.get('coverage') == 'complete'
-                    and run_complete]
+        safe = [name for name, b in backups if b['verified'] is True and b.get('coverage') == 'complete']
+        complete = safe if run_complete else []
         parts = []
         for name, b in backups:
             if b['verified'] is not True:
@@ -558,10 +563,17 @@ class Chain:
                 if b.get('missing'):
                     why.append(f"missing {b['missing'][:5]}")
                 parts.append(f"{name}: verified bytes, partial ({'; '.join(why) or 'incomplete coverage'})")
-        head = ('complete verified backups: ' + ', '.join(complete)) if complete else 'NO COMPLETE VERIFIED BACKUP'
+        if complete:
+            head = 'complete verified backups: ' + ', '.join(complete)
+        elif safe:
+            head = 'NO COMPLETE VERIFIED BACKUP of a finished study; verified backups of all work so far: ' + ', '.join(safe)
+        else:
+            head = ('NO COMPLETE VERIFIED BACKUP. STOP WITHHELD: the Pod is left running so its local work can still be '
+                    f'backed up ({STOP_WITHHELD_FILE})')
         if not run_complete:
             head += f'; run did not complete (stages never finished: {not_completed})'
-        return dict(statement=head + '. ' + '; '.join(parts), complete=complete, stages_not_completed=not_completed)
+        return dict(statement=head + '. ' + '; '.join(parts), complete=complete, safe=safe,
+                    stages_not_completed=not_completed)
 
     def teardown(self, summary):
         steps = summary['teardown'] = []
@@ -573,7 +585,7 @@ class Chain:
         pre, pre_on_volume = self._write_summary(summary, 'pre-export', missing)
         steps.append('summary_sealed')
         t0 = time.monotonic()
-        export = self._export(include=[SUBTREE], expected_runs=sorted(self.expected_runs | {pre}), attempts=3)
+        export = self._export(include=[SUBTREE], expected_runs=sorted(self.local_work | {pre}), attempts=3)
         export['seconds'] = time.monotonic() - t0
         export['missing'] = list((export.get('receipt') or {}).get('missing_expected_runs') or [])
         export['coverage'] = 'complete' if export['verified'] is True and export.get('completeness') == 'complete' \
@@ -588,16 +600,43 @@ class Chain:
         summary['final_summary_upload'] = dict(outcome='ok' if upload['verified'] else 'failed',
                                                attempts=upload['attempts'], path=final)
         summary['teardown_io_running'] = [t.name for t in self._threads if t.is_alive()]
-        summary['stop'] = self._stop()
-        steps.append('stop_requested' if summary['stop']['requested'] else 'stop_not_requested')
+        safe = bool(summary['backups']['safe'])
+        if safe:
+            summary['stop'] = self._stop()
+            (self.volume_root / STOP_WITHHELD_FILE).unlink(missing_ok=True)
+        else:  # stopping would lose the only copy of local work (review 06-10 follow-up, P1)
+            summary['stop'] = self._withhold(summary)
+        steps.append('stop_requested' if summary['stop']['requested'] else
+                     'stop_withheld' if summary['stop'].get('withheld') else 'stop_not_requested')
         pc._write_json(self.volume_root / f'{CHAIN_DIR}/stop_record.json',
                        dict(stop=summary['stop'], steps=steps, attempt=self.attempt))
-        pc._write_json(self.volume_root / ATTEMPT_END_FILE, dict(attempt=self.attempt, state=summary['state'],
-                                                                 unix=time.time()))
+        # The watchdog reads this: an attempt the runner tore down itself is not a crash (it never stops it again).
+        pc._write_json(self.volume_root / ATTEMPT_END_FILE, dict(
+            attempt=self.attempt, state=summary['state'], writer_pid=os.getpid(), unix=time.time(),
+            stop='requested' if summary['stop']['requested'] else
+            'withheld' if summary['stop'].get('withheld') else 'not-requested'))
         self._beat('released', final_state=summary['state'])
-        if summary['state'] == 'complete':  # only a finished study closes the run ID; a failed attempt resumes
+        if summary['state'] == 'complete' and safe:  # a finished, backed-up study closes the run ID
             (self.volume_root / DONE_FILE).write_text(summary['state'] + '\n')
         return summary
+
+    def _withhold(self, summary):
+        record = dict(attempt=self.attempt, unix=time.time(), state=summary['state'],
+                      reason='no complete verified backup: neither the volume copy nor the HF export holds all local '
+                             'work, and a Pod stop would delete the local disk',
+                      missing_on_volume=summary['backups']['volume_copy'].get('missing', [])[:50],
+                      hf_export=summary['backups']['hf_export'].get('attempts'),
+                      next='fix the volume or Hub problem, then relaunch on this Pod with the same record '
+                           '(bash scripts/c_attribution_launch.sh RECORD LOCAL VOLUME): completed stages are '
+                           're-verified and skipped, the backups are retried, and the Pod is stopped once one is '
+                           f"complete. Or stop the Pod by hand: {' '.join(stop_commands(self.record)[0])}")
+        try:
+            pc._write_json(self.volume_root / STOP_WITHHELD_FILE, record)
+        except OSError as exc:
+            record['volume_write_failed'] = str(exc)
+        pc._write_json(self.local_root / STOP_WITHHELD_FILE, record)
+        print(f"STOP WITHHELD: {record['reason']}. Next: {record['next']}", file=sys.stderr)
+        return dict(requested=False, withheld=True, reason=record['reason'], attempts=[])
 
     def _bounded_thread(self, fn, timeout, *args, **kwargs):
         """The exporter is injectable (an in-memory fake Hub in tests), so it runs in a thread. The real exporter
@@ -692,6 +731,11 @@ def in_child(fn, timeout, *args, **kwargs):
     return result[0], result[1], not process.is_alive()
 
 
+def _local_sealed(local_root):
+    base = Path(local_root) / SUBTREE
+    return {str(p.parent.relative_to(local_root)) for p in base.rglob('complete.json')} if base.is_dir() else set()
+
+
 def _verifies(directory):
     try:
         au.verify_run(directory)
@@ -769,8 +813,9 @@ def main(argv=None):
                               stop_timeout=record['timeouts_seconds']['stop_attempt'])))
         return 0
     if args.command == 'watchdog-copy':
-        print(json.dumps(copy_sealed(args.local, root), indent=2))
-        return 0
+        result = copy_sealed(args.local, root)
+        print(json.dumps(result, indent=2))
+        return 0 if result['verified'] and not result['problems'] else 1  # the watchdog withholds its stop on 1
     if args.command == 'precheck':
         try:
             decision = precheck(record, args.volume)

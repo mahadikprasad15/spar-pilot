@@ -115,6 +115,15 @@ def test_the_whole_chain_runs_through_the_real_backend(built, tmp_path, env):
         for values in boot['neurons']['per_layer'].values():   # were NumPy display strings before the fix
             assert isinstance(values, list) and all(isinstance(v, float) for v in values)
         assert freeze
+        # follow-up P2: the final report carries the same intervals, labelled, as numbers
+        shown = report['selected_intervals'][arm]
+        assert shown['label'] == 'exploratory, pointwise; selected on this cohort'
+        assert len(shown['reads']) == len(selected['reads'])
+        for row, sealed_read, i in zip(shown['reads'], selected['reads'], range(len(selected['reads']))):
+            assert {k: row[k] for k in ('group', 'role', 'layer', 'j')} == sealed_read
+            assert row['p2.5'] == intervals['p2.5'][i] and row['p97.5'] == intervals['p97.5'][i]
+            assert isinstance(row['p2.5'], float) and row['arm'] == arm
+    assert 'Selected reads and matched controls' in (local / cs.REPORT_DIR / 'report.md').read_text()
     for arm in ('online-grpo', 'offline-grpo'):  # the rehearsal record's conditions leave untuned out: said so
         assert report['arms'][arm]['untuned_note'] == 'untuned not in the record scope'
 

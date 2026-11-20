@@ -51,6 +51,12 @@ while :; do
   if ! kill -0 "$pid" 2>/dev/null; then
     sleep 2
     if [ -e "$done_file" ]; then echo "watchdog cancelled: chain completed ($(cat "$done_file"))"; exit 0; fi
+    # Optional (C-attribution): the runner records each attempt it tore down itself, with its PID. That writer
+    # already copied, exported and requested (or deliberately withheld) the stop: not a crash, so stand down.
+    if [ -n "${WATCHDOG_HANDLED:-}" ] && [ -f "$WATCHDOG_HANDLED" ] && python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if str(r.get("writer_pid")) == sys.argv[2] else 1)' "$WATCHDOG_HANDLED" "$pid" 2>/dev/null; then
+      echo "watchdog standing down: attempt handled by the runner ($(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("state %s, stop %s" % (r.get("state"), r.get("stop")))' "$WATCHDOG_HANDLED"))"
+      exit 0
+    fi
     reason=writer-exited-without-completing; break
   fi
   if [ "$deadline" != none ] && awk -v now="$(date +%s.%N)" -v d="$deadline" 'BEGIN { exit !(now >= d) }'; then break; fi
@@ -73,6 +79,14 @@ write_summary() {
     "$reason" "$(date +%s)" "$writer_alive" "$copy_rc" "$1" "$2" > "$summary"
 }
 write_summary "pending" ""
+
+# Optional (C-attribution): a failed rescue copy means the volume may lack local work; stopping the Pod would
+# delete it, so leave the Pod running and say so.
+if [ "${WATCHDOG_STOP_REQUIRES_COPY:-0}" = 1 ] && [ "$copy_rc" -ne 0 ]; then
+  write_summary "withheld" ""
+  echo "STOP WITHHELD: the rescue copy failed (rc $copy_rc); the Pod is left running so its local work can be backed up. Stop it by hand: ${WATCHDOG_STOP_1:?}"
+  exit 0
+fi
 
 stop="not-requested" codes=""
 for cmd in "${WATCHDOG_STOP_1:?}" "${WATCHDOG_STOP_2:?}"; do
