@@ -556,13 +556,6 @@ class Stages:
             return None, f'untuned was generated on {self.arms[0]}\'s questions; not paired here (missing {missing[:5]})'
         return {q: rows[q] for q in ids}, None
 
-    def _report_intervals(self, arm):
-        """The sealed selected-read and matched-control intervals (aggregate stage), one row per read."""
-        boot = json.loads((_sealed(self.root / AGG_DIR / arm) / 'bootstrap.json').read_text())['selected']
-        intervals = boot['intervals'] or {}
-        rows = [dict(read, arm=arm, **{k: intervals[k][i] for k in intervals}) for i, read in enumerate(boot['reads'])]
-        return dict(label=boot['label'], reads=rows)
-
     def report(self, ctx):
         wanted = self.record['scope']['generation_conditions']
         arms, headline = {}, {}
