@@ -154,7 +154,8 @@ class Stages:
         except (cb.BundleError, OSError, ValueError) as exc:
             problems.append(f'input bundle: {exc}')
         try:
-            cb.check_base_model(self.record['inputs']['model_dir'], self.bundle())
+            cb.check_base_model(self.record['inputs']['model_dir'], self.bundle(),
+                                  pinned=self.backend.pinned_base_model)
             record['base_model'] = 'pass'
         except cb.BundleError as exc:
             problems.append(str(exc))
@@ -173,8 +174,13 @@ class Stages:
         if problems:
             raise StopBeforeProduction(f'preflight: {problems}')
         record['runtime'] = self.backend.runtime()
-        au.seal_run(self.root / PREFLIGHT_DIR, {'preflight.json': record})
-        return dict(outputs=[PREFLIGHT_DIR])
+        # What qualification and every later unit are valid for; the chain refuses a resume under another one.
+        identity = dict(runtime=record['runtime'], bundle_sha256=self.bundle()['sha256'],
+                        base_model=self.bundle()['base_model']['file_sha256'], code_commit=self.record['code_commit'])
+        record['identity'] = identity
+        directory = f'{PREFLIGHT_DIR}/{ctx.attempt}'  # every attempt checks today's inputs and runtime again
+        au.seal_run(self.root / directory, {'preflight.json': record})
+        return dict(outputs=[directory], identity=identity)
 
     # --- qualification ------------------------------------------------------------------------------
 
@@ -233,12 +239,15 @@ class Stages:
             # (c) surrogate finite differences, FP64 reference
             fd_rows, weights = self._fd_rows(arm_rows)
             reference = self.backend.reference(arm)
-            fd = ck.surrogate_finite_difference(inst, reference, fd_rows, weights,
-                                                epsilon=tol['finite_difference']['epsilon'],
-                                                adapters=q['fd_adapters'], neurons=q['fd_neurons'],
-                                                median_tol=tol['finite_difference']['median_rel_err_max'],
-                                                max_tol=tol['finite_difference']['max_rel_err_max'])
-            self.backend.release(reference)
+            try:
+                fd = ck.surrogate_finite_difference(inst, reference, fd_rows, weights,
+                                                    epsilon=tol['finite_difference']['epsilon'],
+                                                    adapters=q['fd_adapters'], neurons=q['fd_neurons'],
+                                                    median_tol=tol['finite_difference']['median_rel_err_max'],
+                                                    max_tol=tol['finite_difference']['max_rel_err_max'])
+            finally:  # drop this frame's reference before freeing: the FP64 copy must not be live later
+                del reference
+                self.backend.release()
             d['finite_difference'] = fd
             checks[f'{arm}:finite_difference'] = bool(fd['passed'])
             # (d) batch invariance at the token budget
@@ -273,7 +282,8 @@ class Stages:
             d['memory'] = {'peak_bytes': peak, 'total_bytes': total, 'budget': budget}
             if total:
                 checks[f'{arm}:memory'] = bool(peak <= tol['memory_fraction'] * total)
-            self.backend.release(model)
+            inst = model = out = None  # every owner of this arm's model, before the next arm loads
+            self.backend.release()
             ctx.boundary(arm=arm)
         numerics = ck.numerics_record(
             batch_invariance=details[self.arms[0]]['batch_invariance'],
@@ -373,7 +383,8 @@ class Stages:
                                      read_halves=sums.read_halves, term_size=term, sum_abs_c=abs_c)})
                 ctx.boundary(arm=arm, unit=index, of=len(plan))
             if model is not None:
-                self.backend.release(model)
+                model = inst = out = None  # every owner of this arm's model, before the next arm loads
+                self.backend.release()
         return dict(outputs=outputs)
 
     # --- aggregate, split, bootstrap, selection, freeze ------------------------------------------
@@ -401,6 +412,25 @@ class Stages:
         numerics = dict(identity_max_relative=max(m['identity_max_relative'] for m in metas),
                         net_over_gross=[r for m in metas for r in m['net_over_gross']])
         return sums, measures, adapters, down_index, layers, numerics, rows
+
+    @staticmethod
+    def _selected_intervals(S, counts, selection, layers):
+        """Spec priority 1: an interval for every selected read and its matched control, on the frozen selection
+        (exploratory, pointwise; computed after selection, on the same resample counts)."""
+        width = S.shape[2]
+        reads, pairs = [], []
+        for name, group in selection['groups'].items():
+            if group['kind'] != 'reads':
+                continue
+            control = group['control']
+            for role, members in (('target', group['targets']),
+                                  ('control', control['group'] if control['available'] else [])):
+                for t in members:
+                    li, j = divmod(int(t), width)
+                    reads.append(dict(group=name, role=role, layer=int(layers[li]), j=j))
+                    pairs.append((li, j))
+        intervals = st.neuron_bootstrap(S, counts, selected=pairs, tiers=('selected',))['selected'] if pairs else None
+        return dict(label=st.INTERVAL_LABEL, reads=reads, intervals=intervals)
 
     def aggregate_freeze(self, ctx):
         outputs, analysis, by_arm, adapter_S = [], {}, {}, {}
@@ -431,6 +461,7 @@ class Stages:
                                       split={'seed': stats['split_seed'], 'halves': split},
                                       inputs={'rows_sha256': self.sealed_rows(arm)[1]['rows_sha256']})
             freeze['generation_plan'] = plan
+            selected_boot = self._selected_intervals(sums.reads, counts, selection, layers)
             directory = f'{AGG_DIR}/{arm}'
             ratios = np.asarray(numerics['net_over_gross'])
             au.seal_run(self.root / directory, {
@@ -441,7 +472,7 @@ class Stages:
                                     removal_J=np.asarray(summary['reads']['removal_J']), S=sums.reads,
                                     read_halves=sums.read_halves, read_size=read_size),
                 'split.json': {'seed': stats['split_seed'], 'halves': split, 'stability': stability},
-                'bootstrap.json': {'neurons': neuron_boot, 'resamples': stats['resamples'],
+                'bootstrap.json': {'neurons': neuron_boot, 'selected': selected_boot, 'resamples': stats['resamples'],
                                    'seed': stats['bootstrap_seed']},
                 'identity.json': summary.get('identity'),
                 'numerics.json': ck.numerics_record(identity=numerics['identity_max_relative'],
@@ -505,10 +536,23 @@ class Stages:
                 outputs += [f'{sel.GENERATION_DIR}/{UNTUNED_ARM}/untuned/batch-{b:04d}' for b in range(len(plan))]
                 untuned_done = True
                 ctx.boundary(arm=UNTUNED_ARM, condition='untuned')
-            self.backend.release(model)
+            del model
+            self.backend.release()
         return dict(outputs=outputs, notes={'conditions': status})
 
     # --- report -------------------------------------------------------------------------------------
+
+    def _untuned(self, ids, wanted):
+        """(responses for ``ids``, None) from the untuned base (generated once, on the first arm's plan), or
+        (None, why not). A gap is reported, never raised: it is an analysis outcome."""
+        if wanted != 'all' and 'untuned' not in wanted:
+            return None, 'untuned not in the record scope'
+        plan = sel.read_freeze(self.root, self.arms[0])['generation_plan']
+        rows = cg.load_condition(self.root, UNTUNED_ARM, 'untuned', plan)
+        missing = sorted(set(ids) - set(rows))
+        if missing:
+            return None, f'untuned was generated on {self.arms[0]}\'s questions; not paired here (missing {missing[:5]})'
+        return {q: rows[q] for q in ids}, None
 
     def report(self, ctx):
         wanted = self.record['scope']['generation_conditions']
@@ -520,8 +564,14 @@ class Stages:
             ids = [q for b in plan for q in b]
             conds = [c for c in cg.conditions(freeze) if wanted == 'all' or c['name'] in wanted]
             results = {c['name']: cg.load_condition(self.root, arm, c['name'], plan) for c in conds if c['status'] == 'run'}
+            untuned, untuned_note = self._untuned(ids, wanted)
+            if untuned is not None:  # spec: the untuned row is reported alongside, paired by question with intact
+                results['untuned'] = untuned
+                conds = conds + [cg.untuned_condition()]
             counts = st.resample_counts(len(ids), B=stats['resamples'], seed=stats['bootstrap_seed'])
             arms[arm] = cg.summarize_arm(results, ids, conds, counts=counts)
+            if untuned_note:
+                arms[arm]['untuned_note'] = untuned_note
             headline[arm] = {name: {k: v.get(k) for k in ('accuracy', 'delta_pp_vs_intact')}
                              for name, v in arms[arm]['conditions'].items() if isinstance(v, dict) and 'accuracy' in v}
         comparison = json.loads((_sealed(self.root / AGG_DIR / 'comparison') / 'comparison.json').read_text())

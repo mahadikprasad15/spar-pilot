@@ -25,12 +25,44 @@ MODEL_REVISION = '989aa7980e4cf806f80c7fef2b1adb7bc71aa306'
 MODEL_DIR = f'inputs/models/{MODEL_REVISION}'
 TOKENIZER_FILES = ('tokenizer.json', 'tokenizer_config.json', 'vocab.json', 'merges.txt')
 MODEL_FILES = ('config.json', 'model.safetensors')
+# HF's own per-file identities for Qwen/Qwen2.5-1.5B-Instruct at MODEL_REVISION: the LFS sha256 of the weights and
+# the git blob id of config.json, as HF served them (huggingface_hub download metadata, 2026-10-30; the local
+# files match). Fixed here, independent of any snapshot being certified (review 06-10, P1).
+PINNED_BASE_MODEL = {'config.json': {'git_blob_sha1': 'f81ead14ab072d65a07817f83a3ee0e5a1890d10'},
+                     'model.safetensors': {'sha256': 'dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee'}}
 ONLINE = 'runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints'
 OFFLINE = 'imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/checkpoints'
 
 
 class BundleError(ValueError):
     pass
+
+
+def git_blob_sha1(path):
+    data = Path(path).read_bytes()
+    return hashlib.sha1(b'blob %d\0' % len(data) + data).hexdigest()
+
+
+def _identity(path, kind):
+    return sha256(path) if kind == 'sha256' else git_blob_sha1(path)
+
+
+def pinned_identities(model_dir):
+    """The identities of a snapshot in PINNED_BASE_MODEL's form (for tests and diagnostics, never as the pins)."""
+    return {name: {kind: _identity(Path(model_dir) / name, kind) for kind in PINNED_BASE_MODEL[name]}
+            for name in MODEL_FILES}
+
+
+def _check_pins(model_dir, pinned):
+    for name in MODEL_FILES:
+        if not (Path(model_dir) / name).is_file():
+            raise BundleError(f'missing: base model {name} ({model_dir})')
+    for name in MODEL_FILES:
+        path = Path(model_dir) / name
+        for kind, expected in pinned[name].items():
+            if _identity(path, kind) != expected:
+                raise BundleError(f'differs: base model {name} differs from HF revision {MODEL_REVISION[:8]} '
+                                  f'({kind} {expected[:12]}…)')
 
 
 def sha256(path, chunk=1 << 20):
@@ -96,7 +128,8 @@ def _check(root, entry, expected=None):
     return actual
 
 
-def build(artifact_root, entries, *, repo_root=REPO, expected=None, model_dir=None, base_model='required'):
+def build(artifact_root, entries, *, repo_root=REPO, expected=None, model_dir=None, base_model='required',
+          pinned=PINNED_BASE_MODEL):
     """Hash every entry (refusing missing files and any mismatch against ``expected`` {role: sha256}).
 
     Every base-model file in ``MODEL_FILES`` must exist in ``model_dir`` and is hashed (fail closed). A CPU
@@ -113,15 +146,14 @@ def build(artifact_root, entries, *, repo_root=REPO, expected=None, model_dir=No
     model = {}
     if base_model == 'required':
         model_dir = Path(model_dir) if model_dir else root / MODEL_DIR
+        _check_pins(model_dir, pinned)  # against HF's identities, not the files' own hashes
         for name in MODEL_FILES:
-            if not (model_dir / name).is_file():
-                raise BundleError(f'missing: base model {name} ({model_dir})')
             model[name] = sha256(model_dir / name)
     elif base_model != 'not-bundled-fixture':
         raise BundleError(f"base_model must be 'required' or 'not-bundled-fixture', not {base_model!r}")
     body = {'schema': SCHEMA, 'files': files, 'catalog': catalog_revision(repo_root),
             'base_model': {'repo': 'Qwen/Qwen2.5-1.5B-Instruct', 'revision': MODEL_REVISION, 'file_sha256': model,
-                           'mode': base_model,
+                           'mode': base_model, 'pinned': pinned if base_model == 'required' else None,
                            'note': 'downloaded from HF at this revision on the Pod (HF_HOME on the container disk); '
                                    'each file is checked against these hashes'}}
     body['sha256'] = _canonical({k: v for k, v in body.items() if k != 'sha256'})
@@ -137,12 +169,16 @@ def verify(restored_root, bundle):
     return {'verified_files': len(bundle['files']), 'bundle_sha256': bundle['sha256']}
 
 
-def check_base_model(model_dir, bundle):
-    """After the HF download on the Pod: every required base-model file must be recorded and match."""
+def check_base_model(model_dir, bundle, *, pinned=PINNED_BASE_MODEL):
+    """After the HF download on the Pod: every base-model file matches HF's pinned identities (the code's, never
+    the bundle's own) and the hashes the bundle recorded."""
     recorded = bundle['base_model'].get('file_sha256') or {}
     if bundle['base_model'].get('mode', 'required') != 'required' or sorted(recorded) != sorted(MODEL_FILES):
         raise BundleError(f'no base-model hashes for {sorted(set(MODEL_FILES) - set(recorded))}: this bundle '
                           'cannot verify a model')
+    _check_pins(model_dir, pinned)
+    if bundle['base_model'].get('pinned') != pinned:
+        raise BundleError('the bundle was built under other base-model pins than this code checks')
     for name, expected in recorded.items():
         path = Path(model_dir) / name
         if not path.is_file():

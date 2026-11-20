@@ -314,9 +314,10 @@ def watchdog_deadline(budget, *, margin_seconds, wall_now=None):
     return wall_now + max(0.0, budget.remaining_total()) + margin_seconds
 
 
-def copy_sealed(local_root, volume_root, *, sealed_only=True, subtree='attribution'):
+def copy_sealed(local_root, volume_root, *, sealed_only=True, subtree='attribution', skip_present=False):
     """Copy only sealed, hash-verified units and run directories (under ``subtree``) to the volume and
-    re-verify the copies."""
+    re-verify the copies. With ``skip_present``, a run whose volume seal already equals the local one is left
+    as it is (an incremental mirror; the teardown copy re-verifies everything)."""
     if not sealed_only:
         raise ValueError('only sealed outputs are copied')
     local, volume = Path(local_root), Path(volume_root)
@@ -345,6 +346,9 @@ def copy_sealed(local_root, volume_root, *, sealed_only=True, subtree='attributi
             problems.append(str(exc))
             continue
         target = volume / directory.relative_to(local)
+        if skip_present and (target / 'complete.json').is_file() and \
+                (target / 'complete.json').read_bytes() == seal.read_bytes():
+            continue
         target.mkdir(parents=True, exist_ok=True)
         for name in sorted(files):
             (target / name).parent.mkdir(parents=True, exist_ok=True)

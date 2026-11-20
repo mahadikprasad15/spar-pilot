@@ -133,12 +133,25 @@ class Units:
 
 # --- sealed run directories ----------------------------------------------------------------------
 
+def _json_default(value):
+    """NumPy values become JSON numbers and lists (lossless); a path becomes its text. Anything else is refused:
+    ``default=str`` had turned bootstrap arrays into display strings (C-attribution review 06-10, P2)."""
+    import numpy as np
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f'cannot seal a {type(value).__name__} object as JSON')
+
+
 def _encode(value):
     if isinstance(value, bytes):
         return value
     if isinstance(value, str):
         return value.encode()
-    return (json.dumps(value, indent=2, sort_keys=True, default=str) + '\n').encode()
+    return (json.dumps(value, indent=2, sort_keys=True, default=_json_default) + '\n').encode()
 
 
 def _fsync(path, data):

@@ -23,6 +23,7 @@ automatic sign-off rule. What differs, by the user's decisions:
 """
 import argparse
 import fnmatch
+import functools
 import hashlib
 import json
 import os
@@ -46,7 +47,8 @@ CHAIN_DIR = f'{SUBTREE}/chain'
 STATE_FILE = f'{CHAIN_DIR}/state.json'
 MARKER_FILE = f'{CHAIN_DIR}/writer_marker.json'
 PROGRESS_FILE = f'{CHAIN_DIR}/progress.json'
-DONE_FILE = f'{CHAIN_DIR}/done'
+DONE_FILE = f'{CHAIN_DIR}/done'            # the study finished (state complete): the run ID is closed
+ATTEMPT_END_FILE = f'{CHAIN_DIR}/last_attempt_end.json'  # an attempt ended (any state); resumable unless done
 LOG_FILE = f'{SUBTREE}/logs/chain.log'
 LAUNCH_DIR = f'{SUBTREE}/launch'
 SIGNOFF_DIR = f'{SUBTREE}/signoff'
@@ -238,9 +240,21 @@ def run_root(volume, run_id):
     return Path(volume) / SUBTREE / run_id
 
 
-def precheck(record, volume, *, now=time.time, host=None):
-    """Before the launcher takes watchdog ownership: refuse a finished run ID, and a live, foreign or
-    ambiguous writer on this run's marker (a refused second launch stops nothing)."""
+def check_pod(record, current_pod):
+    """The stop target is the record's Pod: refuse a launch on any other Pod (review 06-10, P1)."""
+    if not current_pod:
+        raise ResumeRefused('RUNPOD_POD_ID is not set: cannot confirm this is the Pod the record will stop '
+                            f"({record['pod_id']})")
+    if current_pod != record['pod_id']:
+        raise ResumeRefused(f"this Pod is {current_pod} but the launch record stops Pod {record['pod_id']}; "
+                            'seal a record on this Pod')
+
+
+def precheck(record, volume, *, now=time.time, host=None, current_pod=None):
+    """Before the launcher takes watchdog ownership: refuse a record for another Pod, a finished run ID, and a
+    live, foreign or ambiguous writer on this run's marker (a refused second launch stops nothing). A run whose
+    last attempt ended (failed or stopped) resumes under the same run ID."""
+    check_pod(record, os.environ.get('RUNPOD_POD_ID', '') if current_pod is None else current_pod)
     root = run_root(volume, record['run_id'])
     if (root / DONE_FILE).is_file():
         raise ResumeRefused(f"run {record['run_id']} already finished ({(root / DONE_FILE).read_text().strip()}); "
@@ -257,11 +271,17 @@ class Context:
         self.local_root, self.volume_root = chain.local_root, chain.volume_root
         self.units_done = 0
 
+    @property
+    def attempt(self):
+        return self.chain.attempt
+
     def boundary(self, **progress):
-        """Unit boundary: refresh the writer heartbeat and the visible progress record. Never stops for time."""
+        """Unit boundary: mirror newly sealed work to the volume, refresh the writer heartbeat and the visible
+        progress record (with the mirror's result). Never stops for time."""
         self.units_done += 1
+        mirror = self.chain.mirror()
         self.chain._beat('running', stage=self.stage, units_done=self.units_done)
-        self.chain.progress(self.stage, units_done=self.units_done, **progress)
+        self.chain.progress(self.stage, units_done=self.units_done, mirror=mirror, **progress)
 
     def expect(self, *runs):
         self.chain.expected_runs |= {str(r) for r in runs}
@@ -272,18 +292,26 @@ class Context:
 
 class Chain:
     def __init__(self, record, *, local_root, volume, stages, exporter=None, runner=subprocess.run,
-                 volume_identity=None, host=None, copier=None):
+                 volume_identity=None, host=None, copier=None, current_pod=None):
         self.record, self.stages = record, stages
         self.record_sha256 = record_sha256(record)
         self.local_root = Path(local_root)
         self.volume_root = run_root(volume, record['run_id'])
-        self.exporter, self.runner = exporter or _default_exporter, runner
-        self.copier = copier or (lambda local, vol, sealed_only=True: pc.copy_sealed(local, vol, sealed_only=sealed_only,
-                                                                                     subtree=SUBTREE))
+        self.timeouts = record['timeouts_seconds']
+        # the real exporter's Hub calls run in child processes killed at export_attempt (OnlineHubProcess)
+        self.exporter = exporter or functools.partial(_default_exporter, hub_timeout=self.timeouts['export_attempt'])
+        self.runner = runner
+        # The teardown copy runs in a child process that is ended on timeout (``in_child``), so it must be a
+        # module-level function.
+        self.copier = copier or copy_sealed
+        self.current_pod = os.environ.get('RUNPOD_POD_ID', '') if current_pod is None else current_pod
+        self.pod_confirmed = False
         self.volume_identity, self.host = volume_identity, host or socket.gethostname()
         self.timeouts = record['timeouts_seconds']
         self.expected_runs = {LAUNCH_DIR}
         self.attempt = None
+        self.identity = None
+        self._threads = []
 
     def log(self, message):
         path = self.local_root / LOG_FILE
@@ -302,10 +330,23 @@ class Chain:
     def _save(self, state):
         pc._write_json(self.volume_root / STATE_FILE, state)
 
+    def mirror(self):
+        """Copy newly sealed work to the volume now (incremental; already-copied runs are skipped)."""
+        try:
+            result = self.copier(self.local_root, self.volume_root, sealed_only=True, skip_present=True)
+        except Exception as exc:  # recorded; the teardown copy and the export remain
+            result = dict(verified=False, copied=[], problems=[f'{type(exc).__name__}: {exc}'])
+        if result['problems']:
+            self.log(f"mirror problems: {result['problems']}")
+        return dict(verified=result['verified'], copied=len(result['copied']), problems=result['problems'][:5],
+                    unix=time.time())
+
     def _start(self):
+        check_pod(self.record, self.current_pod)  # first: it decides whether teardown may stop the record's Pod
+        self.pod_confirmed = True
         if self.volume_identity != self.record['volume_identity']:
             raise ResumeRefused(f'volume identity {self.volume_identity!r} differs from the launch record')
-        decision = precheck(self.record, self.volume_root.parent.parent, host=self.host)
+        decision = precheck(self.record, self.volume_root.parent.parent, host=self.host, current_pod=self.current_pod)
         state_path = self.volume_root / STATE_FILE
         state = json.loads(state_path.read_text()) if state_path.is_file() else dict(
             run_id=self.record['run_id'], launch_record_sha256=self.record_sha256, completed={}, elapsed={})
@@ -333,6 +374,18 @@ class Chain:
             except ValueError as exc:
                 problems.append(str(exc))
         return problems
+
+    def _identity_problem(self, state):
+        """Qualification and every later unit are valid only for the runtime and inputs they were qualified
+        under; a resume on anything else is refused (a new run ID requalifies)."""
+        if 'qualification' not in state['completed']:
+            return None
+        qualified = state.get('qualified_identity')
+        if qualified != self.identity:
+            fields = sorted(_differing(qualified, self.identity))
+            return (f'this attempt runs under a runtime/inputs other than the run was qualified under '
+                    f'(fields {fields}); a new run ID is needed to requalify')
+        return None
 
     # --- sign-off (production-1's automatic rule) ---------------------------------------------------
 
@@ -377,6 +430,8 @@ class Chain:
             self._check_signoff(state)
             for name in STAGES:
                 previous = state['completed'].get(name)
+                if name == 'preflight':
+                    previous = None  # today's inputs and runtime are always checked again (review 06-10, P1)
                 if previous is not None:
                     problems = self._outputs_verified(previous)
                     if not problems:
@@ -402,6 +457,13 @@ class Chain:
                              'logged for planning only, no caps)')
                 summary['stages'][name] = dict(status='complete', **{k: v for k, v in result.items()
                                                                      if k in ('analysis', 'counts', 'notes')})
+                if name == 'preflight':
+                    self.identity = result.get('identity')
+                    problem = self._identity_problem(state)
+                    if problem:
+                        summary['stages'][name] = dict(status='stopped', reason=problem)
+                        summary['state'], summary['stop_reason'] = 'stopped', f'preflight: {problem}'
+                        break
                 if name == 'qualification':
                     try:
                         signoff = self._signoff(result)
@@ -410,8 +472,10 @@ class Chain:
                         summary['state'], summary['stop_reason'] = 'stopped', f'qualification: {exc}'
                         break
                     state['signoff'] = summary['signoff'] = signoff
+                    state['qualified_identity'] = self.identity
                 self.expected_runs |= set(result.get('outputs', []))
                 state['completed'][name] = result
+                summary['stages'][name]['mirror'] = self.mirror()
                 if name == 'report':
                     summary['report'] = result.get('headline')
                 self._save(state)
@@ -440,9 +504,9 @@ class Chain:
     def _export(self, *, include, expected_runs, attempts):
         tries, outcome = [], dict(verified=False)
         for _ in range(attempts):
-            kind, value = call_with_timeout(self.exporter, self.timeouts['export_attempt'], self.local_root,
-                                            label=self.record['run_id'], include=include, expected_units=[],
-                                            expected_runs=expected_runs, repo=self.record['export_repo'])
+            kind, value = self._bounded_thread(self.exporter, self.timeouts['export_attempt'], self.local_root,
+                                               label=self.record['run_id'], include=include, expected_units=[],
+                                               expected_runs=expected_runs, repo=self.record['export_repo'])
             if kind == 'ok':
                 tries.append(dict(outcome='ok'))
                 outcome = dict(verified=bool(value.get('readback_verified', True)), receipt=value,
@@ -456,58 +520,112 @@ class Chain:
         relative = f'{SUMMARY_DIR}/{self.attempt}/{phase}'
         au.seal_run(self.local_root / relative, {'run_summary.json': summary, 'run_summary.md': _markdown(summary),
                                                  'missing_work.json': list(missing)})
+        kind, value, ended = in_child(copy_run, self.timeouts['copy'], str(self.local_root / relative),
+                                      str(self.volume_root / relative))
+        return relative, kind == 'ok' and bool(value) and ended
 
-        def copy():
-            source, target = self.local_root / relative, self.volume_root / relative
-            files = au.verify_run(source)
-            for name in sorted(files) + ['complete.json']:
-                (target / name).parent.mkdir(parents=True, exist_ok=True)
-                (target / name).write_bytes((source / name).read_bytes())
-            au.verify_run(target)
-            return True
-        kind, value = call_with_timeout(copy, self.timeouts['copy'])
-        return relative, kind == 'ok' and bool(value)
-
-    def teardown(self, summary):
-        steps = summary['teardown'] = []
-        kind, value = call_with_timeout(self.copier, self.timeouts['copy'], self.local_root, self.volume_root,
-                                        sealed_only=True)
+    def _volume_copy(self):
+        kind, value, ended = in_child(self.copier, self.timeouts['copy'], str(self.local_root),
+                                      str(self.volume_root), sealed_only=True)
         if kind == 'timeout':
             copy = dict(verified=False, outcome='timeout', timeout_seconds=self.timeouts['copy'])
         elif kind == 'error':
-            copy = dict(verified=False, outcome='error', error=f'{type(value).__name__}: {value}')
+            copy = dict(verified=False, outcome='error', error=value)
         else:
-            copy = dict(value, outcome='ok', verified=bool(value.get('verified')))
-        steps.append('volume_copy')
+            copy = dict(value, outcome='ok', verified=bool(value.get('verified')) and not value.get('problems'))
+        copy['ended'] = ended  # the copy process has exited before anything later runs
         copied = {c.split(':', 1)[1] for c in copy.get('copied', []) if c.startswith('run:')}
-        missing = sorted(r for r in self.expected_runs if r not in copied)
-        summary['backups'] = dict(volume_copy=copy, hf_export=dict(verified='pending'),
+        # what is on the volume counts, whether this copy or an earlier mirror put it there
+        present = {r for r in self.expected_runs if r in copied or _verifies(self.volume_root / r)}
+        copy['missing'] = sorted(self.expected_runs - present)
+        copy['coverage'] = 'complete' if copy['verified'] and not copy['missing'] else 'partial'
+        return copy
+
+    def _statement(self, summary, backups):
+        """Verified bytes and complete coverage are reported separately (review 06-10, P1)."""
+        not_completed = [s for s in STAGES if summary['stages'].get(s, {}).get('status') != 'complete']
+        run_complete = summary['state'] == 'complete'
+        complete = [name for name, b in backups if b['verified'] is True and b.get('coverage') == 'complete'
+                    and run_complete]
+        parts = []
+        for name, b in backups:
+            if b['verified'] is not True:
+                parts.append(f'{name}: NOT verified')
+            elif name in complete:
+                parts.append(f'{name}: verified, complete')
+            else:
+                why = [] if run_complete else ['the run did not complete']
+                if b.get('missing'):
+                    why.append(f"missing {b['missing'][:5]}")
+                parts.append(f"{name}: verified bytes, partial ({'; '.join(why) or 'incomplete coverage'})")
+        head = ('complete verified backups: ' + ', '.join(complete)) if complete else 'NO COMPLETE VERIFIED BACKUP'
+        if not run_complete:
+            head += f'; run did not complete (stages never finished: {not_completed})'
+        return dict(statement=head + '. ' + '; '.join(parts), complete=complete, stages_not_completed=not_completed)
+
+    def teardown(self, summary):
+        steps = summary['teardown'] = []
+        copy = self._volume_copy()
+        steps.append('volume_copy')
+        missing = copy['missing']
+        summary['backups'] = dict(volume_copy=copy, hf_export=dict(verified='pending'), complete=[],
                                   statement='HF export pending; this pre-export summary is the one inside the backup')
         pre, pre_on_volume = self._write_summary(summary, 'pre-export', missing)
         steps.append('summary_sealed')
         t0 = time.monotonic()
         export = self._export(include=[SUBTREE], expected_runs=sorted(self.expected_runs | {pre}), attempts=3)
         export['seconds'] = time.monotonic() - t0
+        export['missing'] = list((export.get('receipt') or {}).get('missing_expected_runs') or [])
+        export['coverage'] = 'complete' if export['verified'] is True and export.get('completeness') == 'complete' \
+            and not export['missing'] else 'partial'
         steps.append('hf_export')
-        verified = [n for n, b in [('volume copy', copy), ('HF export', export)] if b['verified'] is True]
-        statement = ('verified backups: ' + ', '.join(verified)) if verified else \
-            'NO VERIFIED BACKUP; possibly missing outputs: every run directory not on the volume or HF'
-        summary['backups'] = dict(volume_copy=copy, hf_export=export, statement=statement,
-                                  pre_export_summary=dict(path=pre, on_volume=pre_on_volume))
+        summary['backups'] = dict(volume_copy=copy, hf_export=export,
+                                  pre_export_summary=dict(path=pre, on_volume=pre_on_volume),
+                                  **self._statement(summary, [('volume copy', copy), ('HF export', export)]))
         final, summary['summary_on_volume'] = self._write_summary(summary, 'final', missing)
         steps.append('summary_on_volume')
         upload = self._export(include=[final], expected_runs=[final], attempts=1)
         summary['final_summary_upload'] = dict(outcome='ok' if upload['verified'] else 'failed',
                                                attempts=upload['attempts'], path=final)
+        summary['teardown_io_running'] = [t.name for t in self._threads if t.is_alive()]
         summary['stop'] = self._stop()
-        steps.append('stop_requested')
+        steps.append('stop_requested' if summary['stop']['requested'] else 'stop_not_requested')
         pc._write_json(self.volume_root / f'{CHAIN_DIR}/stop_record.json',
                        dict(stop=summary['stop'], steps=steps, attempt=self.attempt))
+        pc._write_json(self.volume_root / ATTEMPT_END_FILE, dict(attempt=self.attempt, state=summary['state'],
+                                                                 unix=time.time()))
         self._beat('released', final_state=summary['state'])
-        (self.volume_root / DONE_FILE).write_text(summary['state'] + '\n')
+        if summary['state'] == 'complete':  # only a finished study closes the run ID; a failed attempt resumes
+            (self.volume_root / DONE_FILE).write_text(summary['state'] + '\n')
         return summary
 
+    def _bounded_thread(self, fn, timeout, *args, **kwargs):
+        """The exporter is injectable (an in-memory fake Hub in tests), so it runs in a thread. The real exporter
+        runs every Hub call in a child process killed at ``export_attempt``; after a timeout the thread is joined
+        once more for that long and, if still alive, reported in ``teardown_io_running``."""
+        import threading
+        box = {}
+
+        def target():
+            try:
+                box['value'] = fn(*args, **kwargs)
+            except BaseException as exc:
+                box['error'] = exc
+        thread = threading.Thread(target=target, daemon=True, name=f'export-{len(self._threads)}')
+        self._threads.append(thread)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            thread.join(timeout)
+            return 'timeout', None
+        if 'error' in box:
+            return 'error', box['error']
+        return 'ok', box.get('value')
+
     def _stop(self):
+        if not self.pod_confirmed:  # the record's Pod may not be this one: never stop it (review 06-10, P1)
+            return dict(requested=False, reason="the launch record's Pod was not confirmed as this Pod; nothing "
+                                                'was stopped. Stop this Pod by hand.', attempts=[])
         attempts, requested = [], False
         for command in stop_commands(self.record):
             try:
@@ -522,6 +640,73 @@ class Chain:
             except OSError as exc:
                 attempts.append(dict(command=command, outcome='error', error=str(exc)))
         return dict(requested=requested, externally_verified=False, attempts=attempts)
+
+
+def copy_sealed(local_root, volume_root, sealed_only=True, *, skip_present=False):
+    """Sealed, hash-verified copy of this run's subtree to its volume root (module level: it runs in a child)."""
+    return pc.copy_sealed(local_root, volume_root, sealed_only=sealed_only, subtree=SUBTREE,
+                          skip_present=skip_present)
+
+
+def copy_run(source, target):
+    source, target = Path(source), Path(target)
+    files = au.verify_run(source)
+    for name in sorted(files) + ['complete.json']:
+        (target / name).parent.mkdir(parents=True, exist_ok=True)
+        (target / name).write_bytes((source / name).read_bytes())
+    au.verify_run(target)
+    return True
+
+
+def _child(conn, fn, args, kwargs):
+    try:
+        conn.send(('ok', fn(*args, **kwargs)))
+    except BaseException as exc:
+        conn.send(('error', f'{type(exc).__name__}: {exc}'))
+
+
+def in_child(fn, timeout, *args, **kwargs):
+    """Run ``fn`` in a spawned child; on timeout the child is terminated, then killed, and always reaped, so the
+    work has ended when this returns. ('ok'|'error'|'timeout', value, ended)."""
+    import multiprocessing
+    ctx = multiprocessing.get_context('spawn')  # never fork a CUDA process
+    parent, child = ctx.Pipe(duplex=False)
+    process = ctx.Process(target=_child, args=(child, fn, args, kwargs), daemon=True)
+    process.start()
+    child.close()
+    result = None
+    if parent.poll(timeout):
+        try:
+            result = parent.recv()
+        except EOFError:
+            result = ('error', 'child exited without a result')
+    process.join(5 if result else 0)
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+    if process.is_alive():
+        process.kill()
+        process.join()
+    if result is None:
+        result = ('timeout', None)
+    return result[0], result[1], not process.is_alive()
+
+
+def _verifies(directory):
+    try:
+        au.verify_run(directory)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _differing(a, b, prefix=''):
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = set()
+        for k in set(a) | set(b):
+            out |= _differing(a.get(k), b.get(k), f'{prefix}{k}.')
+        return out
+    return set() if a == b else {prefix.rstrip('.') or '<all>'}
 
 
 def _markdown(summary):
@@ -545,10 +730,10 @@ def _markdown(summary):
     return '\n'.join(lines)
 
 
-def _default_exporter(local_root, *, label, include, expected_units, expected_runs, repo):
+def _default_exporter(local_root, *, label, include, expected_units, expected_runs, repo, hub_timeout=None):
     from pilot_eval.neuron_audit_export import OnlineHubProcess
     receipt = au.export(local_root, label=label, include=include, expected_units=expected_units,
-                        expected_runs=expected_runs, client=OnlineHubProcess(), repo=repo, attempts=1,
+                        expected_runs=expected_runs, client=OnlineHubProcess(timeout=hub_timeout), repo=repo, attempts=1,
                         temp_dir=Path(local_root) / 'tmp')
     return dict(receipt, readback_verified=True)  # upload returns only after a fresh readback hash matched
 
@@ -584,7 +769,7 @@ def main(argv=None):
                               stop_timeout=record['timeouts_seconds']['stop_attempt'])))
         return 0
     if args.command == 'watchdog-copy':
-        print(json.dumps(pc.copy_sealed(args.local, root, subtree=SUBTREE), indent=2))
+        print(json.dumps(copy_sealed(args.local, root), indent=2))
         return 0
     if args.command == 'precheck':
         try:

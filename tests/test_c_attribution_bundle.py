@@ -76,15 +76,16 @@ def test_base_model_files_are_checked_after_download(tmp_path):
     model.mkdir()
     (model / 'config.json').write_text('{}')
     (model / 'model.safetensors').write_bytes(b'weights')
-    bundle = cb.build(root, entries, repo_root=REPO, model_dir=model)
-    assert cb.check_base_model(model, bundle)
+    pinned = cb.pinned_identities(model)  # this fixture's stand-in for HF's published per-file IDs
+    bundle = cb.build(root, entries, repo_root=REPO, model_dir=model, pinned=pinned)
+    assert cb.check_base_model(model, bundle, pinned=pinned)
     (model / 'model.safetensors').write_bytes(b'other')
     with pytest.raises(cb.BundleError, match='differs: base model'):
-        cb.check_base_model(model, bundle)
+        cb.check_base_model(model, bundle, pinned=pinned)
     (model / 'model.safetensors').write_bytes(b'weights')
     (model / 'config.json').unlink()
     with pytest.raises(cb.BundleError, match='missing: base model'):
-        cb.check_base_model(model, bundle)
+        cb.check_base_model(model, bundle, pinned=pinned)
 
 
 def test_real_inputs_build_and_match_the_catalog():
@@ -125,3 +126,38 @@ def test_base_model_hashes_are_required_and_fail_closed(tmp_path):
     tampered = dict(fixture, base_model=dict(fixture['base_model'], file_sha256={}))
     with pytest.raises(cb.BundleError, match='no base-model hashes'):
         cb.check_base_model(tmp_path / 'nonexistent', tampered)
+
+
+def _fake_snapshot(directory, weights):
+    directory.mkdir()
+    (directory / 'config.json').write_text('{"model_type": "qwen2"}')
+    (directory / 'model.safetensors').write_bytes(weights)
+    return directory
+
+
+def test_a_self_consistent_snapshot_cannot_be_labelled_the_pinned_revision(tmp_path):
+    """Review 06-10 P1: expected base-model hashes came from the files being certified. They now come from
+    HF's own per-file IDs for revision 989aa798 (LFS sha256, git blob id), fixed in the code."""
+    root, entries = _root(tmp_path)
+    assert cb.PINNED_BASE_MODEL['model.safetensors'] == {
+        'sha256': 'dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee'}
+    assert cb.PINNED_BASE_MODEL['config.json'] == {'git_blob_sha1': 'f81ead14ab072d65a07817f83a3ee0e5a1890d10'}
+    a = _fake_snapshot(tmp_path / 'a', b'weights-a')
+    b = _fake_snapshot(tmp_path / 'b', b'weights-b')
+    for snapshot in (a, b):  # neither valid-looking snapshot is accepted as the pinned revision
+        with pytest.raises(cb.BundleError, match='differs from HF revision 989aa798'):
+            cb.build(root, entries, repo_root=REPO, model_dir=snapshot)
+    # a bundle sealed under other pins cannot pass the Pod check, which uses the code's pins
+    own = cb.build(root, entries, repo_root=REPO, model_dir=a, pinned=cb.pinned_identities(a))
+    with pytest.raises(cb.BundleError, match='differs from HF revision 989aa798'):
+        cb.check_base_model(a, own)
+    swapped = dict(own, base_model=dict(own['base_model'], pinned=cb.pinned_identities(b)))
+    with pytest.raises(cb.BundleError, match='other base-model pins'):
+        cb.check_base_model(a, swapped, pinned=cb.pinned_identities(a))
+
+
+def test_the_local_pinned_model_matches_hf_identities():
+    model = ARTIFACTS / cb.MODEL_DIR
+    if not (model / 'model.safetensors').is_file():
+        pytest.skip('the pinned base model is not local')
+    assert cb.pinned_identities(model) == cb.PINNED_BASE_MODEL  # hashes about 3 GB

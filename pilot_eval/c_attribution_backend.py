@@ -25,6 +25,9 @@ class TransformersBackend:
         self.model_dir = Path(self.inputs['model_dir'])
         self.repo_root = Path(repo_root)  # the code checkout whose catalog/ the bundle's revision must equal
         self.probes = dict(probes or {})
+        from pilot_eval.c_attribution_bundle import PINNED_BASE_MODEL
+        # HF's identities for the pinned revision; only the CPU world substitutes its own (a test stand-in).
+        self.pinned_base_model = self.probes.get('pinned_base_model', PINNED_BASE_MODEL)
         tokenizer_file = self._path('tokenizer:tokenizer.json')
         self.generation_config_path = self._path('generation-config')
         from transformers import AutoTokenizer
@@ -33,6 +36,10 @@ class TransformersBackend:
         self.pad_token_id = self._tokenizer.pad_token_id
         if self.pad_token_id is None:
             raise ValueError('the pinned tokenizer has no pad token')
+        # IEEE FP32 for every backend (CUDA matmul, cuDNN, mkldnn) plus 'highest', set before any model work and
+        # read back; preflight reads it again and refuses a change (review 06-10, P1; ADR 0021, neuron audit).
+        from pilot_eval.neuron_audit_collector import set_ieee_precision
+        self.precision = set_ieee_precision()
 
     def _entry(self, role):
         entry = next((e for e in self.bundle['files'] if e['role'] == role), None)
@@ -69,13 +76,26 @@ class TransformersBackend:
         return dict(torch=torch.__version__, transformers=transformers.__version__, peft=peft.__version__,
                     python=sys.version.split()[0], dtype='float32', attention='eager', device=self.device,
                     device_name=torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu',
-                    tokenizer=self.tokenizer_identity())
+                    tokenizer=self.tokenizer_identity(), autocast=False, precision=self.precision_readback())
+
+    def precision_readback(self):
+        from pilot_eval.neuron_audit_collector import _legacy_matmul_precision, precision_backends
+        try:
+            legacy = _legacy_matmul_precision()
+        except RuntimeError as exc:  # torch refuses the read when the backend settings disagree
+            legacy = f'unreadable ({str(exc)[:80]})'
+        return dict(precision_backends(), matmul_precision=legacy)
+
+    def precision_problems(self):
+        observed = self.precision_readback()
+        return [f'IEEE FP32 precision not in effect: {k}={v}' for k, v in sorted(observed.items())
+                if v != ('highest' if k == 'matmul_precision' else 'ieee')]
 
     # --- preflight ----------------------------------------------------------------------------------
 
     def preflight(self):
         """Disk, CUDA, HF_HOME off the volume, offline worker, volume identity on its own mount, private repo."""
-        problems = []
+        problems = self.precision_problems()
         disk = self.record['disk']
         work = Path(self.inputs['work_dir'])
         usage = self.probes.get('disk_usage', shutil.disk_usage)(work)
@@ -150,7 +170,9 @@ class TransformersBackend:
         """FP64 copy for the finite-difference reference (used inside ``full_fp64``)."""
         return self.load(arm, dtype='float64')
 
-    def release(self, model):
+    def release(self, model=None):
+        """Collect and empty the CUDA cache. The caller must drop its own references first (``del model``):
+        deleting this parameter does not free the caller's object (review 06-10, P1)."""
         import gc
         import torch
         del model

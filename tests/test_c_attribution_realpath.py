@@ -39,7 +39,7 @@ def versions():
 def backend(w, volume, **probes):
     base = dict(cuda_available=True, volume_identity=lambda: [], private_repo=lambda repo: None,
                 disk_usage=lambda path: DISK, reset_peak=lambda: None, peak_memory=lambda: 10 ** 9,
-                total_memory=lambda: DEVICE_BYTES)
+                total_memory=lambda: DEVICE_BYTES, pinned_base_model=w['pins'])
     base.update(probes)
     return TransformersBackend(w['record'], volume, device='cpu', probes=base, repo_root=w['code'])
 
@@ -78,7 +78,8 @@ def chain(w, tmp_path, *, local='local', stages=None, be=None):
     be = be or backend(w, volume)
     runner = Runner()
     c = cc.Chain(w['record'], local_root=tmp_path / local, volume=volume, volume_identity='sl-0', runner=runner,
-                 stages=stages or cs.Stages(w['record'], tmp_path / local, be).mapping(), exporter=exporter(w['hub']))
+                 stages=stages or cs.Stages(w['record'], tmp_path / local, be).mapping(), exporter=exporter(w['hub']),
+                 current_pod='podcpu1')
     return c, runner
 
 
@@ -96,6 +97,40 @@ def test_the_whole_chain_runs_through_the_real_backend(built, tmp_path, env):
     assert set(report['arms']) == {'online-grpo', 'offline-grpo'}
     assert [' '.join(c) for c in runner.commands] == ['runpodctl stop pod podcpu1']
     assert summary['backups']['hf_export']['verified'] and summary['backups']['volume_copy']['verified']
+    assert summary['backups']['complete'] == ['volume copy', 'HF export']
+    # review 06-10 P2: the results the spec asks for are in the sealed outputs, as numbers
+    for arm in ('online-grpo', 'offline-grpo'):
+        boot = json.loads((local / cs.AGG_DIR / arm / 'bootstrap.json').read_text())
+        selected = boot['selected']
+        from pilot_eval import c_attribution_selection as sel
+        freeze = sel.read_freeze(local, arm)
+        assert {r['group'] for r in selected['reads']} <= {'global64-reads', 'hot64-reads', 'layer64-reads'}
+        assert selected['reads']
+        roles = {r['role'] for r in selected['reads']}
+        assert 'target' in roles
+        intervals = selected['intervals']
+        assert set(intervals) == {'p2.5', 'p97.5'}
+        for values in intervals.values():
+            assert len(values) == len(selected['reads']) and all(isinstance(v, float) for v in values)
+        for values in boot['neurons']['per_layer'].values():   # were NumPy display strings before the fix
+            assert isinstance(values, list) and all(isinstance(v, float) for v in values)
+        assert freeze
+    for arm in ('online-grpo', 'offline-grpo'):  # the rehearsal record's conditions leave untuned out: said so
+        assert report['arms'][arm]['untuned_note'] == 'untuned not in the record scope'
+
+
+def test_the_untuned_row_is_reported_alongside_when_in_scope(tmp_path, env):
+    w = world.build(tmp_path / 'world', record_changes={
+        'scope.generation_conditions': ['intact', 'top10-adapters', 'global64-reads', 'untuned']})
+    c, _ = chain(w, tmp_path)
+    summary = c.run()
+    assert summary['state'] == 'complete', (summary['failures'], summary.get('stop_reason'))
+    report = json.loads((tmp_path / 'local' / cs.REPORT_DIR / 'report.json').read_text())
+    for arm in ('online-grpo', 'offline-grpo'):
+        untuned = report['arms'][arm]['conditions']['untuned']
+        assert untuned['status'] == 'run' and isinstance(untuned['accuracy'], float)
+        assert set(untuned['delta_pp_vs_intact']) == {'estimate', 'p2.5', 'p97.5'}  # paired with intact
+        assert 'untuned_note' not in report['arms'][arm]
 
 
 def test_old_metrics_are_bit_identical_with_and_without_seqlogp(built, tmp_path, env):
@@ -164,7 +199,7 @@ def test_missing_catalog_stops(built, tmp_path, env):
     shutil.copytree(built['code'], code)
     shutil.rmtree(code / 'catalog')
     be = TransformersBackend(built['record'], tmp_path / 'vol', device='cpu', repo_root=code,
-                             probes=dict(cuda_available=True, volume_identity=lambda: [],
+                             probes=dict(cuda_available=True, volume_identity=lambda: [], pinned_base_model=built['pins'],
                                          private_repo=lambda repo: None, disk_usage=lambda p: DISK))
     assert 'catalog' in _stopped_at_preflight(built, tmp_path, be=be)
 
@@ -185,7 +220,8 @@ def test_a_modified_adapter_after_restore_stops(built, tmp_path, env):
 
 def test_the_real_volume_check_without_its_identity_file_stops(built, tmp_path, env):
     be = TransformersBackend(built['record'], tmp_path / 'vol', device='cpu', repo_root=built['code'],
-                             probes=dict(cuda_available=True, private_repo=lambda repo: None, disk_usage=lambda p: DISK))
+                             probes=dict(cuda_available=True, private_repo=lambda repo: None, disk_usage=lambda p: DISK,
+                                         pinned_base_model=built['pins']))
     (tmp_path / 'vol').mkdir()
     assert 'identity' in _stopped_at_preflight(built, tmp_path, be=be)
 
@@ -219,7 +255,7 @@ def test_an_interrupted_unit_and_a_deleted_local_root_resume_from_the_volume(bui
     au.verify_run(root / first_unit)                              # the sealed unit reached the volume
     sealed_at = json.loads((root / first_unit / 'complete.json').read_text())['sealed_unix']
     # the Pod died: no done file, a stale marker of a dead writer, and the local root is gone
-    (root / cc.DONE_FILE).unlink()
+    (root / cc.DONE_FILE).unlink(missing_ok=True)
     dead = subprocess.Popen(['true'])
     dead.wait()
     marker = json.loads((root / cc.MARKER_FILE).read_text())
@@ -235,3 +271,73 @@ def test_an_interrupted_unit_and_a_deleted_local_root_resume_from_the_volume(bui
     # the restored unit was reused, not recomputed
     assert json.loads((tmp_path / 'local' / first_unit / 'complete.json').read_text())['sealed_unix'] == sealed_at
     assert runner.commands
+
+
+# --- review 06-10 -----------------------------------------------------------------------------------
+
+def test_backend_sets_reads_back_and_records_ieee_precision(built, tmp_path, env):
+    from pilot_eval.neuron_audit_collector import PRECISION_BACKENDS, _backend
+    for path in PRECISION_BACKENDS:          # start from TF32 everywhere: the backend must set IEEE itself
+        _backend(path).fp32_precision = 'tf32'
+    be = backend(built, tmp_path / 'vol')
+    runtime = be.runtime()
+    assert runtime['precision'] == dict({p: 'ieee' for p in PRECISION_BACKENDS}, matmul_precision='highest')
+    assert be.preflight() == []
+    _backend('cuda.matmul').fp32_precision = 'tf32'  # something changed it after the backend set it
+    try:
+        assert any('IEEE' in p and 'cuda.matmul' in p for p in be.preflight())
+    finally:
+        _backend('cuda.matmul').fp32_precision = 'ieee'
+
+
+class _Ctx:
+    def log(self, message):
+        pass
+
+    def boundary(self, **kw):
+        pass
+
+    def expect(self, *runs):
+        pass
+
+
+def test_the_fp64_reference_and_each_arms_model_are_freed_before_the_next_measurement(built, tmp_path, env):
+    """Review 06-10 P1: release() must not leave the caller's FP64 reference or a previous arm's model live."""
+    import gc
+    import weakref
+    live = []
+
+    def alive(kind=''):
+        gc.collect()
+        return [name for name, ref in live if ref() is not None and kind in name]
+
+    def reset_peak():  # the peak-memory measurement must not include the FP64 reference
+        assert not alive('FP64'), f'peak-memory measurement with {alive("FP64")}'
+
+    be = backend(built, tmp_path / 'vol', reset_peak=reset_peak)
+    real_load = be.load
+
+    def load(arm, dtype='float32'):
+        if dtype == 'float32':
+            assert not alive(), f'loading {arm} with {alive()} still live'
+        model = real_load(arm, dtype)
+        live.append((f'{arm} {"FP64 reference" if dtype == "float64" else "model"}', weakref.ref(model)))
+        return model
+
+    be.load = load
+    stages = cs.Stages(built['record'], tmp_path / 'local', be)
+    stages.qualification(_Ctx())
+    stages.rows(_Ctx())
+    stages.attribution(_Ctx())
+    assert not alive(), alive()
+
+
+def test_the_pod_preflight_checks_the_base_model_against_the_codes_pins(built, tmp_path, env):
+    """Without the test's stand-in pins the backend uses HF's identities for 989aa798; the tiny world fails them."""
+    from pilot_eval import c_attribution_bundle as cb
+    be = backend(built, tmp_path / 'vol')
+    del be.probes['pinned_base_model']
+    assert TransformersBackend(built['record'], tmp_path / 'vol', device='cpu', probes={},
+                               repo_root=built['code']).pinned_base_model == cb.PINNED_BASE_MODEL
+    be.pinned_base_model = cb.PINNED_BASE_MODEL
+    assert 'differs from HF revision 989aa798' in _stopped_at_preflight(built, tmp_path, be=be)

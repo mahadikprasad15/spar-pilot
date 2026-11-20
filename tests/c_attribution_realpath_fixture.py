@@ -178,7 +178,8 @@ def build(tmp, *, record_changes=None, export_client=None):
     for arm in ADAPTERS:
         for name in ('adapter_model.safetensors', 'adapter_config.json'):
             entries.append({'role': f'adapter:{arm}:64:{name}', 'path': f'{ADAPTERS[arm]}/{name}'})
-    bundle = cb.build(art, entries, repo_root=code, model_dir=model_dir)
+    pins = cb.pinned_identities(model_dir)  # the tiny world's stand-in for HF's published identities
+    bundle = cb.build(art, entries, repo_root=code, model_dir=model_dir, pinned=pins)
     hub = export_client or FakeHub()
     (tmp / 'tmp').mkdir(exist_ok=True)
     receipt = cb.export(art, bundle, label='world', client=hub, temp_dir=tmp / 'tmp', on_event=lambda e: None)
@@ -205,4 +206,4 @@ def build(tmp, *, record_changes=None, export_client=None):
                                           'inputs.model_dir': str(model_dir), 'inputs.work_dir': str(tmp / 'work')})
     return dict(artifacts=art, restored=restored, code=code, model_dir=model_dir, vocab=vocab, eos=eos, pad=pad,
                 bundle=out['bundle'], record_path=record_path, hub=hub,
-                record=cc.load_launch_record(record_path, code_commit=_commit()), draft=draft, ids=ids)
+                record=cc.load_launch_record(record_path, code_commit=_commit()), draft=draft, ids=ids, pins=pins)

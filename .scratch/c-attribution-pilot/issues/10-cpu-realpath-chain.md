@@ -1,6 +1,6 @@
 # 10: CPU whole-chain test through the real backend
 
-**Status:** resolved (2026-11-19; awaiting the pre-GPU review)
+**Status:** resolved (2026-11-19); pre-GPU review findings fixed 2026-11-20 on CPU (see `review-implementation-09-10-response.md`)
 **Type:** task
 **Blocked by:** 09
 
