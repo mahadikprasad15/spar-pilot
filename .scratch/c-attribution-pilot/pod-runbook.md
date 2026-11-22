@@ -165,3 +165,22 @@ The measurements in ticket 11's list then go into the production record, by your
    `python -m pilot_eval.c_attribution_report register --root <restored> --label <label> --location local --prefix imports/c-attribution-<label>`.
 4. Run `python -m pilot_eval.catalog verify` and commit the catalog only when it reports OK.
 
+
+## 10. Production (ticket 12), once the user has approved `launch-record-production.yaml`
+
+The same Pod setup and steps 0–3, with two changes:
+- **Bundle:** restore with `--receipt .scratch/c-attribution-pilot/bundle-receipt-inputs-v2.json`. Its catalog includes the rehearsal registration and matches this checkout's `catalog/`.
+- **Environment:** export `HF_TOKEN` (`read -s HF_TOKEN && export HF_TOKEN`) and `HF_HUB_ENABLE_HF_TRANSFER=0` in every tmux window that launches.
+
+Then seal and launch. There is no dry stop and no interruption: the run ends with the real Pod stop.
+
+```bash
+$PY -m pilot_eval.c_attribution_chain seal --draft .scratch/c-attribution-pilot/launch-record-production.yaml --out $WORK/launch_record.json --artifact-root $WORK/inputs --bundle $WORK/inputs/bundles/c-attribution/inputs-v2/bundle-ec3062d2106714c5.json --model-dir $WORK/model --work-dir $WORK
+```
+```bash
+PY=$PY bash scripts/c_attribution_launch.sh $WORK/launch_record.json $WORK/local $VOL 2>&1 | tee $WORK/production.console.log
+```
+
+- **Attended through qualification**, about 6 minutes. Watch for the sign-off in `$VOL/c-attribution/c-production-1/c-attribution/signoff/signoff.json`. A failed check, including cached-vs-forced above 1e-3 per token or 3e-3 per row, stops the chain before rows. That is a finding: send the logs.
+- **Unattended afterwards,** with the watchdog: about 2.5–6.5 h, mostly greedy.
+- **Afterwards:** step 8 with `R=$VOL/c-attribution/c-production-1`, and step 9 locally with label `production`.

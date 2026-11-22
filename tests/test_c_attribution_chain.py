@@ -632,3 +632,37 @@ def test_a_stop_that_returns_updates_the_closing_records_with_its_outcome(tmp_pa
     stop = json.loads((root / cc.STOP_RECORD_FILE).read_text())
     assert stop['stop']['requested'] is False and len(stop['stop']['attempts']) == 2
     assert stop['steps'][-1] == 'stop_not_requested'
+
+
+# --- ticket 12: the production draft (user decisions 2026-11-22) -----------------------------------------
+
+PRODUCTION_DRAFT = REPO / '.scratch/c-attribution-pilot/launch-record-production.yaml'
+
+
+def test_the_production_draft_seals_with_the_users_decisions(tmp_path):
+    path = cc.finalize_draft(PRODUCTION_DRAFT, tmp_path / 'p.json', code_commit='c0ffee', pod_id='podtest1', fill=FILL)
+    record = cc.load_launch_record(path, code_commit='c0ffee')      # validates the production rules
+    rehearsal = yaml.safe_load(DRAFT.read_text())
+    assert (record['run_id'], record['mode'], record['label']) == ('c-production-1', 'production', 'production')
+    assert record['tolerances']['cached_vs_forced'] == {'per_token_abs_max': 1e-3, 'per_row_abs_M_max': 3e-3}
+    assert record['scope'] == {'attribution_questions': {'online-grpo': 'all', 'offline-grpo': 'all'},
+                               'generation_questions': {'online-grpo': 'all', 'offline-grpo': 'all'},
+                               'generation_conditions': 'all'}
+    # everything else is the approved rehearsal's
+    changed = {'run_id', 'mode', 'label', 'scope', 'decisions', 'code_commit', 'pod_id', 'inputs'}
+    for key in set(rehearsal) - changed:
+        expected = rehearsal[key]
+        if key == 'tolerances':
+            expected = dict(expected, cached_vs_forced=record['tolerances']['cached_vs_forced'])
+        assert record[key] == expected, key
+    assert record['inputs']['sources'] == rehearsal['inputs']['sources']
+    assert set(rehearsal['decisions']) <= set(record['decisions'])
+
+
+def test_a_production_record_refuses_measure_only_tolerances(tmp_path):
+    body = yaml.safe_load(PRODUCTION_DRAFT.read_text())
+    body['tolerances']['cached_vs_forced']['per_row_abs_M_max'] = cc.MEASURE_ONLY
+    draft = tmp_path / 'd.yaml'
+    draft.write_text(yaml.safe_dump(body))
+    with pytest.raises(LaunchRefused, match='per_row_abs_M_max'):
+        cc.finalize_draft(draft, tmp_path / 'p.json', code_commit='c0ffee', pod_id='podtest1', fill=FILL)
