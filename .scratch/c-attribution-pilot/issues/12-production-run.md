@@ -1,6 +1,6 @@
 # 12: Production run
 
-**Status:** needs-triage
+**Status:** ready to launch: record approved 2026-11-22; the Pod run is next
 **Type:** task
 **Blocked by:** 11
 
@@ -25,3 +25,10 @@
 - 2026-11-18 (round 1): the scope was updated from 15 × 150 to 9 conditions per arm, greedy only. The budget comes from the rehearsal (F5, decision 2).
 
 ## Answer
+
+- 2026-11-22 (user): the production launch record `.scratch/c-attribution-pilot/launch-record-production.yaml` is approved.
+  - Run ID `c-production-1`.
+  - Cached-vs-forced tolerances 1e-3 per token and 3e-3 per row, provisional.
+  - The untuned baseline is included: 3,150 answers.
+  - Everything else is the rehearsal's.
+  - Bundle `inputs-v2` (`ec3062d2`). Launch per `pod-runbook.md` section 10.
