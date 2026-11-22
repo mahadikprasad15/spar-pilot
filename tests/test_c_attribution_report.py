@@ -200,3 +200,15 @@ def test_registration_writes_catalog_entries_that_verify(run, tmp_path):
     assert mine and all(c['status'] == 'pass' for c in mine), [c for c in mine if c['status'] != 'pass'][:3]
     with pytest.raises(cr.ReportError, match='already registered'):
         cr.register(run['local'], catalog_dir, location='local', label='rehearsal-pod-1')
+
+
+def test_the_cached_vs_forced_row_table_is_in_the_report_and_its_markdown(run):
+    qual = _j(run['sub'] / 'qualification/qualification.json')['details']
+    for arm in ARMS:
+        table = run['report']['qualification']['arms'][arm]['cached_vs_forced']['per_row']
+        assert table == qual[arm]['cached_vs_forced']['per_row'] and len(table) == len(qual[arm]['rows'])
+        assert run['report']['qualification']['numerics']['per_arm'][arm]['cached_vs_forced']['per_row'] == table
+    section = run['markdown'].split('## Qualification and numerics')[1].split('\n## ')[0]
+    assert section.count('cached vs forced by row') == len(ARMS)
+    first = run['report']['qualification']['arms'][ARMS[0]]['cached_vs_forced']['per_row'][0]
+    assert first['id'] in section

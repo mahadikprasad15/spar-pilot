@@ -167,6 +167,24 @@ def test_cached_and_forced_agree_on_a_capped_length_sequence():
     assert result['per_token_abs']['max'] < 1e-4, result
 
 
+def test_cached_vs_forced_records_one_row_entry_per_row_consistent_with_the_summary():
+    model = tiny()
+    rows, _ = _rows(q=2, n=3)
+    result = cc.cached_vs_forced(model, rows, [4] * len(rows), pad_token_id=0)
+    table = result['per_row']
+    assert [r['id'] for r in table] == [r['id'] for r in rows]
+    for entry, row in zip(table, rows):
+        assert set(entry) == {'id', 'generated_length', 'M_forced', 'M_cached', 'abs_delta_M', 'max_token_abs'}
+        assert entry['generated_length'] == len(row['input_ids']) - 4
+        assert entry['M_forced'] < 0 and entry['M_cached'] < 0          # sums of log-probabilities
+        assert entry['abs_delta_M'] == pytest.approx(abs(entry['M_forced'] - entry['M_cached']), abs=1e-12)
+    # the summary statistics are exactly the table's
+    assert result['per_row_abs_M']['max'] == max(r['abs_delta_M'] for r in table)
+    assert result['per_token_abs']['max'] == max(r['max_token_abs'] for r in table)
+    numerics = cc.numerics_record(cached_vs_forced=result)
+    assert numerics['cached_vs_forced']['per_row'] == table
+
+
 # --- batch invariance, no-op, replay, numerics -------------------------------------------------------
 
 def test_seqlogp_batch_invariance_on_the_tiny_model():

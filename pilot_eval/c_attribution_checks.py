@@ -238,18 +238,23 @@ def cached_vs_forced(model, rows, prompt_lengths, *, pad_token_id):
         inst = ai.Instrument(model, stop_ids=[0], pad_token_id=pad_token_id, identity_rtol=1.0)
         fids, fatt, fpos = inst.batch(rows)
         flogits = model(input_ids=fids, attention_mask=fatt, position_ids=fpos, use_cache=False).logits
-    per_token, per_row = [], []
+    per_token, per_row, table = [], [], []
     for r, row in enumerate(rows):
         positions = am.logit_positions(row['masks']['seq_targets'], length=len(row['input_ids']))
         logp = torch.log_softmax(flogits[r, positions].float(), -1)
         forced = [float(logp[k, row['input_ids'][p + 1]]) for k, p in enumerate(positions)]
         diffs = np.abs(np.array(forced) - np.array(cached[r]))
         per_token.extend(diffs.tolist())
-        per_row.append(abs(float(np.sum(forced, dtype=np.float64) - np.sum(cached[r], dtype=np.float64))))
+        m_forced, m_cached = float(np.sum(forced, dtype=np.float64)), float(np.sum(cached[r], dtype=np.float64))
+        per_row.append(abs(m_forced - m_cached))
+        # one entry per row (user 2026-11-22): the scale of M and which row came closest to a tolerance
+        table.append({'id': row['id'], 'generated_length': len(generated[r]), 'M_forced': m_forced,
+                      'M_cached': m_cached, 'abs_delta_M': per_row[-1], 'max_token_abs': float(diffs.max())})
     tokens = np.array(per_token)
     return {'per_token_abs': {'max': float(tokens.max()), 'median': float(np.median(tokens)),
                               'p99': float(np.percentile(tokens, 99))},
             'per_row_abs_M': {'max': float(max(per_row)), 'median': float(np.median(per_row))},
+            'per_row': table,
             'rows': [r['id'] for r in rows], 'generated_lengths': [len(g) for g in generated],
             'note': 'reconstructed cached decoding on this runtime; the original generation scores were not saved'}
 
@@ -352,7 +357,8 @@ def numerics_record(*, batch_invariance=None, identity=None, gross_net_ratios=No
     if finite_difference is not None:
         record['finite_difference'] = {k: finite_difference[k] for k in ('epsilon', 'median_rel_err', 'max_rel_err', 'floors')}
     if cached_vs_forced is not None:
-        record['cached_vs_forced'] = {k: cached_vs_forced[k] for k in ('per_token_abs', 'per_row_abs_M')}
+        record['cached_vs_forced'] = {k: cached_vs_forced[k] for k in ('per_token_abs', 'per_row_abs_M', 'per_row')
+                                      if k in cached_vs_forced}
     return record
 
 

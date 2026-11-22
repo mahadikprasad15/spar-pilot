@@ -113,6 +113,7 @@ def _qualification(sub, arms):
             rows=len(d['rows']), capped_rows_available=d['capped_rows_available'], capped_note=d.get('capped_note'),
             cached_vs_forced=dict(per_token_abs=d['cached_vs_forced']['per_token_abs'],
                                   per_row_abs_M=d['cached_vs_forced']['per_row_abs_M'],
+                                  per_row=d['cached_vs_forced'].get('per_row'),
                                   rule=d.get('cached_vs_forced_rule', 'launch-record tolerance'),
                                   note=d['cached_vs_forced'].get('note')),
             replay=d['replay'],
@@ -313,6 +314,11 @@ def markdown(body):
             ['peak memory fraction', s['memory']['fraction']],
             ['replay (report-only)', s['replay']['status']],
             ['capped rows available', s['capped_rows_available']]])
+        if cvf.get('per_row'):
+            lines += ['', f'{arm}: cached vs forced by row (M in nats; |Δ| per token is the row\'s largest)', '']
+            lines += _table(['row', 'generated tokens', 'M forced', 'M cached', '|ΔM|', 'max per-token |Δ|'],
+                            [[r['id'], r['generated_length'], _f(r['M_forced'], 6), _f(r['M_cached'], 6),
+                              _f(r['abs_delta_M']), _f(r['max_token_abs'])] for r in cvf['per_row']])
         prov = body['provenance'][arm]
         lines += ['', f"Provenance — verified: {', '.join(prov['verified'])}; recorded: {', '.join(prov['recorded'])}; "
                       f"inferred: {', '.join(prov['inferred']) or 'none'}.", '']
