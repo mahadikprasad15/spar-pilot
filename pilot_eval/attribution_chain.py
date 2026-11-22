@@ -720,13 +720,20 @@ class Chain:
         upload = self._export(include=[final], expected_units=[], expected_runs=[final], attempts=1)
         final_upload = dict(outcome='ok' if upload['verified'] else 'failed', attempts=upload['attempts'],
                             path=final, note='second, small upload of the final summary; best effort')
-        summary['stop'] = self._stop()
-        steps.append('stop_requested')
-        _write_json(self.volume_root / 'attribution/chain/stop_record.json',
-                    dict(stop=summary['stop'], steps=steps, attempt=self.attempt, final_summary_upload=final_upload))
         summary['final_summary_upload'] = final_upload
+        # A real stop ends this container inside the stop call (C-attribution rehearsal, 2026-11-22): the stop
+        # record, released marker and done are written first, and the stop record is updated if this survives.
+        stop_record = self.volume_root / 'attribution/chain/stop_record.json'
+        _write_json(stop_record, dict(stop=dict(requested='in progress', commands=[' '.join(c) for c in
+                                                                                  stop_commands(self.record)]),
+                                      steps=steps + ['stop_requesting'], attempt=self.attempt,
+                                      final_summary_upload=final_upload))
         self._beat('released', final_state=summary['state'])
         (self.volume_root / DONE_FILE).write_text(summary['state'] + '\n')
+        summary['stop'] = self._stop()
+        steps.append('stop_requested')
+        _write_json(stop_record,
+                    dict(stop=summary['stop'], steps=steps, attempt=self.attempt, final_summary_upload=final_upload))
         return summary
 
     def _stop(self):

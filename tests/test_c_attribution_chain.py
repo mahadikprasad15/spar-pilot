@@ -590,3 +590,45 @@ def test_the_approved_rehearsal_draft_seals_with_cost_not_tracked_and_untuned(tm
                                   'run_summary.md').read_text()
     with pytest.raises(LaunchRefused, match='hourly_cost_usd'):
         sealed(tmp_path, hourly_cost_usd='free')
+
+
+# --- rehearsal finding (2026-11-22): a real Pod stop kills the runner inside the stop call -------------
+
+class PodGone(BaseException):
+    """The container ends while ``runpodctl stop`` runs: nothing after the call executes."""
+
+
+class KillingRunner(Runner):
+    def __call__(self, command, **kw):
+        self.commands.append(command)
+        raise PodGone('container stopped')
+
+
+def test_the_closing_records_are_on_the_volume_before_the_stop_is_requested(tmp_path):
+    runner = KillingRunner()
+    chain = _chain(tmp_path, _stages([]), runner=runner)
+    with pytest.raises(PodGone):
+        chain.run()
+    assert runner.commands                                      # the stop was requested
+    root = cc.run_root(tmp_path / 'vol', 'c-rehearsal-pod-1')
+    assert (root / cc.DONE_FILE).read_text() == 'complete\n'    # the run ID is closed
+    end = json.loads((root / cc.ATTEMPT_END_FILE).read_text())
+    assert end['state'] == 'complete' and end['writer_pid'] == os.getpid() and end['stop'] == 'requesting'
+    stop = json.loads((root / cc.STOP_RECORD_FILE).read_text())
+    assert stop['stop']['requested'] == 'in progress' and stop['steps'][-1] == 'stop_requesting'
+    assert stop['stop']['commands'] == ['runpodctl stop pod podtest1', 'runpodctl pod stop podtest1']
+    _released(root)
+    record = cc.load_launch_record(tmp_path / 'launch_record.json', code_commit='c0ffee')
+    with pytest.raises(ResumeRefused, match='already finished'):
+        cc.precheck(record, tmp_path / 'vol', current_pod='podtest1')
+
+
+def test_a_stop_that_returns_updates_the_closing_records_with_its_outcome(tmp_path):
+    chain = _chain(tmp_path, _stages([]), runner=Runner(codes=(1, 1)))
+    summary = chain.run()
+    root = cc.run_root(tmp_path / 'vol', 'c-rehearsal-pod-1')
+    assert not summary['stop']['requested']
+    assert json.loads((root / cc.ATTEMPT_END_FILE).read_text())['stop'] == 'not-requested'
+    stop = json.loads((root / cc.STOP_RECORD_FILE).read_text())
+    assert stop['stop']['requested'] is False and len(stop['stop']['attempts']) == 2
+    assert stop['steps'][-1] == 'stop_not_requested'

@@ -864,3 +864,22 @@ def test_the_production_record_seals_with_six_arms_and_the_approved_values(tmp_p
                              work_dir='/root/attr')
     sealed = ch.load_launch_record(path, code_commit='abc')
     assert sorted(sealed['inputs']['adapter_dirs']) == sorted(ARMS)
+
+
+class _PodGone(BaseException):
+    """The container ends while ``runpodctl stop`` runs (C-attribution rehearsal, 2026-11-22)."""
+
+
+def test_closing_records_reach_the_volume_before_a_stop_that_ends_the_container(tmp_path):
+    def runner(cmd, **kw):
+        raise _PodGone('container stopped')
+
+    chain, _ = harness(tmp_path, ok_stages(), runner=runner)
+    with pytest.raises(_PodGone):
+        chain.run()
+    chain_dir = tmp_path / 'volume' / 'attribution/chain'
+    assert (chain_dir / 'done').read_text() == 'complete\n'
+    record = json.loads((chain_dir / 'stop_record.json').read_text())
+    assert record['stop']['requested'] == 'in progress' and record['steps'][-1] == 'stop_requesting'
+    assert record['final_summary_upload']['outcome'] == 'ok'
+    assert json.loads((tmp_path / 'volume' / ch.MARKER_FILE).read_text())['state'] == 'released'

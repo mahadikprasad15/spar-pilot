@@ -50,6 +50,7 @@ PROGRESS_FILE = f'{CHAIN_DIR}/progress.json'
 DONE_FILE = f'{CHAIN_DIR}/done'            # the study finished (state complete): the run ID is closed
 ATTEMPT_END_FILE = f'{CHAIN_DIR}/last_attempt_end.json'  # an attempt ended (any state); resumable unless done
 STOP_WITHHELD_FILE = f'{CHAIN_DIR}/stop_withheld.json'  # no complete verified backup: the Pod was left running
+STOP_RECORD_FILE = f'{CHAIN_DIR}/stop_record.json'  # written before the stop request, updated if the runner survives it
 LOG_FILE = f'{SUBTREE}/logs/chain.log'
 LAUNCH_DIR = f'{SUBTREE}/launch'
 SIGNOFF_DIR = f'{SUBTREE}/signoff'
@@ -653,23 +654,31 @@ class Chain:
         summary['teardown_io_running'] = [t.name for t in self._threads if t.is_alive()]
         safe = bool(summary['backups']['safe'])
         if safe:
-            summary['stop'] = self._stop()
+            # A real stop ends this container inside the stop call (rehearsal, 2026-11-22): every closing record
+            # (stop record, attempt end, released marker, done) is written first, then the stop is requested.
             (self.volume_root / STOP_WITHHELD_FILE).unlink(missing_ok=True)
+            commands = [' '.join(c) for c in stop_commands(self.record)] if self.pod_confirmed else []
+            self._close(summary, steps + ['stop_requesting'], safe,
+                        stop=dict(requested='in progress', commands=commands, externally_verified=False),
+                        outcome='requesting')
+            summary['stop'] = self._stop()
         else:  # stopping would lose the only copy of local work (review 06-10 follow-up, P1)
             summary['stop'] = self._withhold(summary)
         steps.append('stop_requested' if summary['stop']['requested'] else
                      'stop_withheld' if summary['stop'].get('withheld') else 'stop_not_requested')
-        pc._write_json(self.volume_root / f'{CHAIN_DIR}/stop_record.json',
-                       dict(stop=summary['stop'], steps=steps, attempt=self.attempt))
+        self._close(summary, steps, safe, stop=summary['stop'],
+                    outcome='requested' if summary['stop']['requested'] else
+                    'withheld' if summary['stop'].get('withheld') else 'not-requested')
+        return summary
+
+    def _close(self, summary, steps, safe, *, stop, outcome):
+        pc._write_json(self.volume_root / STOP_RECORD_FILE, dict(stop=stop, steps=steps, attempt=self.attempt))
         # The watchdog reads this: an attempt the runner tore down itself is not a crash (it never stops it again).
         pc._write_json(self.volume_root / ATTEMPT_END_FILE, dict(
-            attempt=self.attempt, state=summary['state'], writer_pid=os.getpid(), unix=time.time(),
-            stop='requested' if summary['stop']['requested'] else
-            'withheld' if summary['stop'].get('withheld') else 'not-requested'))
+            attempt=self.attempt, state=summary['state'], writer_pid=os.getpid(), unix=time.time(), stop=outcome))
         self._beat('released', final_state=summary['state'])
         if summary['state'] == 'complete' and safe:  # a finished, backed-up study closes the run ID
             (self.volume_root / DONE_FILE).write_text(summary['state'] + '\n')
-        return summary
 
     def _withhold(self, summary):
         record = dict(attempt=self.attempt, unix=time.time(), state=summary['state'],

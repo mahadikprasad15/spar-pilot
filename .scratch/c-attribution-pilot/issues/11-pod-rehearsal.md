@@ -1,6 +1,6 @@
 # 11: Attended Pod rehearsal
 
-**Status:** needs-triage
+**Status:** in progress: Pod runs done 2026-11-22; HF clean restore and measurement extraction remain (local)
 **Type:** task
 **Blocked by:** 10
 
@@ -65,3 +65,17 @@
   it by hand. Details are in `chain/stop_withheld.json`.
 - **Exercise in the rehearsal:** one rebind onto a second Pod after the deliberate interruption, if the budget
   allows; it costs one extra Pod setup (about 10 minutes).
+
+## Pod runs, 2026-11-22
+
+On one A100-SXM4-80GB Pod (`fqvn4c3jn1lqx1`, driver 595.112.07), sl-0, bundle `inputs-v1` (`bab65592`).
+
+- **Run 1, `c-rehearsal-pod-1`, dry stop.** Complete in about 14 minutes. Qualification: all 12 checks pass on both arms, and the sign-off says `accept`. Finite difference: median relative error 5.9e-6 and max 2.4e-5, against historical tolerances of 0.05 and 0.2. Both backups are verified and complete. The chain requested the stop for the right Pod ID, and `done`, `stop_record.json` and `last_attempt_end.json` are on the volume. The deliberate interruption was missed: attribution finished between manual checks.
+  - Stage seconds: preflight 8, qualification 321, rows 2, attribution 72, aggregate and freeze 9, generation 410, report 0.3.
+- **Run 2, `c-rehearsal-pod-2` (the same record with the run ID and label changed), for the interruption.** A watcher killed the chain as soon as progress showed attribution with one unit sealed. The watchdog handled the dead writer (a second dry-stop line, for the same Pod ID). With the local root deleted, precheck decided `take-over`. Attempt-002 reran preflight, resumed qualification and rows, completed every stage with verified mirrors, and wrote both backups verified and complete. The chain then stopped the Pod for real. Wall time 494 s.
+- **Failure found (lesson 2026-11-22).** After the real stop, run 2 had no `stop_record.json`, `last_attempt_end.json` or `done`: they were written after the stop call, and the stop ended the container first. Fixed red/green on CPU: the closing records are written before the stop is requested.
+- **Remaining, local:**
+  - restore both runs' HF exports into a clean root and verify them;
+  - extract the measurement list above from `report.json` and `numerics.json`;
+  - propose production values for the user's decision;
+  - register the rehearsal questions in the catalog, then re-export the bundle for production.
