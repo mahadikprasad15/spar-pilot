@@ -423,9 +423,13 @@ def figures(report_path, out_dir):
 
     def save(fig, name, title, sources):
         path = out / name
-        for ax in fig.axes[:1]:  # the labels sit under the title, clear of rotated tick labels
-            ax.set_title(ax.get_title(loc='left'), loc='left', pad=16)
-            ax.text(0, 1.01, note, transform=ax.transAxes, fontsize=7, color=MUTED, ha='left', va='bottom')
+        for ax in fig.axes[:1]:  # the labels sit under the title, wrapped to the plot width so they never widen it
+            import textwrap
+            width_in = ax.get_position().width * fig.get_figwidth()
+            lines = textwrap.wrap(note, width=max(40, int(width_in * 17)))
+            ax.set_title(ax.get_title(loc='left'), loc='left', pad=10 + 11 * len(lines))
+            ax.text(0, 1.01, '\n'.join(lines), transform=ax.transAxes, fontsize=7, color=MUTED, ha='left',
+                    va='bottom', linespacing=1.3)
         fig.savefig(path, dpi=160, bbox_inches='tight')
         plt.close(fig)
         index.append(dict(file=name, title=title, sources=sources,
@@ -463,16 +467,19 @@ def figures(report_path, out_dir):
              ['comparison.adapters.paired_rows'])
     fig, ax = plt.subplots(figsize=(10, 4.4))  # per-layer read-score distributions: p10–p90 bar, p1–p99 whisker
     width = 0.38
+    peak = max(abs(r['quantiles'][p]) for arm in arms for r in body['attribution'][arm]['reads_per_layer']
+               for p in ('p1', 'p99')) or 1.0
+    exponent = int(np.floor(np.log10(peak)))  # the scale goes in the axis label, not a floating offset text
     for k, arm in enumerate(arms):
         rows = body['attribution'][arm]['reads_per_layer']
         pos = np.array([r['layer'] for r in rows]) + (k - 0.5) * width
-        q = {p: np.array([r['quantiles'][p] for r in rows]) for p in ('p1', 'p10', 'p50', 'p90', 'p99')}
+        q = {p: np.array([r['quantiles'][p] for r in rows]) / 10.0 ** exponent for p in ('p1', 'p10', 'p50', 'p90', 'p99')}
         ax.vlines(pos, q['p1'], q['p99'], color=ARM_COLOR.get(arm, INK2), lw=1, alpha=0.6)
         ax.bar(pos, q['p90'] - q['p10'], bottom=q['p10'], width=width * 0.85, color=ARM_COLOR.get(arm, INK2),
                alpha=0.85, label=arm)
         ax.scatter(pos, q['p50'], s=8, color=SURFACE, zorder=3)
     ax.axhline(0, color=AXIS, lw=1, zorder=1)
-    ax.set(xlabel='down_proj layer', ylabel='read dJdλ')
+    ax.set(xlabel='down_proj layer', ylabel=f'read dJdλ (×1e{exponent})' if exponent else 'read dJdλ')
     ax.legend(loc='upper right')
     ax.set_title(f'{title_prefix}neuron-read dJdλ per layer (bar p10–p90, line p1–p99, dot median)')
     save(fig, 'reads-per-layer.png', 'per-layer read-score distributions', [f'attribution.{a}.reads_per_layer' for a in arms])
@@ -485,7 +492,8 @@ def figures(report_path, out_dir):
             control = name.startswith('match')
             color = MUTED if name == 'untuned' else (CONTROL_COLOR if control else TARGET_COLOR)
             if c.get('status') != 'run' or not c.get('delta_pp_vs_intact'):
-                ax.text(i, 0, 'n/a', ha='center', va='bottom', color=MUTED, fontsize=8)
+                why = 'no matched\ncontrol' if c.get('reason') == 'matched-control-unavailable' else 'n/a'
+                ax.text(i, 0, why, ha='center', va='bottom', color=MUTED, fontsize=8)
                 continue
             d = c['delta_pp_vs_intact']
             ax.bar(i, d['estimate'], width=0.62, color=color)

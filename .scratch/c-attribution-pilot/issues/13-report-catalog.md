@@ -1,6 +1,6 @@
 # 13: Report and catalog registration
 
-**Status:** resolved (2026-11-20, CPU); runs for real after ticket 12
+**Status:** done for `c-production-1` (2026-11-22)
 **Type:** task
 **Blocked by:** 07, 04
 
@@ -88,3 +88,19 @@
   - It refuses to overwrite an existing entry. Run `python -m pilot_eval.catalog verify` and commit only when it
     reports OK.
 - **Dependency.** The figures need matplotlib (the project's `report` extra).
+- 2026-11-22, production (`c-production-1`):
+  - **Report:** `report.md` and `report.json`, built on the Pod and restored from HF.
+  - **Figures:** in `artifacts/imports/c-attribution-production/figures/` (6 PNGs and `figures.json`).
+    - Layout fixed after looking at the real output: the labels note is wrapped to the plot width (it had widened
+      the heatmap and scatter images), and the read-score scale moved into the axis label (the floating `1e-6`
+      overlapped the note).
+    - Skipped controls read "no matched control", not "n/a".
+  - **Catalog:**
+    - 15 `greedy-only` response sets: 7 conditions × 2 arms, plus untuned.
+    - 3 `prior_uses` of cohort150: qualification (28 questions), attribution and selection with the freeze hashes
+      (150), greedy ablation (150).
+    - `catalog verify`: all 150 production batch files pass. The 45 failures are the pre-existing ones (files of
+      older runs absent from this worktree), unchanged.
+  - **Tests:** the `tests/test_c_attribution*` and `tests/test_catalog*` suites pass (257) on HEAD with the
+    figure change. With the catalog uncommitted, 7 bundle tests refuse by design ("commit it before building the
+    bundle").

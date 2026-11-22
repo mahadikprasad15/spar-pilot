@@ -1,0 +1,74 @@
+id: offline-grpo.s64.greedy.test150.c-attribution-production-hot64-reads
+kind: evaluation
+arm: offline-grpo
+checkpoint_step: 64
+cohort: gsm8k-test-cohort150
+cohort_coverage: subset
+question_field: question_id
+draws_per_question: 1
+policy:
+  mode: greedy
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+scorer:
+  name: gsm8k-flexible-v3
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+c_suitability: greedy-only
+replay_of: null
+generator: offline-grpo step-64 adapter with condition hot64-reads
+files:
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0000/responses.jsonl
+  sha256: 475a4454a9add1832f6b0ad34abca20f2282789996b3bbdefeb8df5ff58bf949
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0001/responses.jsonl
+  sha256: 75b2d808410624a76fcb8b489d6ae6be763e2b3c17824fa51daa6319f8c25f3a
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0002/responses.jsonl
+  sha256: b47ecbffc645573dad19d9a4eb8c7fddae65d8b7a5a1d7f1359d3ff712238c70
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0003/responses.jsonl
+  sha256: 1d81835a5f54abc2a35f3b391abbce902cbb3108986842bf79cd625fd5c19010
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0004/responses.jsonl
+  sha256: 3b874244b66d789a5b54eb1e9489f3d7c2f06452055f11437ec10b1a36517d93
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0005/responses.jsonl
+  sha256: e6ecbbc5c49e579401bc29c5ebba82c1c0c41565b99ef2ccc7ff1fe1de1d44b6
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0006/responses.jsonl
+  sha256: 3d9db2655245d9727b0501a1c1d7015291f0961aa9422725af50dacd7e0a593d
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0007/responses.jsonl
+  sha256: 952a762aca687c8e21ed6629b50dd48706a02fb31f2b98b41af1fa4a5dea57f3
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0008/responses.jsonl
+  sha256: f4b33e73f0631940b73cf65a1210fa32c84e5412282e5e68fcf55b6f20bdab51
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/offline-grpo/hot64-reads/batch-0009/responses.jsonl
+  sha256: ecbfac52d3422521a41433145620037fe1e3533325f2d26bcaf2020ad6607b4f
+  rows_total: 6
+evidence:
+  status: verified
+  checked:
+  - sealed run directories (hash-verified)
+  - file sha256
+  - row counts
+  note: run c-production-1 (production); one file per fixed greedy batch, together covering the frozen generation
+    question set
+notes: 'C-attribution production: greedy condition hot64-reads; launch hash 11b428b7aeaf2053. Exploratory; components
+  selected on these questions.'
