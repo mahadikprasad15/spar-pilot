@@ -212,3 +212,41 @@ def test_the_cached_vs_forced_row_table_is_in_the_report_and_its_markdown(run):
     assert section.count('cached vs forced by row') == len(ARMS)
     first = run['report']['qualification']['arms'][ARMS[0]]['cached_vs_forced']['per_row'][0]
     assert first['id'] in section
+
+
+def _registered(run, tmp_path):
+    catalog_dir = tmp_path / 'catalog'
+    shutil.copytree(run['w']['code'] / 'catalog', catalog_dir)
+    arms = yaml.safe_load((catalog_dir / 'arms.yaml').read_text())
+    real = yaml.safe_load((cr.REPO / 'catalog/arms.yaml').read_text())['arms']['untuned']
+    arms['arms']['untuned'] = {k: v for k, v in real.items() if k not in ('checkpoints', 'training_data')}
+    (catalog_dir / 'arms.yaml').write_text(yaml.safe_dump(arms))
+    before = (catalog_dir / 'cohorts.yaml').read_text()
+    written = cr.register(run['local'], catalog_dir, location='local', label='rehearsal-pod-1')
+    return catalog_dir, before, written
+
+
+def test_registration_records_the_questions_each_use_actually_touched(run, tmp_path):
+    """Rehearsal finding 2026-11-22: the rows file holds every question, not the attributed ones."""
+    _, _, written = _registered(run, tmp_path)
+    sub = run['sub']
+    attributed = sorted({q for arm in ARMS for u in sorted((sub / 'attribution' / arm).glob('unit-*'))
+                         for q in _j(u / 'meta.json')['question_ids']})
+    all_rows = {json.loads(l)['question_id'] for l in (sub / 'rows/online-grpo/rows.jsonl').read_text().splitlines()}
+    assert len(attributed) < len(all_rows)                       # the fixture can tell the two apart
+    attribution_use = next(u for u in written['prior_uses'] if 'attribution over sampled rows' in u)
+    assert attribution_use.endswith('questions ' + ', '.join(attributed))
+    qual = _j(sub / 'qualification/qualification.json')['details']
+    qual_ids = sorted({r.split(':draw')[0] for arm in ARMS for r in qual[arm]['rows']})
+    qualification_use = next(u for u in written['prior_uses'] if 'qualification' in u)
+    assert qualification_use.endswith('questions ' + ', '.join(qual_ids))
+
+
+def test_registration_appends_prior_uses_without_rewriting_the_cohort_file(run, tmp_path):
+    catalog_dir, before, written = _registered(run, tmp_path)
+    after = (catalog_dir / 'cohorts.yaml').read_text()
+    kept = [line for line in after.splitlines() if line in set(before.splitlines())]
+    assert kept == before.splitlines()                           # every original line, comments included, in order
+    loaded = yaml.safe_load(after)['cohorts']['gsm8k-test-cohort150']['prior_uses']
+    old = yaml.safe_load(before)['cohorts']['gsm8k-test-cohort150']['prior_uses']
+    assert loaded == old + written['prior_uses']

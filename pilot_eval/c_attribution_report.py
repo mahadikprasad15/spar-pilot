@@ -557,20 +557,46 @@ def register(root, catalog_dir, *, location, label, prefix=''):
         written['responses'].append(rid)
     freezes = {arm: sub / 'freeze' / arm / f'{arm}.json' for arm in report['attribution']}
     question_ids = sorted({q for arm in freezes for b in _j(freezes[arm])['generation_plan'] for q in b})
-    attribution_ids = sorted({r['question_id'] for arm in freezes
-                              for r in map(json.loads, (sub / 'rows' / arm / 'rows.jsonl').read_text().splitlines())})
+    # the questions each use actually touched (rehearsal finding 2026-11-22): rows.jsonl holds every question
+    attribution_ids = sorted({q for arm in freezes for unit in sorted((sub / 'attribution' / arm).glob('unit-*'))
+                              for q in _j(unit / 'meta.json')['question_ids']})
+    qual = _j(_sealed(sub / 'qualification') / 'qualification.json')['details']
+    qualification_ids = sorted({r.split(':draw')[0] for arm in qual for r in qual[arm]['rows']})
     cohorts_path = catalog_dir / 'cohorts.yaml'
     cohorts = yaml.safe_load(cohorts_path.read_text())
-    uses = cohorts['cohorts']['gsm8k-test-cohort150'].setdefault('prior_uses', [])
+    uses = cohorts['cohorts']['gsm8k-test-cohort150'].get('prior_uses') or []
     freeze_hashes = ', '.join(f"{arm} {hashlib.sha256(p.read_bytes()).hexdigest()[:16]}" for arm, p in freezes.items())
-    new = [f"C-attribution {label} ({report['mode']}): attribution over sampled rows and selection, freeze "
+    new = [f"C-attribution {label} ({report['mode']}): qualification numerics (log-probabilities, finite "
+           f"differences with leave-one-out reward weights) on sampled rows; questions {', '.join(qualification_ids)}",
+           f"C-attribution {label} ({report['mode']}): attribution over sampled rows and selection, freeze "
            f"(sha256 {freeze_hashes}); questions {', '.join(attribution_ids)}",
            f"C-attribution {label} ({report['mode']}): greedy ablation of the frozen selection; questions "
            f"{', '.join(question_ids)}"]
-    uses += [u for u in new if u not in uses]
-    cohorts_path.write_text(yaml.safe_dump(cohorts, sort_keys=False, width=110))
+    new = [u for u in new if u not in uses]
+    cohorts_path.write_text(_append_prior_uses(cohorts_path.read_text(), 'gsm8k-test-cohort150', new))
+    if yaml.safe_load(cohorts_path.read_text())['cohorts']['gsm8k-test-cohort150']['prior_uses'] != uses + new:
+        raise ReportError('cohorts.yaml did not round-trip after appending prior uses')
     written['prior_uses'] = new
     return written
+
+
+def _append_prior_uses(text, cohort, items):
+    """Insert ``items`` at the end of ``cohort``'s ``prior_uses`` list, leaving every other line as written."""
+    import yaml
+    lines = text.splitlines(keepends=True)
+    start = next(i for i, l in enumerate(lines) if l.rstrip() == f'  {cohort}:')
+    key = next(i for i in range(start + 1, len(lines)) if lines[i].strip().startswith('prior_uses:'))
+    indent = len(lines[key]) - len(lines[key].lstrip())
+    end = key + 1
+    while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) > indent
+                                or lines[end].lstrip().startswith('- ')):
+        end += 1
+    while lines[end - 1].strip() == '':
+        end -= 1
+    item_indent = next((len(l) - len(l.lstrip()) for l in lines[key + 1:end] if l.lstrip().startswith('- ')), indent + 2)
+    block = yaml.safe_dump(list(items), width=110, allow_unicode=True)
+    added = ''.join(' ' * item_indent + l + '\n' for l in block.splitlines())
+    return ''.join(lines[:end]) + added + ''.join(lines[end:])
 
 
 def main(argv=None):
