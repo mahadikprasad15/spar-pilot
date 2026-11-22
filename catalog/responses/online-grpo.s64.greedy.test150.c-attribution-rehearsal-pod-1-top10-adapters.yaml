@@ -1,0 +1,38 @@
+id: online-grpo.s64.greedy.test150.c-attribution-rehearsal-pod-1-top10-adapters
+kind: evaluation
+arm: online-grpo
+checkpoint_step: 64
+cohort: gsm8k-test-cohort150
+cohort_coverage: subset
+question_field: question_id
+draws_per_question: 1
+policy:
+  mode: greedy
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+scorer:
+  name: gsm8k-flexible-v3
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+c_suitability: greedy-only
+replay_of: null
+generator: online-grpo step-64 adapter with condition top10-adapters
+files:
+- location: local
+  path: imports/c-attribution-rehearsal-pod-1/c-attribution/generation/online-grpo/top10-adapters/batch-0000/responses.jsonl
+  sha256: 5a09ceb6ba9915f3a9aba643b24d34415840a626e6649a10ef70082eeefa89b8
+  rows_total: 8
+evidence:
+  status: verified
+  checked:
+  - sealed run directories (hash-verified)
+  - file sha256
+  - row counts
+  note: run c-rehearsal-pod-1 (rehearsal); one file per fixed greedy batch, together covering the frozen generation
+    question set
+notes: 'C-attribution rehearsal-pod-1: greedy condition top10-adapters; launch hash 28f3649797104d90. Exploratory;
+  components selected on these questions.'

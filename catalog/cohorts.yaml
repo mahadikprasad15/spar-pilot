@@ -13,6 +13,26 @@ cohorts:
       - Pilot 4 behaviour (greedy + 8 sampled draws) for online-grpo; offline GRPO behaviour likewise
       - Stage 0 sampling-behaviour (greedy) for sampling-sft k0/k2/k5
       - attribution production-1 Stage D greedy generation (gold-sft, online-grpo, untuned)
+      - 'C-attribution rehearsal-pod-1 (rehearsal): qualification numerics (log-probabilities, finite differences with
+        leave-one-out reward weights) on sampled rows; questions gsm8k:test:1000, gsm8k:test:1034, gsm8k:test:1093, gsm8k:test:1099,
+        gsm8k:test:1104, gsm8k:test:114, gsm8k:test:1220, gsm8k:test:130, gsm8k:test:1301, gsm8k:test:163, gsm8k:test:191,
+        gsm8k:test:206, gsm8k:test:285, gsm8k:test:326, gsm8k:test:333, gsm8k:test:447, gsm8k:test:451, gsm8k:test:514,
+        gsm8k:test:539, gsm8k:test:541, gsm8k:test:592, gsm8k:test:601, gsm8k:test:611, gsm8k:test:663, gsm8k:test:727,
+        gsm8k:test:758, gsm8k:test:788, gsm8k:test:939'
+      - 'C-attribution rehearsal-pod-1 (rehearsal): attribution over sampled rows and selection, freeze (sha256 offline-grpo
+        b24377e0c19c6138, online-grpo 56fe5e8ba284ac4a); questions gsm8k:test:186, gsm8k:test:285, gsm8k:test:611, gsm8k:test:817'
+      - 'C-attribution rehearsal-pod-1 (rehearsal): greedy ablation of the frozen selection; questions gsm8k:test:1116,
+        gsm8k:test:13, gsm8k:test:1300, gsm8k:test:186, gsm8k:test:285, gsm8k:test:538, gsm8k:test:611, gsm8k:test:817'
+      - 'C-attribution rehearsal-pod-2 (rehearsal): qualification numerics (log-probabilities, finite differences with
+        leave-one-out reward weights) on sampled rows; questions gsm8k:test:1000, gsm8k:test:1034, gsm8k:test:1093, gsm8k:test:1099,
+        gsm8k:test:1104, gsm8k:test:114, gsm8k:test:1220, gsm8k:test:130, gsm8k:test:1301, gsm8k:test:163, gsm8k:test:191,
+        gsm8k:test:206, gsm8k:test:285, gsm8k:test:326, gsm8k:test:333, gsm8k:test:447, gsm8k:test:451, gsm8k:test:514,
+        gsm8k:test:539, gsm8k:test:541, gsm8k:test:592, gsm8k:test:601, gsm8k:test:611, gsm8k:test:663, gsm8k:test:727,
+        gsm8k:test:758, gsm8k:test:788, gsm8k:test:939'
+      - 'C-attribution rehearsal-pod-2 (rehearsal): attribution over sampled rows and selection, freeze (sha256 offline-grpo
+        be40c68298ba8f21, online-grpo 03cac095c28ab886); questions gsm8k:test:186, gsm8k:test:285, gsm8k:test:611, gsm8k:test:817'
+      - 'C-attribution rehearsal-pod-2 (rehearsal): greedy ablation of the frozen selection; questions gsm8k:test:1116,
+        gsm8k:test:13, gsm8k:test:1300, gsm8k:test:186, gsm8k:test:285, gsm8k:test:538, gsm8k:test:611, gsm8k:test:817'
     held_out_from: [gsm8k-train-512]
 
   gsm8k-train-512:
