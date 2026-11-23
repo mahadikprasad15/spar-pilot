@@ -15,7 +15,7 @@
 - 2026-11-23 (researcher): D5 512-step cap (1,024 considered, dropped); D18 one A100-80GB; D19 compare with C and production-1 attribution, GRPO arms first, code generic over arms; D20 cheap metrics every step; standalone analysis for both ranks (D22, ticket 12).
 - 2026-11-23 (researcher, later): D5 fixed 1,024 steps, freeze at 960, for both ranks (adaptive stop considered and dropped; settle metrics logged only); D6 λ 6e-4, no sweep; D12 cohort150 evaluation only; D20 val CE every 16 steps.
 - 2026-11-23 (researcher): D24 checkpoints hold only read factors and masks (crash = restart from step 0); D25 A100 supersedes ADR 0018's L4 rule; current C-attribution code wins over older lessons.
-- 2026-11-23 (proposed): D23 causal checks (ticket 19) need OK.
+- 2026-11-23 (researcher): D14 decided (one mask per 4 examples); D23 causal checks skipped for the pilot (follow-up on saved checkpoints).
 
 ## Fog
 - Whether gold's saved order, resolved trainer arguments and checkpoint hashes match the code reconstruction.

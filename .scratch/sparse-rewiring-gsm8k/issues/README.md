@@ -22,5 +22,4 @@ Each ticket is sized for one implementation thread. Groups are waves: tickets in
 | 16 | Launch record | needs-info | 01, 04, 15 | H |
 | 17 | Production run | ready-for-human | 16 | I |
 | 18 | Report and catalog registration | ready-for-agent | 10, 11, 12, 13, 17 | J |
-| 19 | Causal checks (proposed) | needs-info | 17 | J |
 | 20 | ADR: sparse arms on A100-80GB | ready-for-agent | — | A |

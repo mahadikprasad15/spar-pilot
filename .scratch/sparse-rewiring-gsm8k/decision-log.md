@@ -116,7 +116,7 @@ Both arms have 250,880 mask logits. The arm names are proposed.
 
 ### D14. Microbatch and mask noise
 
-**Revised 2026-11-23 after the researcher's question. Still [proposed].**
+**Decided [user 2026-11-23]: one shared mask per 4 examples (2 draws per step), microbatch 1.**
 
 The principle is to split the recipe by what each part controls:
 - The **data and loss path** (which tokens, which labels, how the loss is reduced, one example per forward) defines comparability with gold SFT. It stays gold's.
@@ -209,9 +209,11 @@ Proposed definitions (each **[proposed]**):
 - *Effective rank*: participation ratio `(Σσ)² / Σσ²` of the singular values of the stacked survivor rows per layer and part, plus the number of singular values needed for 90% of `Σσ²`.
 - *Activation shift*: on the 128 validation questions (prompt and gold answer, teacher-forced), mean and mean-absolute change of each survivor's post-SiLU gate × up activation, rewired vs base; plus the same for 1,000 random non-survivors per layer as a reference.
 
-### D23. Causal checks — proposed, not approved
+### D23. Causal checks — skipped for the pilot
 
-Not in the earlier scope; listed now because the researcher's analysis list implies them. **Each needs GPU time and the researcher's OK before ticket 19 is launched.** All run on the final binary model and on validation only; cohort150 only for the revert-all check, labelled exploratory.
+**[user 2026-11-23]: skip for now.** Kept below as a follow-up that can run later on the saved final checkpoints, which hold everything needed (factors and masks). Max did the single-revert form: removing one survivor's new reads and measuring the validation-loss rise (L8.N344: +0.068, 2.7 times any other of the 89; `README.md@max`). If run, single-revert effects need FP64 accumulation and the FP32 floor reported (lessons 2026-11-13, 2026-11-16), and the control uses `c_attribution_selection.match_group`.
+
+Not in the earlier scope; listed now because the researcher's analysis list implies them.  All run on the final binary model and on validation only; cohort150 only for the revert-all check, labelled exploratory.
 
 | Check | What it does | Read-out | Est. GPU, per arm |
 |---|---|---|---|
@@ -255,7 +257,6 @@ Assumptions: about 250 tokens per training example (C spec records 115-token mea
 | Activation shift (D22) | about 5 min | about 5 min |
 | Gold-sft references on validation (once), setup, preflight, export | about 35 min, shared | — |
 | **Total, both arms in sequence** | | **about 5–5.5 h** (wider bounds 4.5–6 h) |
-| Proposed causal checks (D23), if approved | about 1–1.5 h | about 1–1.5 h |
 | Memory over gold | +0.84 M parameters, negligible | +770 M parameters, about +12 GB |
 
 Ticket 15 replaces these with measured values before any launch record.
@@ -265,6 +266,6 @@ Ticket 15 replaces these with measured values before any launch record.
 1. Second seed at the same settings (stability of S).
 2. Rank 0 and rank 1 at matched survivor count, or at a shared LR; rank 4 only if the published model needs reproducing.
 3. Read LR 1e-4 sensitivity (D1-A).
-4. Causal checks beyond D23 (for example cohort150 reverts per block, or sampled evaluation).
+4. Causal checks (D23): revert all, single and block reverts, same-layer transplant control, about 2–3 h GPU for both arms, on the saved final checkpoints.
 5. Same-parameterisation objective comparison on a fixed offline pool (CE on correct draws vs offline GRPO).
 6. Gold vs Sampling-SFT k0/k2/k5 data under the same rewiring objective.
