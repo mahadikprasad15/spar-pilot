@@ -155,6 +155,32 @@ def matched_null(observed, y_bin_counts, universe_bins, *, draws, seed):
     return overlaps
 
 
+def matched_null_stats(values, y_bin_counts, universe_bins, *, draws, seed, chunk=1024):
+    """Several sums over the *same* matched random sets that ``matched_null`` draws.
+
+    ``values`` maps a name to a 1-D array indexed like the bins' neuron indices; each draw's statistic is the
+    sum of that array over the drawn set. For an indicator of X this equals ``matched_null(X, ...)`` with the
+    same seed, draw for draw: rows of ``rng.random`` are generated in ``chunk``-row blocks, which consumes the
+    stream in the same order, so memory is bounded without changing a single draw.
+    """
+    pools = _pools(universe_bins)
+    for name, count in y_bin_counts.items():
+        if count < 0 or name not in pools or count > len(pools[name]):
+            raise Unavailable(f'bin {name!r} cannot supply {count} matched draws')
+    rng = np.random.Generator(np.random.PCG64(seed))
+    out = {k: np.zeros(draws, dtype=np.float64) for k in values}
+    for name, count in sorted(y_bin_counts.items()):
+        if count:
+            pool = pools[name]
+            local = {k: np.asarray(v, dtype=np.float64)[pool] for k, v in values.items()}
+            for start in range(0, draws, chunk):
+                n = min(chunk, draws - start)
+                order = np.argsort(rng.random((n, len(pool))), axis=1)[:, :count]
+                for k, v in local.items():
+                    out[k][start:start + n] += v[order].sum(axis=1)
+    return out
+
+
 def exact_overlap_distribution(observed, y_bin_counts, universe_bins):
     """Exact pmf of the null overlap: convolution of per-bin hypergeometric counts."""
     pools = _pools(universe_bins)
