@@ -1,4 +1,4 @@
-"""Sparse rewiring ticket 09: evaluation wiring tests (checkpoint 0 identity, spec test 22, D12)."""
+"""Sparse rewiring ticket 09: evaluation wiring tests (checkpoint 0 identity via PR #16, spec test 22, D12)."""
 from __future__ import annotations
 
 import json
@@ -12,8 +12,10 @@ import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM
 
 from pilot_eval import attribution_units as au
+from pilot_eval import rewire_checkpoint as rckpt
 from pilot_eval import rewire_evaluation as reval
 from pilot_eval import rewire_module as rm
+from pilot_eval import sparse_rewiring_plan as sp
 
 FIXTURE_CONFIG = Path(__file__).resolve().parent / 'fixtures' / 'rewire' / 'config.json'
 
@@ -41,8 +43,37 @@ def _tiny_qwen2(seed: int = 11) -> Qwen2ForCausalLM:
     return model
 
 
+def _tiny_plan(rank: int) -> dict:
+    """Minimal valid PR #6 plan matching our tiny Qwen2 shape (2 layers, hidden 16, intermediate 32)."""
+    plan = {
+        'schema': sp.PLAN_SCHEMA,
+        'arm': f'sparse-gold-sft-r{rank}',
+        'run_id': f'tiny-r{rank}',
+        'rank': rank,
+        'checkpoints': [0],
+        'settings': {
+            'model': {'layers': 2, 'hidden': 16, 'intermediate': 32, 'parts': ['gate', 'up']},
+            'storage': {
+                'checkpoint_contents': ['read_factors', 'log_alpha', 'seal'],
+                'optimizer_state': 'none',
+                'interruption': 'restart-from-step-0',
+            },
+        },
+        'steps': [],
+    }
+    plan['checkpoint_bytes'] = rckpt.payload_bytes(plan)
+    plan['plan_sha256'] = sp.plan_sha256(plan)
+    return plan
+
+
 def _child_pid_helper(payload: dict) -> dict:
-    return {'pid': os.getpid(), 'echo': payload['value']}
+    return {
+        'pid': os.getpid(),
+        'echo': payload['value'],
+        'offline': os.environ.get('HF_HUB_OFFLINE'),
+        'cublas': os.environ.get('CUBLAS_WORKSPACE_CONFIG'),
+        'runtime_sha256': 'rt-child-ok',
+    }
 
 
 class TestRewireEvaluation(unittest.TestCase):
@@ -53,16 +84,14 @@ class TestRewireEvaluation(unittest.TestCase):
         ids = reval.resolve_token_ids(tok, model_config=tiny_cfg)
         self.assertEqual(ids, {'pad_token_id': 0, 'eos_token_id': 2})
 
-        # Unrepresentative fixture with pad_token_id set in model config must be rejected
         bad_cfg = Qwen2Config(vocab_size=64, hidden_size=16, intermediate_size=32, num_hidden_layers=1, pad_token_id=0)
         with self.assertRaises(ValueError):
             reval.resolve_token_ids(tok, model_config=bad_cfg)
 
-        # Tokenizer missing pad_token_id must be rejected
         with self.assertRaises(ValueError):
             reval.resolve_token_ids(types.SimpleNamespace(pad_token_id=None, eos_token_id=2), model_config=tiny_cfg)
 
-    def test_checkpoint_0_equals_untuned_ce_and_greedy_outputs(self) -> None:
+    def test_checkpoint_0_equals_untuned_ce_and_greedy_outputs_via_pr16_loader(self) -> None:
         base_model = _tiny_qwen2(seed=21)
         val_items = [
             {'input_ids': [5, 6, 7, 8, 9, 2], 'labels': [-100, -100, 7, 8, 9, 2]},
@@ -94,29 +123,22 @@ class TestRewireEvaluation(unittest.TestCase):
             )
 
             for rank in (1, 0):
+                plan = _tiny_plan(rank)
                 m_src = _tiny_qwen2(seed=21)
                 rm.install(m_src, rank=rank, seed=42)
-                ckpt_dir = tmp_path / f'ckpt_r{rank}_0'
-                reval.save_rewire_checkpoint(
-                    ckpt_dir,
-                    m_src,
-                    step=0,
-                    rank=rank,
-                    plan_sha256='plan-abc',
-                    runtime_sha256='rt-def',
-                    code_sha256='code-123',
-                )
-                # Load into a fresh base model
+                run_dir = tmp_path / f'run_r{rank}'
+                rckpt.save_checkpoint(run_dir, 0, m_src, plan, runtime_sha256='rt-def', code_commit='c0ffee')
+
                 m_loaded = _tiny_qwen2(seed=21)
-                meta = reval.load_rewire_checkpoint(
+                seal = reval.load_checkpoint_for_eval(
                     m_loaded,
-                    ckpt_dir,
-                    expected_plan_sha256='plan-abc',
-                    expected_runtime_sha256='rt-def',
-                    expected_code_sha256='code-123',
+                    rckpt.checkpoint_dir(run_dir, 0),
+                    plan,
+                    runtime_sha256='rt-def',
+                    code_commit='c0ffee',
                 )
-                self.assertEqual(meta['step'], 0)
-                self.assertEqual(meta['rank'], rank)
+                self.assertEqual(seal['step'], 0)
+                self.assertEqual(seal['rank'], rank)
 
                 loaded_ce = reval.evaluate_validation_ce(m_loaded, val_items)
                 self.assertEqual(loaded_ce['val_ce'], untuned_ce['val_ce'])
@@ -134,7 +156,7 @@ class TestRewireEvaluation(unittest.TestCase):
                     eos_token_id=2,
                     cap=6,
                     batch_size=2,
-                    checkpoint_meta=meta,
+                    checkpoint_meta=seal,
                 )
                 for qid in ('q0', 'q1'):
                     self.assertEqual(
@@ -180,27 +202,47 @@ class TestRewireEvaluation(unittest.TestCase):
             self.assertTrue(out['scores']['exploratory'])
             self.assertEqual(out['prior_use']['cohort'], reval.COHORT150_NAME)
             self.assertEqual(out['prior_use']['step'], 64)
-            # Tampering with sealed eval fails prior_use verification
             (tmp_path / 'ok_64' / 'responses.jsonl').write_text('{"tampered": true}\n')
             with self.assertRaises(ValueError):
                 reval.prior_use_from_sealed_eval(tmp_path / 'ok_64')
 
-    def test_checkpoint_seal_mismatch_refused_and_child_process_isolated(self) -> None:
+    def test_unbound_checkpoint_refused_and_child_process_checks_env_and_runtime(self) -> None:
+        plan = _tiny_plan(1)
         model = _tiny_qwen2(seed=44)
         rm.install(model, rank=1, seed=42)
         with tempfile.TemporaryDirectory() as tmp:
-            ckpt = Path(tmp) / 'ckpt'
-            reval.save_rewire_checkpoint(
-                ckpt, model, step=8, rank=1, plan_sha256='p1', runtime_sha256='r1', code_sha256='c1'
-            )
+            run_dir = Path(tmp) / 'run'
+            rckpt.save_checkpoint(run_dir, 0, model, plan, runtime_sha256='r1', code_commit='c1')
+            ckpt_dir = rckpt.checkpoint_dir(run_dir, 0)
+            # Refuses mismatched runtime or empty/unknown code_commit
             with self.assertRaises(ValueError):
-                reval.load_rewire_checkpoint(_tiny_qwen2(seed=44), ckpt, expected_plan_sha256='wrong')
+                reval.load_checkpoint_for_eval(_tiny_qwen2(seed=44), ckpt_dir, plan, runtime_sha256='wrong', code_commit='c1')
+            with self.assertRaises(ValueError):
+                reval.load_checkpoint_for_eval(_tiny_qwen2(seed=44), ckpt_dir, plan, runtime_sha256='', code_commit='c1')
+            with self.assertRaises(ValueError):
+                reval.load_checkpoint_for_eval(_tiny_qwen2(seed=44), ckpt_dir, plan, runtime_sha256='r1', code_commit='unknown')
 
+        require_ieee = hasattr(torch.backends.cuda.matmul, 'fp32_precision')
         res = reval.run_in_child_process(
-            'tests.test_rewire_evaluation', '_child_pid_helper', {'value': 'ok'}
+            'tests.test_rewire_evaluation',
+            '_child_pid_helper',
+            {'value': 'ok'},
+            expected_runtime_sha256='rt-child-ok',
+            require_ieee=require_ieee,
         )
         self.assertEqual(res['echo'], 'ok')
         self.assertNotEqual(res['pid'], os.getpid())
+        self.assertEqual(res['offline'], '1')
+        self.assertEqual(res['cublas'], ':4096:8')
+        # Mismatched runtime_sha256 from child is refused
+        with self.assertRaises(RuntimeError):
+            reval.run_in_child_process(
+                'tests.test_rewire_evaluation',
+                '_child_pid_helper',
+                {'value': 'ok'},
+                expected_runtime_sha256='rt-different',
+                require_ieee=require_ieee,
+            )
 
 
 if __name__ == '__main__':
