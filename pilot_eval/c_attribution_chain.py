@@ -342,8 +342,11 @@ class Context:
 
 class Chain:
     def __init__(self, record, *, local_root, volume, stages, exporter=None, runner=subprocess.run,
-                 volume_identity=None, host=None, copier=None, current_pod=None):
+                 volume_identity=None, host=None, copier=None, current_pod=None,
+                 stage_order=None, subtree=None):
         self.record, self.stages = record, stages
+        self.stage_order = list(STAGES) if stage_order is None else list(stage_order)
+        self.subtree = SUBTREE if subtree is None else subtree
         self.record_sha256 = record_sha256(record)
         self.run_sha256 = run_sha256(record)
         self.local_root = Path(local_root)
@@ -409,7 +412,7 @@ class Chain:
         binding = dict(record_sha256=self.record_sha256, pod_id=self.record['pod_id'])
         if binding not in [{k: b[k] for k in binding} for b in state.setdefault('bindings', [])]:
             state['bindings'].append(dict(binding, first_attempt=state.get('attempts', 0) + 1))
-        self.restored = pc.restore_from_volume(self.volume_root, self.local_root, subtree=SUBTREE)
+        self.restored = pc.restore_from_volume(self.volume_root, self.local_root, subtree=self.subtree)
         state['attempts'] = state.get('attempts', 0) + 1
         self.attempt = f"attempt-{state['attempts']:03d}"
         self._marker = dict(run_id=self.record['run_id'], host=self.host, pid=os.getpid(), started_unix=time.time())
@@ -463,7 +466,11 @@ class Chain:
         return record
 
     def _check_signoff(self, state):
-        later = [s for s in STAGES[STAGES.index('qualification'):] if s in state['completed']]
+        if 'qualification' not in self.stage_order:
+            if self.record.get('mode') != 'rehearsal':
+                raise RuntimeError('non-rehearsal chain must include a qualification stage with sign-off')
+            return
+        later = [s for s in self.stage_order[self.stage_order.index('qualification'):] if s in state['completed']]
         if not later:
             return
         signoff, qual = state.get('signoff') or {}, state['completed'].get('qualification')
@@ -485,7 +492,7 @@ class Chain:
             summary.update(attempt=self.attempt, resume=decision, restored_from_volume=self.restored,
                            signoff=state.get('signoff'))
             self._check_signoff(state)
-            for name in STAGES:
+            for name in self.stage_order:
                 previous = state['completed'].get(name)
                 if name == 'preflight':
                     previous = None  # today's inputs and runtime are always checked again (review 06-10, P1)
@@ -541,7 +548,7 @@ class Chain:
         except BaseException as exc:  # every exit path tears down
             self.log('failure:\n' + traceback.format_exc())
             summary['state'] = 'failed'
-            summary['failures'].append(dict(stage=next((s for s in STAGES if s not in summary['stages']), None),
+            summary['failures'].append(dict(stage=next((s for s in self.stage_order if s not in summary['stages']), None),
                                             error=f'{type(exc).__name__}: {exc}', log=LOG_FILE))
         finally:
             if state is not None:
@@ -605,7 +612,7 @@ class Chain:
     def _statement(self, summary, backups):
         """Verified bytes and complete coverage are reported separately (review 06-10, P1). ``safe``: verified
         copies of all local work (the Pod may be stopped); ``complete``: safe and the study finished."""
-        not_completed = [s for s in STAGES if summary['stages'].get(s, {}).get('status') != 'complete']
+        not_completed = [s for s in self.stage_order if summary['stages'].get(s, {}).get('status') != 'complete']
         run_complete = summary['state'] == 'complete'
         safe = [name for name, b in backups if b['verified'] is True and b.get('coverage') == 'complete']
         complete = safe if run_complete else []
