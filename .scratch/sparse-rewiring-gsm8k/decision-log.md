@@ -4,7 +4,7 @@
 
 ## The minimal pilot in one paragraph
 
-Train two sparse-rewiring arms, rank 1 and rank 0 (full per-neuron rows) **[user 2026-11-23]**, from the untuned Qwen2.5-1.5B-Instruct on the 512 gold-SFT examples, with gold's token/label/loss contract, FP32 IEEE runtime and microbatching, and Max's hard-concrete L0 objective, mask optimizer and fixed-mask finish. λ 6e-4 for both, read LR 3e-3 (rank 1) and 3e-4 (rank 0), mask LR 0.1, one mask draw per 4 examples, 512-step cap **[user 2026-11-23]** whose first 64 steps are gold's exact batches, last 64 steps fixed-mask, on one A100-80GB **[user]**. Monitor a new train-split validation set only. Evaluate the step-64 and final checkpoints greedily on cohort150 as exploratory. Compare each arm's binary survivor set with the other's, with `c-production-1`'s per-read J scores and with production-1 adapter attribution, GRPO arms first **[user]**, on CPU; analyse each arm on its own (D22); and plot both arms' training dynamics side by side. One seed per arm, no sweep.
+Train two sparse-rewiring arms, rank 1 and rank 0 (full per-neuron rows) **[user 2026-11-23]**, from the untuned Qwen2.5-1.5B-Instruct on the 512 gold-SFT examples, with gold's token/label/loss contract, FP32 IEEE runtime and microbatching, and Max's hard-concrete L0 objective, mask optimizer and fixed-mask finish. λ 6e-4 for both, read LR 3e-3 (rank 1) and 3e-4 (rank 0), mask LR 0.1, one mask draw per 4 examples, adaptive stop **[user 2026-11-23]**: up to 1,024 steps, stopping 64 fixed-mask steps after the gates settle (checked every 64 steps from 256), first 64 steps gold's exact batches, on one A100-80GB **[user]**. Monitor a new train-split validation set only. Evaluate the step-64 and final checkpoints greedily on cohort150, approved for evaluation only **[user]**. Compare each arm's binary survivor set with the other's, with `c-production-1`'s per-read J scores and with production-1 adapter attribution, GRPO arms first **[user]**, on CPU; analyse each arm on its own (D22); and plot both arms' training dynamics side by side. One seed per arm, λ fixed at 6e-4, no sweep **[user]**.
 
 ## Why not just reuse every gold setting
 
@@ -19,9 +19,9 @@ Gold trains 1.15 M LoRA parameters (r1 on 196 modules) with no selection mechani
 | Read LR | 1e-4 (LoRA) | 3e-3 (rank 4) | **3e-3** | D1 |
 | Mask optimizer | — | AdamW lr 0.1, same schedule | **Max** | D2 |
 | Betas | (0.9, 0.999) | (0.9, 0.99) | **Max** | D3 |
-| Schedule | constant, 64 | 20 warmup + cosine, 1,400, last 100 fixed | **Max shape, 512 cap, last 64 fixed [user]** | D5 |
+| Schedule | constant, 64 | 20 warmup + cosine, 1,400, last 100 fixed | **Max shape, 1,024 max with adaptive stop, last 64 fixed [user]** | D5 |
 | λ | — | 6e-4 | **6e-4 reference** | D6 |
-| Checkpoints | 0/8/16/32/64 | every 50 | **gold's + 128/256/448/512** | D5 |
+| Checkpoints | 0/8/16/32/64 | every 50 | **gold's + every 64 steps to the stop** | D5 |
 
 ## Decisions
 
@@ -49,35 +49,36 @@ Max uses (0.9, 0.99) for both groups (`--beta2`); gold uses (0.9, 0.999). Recomm
 
 Both clip at 1.0. Max clips **read factors only**; masks are unclipped. Recommend the same, and log the read-factor norm before clipping and the unclipped mask-gradient norm separately.
 
-### D5. Steps, schedule, freeze and checkpoints — decided
+### D5. Steps, schedule, stopping and checkpoints — decided
 
-**[user 2026-11-23]: cap 512 steps (8 epochs)**, after weighing 1,024 (which would have added about 2 h of GPU time and doubled the repetition of 512 examples).
+**[user 2026-11-23]: adaptive stopping instead of a fixed cap.** Stop at about 512 steps if the gates have settled, otherwise continue up to 1,024. (A fixed 512 and a fixed 1,024 were both considered.)
 
-| Option considered | Steps (epochs) | Fixed-mask phase | Comment |
-|---|---|---|---|
-| A. Gold-matched | 64 (1) | last 8 | Expected mid-pruning at step 64 (D1 arithmetic), so the survivor set would describe an unconverged race |
-| **B. Chosen** | **512 (8)** | **last 64** | Max's case was 5.4 epochs (11,200 rows / 2,081); 8 epochs here is 4,096 presentations |
-| C. Longer cap | 1,024 (16) | last 128 | Considered and dropped by the researcher |
-| D. Max-matched steps | 1,400 (22) | last 100 | Heavy repetition; 2.7× the training time |
+Adaptive stop **[user 2026-11-23; thresholds proposed]**: the LR schedule is 20-step warmup + cosine to 0 at a **1,024-step maximum**. From step 256, every 64 steps (256, 320, …, 896), compare the hard survivor set (deterministic `z_det > 0`) and the expected-active count with their values 64 steps earlier. The check holds if (1) the Jaccard overlap of the two hard sets is ≥ 0.99 and (2) the relative change of expected-active is < 2%. **Settled** = the check holds at two consecutive checks. At the settling check t, freeze the masks and train 64 more steps with fixed masks, then stop at t + 64 (earliest: settled at 320, stop at 384). If never settled, freeze at 960 and stop at 1,024. Validation CE is not part of the rule, and neither is cohort150; the rule reads only the run's own gates.
 
-20-step warmup and cosine to 0 at step 512 over both groups, fixed-mask from step 449 to 512. Checkpoints: 0, 8, 16, 32, 64 (gold's), 128, 256, 448 (last continuous-mask step) and 512 (final binary). Step 64 is a reference point under a different schedule, not gold's trajectory and not equal token exposure. Whether 512 steps was enough is judged on validation only (settle step, D22, and the validation CE curve). If validation shows the run still moving at 448, report it; do not extend after the fact under the same name.
+| Proposed threshold | Value | Why |
+|---|---|---|
+| First check | step 256 | Before that the gates are expected to still be pruning fast (D1 arithmetic) |
+| Check interval and look-back | 64 steps | One full epoch of the 512 examples between compared states (8 examples per step) |
+| Hard-set Jaccard | ≥ 0.99 | At 100 survivors, at most about 1 neuron changing per epoch |
+| Expected-active change | < 2% relative | Catches the continuous gates still drifting while the hard set is unchanged |
+| Consecutive checks | 2 | One quiet check could be a pause |
+| Fixed-mask finish | 64 steps | Same as before; Max used 100 of 1,400 |
+
+**Deviation to record:** at an early stop the cosine has not reached 0 (at step 384 the LR is still about 70% of peak; at 576 about 40%), so an early-stopped arm ends at a higher LR than Max's runs or a fixed-length run. The two ranks may stop at different steps; the report states both stop steps and compares them at their own final states, plus at the shared checkpoints.
+
+Checkpoints: 0, 8, 16, 32, 64 (gold's), then every 64 steps (128, 192, 256, …) up to and including the final step. Each 64-step check point is a checkpoint, the freeze step is one, and the final step is one. Greedy validation runs at 0/8/16/32/64/128/256/512 (if reached), the freeze step and the final step; the other checkpoints store state only. Step 64 is a reference point under a different schedule, not gold's trajectory and not equal token exposure.
 
 ### D6. λ
 
-**How Max chose λ.** He swept λ from 1e-4 to 3e-3 with up to 3 seeds, scored every run on held-out validation loss and on graded replies to evaluation prompts (does the model loop or repeat), and published "the sparsest run that loops no more than full fine-tuning" (`README.md@max`). So λ was picked by a quality floor first, then maximum sparsity, on his own validation data. For rank 0 his notes report λ 6e-4–8e-4 at LR 3e-4–5e-4 giving 82–122 neurons (`RANK0.md@max`). λ is a price per open neuron: each open gate must lower the training loss by more than about λ to stay open.
+**How Max chose λ.** He swept λ from 1e-4 to 3e-3 with up to 3 seeds, scored every run on held-out validation loss and on graded replies to evaluation prompts (does the model loop or repeat), and published "the sparsest run that loops no more than full fine-tuning" (`README.md@max`). So λ was picked by a quality floor first, then maximum sparsity, on his own data. For rank 0 his notes report λ 6e-4–8e-4 at LR 3e-4–5e-4 giving 82–122 neurons (`RANK0.md@max`). λ is a price per open neuron: each open gate must lower the training loss by more than about λ to stay open, so a higher λ means fewer survivors.
 
-**Here [proposed, for the researcher's review]: a knee rule, fixed before any run.** Sparsity and fit trade off: as λ rises, survivors fall and validation CE eventually rises. The knee is where CE starts to pay for extra sparsity. The rule: **choose the largest λ whose final validation CE is within 2% of the low-λ plateau** (the best final validation CE among the λ values run; the 2% tolerance is tunable). This is Max's rule with validation CE as the quality floor in place of graded looping, and like his it picks the sparsest acceptable run, not the best-fitting one.
+What that tells us: on his task about 100 neurons were enough to match full fine-tuning's quality, and the count moved smoothly with λ. It does not tell us the right λ here: different model, task, data size, and 250,880 candidates vs his 442,368. The survivor count we get at 6e-4 is itself a result.
 
-Procedure:
-1. Run λ = 6e-4 for each rank (the reference point; Max's value, though our model has 250,880 candidates vs 442,368 in Qwen3-8B and λ is per neuron).
-2. If the run is degenerate (about 0 survivors, or more than 1,000), run a bounded validation-only sweep: 3e-4 and 1.2e-3 (then 1.5e-4 or 2.4e-3 only if the knee is still not bracketed). Apply the rule.
-3. If 6e-4 is not degenerate, it is used as is. One run cannot locate a knee, so the report says "λ fixed at the reference value, knee not located".
-
-λ is never chosen on cohort150. Each extra λ costs one more full arm (about 1–1.5 h on an A100, §Compute). **OPEN:** the tolerance (2%) and the degeneracy bounds need the researcher's OK.
+**Decided [user 2026-11-23]: λ = 6e-4 for both ranks, no sweep.** If a run is degenerate (about 0 survivors, or more than 1,000), report it as such; nothing re-runs automatically, and any second λ is a new decision with its own run ID.
 
 ### D7. Data order beyond one epoch
 
-Recommend: steps 1–64 consume gold's saved `inputs/order.json` exactly; epoch e ≥ 2 uses the 512 IDs reshuffled with `random.Random(42 + e − 1)`; record the full 512-step order (8 epochs) before training. Alternative: repeat gold's order every epoch (identical batches, but a periodic pattern). Max reshuffles each epoch.
+Recommend: steps 1–64 consume gold's saved `inputs/order.json` exactly; epoch e ≥ 2 uses the 512 IDs reshuffled with `random.Random(42 + e − 1)`; record the full 1,024-step order (16 epochs) before training; an early stop uses its prefix. Alternative: repeat gold's order every epoch (identical batches, but a periodic pattern). Max reshuffles each epoch.
 
 ### D8. Precision and runtime
 
@@ -93,15 +94,15 @@ Separate and record: data order (gold's saved order, then D7), read-direction in
 
 ### D11. Validation set
 
-**Role:** validation governs every steering decision, not only λ: the λ knee (D6); the settle step and whether the gates have converged (D22); whether 512 steps was enough (D5); the dense CE curve and accuracy at checkpoints in the dynamics figure (D20); and the single, block and control reverts (D23). Cohort150 only reports results. Without a separate set, every one of those choices would be made on the numbers we then report.
+**Role:** with λ fixed (D6) and stopping read from the gates alone (D5), validation is no longer used to choose anything in the training run. It gives the dense learning curve and accuracy at checkpoints (D20), shows whether the model overfits during the extra epochs, and ranks survivors in the reverts (D23). It costs about 15 min of GPU per arm. It is still needed because cohort150 is evaluated only twice, at 64 and final, by design, and a curve at every 16 steps on the reported set would turn it into a tuning set as soon as anyone looked at it to decide something.
 
-No suitable set exists. Proposed: 128 GSM8K **train** questions, `random.Random(20261122)` sample from train indices excluding (a) `gsm8k-train-512`, (b) every `sequences-v2` calibration, discovery and held-out question, (c) any other train ID in a run record or the catalog. Train-split, because C ticket 14 plans to draw a held-out set from the **test** split minus prior uses, and this pilot should not consume it. Measures: gold-answer CE with deterministic masks (Max's selection quantity) every 8 steps (D20), and greedy flexible-v3 accuracy at checkpoints. **Blocked** until the `sequences-v2` ID lists are read from the artifact root (not in Git). Size 128 is a proposal.
+No suitable set exists. Proposed: 128 GSM8K **train** questions, `random.Random(20261122)` sample from train indices excluding (a) `gsm8k-train-512`, (b) every `sequences-v2` calibration, discovery and held-out question, (c) any other train ID in a run record or the catalog. Train-split, because C ticket 14 plans to draw a held-out set from the **test** split minus prior uses, and this pilot should not consume it. Measures: gold-answer CE with deterministic masks (Max's selection quantity) every 16 steps (D20), and greedy flexible-v3 accuracy at checkpoints. **Blocked** until the `sequences-v2` ID lists are read from the artifact root (not in Git). Size 128 is a proposal.
 
-### D12. Cohort150 use
+### D12. Cohort150 use — decided
 
-Cohort150 is not clean: it has been looked at many times. Its catalog prior uses (`catalog/cohorts.yaml@catt`) are greedy evaluation of gold-sft and online-grpo (Pilots 2 and 4); greedy and 8-sample behaviour for online and offline GRPO; Stage 0 greedy for sampling-sft k0/k2/k5; production-1 Stage D greedy generation; and C attribution in two rehearsals and production, where it supplied the sampled rows that the scores were computed on, the frozen top-64 **selection**, and the greedy ablation of that selection. Results on it are still comparable with every other arm because every arm was evaluated there the same way. But they are exploratory, never tuned on, and each new evaluation is a further prior use, registered in `catalog/cohorts.yaml`. Needs the researcher's OK.
+**[user 2026-11-23]: use cohort150 for evaluation only, labelled exploratory.** It is the frozen 150-question GSM8K test cohort every arm has been evaluated on, so the sparse arms are directly comparable with untuned, gold-sft, Sampling SFT and both GRPO arms. Nothing in this pilot is chosen on it. Each new evaluation is registered as a prior use in `catalog/cohorts.yaml`.
 
-**Circularity to label:** C's neuron scores and frozen sets were computed and selected on cohort150. If a report shows that survivors overlapping C's sets also explain accuracy on cohort150, the same 150 questions both chose the neurons and judged them. That combination is labelled circular; a held-out check (C's ticket 14 or this effort's validation set) is needed before it means more.
+Why it was not called clean: its prior uses include greedy evaluation of gold-sft and online-grpo, GRPO behaviour runs, Stage 0, production-1 Stage D, and C attribution, which computed its scores and picked its frozen sets on these questions (`catalog/cohorts.yaml@catt`). **One caveat kept:** a result that combines "survivors overlap C's sets" with cohort150 accuracy is circular for the C side, because the same questions picked C's neurons.
 
 ### D13. Rank — decided
 
@@ -171,16 +172,17 @@ Later (manifest entries only, when those attributions exist): C attribution for 
 
 Not available today: a full-universe attribution for any SFT arm.
 
-### D20. Training-dynamics logging cadence — agreed
+### D20. Training-dynamics logging cadence — decided
 
-**[user 2026-11-23]: every step for the cheap metrics.** Validation CE stays every 8 steps for now; whether to run it every step too is with the researcher.
+**[user 2026-11-23]: cheap metrics every step, validation CE every 16 steps.**
 
 | Cadence | What is logged | Cost |
 |---|---|---|
 | Every step | training CE, L0 term, LR per group, grad norms, gate totals (expected-active, nonzero `z_det`), per-layer nonzero counts, gauge-invariant read-change norms (totals and survivor subset) | free (from tensors already in memory) |
-| Every 8 steps | validation CE with deterministic masks; FP16 `logα` snapshot (0.5 MB) | 64 checks, about 10–15 min per arm. Every step instead would be 512 checks, about 1.5–2 h per arm |
-| Each of the 9 checkpoints | greedy flexible-v3 accuracy on validation (128 questions); survivor list; churn vs previous checkpoint | about 30–40 min per arm |
-| Steps 64 and 512 only | greedy cohort150 (reporting only, D12) | about 10 min per arm |
+| Every 16 steps | validation CE with deterministic masks; FP16 `logα` snapshot (0.5 MB) | 24–64 checks, about 5–15 min per arm |
+| Every 64 steps from 256 | stop-rule check (D5): hard-set Jaccard and expected-active change, written to `logs/stop.jsonl` | free |
+| Up to 10 checkpoints | greedy flexible-v3 accuracy on validation (128 questions); survivor list; churn vs previous checkpoint | about 25–40 min per arm |
+| Step 64 and final | greedy cohort150 (evaluation only, D12) | about 10 min per arm |
 
 Its value is descriptive, and one run cannot separate cause from co-movement.
 
@@ -190,7 +192,7 @@ Requested by the researcher on 2026-11-23. It is descriptive: one seed per arm, 
 
 - **Survivors:** counts (expected-active, nonzero, binary) per arm; Jaccard overlap of the two final binary sets, plus overlap per layer; a layer-matched random reference for the overlap (10,000 draws, seed 20261124 **[proposed]**); and the neurons unique to each arm.
 - **Against C attribution:** each arm's overlap with the `c-production-1` frozen sets and top-K lists (D19), plus the three-way intersection, all on the same universe and null.
-- **Performance:** validation CE and greedy validation accuracy at each checkpoint, and cohort150 greedy at 64 and 512. Arm vs arm is compared paired by question (paired bootstrap on question IDs, 10,000 draws), with gold-sft and untuned as references.
+- **Performance:** validation CE and greedy validation accuracy at each checkpoint, and cohort150 greedy at 64 and final. Arm vs arm is compared paired by question (paired bootstrap on question IDs, 10,000 draws), with gold-sft and untuned as references.
 - **Hardening:** the validation CE change across the freeze, per arm.
 - **Dynamics:** ticket 12's four panels for both arms side by side, on shared y axes.
 - **Read-change size:** the same gauge-invariant per-neuron norm (D20), so rank-0 `‖w_i‖` and rank-1 `‖b_i‖‖a‖` measure the same quantity: the norm of the change to neuron i's read row.
@@ -204,7 +206,7 @@ Requested by the researcher on 2026-11-23: an analysis of what each rewiring arm
 - **Behaviour:** validation CE and accuracy; cohort150 at 64 and final; invalid, capped and length; per-question flips vs gold and untuned.
 
 Proposed definitions (each **[proposed]**):
-- *Settle step*: the first 8-step snapshot t after which the nonzero-`z_det` set changes by fewer than 1% of its size over every later 8-step snapshot until 448.
+- *Settle step*: the D5 stop-rule result (the step at which it first held twice), plus, after the run, the first 16-step snapshot after which the hard set's Jaccard with the final set stays ≥ 0.99.
 - *Effective rank*: participation ratio `(Σσ)² / Σσ²` of the singular values of the stacked survivor rows per layer and part, plus the number of singular values needed for 90% of `Σσ²`.
 - *Activation shift*: on the 128 validation questions (prompt and gold answer, teacher-forced), mean and mean-absolute change of each survivor's post-SiLU gate × up activation, rewired vs base; plus the same for 1,000 random non-survivors per layer as a reference.
 
@@ -230,18 +232,18 @@ Reverting random non-survivors alone would be a no-op (their change is zero), wh
 
 ## Compute (arithmetic estimate, not a measurement)
 
-Assumptions: about 250 tokens per training example (C spec records 115-token mean prompts for test questions; gold answer length to be read from `lengths.json`), 2,000 tokens per step, about 8 × 1.54 × 10⁹ FLOPs per token with checkpointing, A100 FP32 IEEE peak 19.5 TFLOP/s at 30–50% utilisation. One A100-80GB (D18), 512 steps (D5).
+Assumptions: about 250 tokens per training example (C spec records 115-token mean prompts for test questions; gold answer length to be read from `lengths.json`), 2,000 tokens per step, about 8 × 1.54 × 10⁹ FLOPs per token with checkpointing, A100 FP32 IEEE peak 19.5 TFLOP/s at 30–50% utilisation. One A100-80GB (D18). The stop step is unknown, so the table gives an early stop (384), a stop near 512, and the 1,024 maximum.
 
 | Item | Rank 1 | Rank 0 |
 |---|---|---|
 | One step | 2.5–4 s | 3.5–6 s (two extra 1,536 × 8,960 matmuls per layer: roughly +40% FLOPs) |
-| 512 steps | 20–35 min | 30–50 min |
-| Validation CE every 8 steps, greedy validation at 9 checkpoints (D20) | about 45 min | about 45 min |
-| Greedy cohort150 at 64 and 512 | about 10 min | about 10 min |
+| Training: stop at 384 / ~512 / 1,024 | 15–25 / 20–35 / 40–70 min | 25–40 / 30–50 / 60–100 min |
+| Validation CE every 16 steps | 5–15 min | 5–15 min |
+| Greedy validation at up to 10 checkpoints | 25–40 min | 25–40 min |
+| Greedy cohort150 at 64 and final | about 10 min | about 10 min |
 | Activation shift (D22) | about 5 min | about 5 min |
 | Gold-sft references on validation (once), setup, preflight, export | about 35 min, shared | — |
-| **Total, run in sequence** | | **about 3.5–4.5 h** for both arms |
-| Each extra λ if 6e-4 is degenerate (D6) | about 1–1.5 h | about 1.5–2 h |
+| **Total, both arms in sequence** | | **about 3–3.5 h** if both settle by about 512; **about 5–5.5 h** if both run to 1,024 |
 | Proposed causal checks (D23), if approved | about 1–1.5 h | about 1–1.5 h |
 | Memory over gold | +0.84 M parameters, negligible | +770 M parameters, about +12 GB |
 
