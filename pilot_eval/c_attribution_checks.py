@@ -280,21 +280,36 @@ def batch_invariance(inst, rows, budgets, *, tolerance=None):
 
 # --- no-op and restore ----------------------------------------------------------------------------------
 
-def adapter_hash(model):
+def _is_lora(name):
+    return 'lora_' in name
+
+
+def adapter_hash(model, parameter_filter=None):
+    """SHA-256 over the trained parameters picked by ``parameter_filter(name)`` (default: PEFT ``lora_`` names).
+
+    Refuses when the filter selects nothing: an empty hash would make a restore check pass vacuously
+    (for example ``lora_`` on a rewired model, whose parameters are named ``rewire_``)."""
+    keep = parameter_filter or _is_lora
     digest = hashlib.sha256()
+    hashed = 0
     for name, p in sorted(model.named_parameters()):
-        if 'lora_' in name:
+        if keep(name):
             digest.update(name.encode())
             digest.update(p.detach().cpu().contiguous().numpy().tobytes())
+            hashed += 1
+    if not hashed:
+        raise ValueError('adapter_hash: the parameter filter selects no parameter')
     return digest.hexdigest()
 
 
-def noop_check(model, rows, context_factory, *, greedy_tokens=4, pad_token_id=0):
-    """``context_factory()`` builds the intervention context with an empty removal set."""
+def noop_check(model, rows, context_factory, *, greedy_tokens=4, pad_token_id=0, parameter_filter=None):
+    """``context_factory()`` builds the intervention context with an empty removal set.
+
+    ``parameter_filter(name)`` picks the parameters whose restore is checked (default: PEFT ``lora_`` names;
+    a rewired model passes ``rewire_module.is_rewire_parameter``)."""
     import torch
-    inst = ai.Instrument(model, stop_ids=[0], pad_token_id=pad_token_id, identity_rtol=1.0)
-    ids, attention, positions = inst.batch(rows)
-    before = adapter_hash(model)
+    ids, attention, positions = ai.pad_rows(model, rows, pad_token_id)  # no PEFT wrapper needed
+    before = adapter_hash(model, parameter_filter)
 
     def logits():
         with torch.no_grad():
@@ -310,7 +325,7 @@ def noop_check(model, rows, context_factory, *, greedy_tokens=4, pad_token_id=0)
     intact, intact_tokens = logits(), greedy()
     with context_factory():
         inside, inside_tokens = logits(), greedy()
-    after = adapter_hash(model)
+    after = adapter_hash(model, parameter_filter)
     result = {'logits_bit_identical': bool(torch.equal(intact, inside)),
               'greedy_tokens_identical': intact_tokens == inside_tokens,
               'adapter_hash_before': before, 'adapter_hash_after': after, 'restored': before == after}
