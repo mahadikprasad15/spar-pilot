@@ -82,7 +82,10 @@ def test_streamed_bootstrap_equals_unchunked_and_is_deterministic():
     whole = -(counts @ S.reshape(30, -1)) / 30
     for p in cs.PERCENTILES:
         np.testing.assert_allclose(streamed[f'p{p}'].ravel(), np.percentile(whole, p, axis=0), rtol=1e-12)
-    np.testing.assert_array_equal(streamed['p2.5'], cs.bootstrap_dJdlambda(S, counts, chunk=1000)['p2.5'])
+    # Same chunking twice is bit-exact; across chunk sizes the BLAS summation order
+    # may differ, so compare to the same rtol as the percentile check above.
+    np.testing.assert_array_equal(streamed['p2.5'], cs.bootstrap_dJdlambda(S, counts, chunk=7)['p2.5'])
+    np.testing.assert_allclose(streamed['p2.5'], cs.bootstrap_dJdlambda(S, counts, chunk=1000)['p2.5'], rtol=1e-12)
 
 
 def test_bootstrap_on_S_equals_recomputed_leave_one_out_inside_a_resample():
