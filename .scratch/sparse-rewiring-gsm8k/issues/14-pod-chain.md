@@ -13,4 +13,6 @@ Run the two arms through the existing `c_attribution_chain.Chain` with this run'
 
 ## Comments
 
+2026-11-23 implementation review of `dbca6a3` found launch, input binding, recovery and Pod identity blockers. The [review](../review-implementation.md) gives reproduction evidence and acceptance checks for tickets 05, 07, 08, 09 and 14. Recheck those paths before ticket 15.
+
 ## Answer
