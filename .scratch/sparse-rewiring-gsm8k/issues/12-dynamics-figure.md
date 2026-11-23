@@ -13,7 +13,7 @@ Requested by the researcher on 2026-11-23. A CPU figure builder for `spec.md` §
 - [ ] Outputs go to `dynamics/`: PNG and SVG, the CSV that is plotted, and a provenance JSON (input hashes, run ID, code commit).
 - [ ] Caption: descriptive co-movement in one run, not a causal link between gate shutting and accuracy.
 
-The cadence is blocked by decision D20.
+Cadence decided (D20): cheap metrics every step, validation CE every 8 steps unless the researcher asks for every step.
 
 ## Comments
 
