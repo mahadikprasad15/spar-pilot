@@ -198,7 +198,7 @@ Full option tables are in `decision-log.md`. Summary:
 | D11 | Validation set | 128 GSM8K train questions, seeded, excluding the 512, `sequences-v2` and any other recorded train use; gold CE + greedy accuracy | [proposed]; blocked on `sequences-v2` IDs |
 | D12 | Cohort150 use | Allowed as a further exploratory evaluation; never for tuning | [proposed]; needs researcher OK |
 | D13 | Rank | Rank 1 first per the design input; **but** RANK0.md says rank 0 is Max's intended method and rank 1 has no released result | **researcher decision** |
-| D14 | Microbatch | 1 (gold); 8 independent mask draws per step instead of Max's 2 | [proposed] |
+| D14 | Microbatch and mask noise | Microbatch 1 (gold), with one cached mask draw shared by each group of 4 examples: 2 draws per step, as in Max (revised 2026-11-23) | [proposed] |
 | D15 | Gradient checkpointing | On (gold), RNG-preserving recompute tested | [proposed] |
 | D16 | Code reuse | Clean-room reimplementation; ask Max for a license if copying is wanted | [proposed] |
 | D17 | Code base | Branch implementation from `c-attribution-pilot` (or after it merges) | [proposed] |

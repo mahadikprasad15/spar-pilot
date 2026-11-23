@@ -15,7 +15,7 @@ Gold trains 1.15 M LoRA parameters (r1 on 196 modules) with no selection mechani
 | Training examples, prompt, labels | §2.2 | own chat data, trailing newline supervised, 640 truncation | **gold** | Comparability; Max's newline label and truncation are incidental, not method-defining |
 | Loss reduction | token-weighted over the step | token-weighted over the step | **same** | Already equal |
 | Precision | FP32, TF32 off | BF16 frozen, FP32 reads | **gold FP32 + IEEE** | Repository rule; FP32 makes Max's casts no-ops |
-| Microbatch | 1 × 8 | 4 × 2 | **gold 1 × 8** | Exact gold loss path; changes mask-noise sharing (D14) |
+| Microbatch / mask noise | 1 × 8 | 4 × 2 (one mask per 4 rows) | **gold 1 × 8, one mask per 4 examples** | Gold loss path, Max's noise level (D14) |
 | Read LR | 1e-4 (LoRA) | 3e-3 (rank 4) | **3e-3** | D1 |
 | Mask optimizer | — | AdamW lr 0.1, same schedule | **Max** | D2 |
 | Betas | (0.9, 0.999) | (0.9, 0.99) | **Max** | D3 |
@@ -97,7 +97,30 @@ The design input chose rank 1 first. Given `RANK0.md`, the question back to the 
 
 ### D14. Microbatch and mask noise
 
-Gold's microbatch 1 gives eight independent mask draws per step; Max's micro 4 gives two. The expected gradient is the same; its variance differs. Recommend gold's microbatch 1 and record the difference.
+**Revised 2026-11-23 after the researcher's question. Still [proposed].**
+
+The principle is to split the recipe by what each part controls:
+- The **data and loss path** (which tokens, which labels, how the loss is reduced, one example per forward) defines comparability with gold SFT. It stays gold's.
+- The **stochastic selection mechanism** (mask noise level, λ, mask LR) defines the method. It stays Max's, because λ 6e-4 and mask LR 0.1 were tuned under his noise level.
+
+In Max's trainer, one `z` per layer is drawn per forward call and shared by every row and position of that micro-batch (`train.py:301-314,366-376`; micro 4, batch 8). That gives **2 draws per step**.
+
+| Option | Draws per step | Matches | Comment |
+|---|---|---|---|
+| A. Fresh mask per single-example pass | 8 | gold's microbatch path | Usually a less variable gate-gradient estimate, so the selection race is run at a noise level λ was not tuned for |
+| **B. Microbatch 1, one mask per group of 4 consecutive examples** | 2 | gold's loss path and Max's noise level | Requires explicit caching (below) |
+| C. Microbatch 4 with padding | 2 | Max literally | Changes gold's padding-free loss path; padded eager attention adds small numerical differences |
+
+**Recommend B.** Both A and B estimate the same expected objective, because each example's mask has the same marginal distribution. They differ in gradient variability and so in trajectory. B is closer to Max's procedure. It is not inherently more principled or less noisy, and the choice can change which neurons survive. Option A is a later ablation, not part of the minimal pilot.
+
+Implementation for B:
+- At the start of each group of 4 (examples 1–4 and 5–8 of the step's gold order), sample one uniform `u` per layer from the mask-noise generator and cache it.
+- In each of the 4 single-example passes, recompute `z = clip(σ((log u − log(1−u) + logα)/β)(ζ−γ)+γ, 0, 1)` from the cached `u` and the current `logα`, so gradients reach `logα` in every pass. `logα` does not change within a step, so all 4 passes see the same `z`.
+- Gradient checkpointing recomputes with the same cached `u`. It does not re-draw.
+- If a short step ever occurs, groups are `ceil(n/4)`, and the grouping is recorded. Gold steps always have 8 examples.
+- Log the `u` seed and the group boundaries per step.
+
+Test: on a tiny fixture, the summed gradients (reads and `logα`) of 4 single-example passes with a shared cached `u` equal those of one 4-row forward with the same `u`, within FP32 round-off. This is the same token-weighted loss, with a padding-free reference built row by row where needed.
 
 ### D15. Gradient checkpointing
 

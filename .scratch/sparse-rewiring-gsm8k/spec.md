@@ -38,7 +38,7 @@ A new arm `sparse-gold-sft` (catalog name **[proposed]**): the untuned model wit
 
 - `pilot_eval/rewire_module.py` **[proposed name]**: wraps the pinned Qwen2 MLP and reproduces its forward exactly (`down(act(gate(x)) * up(x))`) plus `Δgate = z ⊙ ((x·a_g) b_g)` and `Δup = z ⊙ ((x·a_u) b_u)` for rank 1; `(x Aᵀ) Bᵀ` for rank k; `x Wᵀ` for rank 0. Read changes at every unpadded position (prompt included). Parts gate+up **[user]**.
 - Init: `a ~ N(0,1)/√d` from a CPU generator seeded per layer (D10); `b = 0`; `logα = 1.0`.
-- Hard concrete with β 2/3, γ −0.1, ζ 1.1; training noise per layer per forward from a dedicated generator; deterministic gate `clip(σ(logα)(ζ−γ)+γ, 0, 1)`; expected-active `Σ σ(logα − β ln(−γ/ζ))`; freeze rule `z_det > 0` → binary. Rank: **BLOCKED(D13)** for the primary; the module supports 0, 1 and k.
+- Hard concrete with β 2/3, γ −0.1, ζ 1.1; training noise: one uniform `u` per layer per group of 4 consecutive examples, drawn from a dedicated generator, cached, and reused by each single-example pass and by checkpoint recompute; `z` is recomputed from the cached `u` and the current `logα` (D14, [proposed]); deterministic gate `clip(σ(logα)(ζ−γ)+γ, 0, 1)`; expected-active `Σ σ(logα − β ln(−γ/ζ))`; freeze rule `z_det > 0` → binary. Rank: **BLOCKED(D13)** for the primary; the module supports 0, 1 and k.
 - An `off` switch returning the exact base MLP, and a per-neuron "remove new reads" intervention for later causal checks.
 
 ### Training
@@ -106,6 +106,7 @@ artifacts/runs/sparse-rewiring/<run-id>/
 8. First 64 steps consume gold's order; later orders match the frozen plan.
 9. Clipping touches reads only; mask LR follows the shared schedule.
 10. Checkpointed vs non-checkpointed backward identical for a fixed noise seed.
+10a. Shared-mask equivalence (D14): the summed read and `logα` gradients of 4 single-example passes with one cached `u` equal one 4-row forward with that `u`, within FP32 round-off; a mutation that re-draws `u` per pass fails; the logged group boundaries match the step order.
 11. Uninterrupted vs resumed (at 8 and at a fixed-mask step) give identical factors, masks and logs.
 12. Validation sampler refuses an unreadable exclusion source and never returns an excluded ID.
 13. Comparison: layer-matched null preserves per-layer sizes; overlap on a planted fixture; missing attribution values excluded, not zero.
