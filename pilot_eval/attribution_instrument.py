@@ -135,6 +135,24 @@ def response_mask(instrument, rows):
     return mask
 
 
+def pad_rows(model, rows, pad_token_id):
+    """Right-padded ``(input_ids, attention_mask, position_ids)`` on the model's device. Needs no PEFT wrapper,
+    so checks such as ``c_attribution_checks.noop_check`` can batch rows for any model."""
+    import torch
+    if pad_token_id is None:
+        raise InstrumentFailure('explicit pad token required')
+    if not rows or len({r['id'] for r in rows}) != len(rows):
+        raise InstrumentFailure('nonempty unique batch required')
+    width = max(len(r['input_ids']) for r in rows)
+    device = next(model.parameters()).device
+    ids = torch.tensor([list(r['input_ids']) + [pad_token_id] * (width - len(r['input_ids'])) for r in rows],
+                       device=device)
+    attention = torch.tensor([[1] * len(r['input_ids']) + [0] * (width - len(r['input_ids'])) for r in rows],
+                             device=device)
+    positions = (attention.cumsum(1) - 1).clamp(min=0)
+    return ids, attention, positions
+
+
 class Instrument:
     def __init__(self, model, *, stop_ids, pad_token_id, identity_rtol, adapter='default', head_chunk=1024,
                  metric_order=METRICS, precision='fp32'):
@@ -185,17 +203,7 @@ class Instrument:
     # --- batching ---------------------------------------------------------------------------
 
     def batch(self, rows):
-        torch = self.torch
-        if not rows or len({r['id'] for r in rows}) != len(rows):
-            raise InstrumentFailure('nonempty unique batch required')
-        width = max(len(r['input_ids']) for r in rows)
-        device = next(self.model.parameters()).device
-        ids = torch.tensor([list(r['input_ids']) + [self.pad] * (width - len(r['input_ids'])) for r in rows],
-                           device=device)
-        attention = torch.tensor([[1] * len(r['input_ids']) + [0] * (width - len(r['input_ids'])) for r in rows],
-                                 device=device)
-        positions = (attention.cumsum(1) - 1).clamp(min=0)
-        return ids, attention, positions
+        return pad_rows(self.model, rows, self.pad)
 
     @contextmanager
     def _capture(self, captured, calls):
