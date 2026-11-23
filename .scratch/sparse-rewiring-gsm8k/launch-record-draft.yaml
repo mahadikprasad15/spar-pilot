@@ -37,8 +37,8 @@ disk: {min_free_gb: 60, container_total_gb: 120}
 hardware: {gpu: A100-80GB, count: 1}     # [user 2026-11-23] D18
 
 arms:                                    # [user 2026-11-23] D13 rank 1 and rank 0; names [proposed]
-  sparse-gold-sft-r1: {run_id: sparse-gold-sft-r1-1, rank: 1, read_lr: 3.0e-3}   # D1 [proposed]: Max's rank-4 LR
-  sparse-gold-sft-r0: {run_id: sparse-gold-sft-r0-1, rank: 0, read_lr: 3.0e-4}   # D1 [proposed]: RANK0.md
+  sparse-gold-sft-r1: {run_id: sparse-gold-sft-r1-1, rank: 1, read_lr: 3.0e-3}   # D1 [user 2026-11-23]: Max's rank-4 LR
+  sparse-gold-sft-r0: {run_id: sparse-gold-sft-r0-1, rank: 0, read_lr: 3.0e-4}   # D1 [user 2026-11-23]: RANK0.md
 
 model: {layers: 28, hidden: 1536, intermediate: 8960, parts: [gate, up], positions: all-unpadded}
                                          # [spec] Qwen2.5-1.5B-Instruct; gate+up reads [user 2026-11-22]
@@ -50,8 +50,8 @@ data:
   examples_per_mask: 4                   # [user 2026-11-23] D14: one mask draw per 4 examples (2 per step)
   gold_order_steps: 64                   # D7 [proposed]: steps 1-64 are gold's saved order exactly
   later_epochs: reshuffle-per-epoch      # D7 [proposed]: epoch e uses random.Random(42 + e - 1)
-  loss: gold-completion-loss-step-token-denominator   # D9 [proposed]: gold's contract
-  targets: gold-frozen-training-items    # D9 [proposed]: frozen labels, <|im_end|> supervised, no truncation
+  loss: gold-completion-loss-step-token-denominator   # D9 [user 2026-11-23]: gold's contract
+  targets: gold-frozen-training-items    # D9 [user 2026-11-23]: frozen labels, <|im_end|> supervised, no truncation
 
 training:
   steps: 1024                            # [user 2026-11-23] D5 (16 epochs)
@@ -66,16 +66,16 @@ optimizer:
   name: adamw
   implementation: foreach-off            # [gold] foreach=False
   reads: {betas: [0.9, 0.99], eps: 1.0e-8, weight_decay: 0.0, clip_norm: 1.0}
-                                         # D3 [proposed] Max's betas; D4 [proposed] clip reads only; lr per arm (D1)
+                                         # D3 [user 2026-11-23] Max's betas; D4 [user 2026-11-23] clip reads only; lr per arm (D1)
   masks: {lr: 0.1, betas: [0.9, 0.99], eps: 1.0e-8, weight_decay: 0.0, clip: none}
-                                         # D2 [proposed] Max's mask group; D4 [proposed] masks unclipped
+                                         # D2 [proposed] Max's mask group; D4 [user 2026-11-23] masks unclipped
 
 hard_concrete: {beta: 0.6666666666666666, gamma: -0.1, zeta: 1.1, log_alpha_init: 1.0,
                 read_init: 'a~N(0,1)/sqrt(d);b=0'}   # [Max] equations and init
 
-seeds: {data_order_base: 42, read_init_base: 42, mask_noise: 1042}   # D10 [proposed]
+seeds: {data_order_base: 42, read_init_base: 42, mask_noise: 1042}   # D10 [user 2026-11-23]
 
-runtime:                                 # D8 [proposed] FP32 IEEE; D15 [proposed] checkpointing
+runtime:                                 # D8 [user 2026-11-23] FP32 IEEE; D15 [proposed] checkpointing
   dtype: float32
   precision: ieee
   attention: eager
@@ -109,16 +109,16 @@ evaluation:
   batch_size: 16                         # [C] qualified for C greedy; re-qualified in ticket 15
 
 decisions:                               # one line per decision (decision-log.md); "[proposed]" blocks sealing
-  D1: '[proposed] read LR 3e-3 rank 1 (Max rank 4), 3e-4 rank 0 (RANK0.md)'
+  D1: '[user 2026-11-23] read LR 3e-3 rank 1 (Max rank 4), 3e-4 rank 0 (RANK0.md)'
   D2: '[proposed] mask group: AdamW lr 0.1, wd 0, shared LambdaLR, logα init 1.0'
-  D3: '[proposed] betas (0.9, 0.99) both groups, eps 1e-8'
-  D4: '[proposed] clip 1.0 on read factors only; masks unclipped'
+  D3: '[user 2026-11-23] betas (0.9, 0.99) both groups, eps 1e-8'
+  D4: '[user 2026-11-23] clip 1.0 on read factors only; masks unclipped'
   D5: '[user 2026-11-23] 1,024 steps, warmup 20 + cosine to 0, masks frozen after 960; 11 checkpoints'
   D6: '[user 2026-11-23] lambda 6e-4 both ranks, no sweep; a degenerate run is reported, not re-run'
   D7: "[proposed] steps 1-64 gold's saved order; epoch e >= 2 reshuffled with random.Random(42 + e - 1)"
-  D8: '[proposed] FP32, set_ieee_precision, eager attention, full determinism'
-  D9: "[proposed] gold's target and truncation contract"
-  D10: '[proposed] seeds: data order 42 (gold), read init 42 + layer (CPU generator), mask noise 1042'
+  D8: '[user 2026-11-23] FP32, set_ieee_precision, eager attention, full determinism'
+  D9: "[user 2026-11-23] gold's target and truncation contract"
+  D10: '[user 2026-11-23] seeds: data order 42 (gold), read init 42 + layer (CPU generator), mask noise 1042'
   D11: '[proposed] 128 GSM8K train questions, seeded exclusion sampler; blocked on ticket 01'
   D12: '[user 2026-11-23] cohort150 evaluation only, at 64 and final, exploratory'
   D13: '[user 2026-11-23] rank 1 and rank 0, everything else identical'

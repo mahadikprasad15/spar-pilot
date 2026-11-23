@@ -11,7 +11,7 @@ from pilot_eval import sparse_rewiring_plan as sp
 from pilot_eval.attribution_chain import LaunchRefused
 
 DRAFT = Path(__file__).resolve().parents[1] / '.scratch/sparse-rewiring-gsm8k/launch-record-draft.yaml'
-UNSIGNED = ['D1', 'D2', 'D3', 'D4', 'D7', 'D8', 'D9', 'D10', 'D11', 'D15']
+UNSIGNED = ['D2', 'D7', 'D11', 'D15']   # D1, D3, D4, D8-D10 signed 2026-11-23
 FILL = {'inputs.artifact_root': '/w/inputs', 'inputs.bundle': '/w/b.json', 'inputs.model_dir': '/w/model',
         'inputs.work_dir': '/w'}
 
