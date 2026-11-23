@@ -21,7 +21,7 @@ Companion files: `decision-log.md` (options and the recommended minimal pilot), 
 
 - Active work: `c-attribution-pilot` (`catt@7667739`, 206 commits ahead of `main`). Production run `c-production-1` **finished** 08:43–10:21 UTC today, one attempt, verified backups, Pod stopped (`.scratch/c-attribution-pilot/issues/12-production-run.md@catt`); report and catalog registration done (`13-report-catalog.md@catt`). Ticket 14 (held-out follow-up on GSM8K **test** minus every prior use) is prepared, not launched.
 - Nothing in this design writes to `c-attribution-pilot`, its records, its catalog entries or its artifacts. New files live only under `.scratch/sparse-rewiring-gsm8k/` on `claude/project-thread-4ft24f`.
-- Attribution code (`pilot_eval/c_attribution*.py`, `attribution_*.py`, `neuron_audit_*.py`, `catalog.py`) is **not on `main`**. Implementation must branch from, or merge, `c-attribution-pilot` (decision D17).
+- Attribution code (`pilot_eval/c_attribution*.py`, `attribution_*.py`, `neuron_audit_*.py`, `catalog.py`) is **not on `main`**. Implementation should start on `main` after `c-attribution-pilot` merges (decision D17).
 - Session-start test run on `main@b1a541b`: see the PR description for the counts.
 
 ## 2. Reconstructed executed contracts
@@ -174,7 +174,7 @@ Recommendation **[proposed]**: reimplement in `pilot_eval/` from the method desc
 | Steps/seeds | 64 steps, seed 42, checkpoints 0/8/16/32/64 | Keep 0/8/16/32/64; add later checkpoints (D5); separate seeds (D10) |
 | Existing LoRA | r1 α1, 7 projection types, PEFT init (A random, B zero), both factors trained | Not reused; rewiring arm has no LoRA attached. Differences listed in `decision-log.md` §Not equivalent |
 | Behaviour evaluation | §2.6 | Same protocol; the cohort is not held out (D12) |
-| Attribution | §2.7 | Compare with C `c-production-1` per-read scores (full universe, GRPO only); SFT arms only via production-1 (one layer) and the joint audit (descriptive) |
+| Attribution | §2.7 | Now: C `c-production-1` per-read scores (full universe) and production-1 adapter attribution (one layer), GRPO arms first; other arms later as manifest entries (D19) |
 | Prior exposure | `catalog/cohorts.yaml@catt` | Register every new use in the catalog when it happens |
 | Validation | **None exists** for this purpose | New GSM8K **train** validation set disjoint from the 512 and from `sequences-v2` (D11) |
 | Compute/artifacts | No measurement for this arm | Benchmark first (ticket 07); estimates in `decision-log.md` are arithmetic, not measurements |
@@ -201,7 +201,7 @@ Full option tables are in `decision-log.md`. Summary:
 | D14 | Microbatch and mask noise | Microbatch 1 (gold), with one cached mask draw shared by each group of 4 examples: 2 draws per step, as in Max (revised 2026-11-23) | [proposed] |
 | D15 | Gradient checkpointing | On (gold), RNG-preserving recompute tested | [proposed] |
 | D16 | Code reuse | Clean-room reimplementation; ask Max for a license if copying is wanted | [proposed] |
-| D17 | Code base | Branch implementation from `c-attribution-pilot` (or after it merges) | [proposed] |
+| D17 | Code base | Implement on `main` after the attribution branch merges; otherwise branch from `c-attribution-pilot` | [proposed] |
 | D18 | Hardware | One A100-80GB for both arms | [user 2026-11-23] |
 | D19 | Comparison family | Now: survivors vs C attribution and production-1 adapter attribution, GRPO arms first; code generic over arms via a source manifest so other arms' C attribution is added later | [user 2026-11-23] |
 | D21 | Rank comparison | Survivor Jaccard and per-layer overlap, overlap with C sets, paired accuracy, val CE, counts, dynamics side by side | [proposed] |

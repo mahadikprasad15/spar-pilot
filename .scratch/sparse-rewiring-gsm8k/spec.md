@@ -10,11 +10,11 @@ Every existing arm adapts dense rank-1 LoRA modules, and the neuron-level eviden
 
 ## Solution
 
-Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[proposed]**), identical except for rank and read LR **[user 2026-11-23]**: the untuned model with a `MaskedReRead`-style module on every MLP, trained on gold's frozen training items with gold's loss contract and runtime plus Max's L0 objective, then hardened to a binary survivor set. Saved factors, masks and full recovery state. Greedy evaluation, a rank-1 vs rank-0 comparison, and a CPU comparison of each with `c-production-1`.
+Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[proposed]**), identical except for rank and read LR **[user 2026-11-23]**: the untuned model with a `MaskedReRead`-style module on every MLP, trained on gold's frozen training items with gold's loss contract and runtime plus Max's L0 objective, then hardened to a binary survivor set. Saved factors, masks and full recovery state. 1,024 steps, λ 6e-4, one A100-80GB. Validation-set monitoring, greedy cohort150 evaluation at 64 and final, a standalone analysis of each rank, a rank-1 vs rank-0 comparison, and a CPU comparison of each with C attribution and production-1 adapter attribution for the GRPO arms (generic over arms).
 
 ## User stories
 
-1. As a researcher, I want the new arm trained on gold's exact frozen token IDs and labels so data and format cannot explain differences from gold SFT.
+1. As a researcher, I want both arms trained on gold's exact frozen token IDs and labels so data and format cannot explain differences from gold SFT.
 2. As a researcher, I want the first 64 steps to consume gold's exact batches so the early trajectory has the same exposures.
 3. As a researcher, I want only the new read factors and mask logits to train, and every base weight hash unchanged.
 4. As a researcher, I want the zero-coefficient model to equal the untuned model so checkpoint 0 means "no change".
@@ -125,7 +125,7 @@ artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); bot
 
 ### Registration
 
-- New arm, checkpoints, response sets and cohort prior uses in `catalog/` in the same change as the run records; `catalog verify` must pass on local entries.
+- Both arms, checkpoints, response sets and cohort prior uses in `catalog/` in the same change as the run records; `catalog verify` must pass on local entries.
 
 ## Testing decisions (CPU, tiny Qwen2, no download)
 
@@ -160,4 +160,10 @@ GPU qualification (ticket 07) adds: real longest example forward/backward and pe
 
 ## Open decisions blocking a launch record
 
-D1, D11 (needs `sequences-v2` IDs), D21, D22 definitions, D23 (only if causal checks are wanted). Decided 2026-11-23: D5 (1,024 fixed), D6 (6e-4, no sweep), D12 (evaluation only), D13 (both ranks), D18 (A100-80GB), D19 scope, D20 cadence. See `decision-log.md`.
+Decided by the researcher on 2026-11-23: D5 (1,024 steps, freeze at 960), D6 (λ 6e-4, no sweep), D12 (cohort150 evaluation only), D13 (rank 1 and rank 0), D18 (one A100-80GB), D19 scope (C and production-1, GRPO first, generic code), D20 cadence (cheap metrics every step, validation CE every 16), D22 scope.
+
+Proposed and used as the working plan, but not yet explicitly signed off: D1 (read LR 3e-3 rank 1, 3e-4 rank 0), D2–D4 (Max's mask optimizer, betas, read-only clipping), D7 (epoch order), D8–D10 (FP32 IEEE, gold target contract, seeds), D14 (microbatch 1 with one mask per 4 examples), D15 (checkpointing), D16 (clean-room in `pilot_eval/`), D17 (implementation on `main` after the attribution branch merges), D21 details, D22 definitions (settle step, effective rank).
+
+Blocked on data, not on a decision: D11's validation set needs the `sequences-v2` question IDs and gold's saved run records (ticket 01, needs the artifact root); the comparison needs the `c-production-1` and production-1 output files located (ticket 01).
+
+Not approved: D23 causal checks (ticket 14), about 2–3 h more GPU. See `decision-log.md`.

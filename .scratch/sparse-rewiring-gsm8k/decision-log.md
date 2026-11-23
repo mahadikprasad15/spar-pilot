@@ -151,7 +151,7 @@ Max's repository has no license; only the upstream Sauers trainer is Apache-2.0,
 
 ### D17. Code base for implementation
 
-The catalog, IEEE helper, C outputs reader and neuron-audit helpers are on `c-attribution-pilot` only. Recommend implementation branches from `c-attribution-pilot@7667739` (or from `main` after it merges); this design PR is docs-only against `main`.
+The catalog, IEEE helper, C outputs reader and neuron-audit helpers are on `c-attribution-pilot` only. **Recommend [proposed]: implement on `main` after `c-attribution-pilot` merges**, so the code builds on one reviewed base; if the merge is delayed, branch from `c-attribution-pilot@7667739` and rebase later. This design PR is docs-only against `main`.
 
 ### D18. Hardware — decided
 
