@@ -13,13 +13,13 @@
 - 2026-11-23 (researcher): D13 decided — run both rank 1 and rank 0, everything else identical. Proposed rank-0 LR 3e-4; comparison D21.
 - 2026-11-23: D14 revised (proposed, not signed off): microbatch 1 with one mask draw shared per 4 examples, matching Max's 2 draws per step.
 - 2026-11-23 (researcher): D5 512-step cap (1,024 considered, dropped); D18 one A100-80GB; D19 compare with C and production-1 attribution, GRPO arms first, code generic over arms; D20 cheap metrics every step; standalone analysis for both ranks (D22, ticket 13).
-- 2026-11-23 (researcher, later): D5 replaced by adaptive stop (1,024 max, checks every 64 from 256, thresholds proposed); D6 λ 6e-4, no sweep; D12 cohort150 evaluation only; D20 val CE every 16 steps.
-- 2026-11-23 (proposed): stop thresholds Jaccard ≥ 0.99, expected-active < 2%, two consecutive checks; D23 causal checks (ticket 14) need OK.
+- 2026-11-23 (researcher, later): D5 fixed 1,024 steps, freeze at 960, for both ranks (adaptive stop considered and dropped; settle metrics logged only); D6 λ 6e-4, no sweep; D12 cohort150 evaluation only; D20 val CE every 16 steps.
+- 2026-11-23 (proposed): D23 causal checks (ticket 14) need OK.
 
 ## Fog
 - Whether gold's saved order, resolved trainer arguments and checkpoint hashes match the code reconstruction.
 - `sequences-v2` IDs (needed to exclude them from validation).
 - Mask dynamics at rank 1 on GSM8K: survivor count, and whether λ 6e-4 is degenerate (reported, not re-run).
-- When each rank settles, and whether it settles before 1,024.
+- When each rank settles (diagnostic).
 - Actual GPU time and memory.
 - Whether Max will license the rewiring code.

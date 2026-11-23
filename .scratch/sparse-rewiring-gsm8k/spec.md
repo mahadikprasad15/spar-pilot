@@ -44,8 +44,8 @@ Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[pr
 ### Training
 
 - Explicit loop adapted from `sampling_sft_training_backend.train` (not TRL), reusing `sft_backend.completion_loss`, `CompletionCollator` and `frozen_weight_hash`. Objective per step: Σ over microbatches of `completion_loss(…, denominator = step's supervised tokens)` + `λ · expected_active` (once per step).
-- Optimizer: one AdamW, `foreach=False`, two groups. Values **BLOCKED(D1, D2, D3)**; proposed reads lr 3e-3 (rank 1) / 3e-4 (rank 0), masks lr 0.1, betas (0.9, 0.99), eps 1e-8, wd 0. Clip 1.0 on read factors only (D4). `LambdaLR` shared by both groups; schedule **[user 2026-11-23, D5]** 20 warmup + cosine to 0 at a 1,024-step maximum, with the adaptive stop below.
-- Adaptive stop **[user 2026-11-23; thresholds proposed]**: the LR schedule is 20-step warmup + cosine to 0 at a **1,024-step maximum**. From step 256, every 64 steps (256, 320, …, 896), compare the hard survivor set (deterministic `z_det > 0`) and the expected-active count with their values 64 steps earlier. The check holds if (1) the Jaccard overlap of the two hard sets is ≥ 0.99 and (2) the relative change of expected-active is < 2%. **Settled** = the check holds at two consecutive checks. At the settling check t, freeze the masks and train 64 more steps with fixed masks, then stop at t + 64 (earliest: settled at 320, stop at 384). If never settled, freeze at 960 and stop at 1,024. Validation CE is not part of the rule, and neither is cohort150; the rule reads only the run's own gates. The stop step, the LR at the stop (not decayed to 0 at an early stop) and every check are recorded in `status.json` and `logs/stop.jsonl`.
+- Optimizer: one AdamW, `foreach=False`, two groups. Values **BLOCKED(D1, D2, D3)**; proposed reads lr 3e-3 (rank 1) / 3e-4 (rank 0), masks lr 0.1, betas (0.9, 0.99), eps 1e-8, wd 0. Clip 1.0 on read factors only (D4). `LambdaLR` shared by both groups; schedule **[user 2026-11-23, D5]** 1,024 steps for both ranks: 20 warmup + cosine to 0 at 1,024, masks frozen at 960, final 64 steps with fixed masks.
+- Settle diagnostics **[D5, logged only]**: every 64 steps from 256, Jaccard of the hard survivor set (`z_det > 0`) with the set 64 steps earlier, and relative change of expected-active over the window, in `logs/settle.jsonl`. Nothing stops or changes on them.
 - λ **[user 2026-11-23, D6]** 6e-4 for both ranks, no sweep. A degenerate run (about 0 or more than 1,000 survivors) is reported, not re-run.
 - Runtime (D8): FP32, `set_ieee_precision()`, eager attention, `use_cache=False`, gradient checkpointing (D15), full determinism, pinned packages from `sft_backend.PINS`.
 - Logged every step **[user 2026-11-23, D20]** (`logs/steps.jsonl`): CE, L0 term, total, LR per group, read-factor grad norm before clipping, mask grad norm, examples seen, and the gate and read-change summaries listed under §Training dynamics, including per-layer nonzero counts and survivor-subset norms.
@@ -60,16 +60,16 @@ One figure with step on a shared x axis, built on CPU from the saved logs (ticke
 | 1. Gates | expected-active `Σ P(z>0)`, nonzero deterministic count (`z_det > 0`), and binary survivors after the freeze, on a log y axis; a per-layer heatmap (layer × step) of nonzero-`z_det` counts | every step (totals and per-layer counts) |
 | 2. Read-change size | the gauge-invariant per-neuron row change `‖Δw_i‖ = z_i ‖b_i‖ ‖a‖` (rank 1; `‖b_i A‖` for rank k; `‖w_i‖` for rank 0), summed and as a median, for gate and up separately; once over all neurons and once over the currently nonzero (survivor) set | every step |
 | 3. Performance | validation CE (deterministic masks, dense); greedy flexible-v3 accuracy on validation at the checkpoints; cohort150 greedy only at 64 and final (D12); reference lines for untuned (step 0) and gold-sft step 64 evaluated on the same validation set | CE every 16 steps; accuracy at checkpoints |
-| 4. Events | vertical line at the freeze step; markers at each stop-rule check, with pass/fail; mask churn between consecutive checkpoints as the Jaccard overlap of their nonzero sets, plus counts that switched on and off | checkpoints |
+| 4. Events | vertical line at the freeze step (960); settle diagnostics at each 64-step check; mask churn between consecutive checkpoints as the Jaccard overlap of their nonzero sets, plus counts that switched on and off | checkpoints |
 
 - Raw `‖a‖` or `‖b‖` alone is not reported as a size: rescaling `a` by k and `b` by 1/k leaves the change the same.
 - The gold reference lines need gold-sft checkpoints 0 and 64 evaluated on the new validation set (CE plus one greedy pass). That is a new, cheap use of existing adapters and is registered in the catalog.
 - Every panel shows the real evaluation points as markers; nothing is interpolated between checkpoints.
-- Checkpoints **[user 2026-11-23, D5]** 0/8/16/32/64, then every 64 steps up to and including the final step (so every stop check, the freeze step and the final step), each with unmerged factors, all `logα`, optimizer, scheduler, both RNG streams, data cursor and seal; the freeze step and the final step bracket the hardening. Greedy validation at 0/8/16/32/64/128/256/512 (if reached), freeze and final. Resume only from a complete sealed checkpoint with matching plan and runtime hashes.
+- Checkpoints **[user 2026-11-23, D5]** 0/8/16/32/64/128/256/512/768/960/1024, each with unmerged factors, all `logα`, optimizer, scheduler, both RNG streams, data cursor and seal; 960 and 1,024 bracket the hardening. Greedy validation at every checkpoint. Resume only from a complete sealed checkpoint with matching plan and runtime hashes.
 
 ### Validation and cohort150 roles
 
-λ is fixed and the stop rule reads only the gates, so nothing in training is chosen on any evaluation set. Validation (D11) gives the dense curve, overfitting watch and revert rankings. Cohort150 **[user 2026-11-23, D12]** is evaluation only, at 64 and final, labelled exploratory. Because C's scores and frozen sets were computed and selected on cohort150, a result that combines C overlap with cohort150 accuracy is labelled circular.
+λ and the step count are fixed, so nothing in training is chosen on any evaluation set. Validation (D11) gives the dense curve, overfitting watch and revert rankings. Cohort150 **[user 2026-11-23, D12]** is evaluation only, at 64 and final, labelled exploratory. Because C's scores and frozen sets were computed and selected on cohort150, a result that combines C overlap with cohort150 accuracy is labelled circular.
 
 ### Standalone analysis (D22, ticket 13)
 
@@ -79,13 +79,13 @@ Requested by the researcher on 2026-11-23, for each rank on its own. CPU from sa
 |---|---|---|---|
 | Selection | Survivor counts | expected-active, nonzero `z_det` and binary, total and per layer (one gate per neuron covers both its gate and up reads) | `masks/<k>.json` |
 | | Per-layer distribution | counts per layer, with a uniform-by-layer reference | final binary set |
-| | Gate dynamics and settle step | `logα` histograms at checkpoints; settle step = the D5 stop-rule step, plus the first 16-step snapshot after which Jaccard with the final set stays ≥ 0.99 **[proposed]** | `masks/trace/` |
+| | Gate dynamics and settle step | `logα` histograms at checkpoints; settle step = from the D5 diagnostics, the first check after which both reference values hold to 960, plus the first 16-step snapshot after which Jaccard with the final set stays ≥ 0.99 **[proposed]** | `masks/trace/` |
 | | Stability | Jaccard overlap of each checkpoint's nonzero set with the final binary set; when each survivor first turned on and stayed on | checkpoints |
 | What survivors learned | Change size | gauge-invariant `‖Δw_i‖` for gate and up, distribution over survivors, ratio gate/up per layer | final factors |
 | | Rank 1: the shared direction | `a` per layer and part; cosine of `a` with gold LoRA's gate and up `lora_A` rows in the same layer (sign-free, absolute cosine), against a random-direction reference | rewire state, gold step-64 adapter |
 | | Rank 0: effective rank | per layer and part, participation ratio of the singular values of the stacked survivor rows, and the count reaching 90% of `Σσ²` **[proposed]**; compares with rank 1's forced rank 1 | final factors |
 | | Activation shift | on the 128 validation items (prompt + gold answer, teacher-forced), mean and mean-absolute change of each survivor's `SiLU(gate)·up` vs base; 1,000 random non-survivors per layer as reference | one forward pass per arm |
-| Behaviour | Validation | CE every 16 steps; greedy accuracy at up to 10 checkpoints | logs, eval |
+| Behaviour | Validation | CE every 16 steps; greedy accuracy at 11 checkpoints | logs, eval |
 | | Cohort150 | greedy flexible-v3 at 64 and final; invalid (no parseable answer), capped (hit 1,024 tokens), response length | eval |
 | | Per-question flips | on cohort150, the 2×2 tables vs gold-sft and vs untuned (fixed, broken, both, neither), with paired bootstrap on question IDs | stored responses |
 
@@ -117,7 +117,7 @@ artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); bot
 
 ### Comparison
 
-- D21 (rank 1 vs rank 0, CPU): survivor counts; Jaccard overlap of the final binary sets and overlap per layer, with a layer-matched null; neurons unique to each arm; each arm's and the intersection's overlap with the C sets; validation CE and accuracy per checkpoint; cohort150 greedy at 64 and final, paired by question; both stop steps; CE change across hardening; the dynamics figure side by side on shared axes.
+- D21 (rank 1 vs rank 0, CPU): survivor counts; Jaccard overlap of the final binary sets and overlap per layer, with a layer-matched null; neurons unique to each arm; each arm's and the intersection's overlap with the C sets; validation CE and accuracy per checkpoint; cohort150 greedy at 64 and final, paired by question; CE change across hardening; the dynamics figure side by side on shared axes.
 
 - D19 **[user 2026-11-23]**: GRPO arms first, generic over arms. The comparison reads an attribution source manifest: one entry per (source, arm) with the score file and array, its measured universe as a [28, 8960] boolean mask, the sign convention, and named frozen selections. Overlaps, nulls and sign strata are computed inside each entry's universe only; adding gold-sft or Sampling SFT C attribution later is a manifest entry, not code.
 - Entries now: `c-production-1` for online-grpo and offline-grpo (`aggregate/<arm>/neurons.npz`, `freeze/<arm>.json`, full universe), and production-1 adapter attribution for the same two arms (one `down_proj` layer each). All read in place, never modified. Joins on zero-based `(layer, neuron)`; the loader asserts [28, 8960] and the index convention from the C freeze.
@@ -136,12 +136,12 @@ artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); bot
 5. Hard-concrete equations against hand-computed values; expected-active vs Monte-Carlo frequency within a declared sampling tolerance; freeze maps `logα > −ln 11` to 1.
 6. Three counts and the export agree with an independent recomputation from saved `logα`.
 7. Step loss equals an independent per-token CE sum over the step's supervised tokens with variable lengths (mutation: per-example mean fails).
-8. First 64 steps consume gold's order; later orders match the frozen 1,024-step plan, and an early stop consumes exactly its prefix.
+8. First 64 steps consume gold's order; later orders match the frozen 1,024-step plan.
 9. Clipping touches reads only; mask LR follows the shared schedule.
 10. Checkpointed vs non-checkpointed backward identical for a fixed noise seed.
 10a. Shared-mask equivalence (D14): the summed read and `logα` gradients of 4 single-example passes with one cached `u` equal one 4-row forward with that `u`, within FP32 round-off; a mutation that re-draws `u` per pass fails; the logged group boundaries match the step order.
 10b. Rank 0 and rank 1 share one code path apart from the parameterisation: a rank-0 fixture with its rows set to `b_i a` reproduces a rank-1 fixture's forward and gradients with respect to the mask exactly.
-11. Uninterrupted vs resumed (at 8, across a stop check, and at a fixed-mask step) give identical factors, masks, stop decisions and logs.
+11. Uninterrupted vs resumed (at 8, at 960 and at a fixed-mask step) give identical factors, masks and logs.
 12. Validation sampler refuses an unreadable exclusion source and never returns an excluded ID.
 13. Comparison: layer-matched null preserves per-layer sizes; overlap on a planted fixture; missing attribution values excluded, not zero.
 14. Dynamics: the logged expected-active, nonzero and survivor counts equal a recomputation from the saved `logα` snapshots; the read-change norm is unchanged under `(a, b) → (k a, b / k)`; churn on a planted pair of mask sets; the figure builder refuses a log with missing steps instead of interpolating.
@@ -150,7 +150,7 @@ artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); bot
 16. Standalone analysis: settle step on a planted trace; participation ratio on planted rank-1 and rank-3 rows; `a`-cosine is sign-free and gauge-invariant; flip tables on planted responses.
 17. Causal checks (if D23 is approved): revert-all equals base logits bit-for-bit on the tiny model; the transplant control keeps per-layer counts and moves exactly `|S|` rows.
 
-18. Stop rule: on planted gate traces, it holds only when both conditions hold at two consecutive checks; a single passing check does not stop; Jaccard 0.989 or a 2.1% change fails; settling at check t freezes at t and stops at t + 64; never settling freezes at 960 and stops at 1,024; no check runs before 256; the rule never reads validation or cohort150 values (a fixture that changes only validation CE gives the same stop step); the LR at the stop is recorded.
+18. Settle diagnostics: Jaccard and expected-active change equal a recomputation from planted gate traces; the first check is at 256 and then every 64; the training trajectory is bit-identical with the diagnostics on or off (they never change the run).
 
 GPU qualification (ticket 07) adds: real longest example forward/backward and peak memory, zero-update logits identity on the real model, a disposable few-step run (not the scientific run), throughput, save/restore.
 
@@ -160,4 +160,4 @@ GPU qualification (ticket 07) adds: real longest example forward/backward and pe
 
 ## Open decisions blocking a launch record
 
-D1, D5 stop thresholds (proposed values), D11 (needs `sequences-v2` IDs), D21, D22 definitions, D23 (only if causal checks are wanted). Decided 2026-11-23: D5 adaptive stop, D6 (6e-4, no sweep), D12 (evaluation only), D13 (both ranks), D18 (A100-80GB), D19 scope, D20 cadence. See `decision-log.md`.
+D1, D11 (needs `sequences-v2` IDs), D21, D22 definitions, D23 (only if causal checks are wanted). Decided 2026-11-23: D5 (1,024 fixed), D6 (6e-4, no sweep), D12 (evaluation only), D13 (both ranks), D18 (A100-80GB), D19 scope, D20 cadence. See `decision-log.md`.
