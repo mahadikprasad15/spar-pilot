@@ -38,7 +38,7 @@ Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[pr
 
 - `pilot_eval/rewire_module.py` **[proposed name]**: wraps the pinned Qwen2 MLP and reproduces its forward exactly (`down(act(gate(x)) * up(x))`) plus `Δgate = z ⊙ ((x·a_g) b_g)` and `Δup = z ⊙ ((x·a_u) b_u)` for rank 1; `(x Aᵀ) Bᵀ` for rank k; `x Wᵀ` for rank 0. Read changes at every unpadded position (prompt included). Parts gate+up **[user]**.
 - Init: `a ~ N(0,1)/√d` from a CPU generator seeded per layer (D10); `b = 0`; `logα = 1.0`.
-- Hard concrete with β 2/3, γ −0.1, ζ 1.1; training noise: one uniform `u` per layer per group of 4 consecutive examples, drawn from a dedicated generator, cached, and reused by each single-example pass and by checkpoint recompute; `z` is recomputed from the cached `u` and the current `logα` (D14, [proposed]); deterministic gate `clip(σ(logα)(ζ−γ)+γ, 0, 1)`; expected-active `Σ σ(logα − β ln(−γ/ζ))`; freeze rule `z_det > 0` → binary. Ranks: 1 and 0 are both run **[user 2026-11-23]**; the module also supports k > 1. Rank 0 adds 770.7 M FP32 read parameters, so the memory test in ticket 07 covers it explicitly.
+- Hard concrete with β 2/3, γ −0.1, ζ 1.1; training noise: one uniform `u` per layer per group of 4 consecutive examples, drawn from a dedicated generator, cached, and reused by each single-example pass and by checkpoint recompute; `z` is recomputed from the cached `u` and the current `logα` (D14, [proposed]); deterministic gate `clip(σ(logα)(ζ−γ)+γ, 0, 1)`; expected-active `Σ σ(logα − β ln(−γ/ζ))`; freeze rule `z_det > 0` → binary. Ranks: 1 and 0 are both run **[user 2026-11-23]**; the module also supports k > 1. Rank 0 adds 770.7 M FP32 read parameters, so the memory test in ticket 15 covers it explicitly.
 - An `off` switch returning the exact base MLP, and a per-neuron "remove new reads" intervention for later causal checks.
 
 ### Training
@@ -53,7 +53,7 @@ Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[pr
 
 ### Training dynamics (figure requested by the researcher, 2026-11-23)
 
-One figure with step on a shared x axis, built on CPU from the saved logs (ticket 12). Its purpose is descriptive: it shows how gate shutting, read-change size and performance move together within one run. Co-movement is not evidence that one causes the other.
+One figure with step on a shared x axis, built on CPU from the saved logs (ticket 13). Its purpose is descriptive: it shows how gate shutting, read-change size and performance move together within one run. Co-movement is not evidence that one causes the other.
 
 | Panel | Quantities | Source and cadence |
 |---|---|---|
@@ -65,15 +65,15 @@ One figure with step on a shared x axis, built on CPU from the saved logs (ticke
 - Raw `‖a‖` or `‖b‖` alone is not reported as a size: rescaling `a` by k and `b` by 1/k leaves the change the same.
 - The gold reference lines need gold-sft checkpoints 0 and 64 evaluated on the new validation set (CE plus one greedy pass). That is a new, cheap use of existing adapters and is registered in the catalog.
 - Every panel shows the real evaluation points as markers; nothing is interpolated between checkpoints.
-- Checkpoints **[user 2026-11-23, D5]** 0/8/16/32/64/128/256/512/768/960/1024, each with unmerged factors, all `logα`, optimizer, scheduler, both RNG streams, data cursor and seal; 960 and 1,024 bracket the hardening. Greedy validation at every checkpoint. Resume only from a complete sealed checkpoint with matching plan and runtime hashes.
+- Checkpoints **[user 2026-11-23, D5]** 0/8/16/32/64/128/256/512/768/960/1024, each with unmerged factors, all `logα`, scheduler, data cursor and seal; optimizer and both RNG streams at the latest two only (D24 [proposed], rank 0 is about 9 GB per full checkpoint); 960 and 1,024 bracket the hardening. Greedy validation at every checkpoint. Resume only from a complete sealed checkpoint with matching plan and runtime hashes.
 
 ### Validation and cohort150 roles
 
 λ and the step count are fixed, so nothing in training is chosen on any evaluation set. Validation (D11) gives the dense curve, overfitting watch and revert rankings. Cohort150 **[user 2026-11-23, D12]** is evaluation only, at 64 and final, labelled exploratory. Because C's scores and frozen sets were computed and selected on cohort150, a result that combines C overlap with cohort150 accuracy is labelled circular.
 
-### Standalone analysis (D22, ticket 13)
+### Standalone analysis (D22, ticket 12)
 
-Requested by the researcher on 2026-11-23, for each rank on its own. CPU from saved files, except the activation shift (one forward pass on validation per arm, inside ticket 09).
+Requested by the researcher on 2026-11-23, for each rank on its own. CPU from saved files, except the activation shift (one forward pass on validation per arm, inside ticket 17).
 
 | Group | Measure | Definition | Source |
 |---|---|---|---|
@@ -89,7 +89,7 @@ Requested by the researcher on 2026-11-23, for each rank on its own. CPU from sa
 | | Cohort150 | greedy flexible-v3 at 64 and final; invalid (no parseable answer), capped (hit 1,024 tokens), response length | eval |
 | | Per-question flips | on cohort150, the 2×2 tables vs gold-sft and vs untuned (fixed, broken, both, neither), with paired bootstrap on question IDs | stored responses |
 
-### Causal checks (D23, ticket 14) — proposed, not approved
+### Causal checks (D23, ticket 19) — proposed, not approved
 
 On the final binary model, validation inputs only, except the revert-all sanity check, which also runs cohort150. Revert all (expect untuned within round-off); single reverts (validation CE only) for an importance ranking, layer blocks only if there are more than 512 survivors; block reverts per layer and top-k by importance (k = 1, 4, 16, 64), greedy for 8 blocks; same-layer random control that moves each survivor's change to a random non-survivor in the same layer (20 draws). Reverting random non-survivors alone is a no-op, hence the transplant. About 1–1.5 h per arm, arithmetic estimate. Needs the researcher's OK and its own launch record.
 
@@ -127,6 +127,65 @@ artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); bot
 
 - Both arms, checkpoints, response sets and cohort prior uses in `catalog/` in the same change as the run records; `catalog verify` must pass on local entries.
 
+### Code reuse (audit, 2026-11-23)
+
+Every component names what it reuses. Paths are on `c-attribution-pilot7667739` (`catt`), which implementation builds on (D17). "New" is justified; nothing below is planned as new where an existing function does the job.
+
+| Component | Reuses | New, and why |
+|---|---|---|
+| Gold data and loss | `sft.load_sft` (plan + hash checks), `sft_backend.CompletionCollator`, `sft_backend.completion_loss`, `sft_backend.PINS` | none |
+| Base identity | `sft_backend.frozen_weight_hash`; `c_attribution_bundle.check_base_model` / `pinned_identities` (HF per-file pins) | none |
+| Runtime precision | `neuron_audit_collector.set_ieee_precision` and `precision_backends` (readback) | none |
+| Training loop | the explicit loop in `sampling_sft_training_backend.train` (FP32 check, context-limit refusal, `use_reentrant=False` checkpointing, base-hash check, `foreach=False` AdamW, resume binding); `sampling_sft_training.checkpoint` / `seal` / `load` / `event`; `sampling_sft_training_backend.rng_state` / `restore_rng`; `workflow._hash` for plan and runtime hashes | Two parameter groups, the warmup + cosine `LambdaLR`, the L0 term and the freeze at 960. That loop has one group and a constant LR, and no mask parameters. Adapted, not rewritten: every check it enforces is kept (test 19) |
+| Rewire module | none exists (no masked read-change module in the repo) | `rewire_module.py`: the method itself. Clean-room (D16) |
+| Hard-concrete gate, shared-mask cache | none | `hard_concrete.py`: Max's equations plus the D14 per-group `u` cache |
+| Plan and launch record | `c_attribution_chain.typecheck` / `validate` / `seal_launch_record` / `load_launch_record` (typed YAML, the lesson that PyYAML reads `19.5e12` as text) | the plan schema's new fields only |
+| Validation sampler | `catalog.load` / `find` for recorded train uses; the `sequences-v2` manifest reader in `neuron_audit_sequences` | the seeded exclusion sampler (about 40 lines); no train-split validation set exists |
+| Validation CE | `completion_loss` on items built by the gold builder | none |
+| Greedy evaluation | `c_attribution_generation.greedy` and `score` (flexible-v3 via `scoring.score_gsm8k_flexible_v3`), batching from `c_attribution_generation.batches`; protocol constants from `protocol` | A loader for rewire checkpoints. `sft_evaluation.evaluate_sft` is **not** reusable as is: it accepts only checkpoints 0/8/16/32/64 and loads PEFT adapters |
+| Paired comparisons | `c_attribution_generation.mcnemar_exact`, `summarize_arm`; `c_attribution_stability.resample_counts` (paired bootstrap on question IDs) | none |
+| Overlap and null | `neuron_audit_math.matched_null` (bins = layers), `exact_overlap_distribution`, `derive_seed`, `reference_interval`; `c_attribution_stability.top` / `overlap` / `spearman`; `c_attribution_selection.top_positive`, `read_freeze` | the attribution source manifest (D19): a small loader that turns each source into (universe, scores, frozen sets) |
+| Gauge-invariant norms | `neuron_audit_math.gauge_transform` (test fixture for invariance) | the per-neuron norm itself (one line per rank) |
+| Transplant control (D23) | `c_attribution_selection.match_group` (seeded group-wise matching, after the sequential-control lesson) | the transplant intervention |
+| Sealing, persistence, export | `attribution_units.seal_run` / `verify_run` / `_encode` (NumPy-safe), `export`, `restore_summary` | none |
+| Pod run, preflight, teardown | `c_attribution_chain.Chain` (precheck, `check_pod`, stop-record order, backup coverage before stop), `neuron_audit_preflight.check_interpreter` / `storage_probe`, `neuron_audit_pod.disk_problems` / `stop_command`, the C-attribution runbook | only the stage list for this run. Writing a new runner would repeat about a dozen fixed Pod failures |
+| Catalog | `catalog.verify`; `c_attribution_report.register` / `_append_prior_uses` (prior uses from sealed units, comments kept) | the new arm and response entries |
+| Figures | `c_attribution_report._style` and `figures` conventions | the four dynamics panels and the analysis figures |
+| Standalone analyses | `numpy.linalg.svd`; `neuron_audit_collector.load_saved_factors` to read gold's LoRA `A` for the cosine | settle step, participation ratio and activation-shift hooks (no existing equivalent) |
+
+### Lessons applied (`docs/agents/experiment-lessons.mdcatt`, ADRs)
+
+Read on 2026-11-23: every entry in `docs/agents/experiment-lessons.md` (which exists only on `catt`, not on `main`), ADRs 0001–0023, `docs/experiments/status.md`, and the Pilot 2 SFT and C-attribution review notes. **Changed the design** marks the lessons that altered a decision; the rest are handled by reusing code that already carries the fix.
+
+| Lesson (date) | How it is handled here | Effect |
+|---|---|---|
+| Runpod default container disk too small (2026-11-12) | Rank 0 recovery state is about 9 GB per checkpoint (770 M FP32 factors + 2 Adam moments). Eleven full checkpoints would be about 100 GB per arm. Storage policy D24: factors and `logα` at every checkpoint, full optimizer and RNG state only at the latest two | **Changed the design** (D24) |
+| ADR 0018: "Training still requires L4 to match gold SFT" | The researcher chose A100-80GB (D18). This departs from an accepted ADR, so it needs its own ADR before launch (ticket 20) | **Changed the design** (D25) |
+| Deleting a helper's parameter does not release the model (2026-11-19) | Gold-sft reference evaluations run in a separate child process before rank 0 training, so no reference model can stay resident next to rank 0's extra 12 GB | **Changed the design** (run order) |
+| FP32 finite differences have a resolution floor (2026-11-13, 2026-11-16) | Single-survivor reverts (D23) change validation CE by small amounts. Accumulate CE in FP64, report the FP32 floor next to every Δ, and label effects below it unresolved | **Changed the design** (D23) |
+| Keep confirmation outcomes out of rehearsals (2026-11-13) | The disposable qualification run evaluates on validation only, never cohort150 | **Changed the design** (ticket 15) |
+| A rewritten backend must carry over every setting (2026-11-20) | The loop is adapted from `sampling_sft_training_backend.train`; test 19 lists each check that loop makes and asserts the new one makes it too | reuse + test |
+| Test the real backend boundary on CPU; fakes hid wrong arguments (2026-11-16) | Test 20: a real-path CPU chain on a saved tiny Qwen2, stubbing only CUDA counters, the volume, the Hub and the stop | reuse pattern |
+| Type-check YAML values (2026-11-16) | `c_attribution_chain.typecheck` on the plan and launch record | reuse |
+| Bind resumable stages and measurements to inputs, runtime and code commit (2026-11-11, 2026-11-19) | Plan, runtime and code-commit hashes in every checkpoint seal; resume refuses a mismatch and reruns preflight | reuse |
+| Exercise recovery on an empty disk; reconstruct expected work (2026-11-11, 2026-11-14) | Test 11 resumes in a fresh directory from the volume copy; expected checkpoints are listed in the plan and compared on resume | test |
+| Durability while running; stop only with full backup; closing records before stop; stop the right Pod (2026-11-20, 2026-11-22) | Reuse `c_attribution_chain` teardown, which carries these fixes; mirror at every checkpoint | reuse |
+| HF cache off the volume; hash every download (2026-11-16) | Runbook step from the C-attribution Pod runbook | reuse |
+| Version checks against `+cu128` builds (2026-11-11) | `neuron_audit_preflight.check_interpreter` | reuse |
+| Do not let fixtures supply what the real model lacks (`pad_token_id`, 2026-11-11) | Pad and EOS IDs taken from the pinned tokenizer files and recorded; fixtures leave `pad_token_id` unset | test |
+| Test device boundaries on the real GPU path (2026-11-14, 2026-11-19) | Test 23: the cached `u` and `logα` live on the model device; a meta-device fixture fails if they do not; ticket 15 runs the real path | test |
+| Treat malformed lineage as unresolved (2026-11-11) | Test 12 also feeds a malformed exclusion JSONL line and expects a refusal, not "no overlap" | test |
+| Check whole-group feasibility for matched controls (2026-11-18) | Transplant control uses `match_group` | reuse |
+| Separate a verified response file from a verified sampling policy (2026-11-18) | Flip tables vs GRPO arms use their greedy responses and keep the catalog's policy evidence labels | report label |
+| Zero-signal fixtures must not become numerical failures (2026-11-19) | At checkpoint 0 every read change is zero: norms, ratios and Jaccard of empty sets are defined and tested, not divided by zero | test |
+| A sealed manifest with no expected hashes verifies nothing (2026-11-19) | The input bundle (gold plan, order, C outputs, validation IDs) requires the full hash set | reuse (`c_attribution_bundle`) |
+| Round-trip results through the actual serializer (2026-11-20) | `attribution_units._encode`; tests read back sealed reports | reuse |
+| Record exposure from the artifact that recorded the use (2026-11-22) | Cohort150 and validation prior uses come from sealed evaluation units | reuse (`register`) |
+| Report magnitudes beside signed averages; keep controls visible (2026-11-11) | Activation shift reports mean and mean-absolute; every overlap shows its layer-matched null | spec |
+| ADR 0021 IEEE runtime; ADR 0001 / 0005 frozen protocol and flexible-v3; ADR 0004 OOM stops without fallback | IEEE precision set and read back; protocol unchanged; an OOM in qualification stops, with no automatic batch or precision change | reuse |
+
+Not relevant here: PEFT `disable_adapter` unfreezing (no PEFT in training; gold's LoRA is only read on CPU), `model.double()` not being FP64 (no FP64 model reference is planned), watchdog deadlines (the C runner's no-cap mode is reused as is), and the Colab-specific stderr and preinstalled-package lessons (the run is on a Pod).
+
 ## Testing decisions (CPU, tiny Qwen2, no download)
 
 1. Off-switch and zero-coefficient forward equal the base MLP bit-for-bit in FP32; logits equal across a whole tiny model.
@@ -152,18 +211,24 @@ artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); bot
 
 18. Settle diagnostics: Jaccard and expected-active change equal a recomputation from planted gate traces; the first check is at 256 and then every 64; the training trajectory is bit-identical with the diagnostics on or off (they never change the run).
 
-GPU qualification (ticket 07) adds: real longest example forward/backward and peak memory, zero-update logits identity on the real model, a disposable few-step run (not the scientific run), throughput, save/restore.
+19. Carried-over checks: the new loop refuses non-FP32 weights, a context overflow, a wrong base hash, and enables `use_reentrant=False` checkpointing and `foreach=False`, exactly as `sampling_sft_training_backend.train` does (one red case per check).
+20. Real-path CPU chain: plan → preflight → train (3 steps, rank 1 and rank 0) → checkpoint → evaluate → seal → export → restore, on a saved tiny Qwen2 and the real launch-record YAML; only CUDA counters, volume, Hub and stop are stubbed.
+21. Storage policy (D24): every checkpoint keeps factors and `logα`; only the latest two keep optimizer and RNG; resume from an older checkpoint is refused with a clear message; the planned disk total is computed from shapes and checked by preflight.
+22. Pad and EOS IDs come from the tokenizer files; a fixture with `pad_token_id` in the model config is rejected as unrepresentative.
+23. Device placement: cached `u`, `logα` and the rewire factors are on the model device; a meta-device fixture fails on any CPU tensor in the forward.
+
+GPU qualification (ticket 15) adds: real longest example forward/backward and peak memory, zero-update logits identity on the real model, a disposable few-step run (not the scientific run), throughput, save/restore.
 
 ## Out of scope
 
-λ sweeps, rank 4 runs, second seeds, per-example mask ablation, objective comparisons, sampled evaluation, causal checks beyond D23, any change to existing arms, the C-attribution records or ticket 14's held-out pool.
+λ sweeps, rank 4 runs, second seeds, per-example mask ablation, objective comparisons, sampled evaluation, causal checks beyond D23, any change to existing arms, the C-attribution records or C-attribution ticket 14's held-out pool.
 
 ## Open decisions blocking a launch record
 
 Decided by the researcher on 2026-11-23: D5 (1,024 steps, freeze at 960), D6 (λ 6e-4, no sweep), D12 (cohort150 evaluation only), D13 (rank 1 and rank 0), D18 (one A100-80GB), D19 scope (C and production-1, GRPO first, generic code), D20 cadence (cheap metrics every step, validation CE every 16), D22 scope.
 
-Proposed and used as the working plan, but not yet explicitly signed off: D1 (read LR 3e-3 rank 1, 3e-4 rank 0), D2–D4 (Max's mask optimizer, betas, read-only clipping), D7 (epoch order), D8–D10 (FP32 IEEE, gold target contract, seeds), D14 (microbatch 1 with one mask per 4 examples), D15 (checkpointing), D16 (clean-room in `pilot_eval/`), D17 (implementation on `main` after the attribution branch merges), D21 details, D22 definitions (settle step, effective rank).
+Proposed and used as the working plan, but not yet explicitly signed off: D1 (read LR 3e-3 rank 1, 3e-4 rank 0), D2–D4 (Max's mask optimizer, betas, read-only clipping), D7 (epoch order), D8–D10 (FP32 IEEE, gold target contract, seeds), D14 (microbatch 1 with one mask per 4 examples), D15 (checkpointing), D16 (clean-room in `pilot_eval/`), D17 (implementation on `main` after the attribution branch merges), D21 details, D22 definitions (settle step, effective rank), D24 (checkpoint storage), and D25 (an ADR for the A100 departure from ADR 0018, ticket 20).
 
 Blocked on data, not on a decision: D11's validation set needs the `sequences-v2` question IDs and gold's saved run records (ticket 01, needs the artifact root); the comparison needs the `c-production-1` and production-1 output files located (ticket 01).
 
-Not approved: D23 causal checks (ticket 14), about 2–3 h more GPU. See `decision-log.md`.
+Not approved: D23 causal checks (ticket 19), about 2–3 h more GPU. See `decision-log.md`.

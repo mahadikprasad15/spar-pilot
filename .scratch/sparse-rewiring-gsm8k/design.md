@@ -8,21 +8,21 @@ Companion files: `decision-log.md` (options and the recommended minimal pilot), 
 
 | Tag | Meaning |
 |---|---|
-| `main@b1a541b` | spar-pilot `main` (this branch's base). The SFT/protocol/scoring files are byte-identical on `c-attribution-pilot` |
-| `catt@7667739` | spar-pilot branch `c-attribution-pilot`, head on 2026-11-22. It contains every other attribution branch (`claude/bold-gauss-5qkzwi`, `neuron-audit-phase1`, `offline-grpo`, `adapter-attribution-spec` are all ancestors) and the `catalog/` |
-| `max@a6dc314` | `maxsloef/owl-rewired-neurons` `a6dc314740acbf726dcac435b4e84eebbbde49d8`, still the public `main` head when cloned on 2026-11-22 |
-| **catalog** | `catalog/*.yaml` on `catt@7667739`; its own `evidence.status` (verified / inferred / unknown) is carried over unchanged |
+| `mainb1a541b` | spar-pilot `main` (this branch's base). The SFT/protocol/scoring files are byte-identical on `c-attribution-pilot` |
+| `catt7667739` | spar-pilot branch `c-attribution-pilot`, head on 2026-11-22. It contains every other attribution branch (`claude/bold-gauss-5qkzwi`, `neuron-audit-phase1`, `offline-grpo`, `adapter-attribution-spec` are all ancestors) and the `catalog/` |
+| `maxa6dc314` | `maxsloef/owl-rewired-neurons` `a6dc314740acbf726dcac435b4e84eebbbde49d8`, still the public `main` head when cloned on 2026-11-22 |
+| **catalog** | `catalog/*.yaml` on `catt7667739`; its own `evidence.status` (verified / inferred / unknown) is carried over unchanged |
 | **recomputed** | Claude recomputed the value on CPU from code alone in this session (no dataset or model download) |
 | **not checked** | The artifact exists only on Drive, HF, the sl-0 volume or the researcher's machine. No device folder or artifact root was reachable from this session, so no artifact bytes were hashed here |
 
-**Important limit.** This reconstruction reads code, specs, launch records and the catalog. It did not read `meta/resolved_trainer.json`, `inputs/order.json`, `training.items.json` or any run config, because the artifact root is not in Git (`docs/artifacts.md@main`). Every value marked "code" is what the pinned code would have produced; the saved run files govern and must be read in ticket 01 before any of these values are frozen.
+**Important limit.** This reconstruction reads code, specs, launch records and the catalog. It did not read `meta/resolved_trainer.json`, `inputs/order.json`, `training.items.json` or any run config, because the artifact root is not in Git (`docs/artifacts.mdmain`). Every value marked "code" is what the pinned code would have produced; the saved run files govern and must be read in ticket 01 before any of these values are frozen.
 
 ## 1. Current repository state (2026-11-22)
 
-- Active work: `c-attribution-pilot` (`catt@7667739`, 206 commits ahead of `main`). Production run `c-production-1` **finished** 08:43–10:21 UTC today, one attempt, verified backups, Pod stopped (`.scratch/c-attribution-pilot/issues/12-production-run.md@catt`); report and catalog registration done (`13-report-catalog.md@catt`). Ticket 14 (held-out follow-up on GSM8K **test** minus every prior use) is prepared, not launched.
+- Active work: `c-attribution-pilot` (`catt7667739`, 206 commits ahead of `main`). Production run `c-production-1` **finished** 08:43–10:21 UTC today, one attempt, verified backups, Pod stopped (`.scratch/c-attribution-pilot/issues/12-production-run.mdcatt`); report and catalog registration done (`13-report-catalog.mdcatt`). Ticket 19 (held-out follow-up on GSM8K **test** minus every prior use) is prepared, not launched.
 - Nothing in this design writes to `c-attribution-pilot`, its records, its catalog entries or its artifacts. New files live only under `.scratch/sparse-rewiring-gsm8k/` on `claude/project-thread-4ft24f`.
 - Attribution code (`pilot_eval/c_attribution*.py`, `attribution_*.py`, `neuron_audit_*.py`, `catalog.py`) is **not on `main`**. Implementation should start on `main` after `c-attribution-pilot` merges (decision D17).
-- Session-start test run on `main@b1a541b`: see the PR description for the counts.
+- Session-start test run on `mainb1a541b`: see the PR description for the counts.
 
 ## 2. Reconstructed executed contracts
 
@@ -30,55 +30,55 @@ Companion files: `decision-log.md` (options and the recommended minimal pilot), 
 
 | Item | Value | Source | Status |
 |---|---|---|---|
-| Model | `Qwen/Qwen2.5-1.5B-Instruct` rev `989aa7980e4cf806f80c7fef2b1adb7bc71aa306` | `catalog/arms.yaml@catt` header; `docs/methods.md@main`; C launch inputs record "`989aa798…` in both configs" (`c-attribution-pilot/spec.md@catt`) | recorded in run configs (per C spec); not rehashed here |
-| Tokenizer | Same repo and revision; chat template sha256 `2e2d2512…` (prefix only in Git) | `c-attribution-pilot/spec.md@catt` §Data and provenance | recorded; full hash in source configs, not checked |
-| Shape | 28 decoder blocks, MLP intermediate width 8,960 (`down_proj` input), hidden 1,536 | 28×8,960 used throughout C attribution (`c-attribution-pilot/spec.md@catt`); hidden 1,536 asserted in `pilot_eval/trace_lenses.py:113@catt` | from code; **confirm from the loaded `config.json` in ticket 02** |
+| Model | `Qwen/Qwen2.5-1.5B-Instruct` rev `989aa7980e4cf806f80c7fef2b1adb7bc71aa306` | `catalog/arms.yamlcatt` header; `docs/methods.mdmain`; C launch inputs record "`989aa798…` in both configs" (`c-attribution-pilot/spec.mdcatt`) | recorded in run configs (per C spec); not rehashed here |
+| Tokenizer | Same repo and revision; chat template sha256 `2e2d2512…` (prefix only in Git) | `c-attribution-pilot/spec.mdcatt` §Data and provenance | recorded; full hash in source configs, not checked |
+| Shape | 28 decoder blocks, MLP intermediate width 8,960 (`down_proj` input), hidden 1,536 | 28×8,960 used throughout C attribution (`c-attribution-pilot/spec.mdcatt`); hidden 1,536 asserted in `pilot_eval/trace_lenses.py:113catt` | from code; **confirm from the loaded `config.json` in ticket 02** |
 | MLP form | Qwen2 MLP: `down(act(gate(x)) * up(x))`, SiLU, no MLP biases | Qwen2 architecture; to verify against pinned `transformers==4.57.6` `modeling_qwen2.py` | not checked here |
 | Candidate neurons | 28 × 8,960 = 250,880, zero-based `(layer, neuron)`; neuron j = row j of `gate_proj`/`up_proj` = column j of `down_proj` = input j of the `down_proj` LoRA read | derived | to test (ticket 02) |
-| "Untuned" | This checkpoint with adapters disabled / zero-B adapter `b26c524a…` | `catalog/arms.yaml@catt` | catalog |
+| "Untuned" | This checkpoint with adapters disabled / zero-B adapter `b26c524a…` | `catalog/arms.yamlcatt` | catalog |
 
 ### 2.2 Gold SFT (Pilot 2), canonical arm `gold-sft`
 
-Canonical run: `runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1` (`catalog/arms.yaml@catt`). This is the **L4** variant (ADR 0004); the T4 plan is a separate, older variant.
+Canonical run: `runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1` (`catalog/arms.yamlcatt`). This is the **L4** variant (ADR 0004); the T4 plan is a separate, older variant.
 
 | Area | Value | Source |
 |---|---|---|
-| Dataset | `openai/gsm8k` `main`, rev `740312add88f781978c0658806c59bc2815b9866`, split `train` | `catalog/cohorts.yaml@catt` `gsm8k-train-512` |
-| Training IDs | 512 = `sorted(random.Random(42).sample(range(len(train)), 512))`, IDs `gsm8k:train:{index}` | `pilot_eval/sft.py:123,144@main` |
+| Dataset | `openai/gsm8k` `main`, rev `740312add88f781978c0658806c59bc2815b9866`, split `train` | `catalog/cohorts.yamlcatt` `gsm8k-train-512` |
+| Training IDs | 512 = `sorted(random.Random(42).sample(range(len(train)), 512))`, IDs `gsm8k:train:{index}` | `pilot_eval/sft.py:123,144main` |
 | ID digest | `e15548111c6ee7eb2035f1e7e9ad7e8df6af155b563819d1933ea73334f22b31` | catalog; **recomputed** identical from code with `len(train)=7473` |
-| Order | `order = list(range(512)); random.Random(42).shuffle(order)`; SequentialSampler over that order; step s uses `order[(s-1)*8 : s*8]`; checked each step against actual exposures | `sft_backend.py:103-104,203-208,228-233@main` |
+| Order | `order = list(range(512)); random.Random(42).shuffle(order)`; SequentialSampler over that order; step s uses `order[(s-1)*8 : s*8]`; checked each step against actual exposures | `sft_backend.py:103-104,203-208,228-233main` |
 | Exposure | 64 steps × 8 = 512 presentations = exactly one epoch, no repeats | code; saved `logs/steps.jsonl` not checked |
 | First batch (reconstruction) | `train:3104, 2902, 4885, 1746, 6609, 1148, 6833, 2308` | **recomputed**; must equal saved `inputs/order.json[0:8]` (ticket 01) |
-| Prompt | `gsm8k_messages`: one user turn "Solve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: {q}", rendered with the tokenizer's chat template, `add_generation_prompt=True` (Qwen default system message included, known discrepancy kept) | `protocol.py:25-37@main`; `.scratch/pilot2-sft/spec.md@main` |
-| Target | Raw GSM8K `answer` string (calculator annotations and `####` kept) as the assistant turn | `sft.py:131-133@main` |
-| Tokens | `encode(full, add_special_tokens=False)`, cut after the single `<|im_end|>` (151645); trailing template newline **not** supervised | `sft.py:134-141@main` |
-| Labels | `[-100]*prompt_tokens + input_ids[prompt_tokens:]`, last label must be EOS 151645 | `sft.py:146,71-76@main` |
-| Truncation / packing | Forbidden / off; `max_length` = longest real sequence | `sft.py:141-142,171@main` |
-| Loss | `CE(logits[:, :-1], labels[:, 1:], reduction='sum') / num_items_in_batch` = **summed over supervised tokens of the 8-example window, divided by that window's supervised-token count** (token-weighted) | `sft_backend.py:36-48@main`; `docs/experiments/pilot-2.md@main` |
-| Model dtype / attention | FP32 weights and LoRA, `attn_implementation='eager'`, no autocast | `sft_backend.py:81-82,98@main` |
-| TF32 | `SFTConfig(tf32=False)` (legacy HF switch; cuDNN TF32 not explicitly set by this backend; Sampling SFT later sets both explicitly) | `sft_backend.py:256@main`; `sampling_sft_training_backend.py:19-21@main` |
-| Packages | torch 2.9.0, transformers 4.57.6, trl 0.26.2, peft 0.18.0, datasets 4.4.1, accelerate 1.12.0, huggingface-hub 0.36.0 | `sft_backend.py:21-23@main` (enforced) |
-| Adapter | PEFT LoRA r=1, alpha=1, dropout 0, `init_lora_weights=True` (A Kaiming-uniform, B zero), 196 targets q/k/v/o/gate/up/down × 28; base frozen; trainable = `lora_*` only | `sft_backend.py:85-97@main`; `docs/methods.md@main` |
-| Optimizer | `adamw_torch`, `foreach=False`, LR 1e-4, betas (0.9, 0.999), eps 1e-8, weight decay 0, clip 1.0 (all trainables) | `sft.py:15-19@main`; `sft_backend.py:250-256@main` |
+| Prompt | `gsm8k_messages`: one user turn "Solve the following problem step by step. End your response with a final line in the form #### <number>.\n\nProblem: {q}", rendered with the tokenizer's chat template, `add_generation_prompt=True` (Qwen default system message included, known discrepancy kept) | `protocol.py:25-37main`; `.scratch/pilot2-sft/spec.mdmain` |
+| Target | Raw GSM8K `answer` string (calculator annotations and `####` kept) as the assistant turn | `sft.py:131-133main` |
+| Tokens | `encode(full, add_special_tokens=False)`, cut after the single `<|im_end|>` (151645); trailing template newline **not** supervised | `sft.py:134-141main` |
+| Labels | `[-100]*prompt_tokens + input_ids[prompt_tokens:]`, last label must be EOS 151645 | `sft.py:146,71-76main` |
+| Truncation / packing | Forbidden / off; `max_length` = longest real sequence | `sft.py:141-142,171main` |
+| Loss | `CE(logits[:, :-1], labels[:, 1:], reduction='sum') / num_items_in_batch` = **summed over supervised tokens of the 8-example window, divided by that window's supervised-token count** (token-weighted) | `sft_backend.py:36-48main`; `docs/experiments/pilot-2.mdmain` |
+| Model dtype / attention | FP32 weights and LoRA, `attn_implementation='eager'`, no autocast | `sft_backend.py:81-82,98main` |
+| TF32 | `SFTConfig(tf32=False)` (legacy HF switch; cuDNN TF32 not explicitly set by this backend; Sampling SFT later sets both explicitly) | `sft_backend.py:256main`; `sampling_sft_training_backend.py:19-21main` |
+| Packages | torch 2.9.0, transformers 4.57.6, trl 0.26.2, peft 0.18.0, datasets 4.4.1, accelerate 1.12.0, huggingface-hub 0.36.0 | `sft_backend.py:21-23main` (enforced) |
+| Adapter | PEFT LoRA r=1, alpha=1, dropout 0, `init_lora_weights=True` (A Kaiming-uniform, B zero), 196 targets q/k/v/o/gate/up/down × 28; base frozen; trainable = `lora_*` only | `sft_backend.py:85-97main`; `docs/methods.mdmain` |
+| Optimizer | `adamw_torch`, `foreach=False`, LR 1e-4, betas (0.9, 0.999), eps 1e-8, weight decay 0, clip 1.0 (all trainables) | `sft.py:15-19main`; `sft_backend.py:250-256main` |
 | Schedule | constant, 0 warmup, 64 steps | same |
 | Batching | microbatch 1, accumulation 8 (effective 8), no padding inside a microbatch | same |
-| Seeds | `seed=42`, `data_seed=42`, `enable_full_determinism(42)`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` | `sft_backend.py:73,77,258@main` |
-| Memory | gradient checkpointing (non-reentrant), `use_cache=False` | `sft_backend.py:93,257@main` |
-| Checkpoints | 0, 8, 16, 32, 64 with optimizer/scheduler/RNG; step-64 adapter sha256 `a20a344e…` | `catalog/arms.yaml@catt` (5 hashes, from joint-audit inventory-v2) |
-| Hardware | L4 (variant check enforces `'L4' in device`) | `sft_backend.py:114-116@main`; ADR 0004 |
+| Seeds | `seed=42`, `data_seed=42`, `enable_full_determinism(42)`, `CUBLAS_WORKSPACE_CONFIG=:4096:8` | `sft_backend.py:73,77,258main` |
+| Memory | gradient checkpointing (non-reentrant), `use_cache=False` | `sft_backend.py:93,257main` |
+| Checkpoints | 0, 8, 16, 32, 64 with optimizer/scheduler/RNG; step-64 adapter sha256 `a20a344e…` | `catalog/arms.yamlcatt` (5 hashes, from joint-audit inventory-v2) |
+| Hardware | L4 (variant check enforces `'L4' in device`) | `sft_backend.py:114-116main`; ADR 0004 |
 
 **Conflicts to resolve (ticket 01):**
-- `catalog/responses/gold-sft.greedy.test150.pilot2.yaml@catt`: the Pilot 2 evaluation config records adapter `26fdcb24…`, not the inventory step-64 hash `a20a344e…`; flexible-v3 0.647 there vs 0.66 in production-1 Stage D. Catalog status `inferred`, "checkpoint identity unverified". Its step-0 evaluation records `71ee7a33…`, not the zero adapter `b26c524a…`.
-- The actual saved `meta/resolved_trainer.json` (TRL resolution of every argument), `inputs/order.json` and `logs/steps.jsonl` have not been read. The status ledger says "original full runtime/config provenance not independently reverified" (`docs/experiments/status.md@main`).
+- `catalog/responses/gold-sft.greedy.test150.pilot2.yamlcatt`: the Pilot 2 evaluation config records adapter `26fdcb24…`, not the inventory step-64 hash `a20a344e…`; flexible-v3 0.647 there vs 0.66 in production-1 Stage D. Catalog status `inferred`, "checkpoint identity unverified". Its step-0 evaluation records `71ee7a33…`, not the zero adapter `b26c524a…`.
+- The actual saved `meta/resolved_trainer.json` (TRL resolution of every argument), `inputs/order.json` and `logs/steps.jsonl` have not been read. The status ledger says "original full runtime/config provenance not independently reverified" (`docs/experiments/status.mdmain`).
 
 ### 2.3 Sampling SFT k0 / k2 / k5
 
 | Area | Value | Source |
 |---|---|---|
-| Recipe | Gold-guided proposer + k steps of greedy likelihood search + correctness filtering ("Sampling SFT recipe", not on-policy SFT) | `CONTEXT.md@main`; `docs/experiments/sampling-sft.md@main` |
+| Recipe | Gold-guided proposer + k steps of greedy likelihood search + correctness filtering ("Sampling SFT recipe", not on-policy SFT) | `CONTEXT.mdmain`; `docs/experiments/sampling-sft.mdmain` |
 | Data | `answers.jsonl` sha256 `71f09f5c…` (HF `spar-sampling-sft-artifacts`); k0 478 / k2 477 / k5 472 of 512 problems covered (34 / 35 / 40 uncovered) | catalog `sampling-sft-k*.training-data.yaml` (status `inferred`) |
-| Order | Gold's 64 batches, original slots; a missing slot is skipped, so steps have 3–8 examples; denominator = that step's actual supervised tokens | `sampling_sft_training_backend.py:161-166@main` |
-| Training | Gold primitives: same loss, AdamW 1e-4 constant, clip 1.0, microbatch 1, FP32, TF32 and cuDNN TF32 explicitly off, `highest` matmul precision, L4, from gold's exact checkpoint-0 adapter | `sampling_sft_training_backend.py:1-36,95-110@main`; ADR 0023 |
+| Order | Gold's 64 batches, original slots; a missing slot is skipped, so steps have 3–8 examples; denominator = that step's actual supervised tokens | `sampling_sft_training_backend.py:161-166main` |
+| Training | Gold primitives: same loss, AdamW 1e-4 constant, clip 1.0, microbatch 1, FP32, TF32 and cuDNN TF32 explicitly off, `highest` matmul precision, L4, from gold's exact checkpoint-0 adapter | `sampling_sft_training_backend.py:1-36,95-110main`; ADR 0023 |
 | Checkpoints | 0 and 64 in the catalog (`a28f52a0…` k2 etc.) | catalog |
 | Eval | Greedy, cohort150, A100 FP32 batch 16 (Stage 0 sampling-behaviour), flexible-v3 | catalog `sampling-sft-k*.s64.greedy.test150.yaml` (verified) |
 
@@ -86,32 +86,32 @@ Canonical run: `runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42
 
 | Area | Value | Source |
 |---|---|---|
-| Data | Same 512 questions; 64 updates × 8 problems × 8 fresh draws from the current policy (4,096 accepted) | `docs/experiments/pilot-4.md@main`; catalog `online-grpo.training-rollouts` |
+| Data | Same 512 questions; 64 updates × 8 problems × 8 fresh draws from the current policy (4,096 accepted) | `docs/experiments/pilot-4.mdmain`; catalog `online-grpo.training-rollouts` |
 | Sampling | T 1.0, top-p 1, top-k 0, rep. penalty 1.0, cap 1,024, EOS 151645 | catalog |
 | Objective | DAPO loss, group-scaled rewards, one iteration, beta 0; reward flexible-v3 (scorer sha256 `c958d2de…`), cap → 0 | pilot-4 page; catalog |
 | Optimizer | AdamW 1e-4, betas 0.9/0.999, eps 1e-8, constant, no warmup/decay, clip 1 | pilot-4 page |
 | Runtime | FP32, eager, TF32 off, A100 80GB | pilot-4 page |
 | Checkpoints | 0/8/16/32/64; step 64 `70d2d56c…` | catalog |
-| Lineage gaps | Training rollouts "not present locally or in either HF dataset; Drive copy assumed"; "online-grpo lineage is partial (its frozen plan is not local)" | catalog; `adapter-neuron-attribution/spec.md@catt` |
+| Lineage gaps | Training rollouts "not present locally or in either HF dataset; Drive copy assumed"; "online-grpo lineage is partial (its frozen plan is not local)" | catalog; `adapter-neuron-attribution/spec.mdcatt` |
 
 ### 2.5 Offline GRPO, arm `offline-grpo`
 
 | Area | Value | Source |
 |---|---|---|
-| Data | Fixed pool of untuned draws, 512 × 8 = 4,096 (128 historical groups + 384 new), same 64 ordered windows, no importance weights | catalog `offline-grpo.training-pool` (inferred); `.scratch/offline-grpo/spec.md@catt` |
-| Update | "Use the verified Pilot 4 plan as the field-by-field reference" (same optimizer, reduction, checkpoints) from the exact checkpoint-0 adapter | `offline-grpo/spec.md@catt` §Implementation decisions |
+| Data | Fixed pool of untuned draws, 512 × 8 = 4,096 (128 historical groups + 384 new), same 64 ordered windows, no importance weights | catalog `offline-grpo.training-pool` (inferred); `.scratch/offline-grpo/spec.mdcatt` |
+| Update | "Use the verified Pilot 4 plan as the field-by-field reference" (same optimizer, reduction, checkpoints) from the exact checkpoint-0 adapter | `offline-grpo/spec.mdcatt` §Implementation decisions |
 | Checkpoints | 0/8/16/32/64; step 64 `66015518…` | catalog |
-| Gap | Step-64 config hash differs from the original config; recovery of the actual step-64 config was required | `joint-neuron-adapter-audit/spec.md@catt` |
+| Gap | Step-64 config hash differs from the original config; recovery of the actual step-64 config was required | `joint-neuron-adapter-audit/spec.mdcatt` |
 
 ### 2.6 Behaviour evaluation
 
 | Item | Value | Source |
 |---|---|---|
-| Cohort | `gsm8k-test-cohort150`: `sorted(random.Random(42).sample(range(1319), 150))`, IDs `gsm8k:test:{i}`, digest `79692f50…` | catalog; **recomputed** identical; `protocol.py:9-11@main`; ADR 0001 |
+| Cohort | `gsm8k-test-cohort150`: `sorted(random.Random(42).sample(range(1319), 150))`, IDs `gsm8k:test:{i}`, digest `79692f50…` | catalog; **recomputed** identical; `protocol.py:9-11main`; ADR 0001 |
 | Decoding | Greedy, `max_new_tokens` 1,024, EOS 151645, rep. penalty 1.0, explicit arguments | catalog policies; C launch record |
-| Scorer | `score_gsm8k_flexible_v3(text, gold, capped)`, file sha256 `c958d2de…`; capped → 0; invalid stays in denominator | `pilot_eval/scoring.py:173@main`; ADR 0005 |
+| Scorer | `score_gsm8k_flexible_v3(text, gold, capped)`, file sha256 `c958d2de…`; capped → 0; invalid stays in denominator | `pilot_eval/scoring.py:173main`; ADR 0005 |
 | Runtime variants | Pilot 2 L4 batch 2; Stage 0 A100 batch 16; C production A100 batch 16 | ADR 0004; catalog |
-| Prior uses | Every arm's evaluations, Pilot 4 sampled ×8, production-1 Stage D, all C rehearsals, **C production attribution, selection and greedy ablation on (nearly) all 150 questions** | `catalog/cohorts.yaml@catt` |
+| Prior uses | Every arm's evaluations, Pilot 4 sampled ×8, production-1 Stage D, all C rehearsals, **C production attribution, selection and greedy ablation on (nearly) all 150 questions** | `catalog/cohorts.yamlcatt` |
 | Status | Not held out for anything. Selection-on-cohort already occurred (C attribution). A new greedy evaluation is a further prior use and must be labelled exploratory | derived |
 
 ### 2.7 Existing neuron-level measurements available for comparison
@@ -124,7 +124,7 @@ Canonical run: `runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42
 
 None of these measures how a neuron's **gate/up reads** should change. The C and production-1 objects are about how the `down_proj` adapter reads neuron j's **activation**. Sparse rewiring selects neurons whose **inputs** are changed. The join key `(layer, neuron)` is the same; the measured objects differ (design input §3 already states this).
 
-### 2.8 Max's method at `max@a6dc314`
+### 2.8 Max's method at `maxa6dc314`
 
 | Item | Value | Source |
 |---|---|---|
@@ -170,14 +170,14 @@ Recommendation **[proposed]**: reimplement in `pilot_eval/` from the method desc
 | Gold answers | Raw GSM8K answer, Qwen template with default system message, `<|im_end|>` supervised, trailing newline not | Reuse the frozen `training.items.json` token IDs (not re-tokenized) |
 | Loss and masks | Shifted CE summed / window supervised tokens | Same; Max's reduction is mathematically the same (token-weighted per step); Max's trailing-newline label and 640 truncation are **not** adopted (D9) |
 | Sequence limits | `max_length` = longest real example; no truncation | Same; preflight the longest example on the target GPU |
-| Optimizer/runtime | FP32, eager, TF32 off (legacy flag), AdamW 0.9/0.999 1e-4, clip 1, microbatch 1 × 8 | FP32 + explicit IEEE precision (`neuron_audit_collector.set_ieee_precision@catt`, lesson 2026-11-19); optimizer per D1–D4 |
+| Optimizer/runtime | FP32, eager, TF32 off (legacy flag), AdamW 0.9/0.999 1e-4, clip 1, microbatch 1 × 8 | FP32 + explicit IEEE precision (`neuron_audit_collector.set_ieee_precisioncatt`, lesson 2026-11-19); optimizer per D1–D4 |
 | Steps/seeds | 64 steps, seed 42, checkpoints 0/8/16/32/64 | Keep 0/8/16/32/64; add later checkpoints (D5); separate seeds (D10) |
 | Existing LoRA | r1 α1, 7 projection types, PEFT init (A random, B zero), both factors trained | Not reused; rewiring arm has no LoRA attached. Differences listed in `decision-log.md` §Not equivalent |
 | Behaviour evaluation | §2.6 | Same protocol; the cohort is not held out (D12) |
 | Attribution | §2.7 | Now: C `c-production-1` per-read scores (full universe) and production-1 adapter attribution (one layer), GRPO arms first; other arms later as manifest entries (D19) |
-| Prior exposure | `catalog/cohorts.yaml@catt` | Register every new use in the catalog when it happens |
+| Prior exposure | `catalog/cohorts.yamlcatt` | Register every new use in the catalog when it happens |
 | Validation | **None exists** for this purpose | New GSM8K **train** validation set disjoint from the 512 and from `sequences-v2` (D11) |
-| Compute/artifacts | No measurement for this arm | Benchmark first (ticket 07); estimates in `decision-log.md` are arithmetic, not measurements |
+| Compute/artifacts | No measurement for this arm | Benchmark first (ticket 15); estimates in `decision-log.md` are arithmetic, not measurements |
 
 ## 4. Decision register
 
@@ -207,6 +207,8 @@ Full option tables are in `decision-log.md`. Summary:
 | D21 | Rank comparison | Survivor Jaccard and per-layer overlap, overlap with C sets, paired accuracy, val CE, counts, dynamics side by side | [proposed] |
 | D20 | Dynamics logging | Researcher-requested figure: gates, read-change norms and performance against step; cheap metrics every step, validation CE every 16 steps, greedy at checkpoints | [user 2026-11-23] |
 | D22 | Standalone analysis | Selection, what survivors learned, behaviour, for each rank | [user 2026-11-23] scope; definitions [proposed] |
+| D24 | Checkpoint storage | Factors and `logα` at every checkpoint; optimizer and RNG at the latest two only (rank 0 is about 9 GB per full checkpoint) | [proposed], from the disk-size lesson |
+| D25 | A100 ADR | Record the departure from ADR 0018 (L4 for training) | needed before qualification |
 | D23 | Causal checks | Revert all, single and block reverts, same-layer transplant control; about 2–3 h GPU for both arms | [proposed], not approved |
 
 ## 5. Recommended minimal pilot (once separately authorised)
@@ -218,7 +220,7 @@ Two sparse gold-SFT arms, **rank 1 and rank 0 [user 2026-11-23]**, from the untu
 1. **Shared IDs and restrictions.** Training: all arms use `gsm8k-train-512` (digest verified). Evaluation and C attribution share `gsm8k-test-cohort150`, which is not held out. Production-1 attribution and the joint audit used `sequences-v2` GSM8K **train** questions (IDs only in artifacts). Unknown lineage: online-GRPO rollouts and frozen plan (not local), offline step-64 config, the 128 historical offline groups' generator.
 2. **Gold SFT's actual settings.** §2.2. Differences in Max: trailing-newline label, 640 truncation, BF16, betas 0.99, warmup + cosine, mask group, unclipped masks, micro 4.
 3. **What attribution produces.** C: full 28 × 8,960 `down_proj` read-term J gradients for the two GRPO arms. Production-1: one layer per arm, trace/stop metrics, all 6 arms. Joint audit: descriptive A/B/D lists for all layers and arms. None is a gate/up-read measure.
-4. **Smallest budget.** Not measured. Arithmetic estimate in `decision-log.md`; ticket 07 measures it.
+4. **Smallest budget.** Not measured. Arithmetic estimate in `decision-log.md`; ticket 15 measures it.
 5. **Researcher decisions before a launchable spec.** D1, D11 (and its data), D21, D22 definitions, D23 if wanted. Decided 2026-11-23: D5 (1,024 fixed), D6, D12, D13, D18, D19 scope, D20 cadence.
 6. **Max's rank-1 result.** Unavailable: configured in `modal_runs.py`, no result directory, no rank-1 row in `RANK0.md`.
-7. **Reusable code.** In this repo: `sft.load_sft` and the frozen `training.items.json`; `sft_backend.completion_loss`, `CompletionCollator`, `frozen_weight_hash`; the explicit loop and recovery pattern in `sampling_sft_training_backend.train`; `neuron_audit_collector.set_ieee_precision@catt`; `scoring.score_gsm8k_flexible_v3`; the greedy evaluation used by Stage 0 / C generation; `catalog` register/verify; C-attribution `aggregate/<arm>/neurons.npz` and freeze files as comparison inputs. From Max: the method, not the code (§2.9).
+7. **Reusable code.** In this repo: `sft.load_sft` and the frozen `training.items.json`; `sft_backend.completion_loss`, `CompletionCollator`, `frozen_weight_hash`; the explicit loop and recovery pattern in `sampling_sft_training_backend.train`; `neuron_audit_collector.set_ieee_precisioncatt`; `scoring.score_gsm8k_flexible_v3`; the greedy evaluation used by Stage 0 / C generation; `catalog` register/verify; C-attribution `aggregate/<arm>/neurons.npz` and freeze files as comparison inputs. From Max: the method, not the code (§2.9).

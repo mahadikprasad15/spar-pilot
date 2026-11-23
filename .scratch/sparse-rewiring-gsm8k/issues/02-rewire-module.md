@@ -2,11 +2,14 @@
 
 **Status:** ready-for-agent
 **Type:** task
+**Blocked by:** —
+**Group:** A
 
-Clean-room `MaskedReRead`-style module for the pinned Qwen2 MLP (`spec.md` §Module), ranks 0/1/k, gate+up parts, off switch, per-neuron removal of new reads. Do not copy Max's code (D16); cite `max@a6dc314` and Louizos et al. 2018 in the module docstring.
+Clean-room masked read-change module for the pinned Qwen2 MLP (`spec.md` §Module): rank 1 and rank 0 (rank k supported), gate+up, off switch, per-neuron removal and transplant hooks for later checks. Do not copy Max's code (D16); cite `max@a6dc314` and Louizos et al. 2018.
 
-- [ ] Red/green: spec tests 1–4.
-- [ ] Confirm hidden 1,536, intermediate 8,960, 28 layers and SiLU from the pinned config in a test that reads a saved config fixture, not a download.
+- [ ] Red/green: spec tests 1–4 and 10b.
+- [ ] Shapes read from a saved config fixture, never a download.
+- [ ] Device placement: spec test 23.
 
 ## Comments
 
