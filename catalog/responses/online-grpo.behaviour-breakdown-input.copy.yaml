@@ -1,0 +1,29 @@
+kind: replay
+cohort: gsm8k-test-cohort150
+question_field: item_id
+scorer:
+  name: gsm8k-flexible-v3
+  code_sha256: c958d2de1a6212b49fcfa2f7ac1fd215117ca8d3dbfe3ace805576ce6937eb6c
+  cap_reward: 0
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+id: online-grpo.behaviour-breakdown-input.copy
+replay_of: online-grpo.s64.sampled-x8.test150
+arm: online-grpo
+policy:
+  mode: mixed
+draws_per_question: null
+c_suitability: on-policy
+files:
+- location: local
+  path: runs/pilot-4/behaviour-breakdown/pilot4-behaviour-breakdown-2026-10-22-v1/inputs/source-002/responses.jsonl
+  sha256: 4af7926a3def742d9eef128f3b7306b783aada413f785624054dacb16ee971ec
+  rows_total: 3150
+evidence:
+  status: verified
+  checked:
+  - byte-identical to imports/pilot4-behaviour-breakdown-2026-10-22/grpo/responses.jsonl (same sha256)
+notes: Whole-file copy (all steps and modes); never count separately.

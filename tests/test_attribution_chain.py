@@ -1,0 +1,885 @@
+"""Ticket 11: overnight chain runner; every external call mocked (CPU, no GPU, no Hub, no runpodctl)."""
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from pilot_eval import attribution_chain as ch
+from pilot_eval import attribution_units as au
+
+ARMS = ['gold-sft', 'online-grpo', 'offline-grpo', 'sampling-sft-k0', 'sampling-sft-k2', 'sampling-sft-k5']
+# review round 4 (8): the pre-export summary is sealed before the export so it is inside the HF backup
+TEARDOWN = ['writers_joined', 'volume_copy', 'summary_sealed', 'hf_export', 'summary_on_volume', 'stop_requested']
+
+
+def record(**overrides):
+    base = dict(
+        schema=ch.LAUNCH_SCHEMA, run_id='overnight-r1', mode='production', code_commit='abc123', pod_id='pod-1',
+        pod_stop_commands=['runpodctl stop pod {id}', 'runpodctl pod stop {id}'], expected_arms=list(ARMS),
+        volume_identity='sl-0:vol-uuid', export_repo='owner/private', hourly_cost_usd=2.0,
+        caps_seconds=dict(total=1000, qualification=100, base_traces=100, attribution_and_freeze=300, stage_c=200,
+                          stage_d=200, report=50, preflight=50),
+        tolerances=dict(finite_difference=dict(epsilon=1e-2, median_rel_err_max=0.05, max_rel_err_max=0.20,
+                                               precision='fp64'),
+                        neuron_sum_identity=1e-4, batch_invariance=1e-4, resolution_floor='10x batch invariance'),
+        minimums=dict(discovery=120, heldout=60), selection=dict(top_group=10, top_singles=5, tolerance=0.2,
+                                                                 seed=20000, random_seeds=[1, 2, 3], read_size=64),
+        statistics=dict(resamples=10000, seed=1234, alpha=0.05, margin=0.25, sparse_lower=0.7, dense_upper=0.3,
+                        gate_singles_min=4, null_orders=1000, null_seed=4),
+        generation_batch_rule=dict(candidates=[1, 8, 16, 32, 64], items=20, max_flips=1, max_stop_changes=1),
+        token_budget_sweep=[2048, 4096, 8192, 16384, 32768, 65536], watchdog_margin_seconds=1800,
+        marker_stale_seconds=600, compute=dict(fp32_peak_flops=19.5e12),
+        stage_d=dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item', ratio=0.5),
+                     pilot_results={'gold-sft': dict(path='p/gold.jsonl', filters={}),
+                                    'online-grpo': dict(path='p/online.jsonl', filters=dict(step=64))}),
+        timeouts_seconds=dict(copy=60, export_attempt=60, stop_attempt=30, writer_join=10))
+    base.update(overrides)
+    return base
+
+
+def sealed_record(tmp_path, **overrides):
+    path = tmp_path / 'launch' / 'launch_record.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return ch.seal_launch_record(record(**overrides), path)
+
+
+class Calls:
+    def __init__(self):
+        self.order, self.stops = [], []
+
+
+def harness(tmp_path, stages, *, copier=None, exporter=None, runner=None, now=None, writers=(), **record_overrides):
+    calls = Calls()
+    path = sealed_record(tmp_path, **record_overrides)
+
+    def default_copier(local, volume, *, sealed_only):
+        calls.order.append('volume_copy')
+        assert sealed_only
+        return dict(verified=True, copied=['x'], problems=[])
+
+    def default_exporter(local, *, label, include, expected_units, expected_runs, repo):
+        calls.order.append('hf_export')
+        return dict(revision='a' * 40, completeness='complete', readback_verified=True)
+
+    def default_runner(cmd, **kw):
+        calls.order.append('stop')
+        calls.stops.append((cmd, kw.get('timeout')))
+        return subprocess.CompletedProcess(cmd, 0, 'stopped', '')
+
+    chain = ch.Chain(ch.load_launch_record(path, code_commit='abc123'), local_root=tmp_path / 'local',
+                     volume_root=tmp_path / 'volume', stages=stages, copier=copier or default_copier,
+                     exporter=exporter or default_exporter, runner=runner or default_runner,
+                     now=now or time.monotonic, writers=list(writers), volume_identity='sl-0:vol-uuid')
+    return chain, calls
+
+
+def ok_stages(order=None, **replace):
+    order = order if order is not None else []
+
+    def make(name):
+        def stage(ctx):
+            order.append(name)
+            if name == 'qualification':
+                return dict(checks=dict(finite_differences=True, batch_invariance=True, neuron_identity=True),
+                            review_flags=[], arms=list(ctx.record['expected_arms']), budget=8192)
+            if name == 'report':
+                return dict(gates={'gold-sft|trace': True}, primaries=dict(primary1='inconclusive'))
+            return dict(status='complete')
+        return stage
+
+    stages = {name: make(name) for name in ch.STAGES}
+    stages.update(replace)
+    return stages
+
+
+# --- launch record --------------------------------------------------------------------------------
+
+def test_launch_record_refuses_null_or_proposed_values(tmp_path):
+    path = sealed_record(tmp_path)
+    assert ch.load_launch_record(path, code_commit='abc123')['run_id'] == 'overnight-r1'
+    for bad in [dict(caps_seconds=dict(total=None)), dict(minimums=dict(discovery='[proposed] 120', heldout=60)),
+                dict(pod_id=None), dict(selection=dict(random_seeds=None))]:
+        p = sealed_record(tmp_path / 'b', **bad)
+        with pytest.raises(ch.LaunchRefused, match='unresolved'):
+            ch.load_launch_record(p, code_commit='abc123')
+    for bad in [dict(stage_d=dict(early_stop_rule=None, pilot_results={})), dict(compute=dict(fp32_peak_flops=None))]:
+        with pytest.raises(ch.LaunchRefused, match='unresolved'):
+            ch.load_launch_record(sealed_record(tmp_path / 'c', **bad), code_commit='abc123')
+    no_pilot = sealed_record(tmp_path / 'd', stage_d=dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item',
+                                                                               ratio=0.5), pilot_results={}))
+    with pytest.raises(ch.LaunchRefused, match='pilot'):
+        ch.load_launch_record(no_pilot, code_commit='abc123')
+    with pytest.raises(ch.LaunchRefused, match='commit'):
+        ch.load_launch_record(path, code_commit='other')
+    path.write_text(path.read_text().replace('overnight-r1', 'overnight-r2'))
+    with pytest.raises(ch.LaunchRefused, match='seal'):
+        ch.load_launch_record(path, code_commit='abc123')
+
+
+def test_production_refuses_missing_arms_rehearsal_uses_its_labelled_set(tmp_path):
+    with pytest.raises(ch.LaunchRefused, match='arms'):
+        ch.load_launch_record(sealed_record(tmp_path / 'p', expected_arms=ARMS[:2]), code_commit='abc123')
+    rec = ch.load_launch_record(sealed_record(tmp_path / 'r', mode='rehearsal', expected_arms=ARMS[:2],
+                                              rehearsal_label='rehearsal-pod-2arm'), code_commit='abc123')
+    assert rec['expected_arms'] == ARMS[:2]
+    with pytest.raises(ch.LaunchRefused, match='label'):
+        ch.load_launch_record(sealed_record(tmp_path / 'r2', mode='rehearsal', expected_arms=ARMS[:2]),
+                              code_commit='abc123')
+
+
+# --- exit paths ---------------------------------------------------------------------------------------
+
+def test_success_path_runs_every_stage_signs_off_and_ends_in_teardown_order(tmp_path):
+    order = []
+    chain, calls = harness(tmp_path, ok_stages(order))
+    summary = chain.run()
+    assert order == ch.STAGES
+    assert summary['teardown'] == TEARDOWN and summary['state'] == 'complete'
+    assert summary['signoff']['by'] == ch.AUTO_REVIEWER and 'user' not in summary['signoff']['by'].split()
+    assert calls.stops[0][0] == ['runpodctl', 'stop', 'pod', 'pod-1'] and calls.stops[0][1] == 30
+    assert summary['stop'] == dict(requested=True, externally_verified=False, attempts=summary['stop']['attempts'])
+    restored = au.latest_summary(tmp_path / 'volume')['summary']
+    assert restored['backups']['volume_copy']['verified'] and restored['backups']['hf_export']['verified']
+
+
+def test_qualification_failure_stops_before_production(tmp_path):
+    order = []
+
+    def failing(ctx):
+        order.append('qualification')
+        return dict(checks=dict(finite_differences=False), review_flags=[], arms=list(ARMS))
+
+    chain, calls = harness(tmp_path, ok_stages(order, qualification=failing))
+    summary = chain.run()
+    assert 'attribution_and_freeze' not in order and summary['state'] == 'stopped-before-production'
+    assert summary['teardown'] == TEARDOWN and 'finite_differences' in summary['stop_reason']
+
+
+@pytest.mark.parametrize('problem', ['review_flag', 'missing_arm', 'minimum', 'budget'])
+def test_listed_preproduction_failures_stop_the_chain(tmp_path, problem):
+    order = []
+
+    def qual(ctx):
+        order.append('qualification')
+        out = dict(checks=dict(fd=True), review_flags=[], arms=list(ARMS))
+        if problem == 'review_flag':
+            out['review_flags'] = ['layer 3 discrepancy']
+        if problem == 'missing_arm':
+            out['arms'] = ARMS[:-1]
+        if problem == 'budget':
+            raise ch.StopBeforeProduction('no feasible token budget')
+        return out
+
+    def traces(ctx):
+        order.append('base_traces')
+        if problem == 'minimum':
+            from pilot_eval.attribution_traces import MinimumUnmet
+            raise MinimumUnmet('discovery: 100 < 120')
+        return {}
+
+    chain, _ = harness(tmp_path, ok_stages(order, qualification=qual, base_traces=traces))
+    summary = chain.run()
+    assert summary['state'] == 'stopped-before-production' and 'attribution_and_freeze' not in order
+    assert summary['teardown'] == TEARDOWN
+
+
+def test_analysis_outcomes_never_stop_the_run(tmp_path):
+    order = []
+
+    def stage_c(ctx):
+        order.append('stage_c')
+        return dict(gate_failed=True, skipped=['match10-stop'], primaries='inconclusive')
+
+    chain, _ = harness(tmp_path, ok_stages(order, stage_c=stage_c))
+    summary = chain.run()
+    assert order == ch.STAGES and summary['state'] == 'complete'
+
+
+def test_exception_path_still_tears_down_in_order(tmp_path):
+    def boom(ctx):
+        raise RuntimeError('CUDA error: device-side assert')
+
+    chain, calls = harness(tmp_path, ok_stages(stage_c=boom))
+    summary = chain.run()
+    assert summary['state'] == 'failed' and 'device-side assert' in summary['failures'][0]['error']
+    assert summary['failures'][0]['log'] and summary['teardown'] == TEARDOWN
+    assert calls.order == ['volume_copy', 'hf_export', 'hf_export', 'stop']  # full export, then final summary
+
+
+def test_hf_failure_still_stops_and_is_reported(tmp_path):
+    def exporter(*a, **k):
+        raise ConnectionError('hub down')
+
+    chain, calls = harness(tmp_path, ok_stages(), exporter=exporter)
+    summary = chain.run()
+    assert summary['backups']['hf_export']['verified'] is False and len(summary['backups']['hf_export']['attempts']) == 3
+    assert summary['stop']['requested'] is True and summary['teardown'] == TEARDOWN
+
+
+def test_hung_copy_and_hung_stop_time_out_and_neither_backup_verified_is_reported(tmp_path):
+    def hung_copy(*a, **k):
+        time.sleep(30)
+
+    def exporter(*a, **k):
+        raise PermissionError('401')
+
+    attempts = []
+
+    def runner(cmd, **kw):
+        attempts.append(cmd)
+        raise subprocess.TimeoutExpired(cmd, kw['timeout'])
+
+    chain, _ = harness(tmp_path, ok_stages(), copier=hung_copy, exporter=exporter, runner=runner,
+                       timeouts_seconds=dict(copy=0.2, export_attempt=0.2, stop_attempt=0.1, writer_join=0.1))
+    started = time.monotonic()
+    summary = chain.run()
+    assert time.monotonic() - started < 10
+    assert summary['backups']['volume_copy'] == dict(verified=False, outcome='timeout', timeout_seconds=0.2)
+    assert 'NO VERIFIED BACKUP' in summary['backups']['statement']
+    assert len(attempts) == 2 and summary['stop']['requested'] is False
+    assert [a['outcome'] for a in summary['stop']['attempts']] == ['timeout', 'timeout']
+    local = au.latest_summary(tmp_path / 'local')['summary']
+    assert local['backups']['volume_copy']['verified'] is False  # never labelled verified
+
+
+def test_stop_command_fallback(tmp_path):
+    seen = []
+
+    def runner(cmd, **kw):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1 if len(seen) == 1 else 0, '', 'unknown command')
+
+    chain, _ = harness(tmp_path, ok_stages(), runner=runner)
+    summary = chain.run()
+    assert seen == [['runpodctl', 'stop', 'pod', 'pod-1'], ['runpodctl', 'pod', 'stop', 'pod-1']]
+    assert summary['stop']['requested'] is True and summary['stop']['attempts'][0]['returncode'] == 1
+
+
+def test_writers_are_stopped_and_joined_first(tmp_path):
+    events = []
+
+    class Writer:
+        def stop(self):
+            events.append('stop')
+
+        def join(self, timeout):
+            events.append(('join', timeout))
+            return True
+
+    def copier(*a, **k):
+        events.append('copy')
+        return dict(verified=True, problems=[])
+
+    chain, _ = harness(tmp_path, ok_stages(), copier=copier, writers=[Writer()])
+    chain.run()
+    assert events == ['stop', ('join', 10), 'copy']
+
+
+# --- caps ---------------------------------------------------------------------------------------------
+
+def test_overrun_ends_the_stage_at_a_unit_boundary_and_goes_to_report_and_stop(tmp_path):
+    clock = [0.0]
+    order, units = [], []
+
+    def attribution(ctx):
+        order.append('attribution_and_freeze')
+        for unit in range(10):
+            clock[0] += 50
+            units.append(unit)
+            ctx.boundary()
+        return {}
+
+    chain, _ = harness(tmp_path, ok_stages(order, attribution_and_freeze=attribution), now=lambda: clock[0])
+    summary = chain.run()
+    assert units == list(range(6)) and summary['stages']['attribution_and_freeze']['status'] == 'cap-reached'
+    assert 'stage_c' not in order and order[-1] == 'report' and summary['state'] == 'cap-reached'
+    assert summary['teardown'] == TEARDOWN
+
+
+def test_longest_first_packing_does_not_stop_a_healthy_run(tmp_path):
+    clock = [0.0]
+    projections = []
+
+    def attribution(ctx):
+        for seconds in [100, 60, 30, 20, 10, 10, 10, 10, 10, 10]:  # 270 s < 300 s cap
+            clock[0] += seconds
+            ctx.boundary()
+            projections.append(ctx.projection(done=len(projections) + 1, total=10))
+        return {}
+
+    chain, _ = harness(tmp_path, ok_stages(attribution_and_freeze=attribution), now=lambda: clock[0])
+    summary = chain.run()
+    assert projections[0]['projected_seconds'] > 300 and summary['state'] == 'complete'
+
+
+def test_elapsed_budget_persists_across_a_restart(tmp_path):
+    clock = [0.0]
+
+    def slow(ctx):
+        clock[0] += 80
+        ctx.boundary()
+        raise RuntimeError('killed')
+
+    chain, _ = harness(tmp_path, ok_stages(attribution_and_freeze=slow), now=lambda: clock[0])
+    chain.run()
+    budget = json.loads((tmp_path / 'volume' / ch.BUDGET_FILE).read_text())
+    assert budget['elapsed']['attribution_and_freeze'] == pytest.approx(80)
+
+
+# --- resume and marker ---------------------------------------------------------------------------------
+
+def marker(tmp_path, **fields):
+    path = tmp_path / 'volume' / ch.MARKER_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = dict(run_id='overnight-r1', host=socket.gethostname(), pid=999999, state='running',
+                heartbeat_unix=time.time() - 3600)
+    base.update(fields)
+    path.write_text(json.dumps(base))
+    return path
+
+
+def test_killed_worker_stale_marker_resumes_and_skips_completed_stages(tmp_path):
+    order = []
+    chain, _ = harness(tmp_path, ok_stages(order))
+    state = tmp_path / 'volume' / ch.STATE_FILE
+    state.parent.mkdir(parents=True, exist_ok=True)
+    qual = dict(checks=dict(fd=True), review_flags=[], arms=ARMS)
+    state.write_text(json.dumps(dict(run_id='overnight-r1', completed={'preflight': {}, 'qualification': qual},
+                                     signoff=dict(by=ch.AUTO_REVIEWER, decision='accept',
+                                                  qualification_sha256=ch.Chain._qualification_sha(qual)))))
+    marker(tmp_path)
+    summary = chain.run()
+    assert summary['resume']['decision'] == 'take-over' and order[0] == 'base_traces'
+
+
+def test_live_writer_stops_for_investigation(tmp_path):
+    marker(tmp_path, pid=os.getpid(), heartbeat_unix=time.time())
+    order = []
+    chain, calls = harness(tmp_path, ok_stages(order))
+    with pytest.raises(ch.ResumeRefused, match='live'):
+        chain.run()
+    assert order == [] and calls.stops == []  # never tears down another writer's run
+
+
+@pytest.mark.parametrize('fields,reason', [(dict(host='other-host'), 'ambiguous'),
+                                           (dict(heartbeat_unix=time.time()), 'ambiguous'),
+                                           (dict(run_id='someone-else'), 'foreign')])
+def test_ambiguous_or_foreign_marker_stops(tmp_path, fields, reason):
+    marker(tmp_path, **fields)
+    chain, _ = harness(tmp_path, ok_stages())
+    with pytest.raises(ch.ResumeRefused, match=reason):
+        chain.run()
+
+
+def test_volume_identity_mismatch_refuses_resume(tmp_path):
+    chain, _ = harness(tmp_path, ok_stages())
+    chain.volume_identity = 'sl-1:other'
+    with pytest.raises(ch.ResumeRefused, match='volume'):
+        chain.run()
+
+
+def test_resume_skips_sealed_units(tmp_path):
+    units = au.Units(tmp_path / 'local', plan_sha256='p', code_sha256='c', runtime_sha256='r')
+    calls = []
+
+    def compute(batch):
+        calls.append(batch)
+        return dict(blocks={('examples', 0, 'x'): np.ones((1, 2), dtype=np.float32)}, counts={'examples': [1]})
+
+    batches = [['e0'], ['e1'], ['e2']]
+    ch.run_units(units, 'gold-sft', batches, compute, boundary=lambda: None, input_sha256='i')
+    assert calls == batches
+    calls.clear()
+    ch.run_units(units, 'gold-sft', batches, compute, boundary=lambda: None, input_sha256='i')
+    assert calls == []
+
+
+def test_unavailable_matched_group_is_skipped_not_fatal(tmp_path):
+    units = au.Units(tmp_path / 'local', plan_sha256='p', code_sha256='c', runtime_sha256='r')
+    conditions = [dict(name='top1-trace', kind='removal', adapters=[1], status='run', reason=None),
+                  dict(name='match10-trace', kind='removal', adapters=None, status='skipped',
+                       reason='matched-control-unavailable')]
+    seen = []
+
+    def evaluate(condition):
+        seen.append(condition['name'])
+        return dict(blocks={('examples', 0, 'delta_trace'): np.zeros((2, 1), dtype=np.float32)},
+                    counts={'examples': [1, 1]})
+
+    out = ch.run_conditions(units, 'gold-sft', conditions, evaluate, example_ids=['q0', 'q1'], boundary=lambda: None,
+                            input_sha256='i')
+    assert seen == ['top1-trace'] and out['skipped'] == [dict(name='match10-trace', reason='matched-control-unavailable')]
+
+
+# --- watchdog ----------------------------------------------------------------------------------------
+
+WATCHDOG = Path(__file__).resolve().parents[1] / 'scripts' / 'attribution_watchdog.sh'
+
+
+def test_watchdog_deadline_uses_the_persisted_remaining_cap(tmp_path):
+    budget = au.Budget(tmp_path / 'b.json', stage_caps=dict(x=100), total_cap=1000, now=lambda: 0)
+    budget.charge('x', 400)
+    deadline = ch.watchdog_deadline(budget, margin_seconds=1800, wall_now=1_000_000.0)
+    assert deadline == pytest.approx(1_000_000 + 600 + 1800)
+
+
+def test_watchdog_fires_on_a_hung_stage(tmp_path):
+    hung = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    log = tmp_path / 'actions.log'
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}; exit 1',
+               WATCHDOG_STOP_2=f'echo stop2 >> {log}', WATCHDOG_SUMMARY=str(tmp_path / 'watchdog_summary.json'))
+    deadline = time.time() + 1
+    (tmp_path / 'owner').write_text('attempt-A\n')
+    result = subprocess.run(['bash', str(WATCHDOG), str(deadline), str(hung.pid), str(tmp_path / 'done'), '2', '5', '5',
+                             str(tmp_path / 'owner'), 'attempt-A'],
+                            env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert hung.wait(timeout=10) is not None
+    assert log.read_text().split() == ['copy', 'stop1', 'stop2']
+    summary = json.loads((tmp_path / 'watchdog_summary.json').read_text())
+    assert summary['fired'] is True and summary['stop'] == 'requested' and summary['externally_verified'] is False
+
+
+def test_watchdog_cancelled_cleanly_on_normal_completion(tmp_path):
+    log = tmp_path / 'actions.log'
+    (tmp_path / 'done').write_text('complete')
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
+               WATCHDOG_STOP_2='true', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    (tmp_path / 'owner').write_text('attempt-A\n')
+    result = subprocess.run(['bash', str(WATCHDOG), str(time.time() + 3600), str(os.getpid()), str(tmp_path / 'done'),
+                             '2', '5', '5', str(tmp_path / 'owner'), 'attempt-A'], env=env, capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0 and not log.exists() and 'cancelled' in result.stdout
+
+
+def test_r6_1_watchdog_acts_at_once_when_the_writer_dies_without_completing(tmp_path):
+    """Review round 6 (1): a startup failure (CLI, backend construction, ``_start``) exits before the chain's own
+    teardown; the watchdog must copy and stop within seconds, not at the deadline hours later."""
+    dead = subprocess.Popen([sys.executable, '-c', 'raise SystemExit(1)'])
+    dead.wait(timeout=10)
+    log = tmp_path / 'actions.log'
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
+               WATCHDOG_STOP_2='true', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    (tmp_path / 'owner').write_text('attempt-A\n')
+    started = time.time()
+    result = subprocess.run(['bash', str(WATCHDOG), str(time.time() + 3600), str(dead.pid), str(tmp_path / 'done'),
+                             '2', '5', '5', str(tmp_path / 'owner'), 'attempt-A'], env=env, capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert time.time() - started < 15
+    assert log.read_text().split() == ['copy', 'stop1']
+    summary = json.loads((tmp_path / 's.json').read_text())
+    assert summary['reason'] == 'writer-exited-without-completing' and summary['stop'] == 'requested'
+
+
+def test_r6_1_watchdog_still_stands_down_when_the_writer_finished_normally(tmp_path):
+    finished = subprocess.Popen([sys.executable, '-c', 'pass'])
+    finished.wait(timeout=10)
+    log = tmp_path / 'actions.log'
+    (tmp_path / 'done').write_text('complete')
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
+               WATCHDOG_STOP_2='true', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    (tmp_path / 'owner').write_text('attempt-A\n')
+    result = subprocess.run(['bash', str(WATCHDOG), str(time.time() + 3600), str(finished.pid), str(tmp_path / 'done'),
+                             '2', '5', '5', str(tmp_path / 'owner'), 'attempt-A'], env=env, capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0 and not log.exists() and 'cancelled' in result.stdout
+
+
+def test_heartbeat_is_refreshed_at_every_unit_boundary(tmp_path):
+    beats = []
+
+    def attribution(ctx):
+        for _ in range(3):
+            ctx.boundary()
+            beats.append(json.loads((tmp_path / 'volume' / ch.MARKER_FILE).read_text())['units_done'])
+        return {}
+
+    chain, _ = harness(tmp_path, ok_stages(attribution_and_freeze=attribution))
+    chain.run()
+    assert beats == [1, 2, 3]
+
+
+def test_finalize_turns_an_edited_draft_into_a_sealed_loadable_record(tmp_path):
+    import yaml
+    draft = tmp_path / 'draft.yaml'
+    rec = record()
+    rec['code_commit'] = None  # filled at seal time from the checkout
+    draft.write_text(yaml.safe_dump(dict(rec, pod_id=None)))
+    with pytest.raises(ch.LaunchRefused, match='pod_id'):
+        ch.finalize_draft(draft, tmp_path / 'out.json', code_commit='abc123')
+    assert not (tmp_path / 'out.json').exists()  # nothing sealed while a value is unresolved
+    draft.write_text(yaml.safe_dump(rec))
+    path = ch.finalize_draft(draft, tmp_path / 'out.json', code_commit='abc123')
+    assert ch.load_launch_record(path, code_commit='abc123')['code_commit'] == 'abc123'
+
+
+def test_the_repository_draft_is_complete_except_for_user_values():
+    import yaml
+    from pathlib import Path
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-draft.yaml'
+    rec = yaml.safe_load(draft.read_text())
+    missing = set(ch.unresolved(dict(rec, code_commit='x')))
+    assert missing and all(p.split('.')[0].split('[')[0] in ch.USER_FIELDS for p in missing), sorted(missing)
+    assert set(ch.REQUIRED) <= set(rec)
+
+
+# --- review round 4 -------------------------------------------------------------------------------
+
+def test_r4_2_failed_qualification_is_not_marked_complete_and_resume_requires_signoff(tmp_path):
+    order = []
+
+    def failing(ctx):
+        order.append('qualification')
+        return dict(checks=dict(finite_differences=False), review_flags=[], arms=list(ARMS))
+
+    chain, _ = harness(tmp_path, ok_stages(order, qualification=failing))
+    assert chain.run()['state'] == 'stopped-before-production'
+    state = json.loads((tmp_path / 'volume' / ch.STATE_FILE).read_text())
+    assert 'qualification' not in state['completed'] and state.get('signoff') is None
+    # a resumed attempt reruns qualification; it never skips to production
+    order.clear()
+    chain, _ = harness(tmp_path / 'r', ok_stages(order), )
+    # forge a state that claims qualification completed but has no sign-off
+    state_path = tmp_path / 'r' / 'volume' / ch.STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(dict(run_id='overnight-r1', completed={'preflight': {}, 'qualification': {}})))
+    summary = chain.run()
+    assert summary['state'] == 'failed' and 'sign-off' in summary['failures'][0]['error']
+    assert 'attribution_and_freeze' not in order
+
+
+def test_r4_2_signoff_must_match_the_completed_qualification(tmp_path):
+    order = []
+    chain, _ = harness(tmp_path, ok_stages(order))
+    state_path = tmp_path / 'volume' / ch.STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    qual = dict(checks=dict(fd=True), review_flags=[], arms=ARMS)
+    state_path.write_text(json.dumps(dict(run_id='overnight-r1', completed={'preflight': {}, 'qualification': qual},
+                                          signoff=dict(by=ch.AUTO_REVIEWER, decision='accept',
+                                                       qualification_sha256='0' * 64))))
+    summary = chain.run()
+    assert summary['state'] == 'failed' and 'sign-off' in summary['failures'][0]['error'] and order == []
+
+
+def test_r4_4_resume_refuses_a_sealed_unit_with_another_identity(tmp_path):
+    units = au.Units(tmp_path / 'local', plan_sha256='p', code_sha256='c', runtime_sha256='r')
+
+    def compute(batch):
+        return dict(blocks={('examples', 0, 'x'): np.ones((1, 2), dtype=np.float32)}, counts={'examples': [1]})
+
+    ch.run_units(units, 'gold-sft', [['e0']], compute, boundary=lambda: None, input_sha256='i')
+    changed = au.Units(tmp_path / 'local', plan_sha256='p2', code_sha256='c', runtime_sha256='r')
+    with pytest.raises(ValueError, match='identity'):
+        ch.run_units(changed, 'gold-sft', [['e0']], compute, boundary=lambda: None, input_sha256='i')
+    with pytest.raises(ValueError, match='identity'):
+        ch.run_units(units, 'gold-sft', [['e9']], compute, boundary=lambda: None, input_sha256='i')
+    conditions = [dict(name='top1-trace', kind='removal', adapters=[1], status='run', reason=None)]
+
+    def evaluate(condition):
+        return dict(blocks={('examples', 0, 'd'): np.zeros((1, 1), dtype=np.float32)}, counts={'examples': [1]})
+
+    ch.run_conditions(units, 'gold-sft', conditions, evaluate, example_ids=['q0'], boundary=lambda: None,
+                      input_sha256='i')
+    with pytest.raises(ValueError, match='identity'):
+        ch.run_conditions(changed, 'gold-sft', conditions, evaluate, example_ids=['q0'], boundary=lambda: None,
+                          input_sha256='i')
+
+
+def test_r4_6_time_after_the_last_boundary_and_export_time_are_charged(tmp_path):
+    clock = [0.0]
+
+    def preflight(ctx):
+        clock[0] += 200  # no unit boundary at all
+        return {}
+
+    def exporter(*a, **k):
+        clock[0] += 30
+        return dict(revision='a' * 40, completeness='complete', readback_verified=True)
+
+    chain, _ = harness(tmp_path, ok_stages(preflight=preflight), exporter=exporter, now=lambda: clock[0])
+    summary = chain.run()
+    budget = json.loads((tmp_path / 'volume' / ch.BUDGET_FILE).read_text())
+    assert budget['elapsed']['preflight'] == pytest.approx(200)
+    assert summary['stages']['preflight']['status'] == 'cap-exceeded-at-completion'
+    assert summary['state'] == 'stopped-before-production'
+    assert budget['elapsed']['teardown'] >= 30
+
+
+def test_r4_6_total_cap_checked_before_each_stage(tmp_path):
+    clock = [0.0]
+    order = []
+
+    def attribution(ctx):
+        order.append('attribution_and_freeze')
+        clock[0] += 290  # under its 300 s cap, but the total (1000) is now spent with earlier stages
+        return {}
+
+    def traces(ctx):
+        order.append('base_traces')
+        clock[0] += 99
+        return {}
+
+    def qual(ctx):
+        order.append('qualification')
+        clock[0] += 99
+        return dict(checks=dict(fd=True), review_flags=[], arms=list(ARMS))
+
+    def stage_c(ctx):
+        order.append('stage_c')
+        clock[0] += 199
+        return {}
+
+    def stage_d(ctx):
+        order.append('stage_d')
+        clock[0] += 199
+        return {}
+
+    def pre(ctx):
+        clock[0] += 49
+        return {}
+
+    chain, _ = harness(tmp_path, ok_stages(order, preflight=pre, qualification=qual, base_traces=traces,
+                                           attribution_and_freeze=attribution, stage_c=stage_c, stage_d=stage_d),
+                       now=lambda: clock[0],
+                       caps_seconds=dict(total=700, qualification=100, base_traces=100, attribution_and_freeze=300,
+                                         stage_c=200, stage_d=200, report=50, preflight=50))
+    summary = chain.run()
+    assert 'stage_d' not in order and summary['stages']['stage_d']['status'] == 'not-run'
+    assert summary['state'] == 'cap-reached' and order[-1] == 'report'
+
+
+def test_r4_8_summary_is_inside_the_hf_backup_and_the_final_one_reaches_the_volume(tmp_path):
+    from tests.test_neuron_audit_export import FakeHub
+    hub = FakeHub()
+
+    def exporter(local, *, label, include, expected_units, expected_runs, repo):
+        return au.export(local, label=label, include=include, expected_units=expected_units,
+                         expected_runs=expected_runs, client=hub, temp_dir=tmp_path / 'tmp', on_event=lambda e: None)
+
+    chain, _ = harness(tmp_path, ok_stages(), exporter=exporter)
+    summary = chain.run()
+    receipt = summary['backups']['hf_export']['receipt']
+    assert receipt['completeness'] == 'complete'
+    restored = au.restore_summary(receipt, tmp_path / 'clean', client=hub, on_event=lambda e: None)
+    assert restored['phase'] == 'pre-export' and restored['summary']['backups']['hf_export']['verified'] == 'pending'
+    final = au.latest_summary(tmp_path / 'volume')
+    assert final['phase'] == 'final' and final['summary']['backups']['hf_export']['verified'] is True
+    record = json.loads((tmp_path / 'volume' / 'attribution/chain/stop_record.json').read_text())
+    assert record['final_summary_upload']['outcome'] == 'ok'
+
+
+def test_r4_8_a_retry_never_leaves_a_stale_summary(tmp_path):
+    def boom(ctx):
+        raise RuntimeError('first attempt fails')
+
+    chain, _ = harness(tmp_path, ok_stages(stage_c=boom))
+    assert chain.run()['state'] == 'failed'
+    (tmp_path / 'volume' / ch.MARKER_FILE).write_text(json.dumps(dict(
+        run_id='overnight-r1', host=socket.gethostname(), pid=999999, state='running', heartbeat_unix=0)))
+    chain, _ = harness(tmp_path, ok_stages())
+    assert chain.run()['state'] == 'complete'
+    latest = au.latest_summary(tmp_path / 'volume')
+    assert latest['summary']['state'] == 'complete' and latest['attempt'].startswith('attempt-002')
+
+
+
+def test_r4_7_a_superseded_watchdog_stands_down_without_signalling_or_stopping(tmp_path):
+    """A killed attempt's watchdog must never stop the Pod under a resumed writer (review round 4, 7)."""
+    replacement = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    log = tmp_path / 'actions.log'
+    env = dict(os.environ, WATCHDOG_COPY=f'echo copy >> {log}', WATCHDOG_STOP_1=f'echo stop1 >> {log}',
+               WATCHDOG_STOP_2=f'echo stop2 >> {log}', WATCHDOG_SUMMARY=str(tmp_path / 's.json'))
+    owner = tmp_path / 'owner'
+    owner.write_text('attempt-A\n')
+    old = subprocess.Popen(['bash', str(WATCHDOG), str(time.time() + 3), str(replacement.pid), str(tmp_path / 'done'),
+                            '2', '5', '5', str(owner), 'attempt-A'], env=env, stdout=subprocess.PIPE, text=True)
+    time.sleep(1)
+    owner.write_text('attempt-B\n')  # the relaunch takes ownership before starting its own chain and watchdog
+    out, _ = old.communicate(timeout=30)
+    try:
+        assert old.returncode == 0 and 'superseded' in out
+        assert not log.exists() and replacement.poll() is None  # nothing copied or stopped; the new writer lives
+    finally:
+        replacement.kill()
+
+
+
+def test_launch_record_must_state_the_finite_difference_precision(tmp_path):
+    for bad in ['fp32-noisy', None]:
+        tol = dict(record()['tolerances'])
+        tol['finite_difference'] = dict(tol['finite_difference'], precision=bad)
+        with pytest.raises(ch.LaunchRefused, match='precision|unresolved'):
+            ch.load_launch_record(sealed_record(tmp_path / str(bad), tolerances=tol), code_commit='abc123')
+
+
+# --- Pod integration (2026-11-16) ------------------------------------------------------------------------
+
+def test_observed_volume_identity_uses_the_joint_audit_sentinel_and_mount_checks(tmp_path):
+    from pilot_eval.neuron_audit_preflight import VOLUME_SENTINEL
+    volume, local = tmp_path / 'volume', tmp_path / 'local'
+    volume.mkdir()
+    local.mkdir()
+    (volume / VOLUME_SENTINEL).write_text(json.dumps(dict(volume_id='sl-0')))
+    on_volume = lambda p: Path(p).name == 'volume'  # noqa: E731
+    probes = dict(mount_of=lambda p: '/workspace' if on_volume(p) else '/', mounts_text='',
+                  device_of=lambda p: 2 if on_volume(p) else 1)
+    assert ch.observed_volume_identity(volume, local, expected='sl-0', **probes) == 'sl-0'
+    with pytest.raises(ch.ResumeRefused, match='not sl-1'):
+        ch.observed_volume_identity(volume, local, expected='sl-1', **probes)
+    same_disk = dict(probes, mount_of=lambda p: '/', device_of=lambda p: 1)
+    with pytest.raises(ch.ResumeRefused, match='same filesystem'):
+        ch.observed_volume_identity(volume, local, expected='sl-0', **same_disk)
+
+
+def test_fill_from_prepare_inputs_and_the_pod_environment(tmp_path):
+    import yaml
+    rec = record()
+    rec.update(code_commit=None, pod_id=None, inputs=dict(artifact_root=None, model_dir=None, tokenizer_dir=None,
+                                                          adapter_dirs={a: None for a in ARMS},
+                                                          inventory_dir='runs/i', sequences_dir='runs/s',
+                                                          gsm8k_test_parquet='data/test.parquet', work_dir=None,
+                                                          max_new_tokens=1024))
+    draft = tmp_path / 'draft.yaml'
+    draft.write_text(yaml.safe_dump(rec))
+    inputs = tmp_path / 'inputs.json'
+    inputs.write_text(json.dumps(dict(prep='/root/attr/prep', model_dir='/root/attr/hf/model', tokenizer_dir='/t',
+                                      adapter_dirs={a: f'/root/attr/prep/adapters/{a}' for a in ARMS})))
+    seq = tmp_path / 'prep' / 'runs/s'
+    seq.mkdir(parents=True)
+    (seq / 'manifest.json').write_text(json.dumps(dict(sources=dict(gsm8k=dict(test_parquet='data/pinned-test.parquet')))))
+    inputs.write_text(json.dumps(dict(json.loads(inputs.read_text()), prep=str(tmp_path / 'prep'))))
+    rec['inputs']['gsm8k_test_parquet'] = None
+    draft.write_text(yaml.safe_dump(rec))
+    path = ch.finalize_draft(draft, tmp_path / 'out.json', code_commit='abc123', inputs_json=inputs,
+                             pod_id='pod-xyz', work_dir='/root/attr')
+    sealed = ch.load_launch_record(path, code_commit='abc123')
+    assert sealed['pod_id'] == 'pod-xyz' and sealed['inputs']['artifact_root'] == str(tmp_path / 'prep')
+    assert sealed['inputs']['gsm8k_test_parquet'] == 'data/pinned-test.parquet'  # from the sequences manifest
+    assert sealed['inputs']['adapter_dirs']['gold-sft'].endswith('adapters/gold-sft')
+    assert sealed['inputs']['work_dir'] == '/root/attr' and sealed['inputs']['inventory_dir'] == 'runs/i'
+    with pytest.raises(ch.LaunchRefused, match='pod_id'):  # never filled with an invented value
+        ch.finalize_draft(draft, tmp_path / 'out2.json', code_commit='abc123', inputs_json=inputs, pod_id=None,
+                          work_dir='/root/attr')
+
+
+def test_the_pod_rehearsal_draft_seals_once_the_pod_and_the_price_are_filled(tmp_path):
+    import yaml
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-pod-rehearsal.yaml'
+    rec = yaml.safe_load(draft.read_text())
+    assert rec['mode'] == 'rehearsal' and rec['tolerances']['finite_difference']['precision'] == 'fp64'
+    seq = tmp_path / 'prep' / rec['inputs']['sequences_dir']
+    seq.mkdir(parents=True)
+    (seq / 'manifest.json').write_text(json.dumps(dict(sources=dict(gsm8k=dict(test_parquet='t.parquet')))))
+    inputs = tmp_path / 'inputs.json'
+    inputs.write_text(json.dumps(dict(prep=str(tmp_path / 'prep'), model_dir='/m', tokenizer_dir='/t',
+                                      adapter_dirs={'gold-sft': '/a', 'online-grpo': '/b'})))
+    (tmp_path / 'd.yaml').write_text(yaml.safe_dump(dict(rec, hourly_cost_usd=1.9)))
+    path = ch.finalize_draft(tmp_path / 'd.yaml', tmp_path / 'r.json', code_commit='abc', inputs_json=inputs,
+                             pod_id='pod1', work_dir='/root/attr')
+    loaded = ch.load_launch_record(path, code_commit='abc')
+    assert loaded['run_id'] == rec['run_id']
+    assert isinstance(loaded['compute']['fp32_peak_flops'], float)  # pod-2: YAML read 19.5e12 as text
+
+
+@pytest.mark.parametrize('path, value', [
+    (('compute', 'fp32_peak_flops'), '19.5e12'),          # Pod launch 2: PyYAML reads an unsigned exponent as text
+    (('caps_seconds', 'total'), '10800'),
+    (('statistics', 'alpha'), True),
+    (('inputs', 'max_new_tokens'), '1024'),
+])
+def test_a_number_given_as_text_or_bool_is_refused_at_load(tmp_path, path, value):
+    rec = record(inputs=dict(max_new_tokens=1024, model_dir='/m'))
+    target = rec
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    with pytest.raises(ch.LaunchRefused, match='.'.join(path)):
+        ch.load_launch_record(sealed_record(tmp_path, **{path[0]: rec[path[0]]}), code_commit='abc123')
+
+
+def test_r6_4_pilot_filter_values_keep_their_type_and_paths_must_be_text():
+    """Review round 6 (4): the production draft filters online-grpo pilot rows by ``step: 64`` (a number that must
+    equal the rows' numeric field); only the pilot file path is text."""
+    ok = dict(stage_d=dict(pilot_results={'online-grpo': dict(path='p.jsonl', filters=dict(step=64, run='v1'))}))
+    assert ch.mistyped(ok) == []
+    bad = dict(stage_d=dict(pilot_results={'online-grpo': dict(path=7, filters={})}))
+    assert ch.mistyped(bad) and 'pilot_results.online-grpo.path' in ch.mistyped(bad)[0]
+
+
+def test_r6_4_the_production_draft_has_no_type_errors():
+    import yaml
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-draft.yaml'
+    assert ch.mistyped(yaml.safe_load(draft.read_text())) == []
+
+
+@pytest.mark.parametrize('path, value', [
+    (('qualification', 'fd_rows'), 1.5), (('inputs', 'max_new_tokens'), 1.5), (('selection', 'random_seeds'), [1, 2.5]),
+    (('token_budget_sweep',), [2048, 4096.0]), (('statistics', 'resamples'), 1e4)])
+def test_r6_9_counts_seeds_and_budgets_must_be_integers(path, value):
+    """Review round 6 (9): a fractional count, seed or budget is refused; real-valued thresholds stay floats."""
+    rec = record(qualification=dict(fd_rows=4), inputs=dict(max_new_tokens=1024))
+    assert ch.mistyped(rec) == []
+    target = rec
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    assert any(p.startswith('.'.join(path)) and 'integer' in p for p in ch.mistyped(rec))
+
+
+def test_production_with_the_pilot_comparison_deferred_loads_and_without_either_is_refused(tmp_path):
+    """User decision 2026-11-16: the production run may defer the item-level pilot comparison (all Stage D
+    responses are sealed, so it can be added later); without pilot files and without the deferral it is refused."""
+    deferred = dict(early_stop_rule=dict(kind='fraction-of-untuned-same-item', ratio=0.5), pilot_results={},
+                    pilot_comparison='deferred')
+    assert ch.load_launch_record(sealed_record(tmp_path / 'a', stage_d=deferred), code_commit='abc123')
+    neither = dict(deferred, pilot_comparison=None)
+    neither.pop('pilot_comparison')
+    with pytest.raises(ch.LaunchRefused, match='pilot'):
+        ch.load_launch_record(sealed_record(tmp_path / 'b', stage_d=neither), code_commit='abc123')
+    with pytest.raises(ch.LaunchRefused, match='pilot_comparison'):
+        ch.load_launch_record(sealed_record(tmp_path / 'c', stage_d=dict(deferred, pilot_comparison='later')),
+                              code_commit='abc123')
+
+
+def test_the_production_record_seals_with_six_arms_and_the_approved_values(tmp_path):
+    import yaml
+    draft = Path(__file__).resolve().parents[1] / '.scratch/adapter-neuron-attribution/launch-record-production.yaml'
+    rec = yaml.safe_load(draft.read_text())
+    assert rec['mode'] == 'production' and sorted(rec['expected_arms']) == sorted(ARMS)
+    assert rec['minimums'] == dict(discovery=120, heldout=60) and rec['stage_d']['pilot_comparison'] == 'deferred'
+    seq = tmp_path / 'prep' / rec['inputs']['sequences_dir']
+    seq.mkdir(parents=True)
+    (seq / 'manifest.json').write_text(json.dumps(dict(sources=dict(gsm8k=dict(test_parquet='t.parquet')))))
+    inputs = tmp_path / 'inputs.json'
+    inputs.write_text(json.dumps(dict(prep=str(tmp_path / 'prep'), model_dir='/m', tokenizer_dir='/t',
+                                      adapter_dirs={a: f'/{a}' for a in ARMS})))
+    path = ch.finalize_draft(draft, tmp_path / 'r.json', code_commit='abc', inputs_json=inputs, pod_id='pod1',
+                             work_dir='/root/attr')
+    sealed = ch.load_launch_record(path, code_commit='abc')
+    assert sorted(sealed['inputs']['adapter_dirs']) == sorted(ARMS)
+
+
+class _PodGone(BaseException):
+    """The container ends while ``runpodctl stop`` runs (C-attribution rehearsal, 2026-11-22)."""
+
+
+def test_closing_records_reach_the_volume_before_a_stop_that_ends_the_container(tmp_path):
+    def runner(cmd, **kw):
+        raise _PodGone('container stopped')
+
+    chain, _ = harness(tmp_path, ok_stages(), runner=runner)
+    with pytest.raises(_PodGone):
+        chain.run()
+    chain_dir = tmp_path / 'volume' / 'attribution/chain'
+    assert (chain_dir / 'done').read_text() == 'complete\n'
+    record = json.loads((chain_dir / 'stop_record.json').read_text())
+    assert record['stop']['requested'] == 'in progress' and record['steps'][-1] == 'stop_requesting'
+    assert record['final_summary_upload']['outcome'] == 'ok'
+    assert json.loads((tmp_path / 'volume' / ch.MARKER_FILE).read_text())['state'] == 'released'

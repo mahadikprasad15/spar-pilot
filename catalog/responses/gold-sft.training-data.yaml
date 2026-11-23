@@ -1,0 +1,32 @@
+kind: training-data
+cohort: gsm8k-train-512
+question_field: source_id
+scorer:
+  name: none (gold reference)
+selection:
+  correctness_filtered: true
+  gold_access: true
+  all_groups_retained: true
+  best_of_n: false
+id: gold-sft.training-data
+arm: gold-sft
+checkpoint_step: null
+policy:
+  mode: none
+draws_per_question: 1
+c_suitability: fixed-text
+generator: human GSM8K gold solutions
+files:
+- location: hf-sampling-sft-local
+  path: unpacked/runs/sampling-sft/sampling-sft-v1/gate/l4-gate-v2/results/answers.jsonl
+  sha256: 71f09f5cb4909d5b8ee1663e867584edcefc21abaf89d0b58258f973c6605268
+  rows_total: 1939
+  select:
+    method: gold
+  rows_selected: 512
+evidence:
+  status: verified
+  checked:
+  - file sha256, rows, cohort IDs
+notes: Loss-bearing SFT token IDs (prompt_ids, response_ids). Same texts as runs/stage0/a100-stage0-v1/dataset/inputs/answers.jsonl
+  (membership gold).

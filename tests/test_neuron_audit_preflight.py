@@ -1,0 +1,191 @@
+"""Ticket 03b worker preflight: environment order, interpreter, storage ops, capacity, online HF check."""
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from pilot_eval import neuron_audit_preflight as pf
+
+GOOD_ENV = dict(PYTHONUNBUFFERED='1', CUBLAS_WORKSPACE_CONFIG=':4096:8')
+
+
+def test_offline_flags_set_and_late_import_detected():
+    env = dict(GOOD_ENV, HF_TOKEN='secret-value')
+    record, problems = pf.prepare_environment(env, modules={})
+    assert problems == [] and env['HF_HUB_OFFLINE'] == '1' and env['HF_HUB_ENABLE_HF_TRANSFER'] == '0'
+    assert record['hf_token_set'] is True and 'secret-value' not in json.dumps(record)
+    _, problems = pf.prepare_environment(dict(GOOD_ENV), modules={'huggingface_hub': object()})
+    assert any('after importing' in p for p in problems)
+    _, problems = pf.prepare_environment(dict(GOOD_ENV, HF_HUB_OFFLINE='1'), modules={'huggingface_hub': object()})
+    assert problems == []
+
+
+def test_missing_hf_transfer_unbuffered_and_cublas_reported(monkeypatch):
+    import builtins
+    real = builtins.__import__
+    monkeypatch.setattr(builtins, '__import__', lambda name, *a, **k: (_ for _ in ()).throw(ImportError())
+                        if name == 'hf_transfer' else real(name, *a, **k))
+    _, problems = pf.prepare_environment({'HF_HUB_ENABLE_HF_TRANSFER': '1'}, modules={})
+    assert any('hf_transfer' in p for p in problems)
+    assert any('PYTHONUNBUFFERED' in p for p in problems) and any('CUBLAS' in p for p in problems)
+
+
+def test_interpreter_and_package_pins():
+    versions = {'torch': '2.9.0', 'peft': '0.18.0'}
+    record, problems = pf.check_interpreter('/venv/bin/python', '/venv', versions, executable='/venv/bin/python',
+                                            prefix='/venv', version=versions.get)
+    assert problems == [] and record['packages'] == versions
+    _, problems = pf.check_interpreter('/venv/bin/python', '/venv', versions, executable='/usr/bin/python3',
+                                       prefix='/usr', version=lambda n: '2.7.1' if n == 'torch' else '0.18.0')
+    assert len(problems) == 3
+    _, problems = pf.check_interpreter(None, None, {}, executable='x', prefix='y', version=versions.get)
+    assert any('not recorded' in p for p in problems)
+
+
+def test_storage_probe_runs_writer_operations_and_cleans_up(tmp_path):
+    record, problems = pf.storage_probe(tmp_path, 3 << 20, label='volume')
+    assert problems == [] and list(record['operations']) == ['create_write_fsync', 'read_back_hash', 'rename',
+                                                              'copyfile', 'delete']
+    assert not list(tmp_path.iterdir())
+
+
+def test_storage_probe_reports_failure(tmp_path, monkeypatch):
+    def no_copy(*a, **k):
+        raise PermissionError('Operation not permitted')  # e.g. FUSE refusing metadata changes
+    monkeypatch.setattr(pf.shutil, 'copyfile', no_copy)
+    record, problems = pf.storage_probe(tmp_path, label='volume')
+    assert problems == ['volume: copyfile failed (PermissionError)']
+    assert record['operations']['delete']['ok'] is True and not list(tmp_path.iterdir())
+
+
+def test_storage_rules_local_working_set_and_hf_quota(tmp_path):
+    local = dict(free_bytes=100_000, total_bytes=200_000)
+    hf = dict(observed_private_bytes=15_000, quota_bytes=100_000)
+    ok, problems = pf.confirm_storage(local, hf, per_arm_bytes=10_000, total_upload_bytes=60_000, local_dir=tmp_path)
+    assert problems == [] and ok['local_need_bytes'] == 30_000 and ok['probe']['bytes'] == 500
+    _, problems = pf.confirm_storage(local, hf, per_arm_bytes=25_000, total_upload_bytes=60_000)
+    assert any('local working set' in p for p in problems)
+    _, problems = pf.confirm_storage(local, hf, per_arm_bytes=1_000, total_upload_bytes=75_000)
+    assert any('85% of quota' in p for p in problems)
+    _, problems = pf.confirm_storage(local, dict(observed_private_bytes=None, quota_bytes=1), per_arm_bytes=1,
+                                     total_upload_bytes=1)
+    assert problems == ['HF private usage/quota not measured']
+
+
+def test_global_volume_has_no_capacity_rule_and_local_disk_is_measured(tmp_path):
+    (tmp_path / 'x.bin').write_bytes(b'x' * 1000)
+    assert pf.volume_record(tmp_path) == dict(volume_dir=str(tmp_path), used_bytes=1000,
+                                              capacity_rule='none (global volume)')
+    assert pf.local_disk(tmp_path)['free_bytes'] > 0
+
+
+class FakeHub:
+    def __init__(self, private=True, corrupt=False):
+        self.private, self.corrupt, self.store = private, corrupt, {}
+
+    def info(self, repo):
+        return SimpleNamespace(private=self.private)
+
+    def publish(self, repo, files):
+        self.store.update({n: Path(p).read_bytes() for n, p in files.items()})
+        return 'f' * 40
+
+    def fetch_to(self, repo, name, revision, directory):
+        path = Path(directory) / Path(name).name
+        path.write_bytes(self.store[name] + (b'x' if self.corrupt else b''))
+        return path
+
+
+def test_online_hf_check_private_write_readback(tmp_path):
+    record, problems = pf.hf_online_check(FakeHub(), 'o/r', tmp_path)
+    assert problems == [] and record['readback_matches'] is True and record['revision'] == 'f' * 40
+    assert pf.hf_online_check(FakeHub(private=False), 'o/r', tmp_path)[1] == ['HF export repository is not private']
+    assert pf.hf_online_check(FakeHub(corrupt=True), 'o/r', tmp_path)[1] == ['HF readback hash differs']
+
+
+def test_online_check_runs_in_a_separate_online_process(tmp_path):
+    calls = []
+
+    def runner(command, env, **kw):
+        calls.append((command, env))
+        return SimpleNamespace(returncode=0, stdout=json.dumps(dict(record=dict(ok=1), problems=[])) + '\n', stderr='')
+
+    record, problems = pf.hf_online_subprocess('o/r', tmp_path, runner=runner)
+    command, env = calls[0]
+    assert problems == [] and record == dict(ok=1)
+    assert command[1:4] == ['-m', 'pilot_eval.neuron_audit_preflight', 'hf-check'] and env['HF_HUB_OFFLINE'] == '0'
+    failing = lambda *a, **k: SimpleNamespace(returncode=1, stdout='', stderr='401 Unauthorized')
+    assert pf.hf_online_subprocess('o/r', tmp_path, runner=failing)[1] == ['online HF export check process failed']
+
+
+def test_run_collects_every_problem_and_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(pf, 'precision_and_device', lambda: (dict(device='cpu'), []))
+    plan = dict(preflight=dict(expected_sys_executable='a', expected_sys_prefix='b', export_repo='o/r'),
+                runtime=dict(packages={}, expected_device='NVIDIA A100-SXM4-80GB'),
+                storage=dict())
+    with pytest.raises(pf.PreflightFailure) as info:
+        pf.run(plan, volume_dir=tmp_path, local_temp=tmp_path, offline_load=lambda: 1 / 0,
+               environ=dict(GOOD_ENV), interpreter=lambda *a, **k: ({}, []),
+               commit_check=lambda expected: ({}, ['running commit x != plan']))
+    problems = info.value.problems
+    assert any('device cpu' in p for p in problems) and any('offline model' in p for p in problems)
+    assert 'HF online export check was not run' in problems
+    assert any('global_volume.id is not recorded' in p for p in problems)  # no volume identity: refused
+    assert any('running commit' in p for p in problems)
+
+
+def test_rehearsal_records_volume_and_commit_problems_as_warnings(tmp_path, monkeypatch):
+    monkeypatch.setattr(pf, 'precision_and_device', lambda: (dict(device='cpu'), []))
+    plan = dict(preflight=dict(expected_sys_executable=None, expected_sys_prefix=None, export_repo='o/r'),
+                runtime=dict(packages={}, expected_device=None), storage=dict(global_volume=dict(id='sl-0')))
+    volume = tmp_path / 'not-yet'
+    record = pf.run(plan, volume_dir=volume, local_temp=tmp_path, offline_load=lambda: {},
+                    environ=dict(GOOD_ENV, HF_HUB_OFFLINE='1'),
+                    interpreter=lambda *a, **k: ({}, []), hf_check=lambda: ({}, []), rehearsal=True,
+                    commit_check=lambda expected: ({}, ['runtime.code_commit is not recorded in the plan']))
+    assert any('does not exist' in w for w in record['warnings']) and any('code_commit' in w for w in record['warnings'])
+
+
+def test_cuda_build_suffix_policy():
+    assert pf.version_matches('2.9.0+cu128', '2.9.0', ['cu128'])
+    assert not pf.version_matches('2.9.0+cu128', '2.9.0')  # suffix must be listed in the plan
+    assert not pf.version_matches('2.9.1+cu128', '2.9.0', ['cu128'])
+    assert pf.version_matches('2.9.0', '2.9.0') and not pf.version_matches(None, '2.9.0')
+    assert pf.version_matches('2.9.0+cu128', '2.9.0+cu128') and not pf.version_matches('2.9.0+cu126', '2.9.0+cu128')
+    record, problems = pf.check_interpreter('/v/bin/python', '/v', {'torch': '2.9.0'}, executable='/v/bin/python',
+                                            prefix='/v', version=lambda n: '2.9.0+cu128',
+                                            allowed_local={'torch': ['cu128']})
+    assert problems == [] and record['packages'] == {'torch': '2.9.0+cu128'}  # full string recorded
+
+
+def test_volume_identity_requires_existing_separate_mount_and_identity_file(tmp_path):
+    local, volume = tmp_path / 'local', tmp_path / 'vol'
+    local.mkdir()
+    record, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local)
+    assert 'does not exist' in problems[0] and not volume.exists()  # never created by the check
+    volume.mkdir()
+    _, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local)
+    assert any('same filesystem' in p for p in problems)
+    mounted = dict(mount_of=lambda p: '/vol' if Path(p).name == 'vol' else '/',
+                   device_of=lambda p: 2 if Path(p).name == 'vol' else 1)
+    _, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local, **mounted)
+    assert problems == [next(p for p in problems if 'identity file' in p)]
+    with pytest.raises(pf.PreflightFailure):
+        pf.init_volume(volume, volume_id='sl-0', local_dir=local)  # same filesystem: refused, nothing written
+    assert not (volume / pf.VOLUME_SENTINEL).exists()
+    pf.init_volume(volume, volume_id='sl-0', local_dir=local, **mounted)
+    record, problems = pf.volume_identity(volume, expected_id='sl-0', local_dir=local, **mounted)
+    assert problems == [] and record['identity']['volume_id'] == 'sl-0'
+    _, problems = pf.volume_identity(volume, expected_id='sl-9', local_dir=local, **mounted)
+    assert any('names sl-0' in p for p in problems)
+
+
+def test_code_commit_must_match_and_be_clean():
+    def runner(out):
+        return lambda cmd, **k: SimpleNamespace(stdout=out if 'rev-parse' in cmd else '', returncode=0)
+    assert pf.check_code_commit('a' * 40, runner=runner('a' * 40 + '\n'))[1] == []
+    assert 'running commit' in pf.check_code_commit('a' * 40, runner=runner('b' * 40))[1][0]
+    assert 'not recorded' in pf.check_code_commit(None, runner=runner('b' * 40))[1][0]
+    dirty = lambda cmd, **k: SimpleNamespace(stdout='a' * 40 if 'rev-parse' in cmd else ' M pilot_eval/x.py\n')
+    assert 'tracked files differ' in pf.check_code_commit('a' * 40, runner=dirty)[1][0]

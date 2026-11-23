@@ -1,0 +1,95 @@
+# Canonical arm names. Use these names everywhere new; aliases record the names older runs used.
+# Checkpoint sha256 = adapter_model.safetensors bytes (matches the joint audit's inventory-v2).
+# Base for every arm: Qwen/Qwen2.5-1.5B-Instruct, revision 989aa7980e4cf806f80c7fef2b1adb7bc71aa306,
+# rank-1 LoRA, alpha 1, dropout 0, targets q/k/v/o/gate/up/down_proj (196 adapters), FP32.
+arms:
+  untuned:
+    aliases: [base, step-0, zero-adapter]
+    description: Base model; checkpoint 0 is the shared zero-B initial adapter (no effect on outputs).
+    checkpoints:
+      0: {location: local, path: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k0/checkpoints/checkpoint-0/adapter_model.safetensors,
+          sha256: b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5}
+
+  gold-sft:
+    aliases: [sft, gold, pilot2-sft-fp32-l4-batch8-v1, sft-64]
+    description: SFT on 512 GSM8K gold solutions (Pilot 2), 64 steps.
+    training_data: gold-sft.training-data
+    training_run: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1
+    checkpoints:
+      0: {location: local, path: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/checkpoints/checkpoint-0/adapter_model.safetensors,
+          sha256: b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5}
+      8: {location: local, path: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/checkpoints/checkpoint-8/adapter_model.safetensors,
+          sha256: 96323b9a251120f8868499cf6c35440a6121e386223bd3be9f0980800f3243a2}
+      16: {location: local, path: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/checkpoints/checkpoint-16/adapter_model.safetensors,
+           sha256: 3af3cdb9c21b62a04241f0c5cb29778baaec0b5fd3dba668ccdeb05a84129aad}
+      32: {location: local, path: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/checkpoints/checkpoint-32/adapter_model.safetensors,
+           sha256: e161e14272bd442ce0224e35db7982f9fc48ba11a8476a4c46bc812f4d2ecf0b}
+      64: {location: local, path: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/checkpoints/checkpoint-64/adapter_model.safetensors,
+           sha256: a20a344efabe576669b3c89701b161dd568efdf776bb512f7f128f9a8b75aeaa}
+
+  online-grpo:
+    aliases: [grpo, pilot4-grpo, pilot4-grpo-fp32-v1-arm-v1]
+    description: Online GRPO (Pilot 4), 64 steps x 8 prompts x 8 draws, DAPO loss, beta 0, T=1.
+    training_data: online-grpo.training-rollouts
+    training_run: runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1
+    checkpoints:
+      0: {location: local, path: runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints/checkpoint-0/adapter_model.safetensors,
+          sha256: b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5}
+      8: {location: local, path: runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints/checkpoint-8/adapter_model.safetensors,
+          sha256: 964931ece15b861d8dfac21c36524dc7e986a058f1a515b18a785e2bce025e3d}
+      16: {location: local, path: runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints/checkpoint-16/adapter_model.safetensors,
+           sha256: 17d4d2d8829daba712d11d191b54984e78ed54f29dcfd9a2a2c63ff69a7efd71}
+      32: {location: local, path: runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints/checkpoint-32/adapter_model.safetensors,
+           sha256: 4de7e5e4587124cb5327b9c19a2a3a40b0846380fe75db3b96c56034a7b0010a}
+      64: {location: local, path: runs/pilot-4/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot4-grpo-fp32-v1-arm-v1/checkpoints/checkpoint-64/adapter_model.safetensors,
+           sha256: 70d2d56cd4636933020b107d6fb344ed451bc879b4a694e725c8608181f07226}
+
+  offline-grpo:
+    aliases: [offline-grpo-v1]
+    description: Offline GRPO on a fixed pool of untuned-model draws (512 questions x 8), 64 steps.
+    training_data: offline-grpo.training-pool
+    training_run: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training
+    checkpoints:
+      0: {location: local, path: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/checkpoints/checkpoint-0/adapter_model.safetensors,
+          sha256: b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5}
+      8: {location: local, path: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/checkpoints/checkpoint-8/adapter_model.safetensors,
+          sha256: ccbfe4f06c2200c2775bef0a6112c33a50dd1764f32a3a60eb25d410fd166eb2}
+      16: {location: local, path: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/checkpoints/checkpoint-16/adapter_model.safetensors,
+           sha256: 0ca0c632d9ad26593b0d5a7596ea889779010d71c4c4dab4c593a6e506aebcdb}
+      32: {location: local, path: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/checkpoints/checkpoint-32/adapter_model.safetensors,
+           sha256: 79628ee5e1ba3ac02019ca7248b8b96c9b84535bec28f6ff225f4705212170eb}
+      64: {location: local, path: imports/offline-grpo-v1/runs/offline-grpo/offline-grpo-v1-training/training/checkpoints/checkpoint-64/adapter_model.safetensors,
+           sha256: 6601551812ab754ccf35c0fbd5f6cf181786636683e9367b24c4f92451a1c93f}
+
+  sampling-sft-k0:
+    aliases: [k0, l4-night-v1-train-k0]
+    description: Sampling SFT, k=0 data recipe (gold-guided proposer + greedy likelihood search), 64 steps.
+    training_data: sampling-sft-k0.training-data
+    training_run: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k0
+    checkpoints:
+      0: {location: local, path: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k0/checkpoints/checkpoint-0/adapter_model.safetensors,
+          sha256: b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5}
+      64: {location: local, path: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k0/checkpoints/checkpoint-64/adapter_model.safetensors,
+           sha256: e4ffdc406839301e31d59ef218630a6aa1a78c4982ce30c3e022e48e77063cde}
+
+  sampling-sft-k2:
+    aliases: [k2, l4-night-v1-train-k2]
+    description: Sampling SFT, k=2 data recipe, 64 steps.
+    training_data: sampling-sft-k2.training-data
+    training_run: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k2
+    checkpoints:
+      0: {location: local, path: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k2/checkpoints/checkpoint-0/adapter_model.safetensors,
+          sha256: b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5}
+      64: {location: local, path: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k2/checkpoints/checkpoint-64/adapter_model.safetensors,
+           sha256: a28f52a0b61d0ee6140ece1a8fc4983fb1dcf4bd75db84c8594e5a9c73c27f73}
+
+  sampling-sft-k5:
+    aliases: [k5, l4-night-v1-train-k5]
+    description: Sampling SFT, k=5 data recipe, 64 steps.
+    training_data: sampling-sft-k5.training-data
+    training_run: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k5
+    checkpoints:
+      0: {location: local, path: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k5/checkpoints/checkpoint-0/adapter_model.safetensors,
+          sha256: b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5}
+      64: {location: local, path: runs/sampling-sft/sampling-sft-v1/training/l4-night-v1-train-k5/checkpoints/checkpoint-64/adapter_model.safetensors,
+           sha256: c25695773d39fe4b2d8a5978ab0c276aa423e6e8458b061f9aeb30b20cb85769}

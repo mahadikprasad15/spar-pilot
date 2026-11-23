@@ -14,11 +14,20 @@ The code is a measurement instrument: correctness of scoring matters more than s
   decoding settings, scorer, seed. Every run saves all responses as JSONL.
 - Commit after each green step, with a short message.
 - If a decision is not in spec.md or docs/adr/, ask. Do not choose silently.
+- A run that produces checkpoints, responses or a question set is not finished until it is
+  registered in `catalog/` (see `catalog/README.md`) and `python -m pilot_eval.catalog verify`
+  reports OK. Look artifacts up there before searching directories.
 
 ## Commands
 - Tests: `pytest -q`
+- Artifact catalog: `python -m pilot_eval.catalog verify` / `python -m pilot_eval.catalog find --arm <arm>`
 
 ## Agent skills
+
+### Experiment lessons
+
+- Before designing or building an experiment, evaluation, or remote runner, read `docs/agents/experiment-lessons.md` and apply the relevant lessons.
+- When review or investigation identifies a serious reusable bug or gap, add or update a concise, evidence-linked lesson in that file; distinguish confirmed behavior from an unverified risk, and record resolution only when verified. Track the specific fix in the issue tracker when appropriate.
 
 ### Issue tracker
 
