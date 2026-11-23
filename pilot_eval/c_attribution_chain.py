@@ -247,34 +247,39 @@ def seal_launch_record(record, path):
     return pc.seal_launch_record(record, path)
 
 
-def load_launch_record(path, *, code_commit):
+def load_launch_record(path, *, code_commit, validator=None):
+    """A sealed record, refused unless it matches its seal and passes ``validator`` (default: this module's
+    ``validate``; other runs that reuse the sealed, typed record pass their own, e.g. ``sparse_rewiring_plan``)."""
     path = Path(path)
     record = json.loads(path.read_text())
     seal = path.with_suffix('.seal.json')
     if not seal.is_file() or json.loads(seal.read_text())['sha256'] != record_sha256(record):
         raise LaunchRefused('launch record does not match its seal')
-    return validate(record, code_commit=code_commit)
+    return (validator or validate)(record, code_commit=code_commit)
 
 
-def finalize_draft(draft_path, out_path, *, code_commit, pod_id=None, fill=None):
+def finalize_draft(draft_path, out_path, *, code_commit, pod_id=None, fill=None, validator=None,
+                   fillable=USER_FILLED):
     """Approved YAML draft -> sealed, typed JSON record. Fills only empty (null) fields: the code commit, the
-    Pod ID (from the Pod's environment) and the input paths in ``fill`` ({'inputs.work_dir': ...})."""
+    Pod ID (from the Pod's environment) and the input paths in ``fill`` ({'inputs.work_dir': ...}).
+    ``validator`` and ``fillable`` default to this module's; another run's record passes its own."""
+    validator = validator or validate
     import yaml
     record = yaml.safe_load(Path(draft_path).read_text())
     record['code_commit'] = code_commit
     if record.get('pod_id') is None and pod_id:
         record['pod_id'] = pod_id
     for dotted, value in (fill or {}).items():
-        if dotted not in USER_FILLED:
+        if dotted not in fillable:
             raise LaunchRefused(f'{dotted} is not a fillable field')
         parent, key = record, dotted.split('.')
         for part in key[:-1]:
             parent = parent.setdefault(part, {})
         if parent.get(key[-1]) is None and value is not None:
             parent[key[-1]] = str(value)
-    validate(record, code_commit=code_commit)
+    validator(record, code_commit=code_commit)
     path = seal_launch_record(record, out_path)
-    load_launch_record(path, code_commit=code_commit)
+    load_launch_record(path, code_commit=code_commit, validator=validator)
     return path
 
 
