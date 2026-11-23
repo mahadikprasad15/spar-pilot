@@ -23,7 +23,7 @@ Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[pr
 7. As a researcher, I want hyperparameter or run decisions made on a validation set that is disjoint from every training and protected set.
 8. As a researcher, I want behaviour measured under the established cohort150 protocol, labelled exploratory.
 9. As a researcher, I want overlap with C attribution reported on the measured universe with a layer-matched null.
-10. As an operator, I want resumable checkpoints with optimizer, scheduler, RNG and data cursor so an interruption does not repeat or skip updates.
+10. As an operator, I want each checkpoint to hold the read factors and masks with a seal, and an interrupted arm to restart cleanly from step 0 with the same result, so a crash never mixes partial state into a run.
 11. As a maintainer, I want CPU tests with no model download, and the method reimplemented under this repository's license.
 
 ## Implementation decisions
@@ -65,7 +65,7 @@ One figure with step on a shared x axis, built on CPU from the saved logs (ticke
 - Raw `‖a‖` or `‖b‖` alone is not reported as a size: rescaling `a` by k and `b` by 1/k leaves the change the same.
 - The gold reference lines need gold-sft checkpoints 0 and 64 evaluated on the new validation set (CE plus one greedy pass). That is a new, cheap use of existing adapters and is registered in the catalog.
 - Every panel shows the real evaluation points as markers; nothing is interpolated between checkpoints.
-- Checkpoints **[user 2026-11-23, D5]** 0/8/16/32/64/128/256/512/768/960/1024, each with unmerged factors, all `logα`, scheduler, data cursor and seal; optimizer and both RNG streams at the latest two only (D24 [proposed], rank 0 is about 9 GB per full checkpoint); 960 and 1,024 bracket the hardening. Greedy validation at every checkpoint. Resume only from a complete sealed checkpoint with matching plan and runtime hashes.
+- Checkpoints **[user 2026-11-23, D5]** 0/8/16/32/64/128/256/512/768/960/1024, each with only the unmerged read factors, all `logα` and a seal binding step, plan, runtime and code commit (D24 **[user 2026-11-23]**: no optimizer, scheduler or RNG state at any checkpoint). 960 and 1,024 bracket the hardening. Greedy validation at every checkpoint. **No mid-run resume:** an interrupted arm restarts from step 0 under the same plan, and a completed, verified arm is never rerun.
 
 ### Validation and cohort150 roles
 
@@ -99,7 +99,7 @@ On the final binary model, validation inputs only, except the revert-all sanity 
 artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); both share one plan except rank and read LR
   config.json  runtime.json  status.json  logs/steps.jsonl  logs/validation.jsonl
   inputs/order.json  inputs/validation.items.json (+ exclusion record)
-  checkpoints/checkpoint-<k>/  rewire_state.safetensors  optimizer.pt  scheduler.pt  rng.pt  complete.json
+  checkpoints/checkpoint-<k>/  rewire_state.safetensors (factors + logα)  complete.json (seal)
   masks/<k>.json             expected / nonzero / binary counts per layer; survivor list
   masks/trace/<step>.npz     logα snapshot every 16 steps (FP16), for the per-layer heatmap and churn
   dynamics/                  figure (PNG + SVG), its input table (CSV) and a provenance JSON
@@ -129,7 +129,7 @@ artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); bot
 
 ### Code reuse (audit, 2026-11-23)
 
-Every component names what it reuses. Paths are on `c-attribution-pilot7667739` (`catt`), which implementation builds on (D17). "New" is justified; nothing below is planned as new where an existing function does the job.
+Every component names what it reuses. Paths are on `c-attribution-pilot@7667739` (`catt`), which implementation builds on (D17). "New" is justified; nothing below is planned as new where an existing function does the job.
 
 | Component | Reuses | New, and why |
 |---|---|---|
@@ -178,13 +178,15 @@ Attribution-only checks not reused because they test something this run does not
 
 **Qualification (ticket 15)** therefore runs the existing harness: `Stages.preflight` and `TransformersBackend.preflight`, then `noop_check`, `processor_check`, `cached_vs_forced`, the extended `HFTrainingEngine.preflight` on the longest example for each rank, and the peak-memory rule, all sealed with `attribution_units.seal_run`. New checks are only the ones specific to this method: the shared-mask cache on the real model (same gradients with and without checkpoint recompute) and the D24 disk total.
 
-### Lessons applied (`docs/agents/experiment-lessons.mdcatt`, ADRs)
+### Lessons applied (`docs/agents/experiment-lessons.md@catt`, ADRs)
+
+**Rule [user 2026-11-23]:** where a lesson conflicts with the current C-attribution code (`c-attribution-pilot@7667739`, still the branch head on 2026-11-23), the current code wins. Each lesson below was rechecked against that code; superseded ones are listed after the table.
 
 Read on 2026-11-23: every entry in `docs/agents/experiment-lessons.md` (which exists only on `catt`, not on `main`), ADRs 0001–0023, `docs/experiments/status.md`, and the Pilot 2 SFT and C-attribution review notes. **Changed the design** marks the lessons that altered a decision; the rest are handled by reusing code that already carries the fix.
 
 | Lesson (date) | How it is handled here | Effect |
 |---|---|---|
-| Runpod default container disk too small (2026-11-12) | Rank 0 recovery state is about 9 GB per checkpoint (770 M FP32 factors + 2 Adam moments). Eleven full checkpoints would be about 100 GB per arm. Storage policy D24: factors and `logα` at every checkpoint, full optimizer and RNG state only at the latest two. The disk size goes into the launch record's `disk` block, which the current `TransformersBackend.preflight` enforces | **Changed the design** (D24) |
+| Runpod default container disk too small (2026-11-12) | Rank 0 recovery state is about 9 GB per checkpoint (770 M FP32 factors + 2 Adam moments). Eleven full checkpoints would be about 100 GB per arm. Storage policy D24 [user 2026-11-23]: factors and `logα` only, no optimizer state, about 34 GB for rank 0 in all. The disk size goes into the launch record's `disk` block, which the current `TransformersBackend.preflight` enforces | **Changed the design** (D24) |
 | ADR 0018: "Training still requires L4 to match gold SFT" | **Superseded for these arms [user 2026-11-23]:** the researcher said L4 is not needed for training. A short ADR records that the A100-80GB choice (D18) replaces ADR 0018's L4 rule for the sparse arms (ticket 20) | Recorded (D25) |
 | Deleting a helper's parameter does not release the model (2026-11-19) | Gold-sft reference evaluations run in a separate child process before rank 0 training, so no reference model can stay resident next to rank 0's extra 12 GB | **Changed the design** (run order) |
 | FP32 finite differences have a resolution floor (2026-11-13, 2026-11-16) | Single-survivor reverts (D23) change validation CE by small amounts. Accumulate CE in FP64, report the FP32 floor next to every Δ, and label effects below it unresolved | **Changed the design** (D23) |
@@ -192,8 +194,8 @@ Read on 2026-11-23: every entry in `docs/agents/experiment-lessons.md` (which ex
 | A rewritten backend must carry over every setting (2026-11-20) | The loop is adapted from `sampling_sft_training_backend.train`; test 19 lists each check that loop makes and asserts the new one makes it too | reuse + test |
 | Test the real backend boundary on CPU; fakes hid wrong arguments (2026-11-16) | Test 20: a real-path CPU chain on a saved tiny Qwen2, stubbing only CUDA counters, the volume, the Hub and the stop | reuse pattern |
 | Type-check YAML values (2026-11-16) | `c_attribution_chain.typecheck` on the plan and launch record | reuse |
-| Bind resumable stages and measurements to inputs, runtime and code commit (2026-11-11, 2026-11-19) | Plan, runtime and code-commit hashes in every checkpoint seal; resume refuses a mismatch and reruns preflight | reuse |
-| Exercise recovery on an empty disk; reconstruct expected work (2026-11-11, 2026-11-14) | Test 11 resumes in a fresh directory from the volume copy; expected checkpoints are listed in the plan and compared on resume | test |
+| Bind resumable stages and measurements to inputs, runtime and code commit (2026-11-11, 2026-11-19) | Plan, runtime and code-commit hashes in every checkpoint seal; evaluation and analysis refuse a checkpoint whose seal does not match; a restart reruns preflight | reuse |
+| Exercise recovery on an empty disk; reconstruct expected work (2026-11-11, 2026-11-14) | No mid-run resume (D24). Test 11 checks that a restart in a fresh directory reproduces the uninterrupted run, and that completed arms restored from the volume are verified against the plan's expected checkpoints instead of rerun | test |
 | Durability while running; stop only with full backup; closing records before stop; stop the right Pod (2026-11-20, 2026-11-22) | Reuse `c_attribution_chain` teardown, which carries these fixes; mirror at every checkpoint | reuse |
 | HF cache off the volume; hash every download (2026-11-16) | Runbook step from the C-attribution Pod runbook | reuse |
 | Version checks against `+cu128` builds (2026-11-11) | Superseded: `TransformersBackend.runtime` fingerprint | current code |
@@ -208,6 +210,8 @@ Read on 2026-11-23: every entry in `docs/agents/experiment-lessons.md` (which ex
 | Record exposure from the artifact that recorded the use (2026-11-22) | Cohort150 and validation prior uses come from sealed evaluation units | reuse (`register`) |
 | Report magnitudes beside signed averages; keep controls visible (2026-11-11) | Activation shift reports mean and mean-absolute; every overlap shows its layer-matched null | spec |
 | ADR 0021 IEEE runtime; ADR 0001 / 0005 frozen protocol and flexible-v3; ADR 0004 OOM stops without fallback | IEEE precision set and read back; protocol unchanged; an OOM in qualification stops, with no automatic batch or precision change | reuse |
+
+**Superseded by the current C code or a later decision:** the exact interpreter check (now the `runtime` fingerprint); `neuron_audit_pod.disk_problems` and its 60% rule (now the launch record's `disk` block in `TransformersBackend.preflight`); `storage_probe` (now `volume_identity`); elapsed-time limits and watchdog deadlines (2026-11-11, 2026-11-18; the C chain runs with the deadline disabled and budget caps were withdrawn in ADR 0018); ADR 0018's L4 rule for training (researcher, 2026-11-23); ADR 0004 is gold's own hardware history, not a constraint here. Lessons whose fixes went into older modules (`attribution_chain`, `neuron_audit_*`) are taken in the form the C code carries them.
 
 Not relevant here: PEFT `disable_adapter` unfreezing (no PEFT in training; gold's LoRA is only read on CPU), `model.double()` not being FP64 (no FP64 model reference is planned), watchdog deadlines (the C runner's no-cap mode is reused as is), and the Colab-specific stderr and preinstalled-package lessons (the run is on a Pod).
 
@@ -225,7 +229,7 @@ Not relevant here: PEFT `disable_adapter` unfreezing (no PEFT in training; gold'
 10. Checkpointed vs non-checkpointed backward identical for a fixed noise seed.
 10a. Shared-mask equivalence (D14): the summed read and `logα` gradients of 4 single-example passes with one cached `u` equal one 4-row forward with that `u`, within FP32 round-off; a mutation that re-draws `u` per pass fails; the logged group boundaries match the step order.
 10b. Rank 0 and rank 1 share one code path apart from the parameterisation: a rank-0 fixture with its rows set to `b_i a` reproduces a rank-1 fixture's forward and gradients with respect to the mask exactly.
-11. Uninterrupted vs resumed (at 8, at 960 and at a fixed-mask step) give identical factors, masks and logs.
+11. Restart, not resume: two runs from step 0 give bit-identical factors, masks and logs at steps 8 and 960 (determinism); after a simulated crash the chain discards the partial arm's checkpoints and restarts it; a completed arm restored from the volume is verified and kept.
 12. Validation sampler refuses an unreadable exclusion source and never returns an excluded ID.
 13. Comparison: layer-matched null preserves per-layer sizes; overlap on a planted fixture; missing attribution values excluded, not zero.
 14. Dynamics: the logged expected-active, nonzero and survivor counts equal a recomputation from the saved `logα` snapshots; the read-change norm is unchanged under `(a, b) → (k a, b / k)`; churn on a planted pair of mask sets; the figure builder refuses a log with missing steps instead of interpolating.
@@ -238,7 +242,7 @@ Not relevant here: PEFT `disable_adapter` unfreezing (no PEFT in training; gold'
 
 19. Carried-over checks: the new loop refuses non-FP32 weights, a context overflow, a wrong base hash, and enables `use_reentrant=False` checkpointing and `foreach=False`, exactly as `sampling_sft_training_backend.train` does (one red case per check).
 20. Real-path CPU chain: plan → preflight → train (3 steps, rank 1 and rank 0) → checkpoint → evaluate → seal → export → restore, on a saved tiny Qwen2 and the real launch-record YAML; only CUDA counters, volume, Hub and stop are stubbed.
-21. Storage policy (D24): every checkpoint keeps factors and `logα`; only the latest two keep optimizer and RNG; resume from an older checkpoint is refused with a clear message; the planned disk total is computed from shapes and checked by preflight.
+21. Storage policy (D24): a checkpoint holds only factors, `logα` and its seal; the planned disk total is computed from shapes, written to the launch record's `disk` block, and checked by preflight.
 22. Pad and EOS IDs come from the tokenizer files; a fixture with `pad_token_id` in the model config is rejected as unrepresentative.
 24. Precision: a run-path test fails if `torch.backends.cuda.matmul.allow_tf32` or `cudnn.allow_tf32` is assigned anywhere, and preflight refuses unless every `fp32_precision` reads `ieee`.
 25. Extended checks keep old behaviour: `noop_check` and `HFTrainingEngine.preflight` give identical results for their existing callers (existing tests unchanged), and `noop_check` on a rewired fixture fails when the rewire parameters change inside the context.

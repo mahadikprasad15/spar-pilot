@@ -53,7 +53,7 @@ Both clip at 1.0. Max clips **read factors only**; masks are unclipped. Recommen
 
 **[user 2026-11-23]: a fixed 1,024 steps (16 epochs) for both ranks.** 20-step warmup, then cosine to 0 at step 1,024 over both groups; masks frozen at step 960 and the final 64 steps trained with fixed masks.
 
-Why fixed rather than an adaptive stop (considered and dropped): in Max's published run (`results/train/v2_reread_l06e-4_lr3e-3_s2/train_log.jsonmax`, rechecked here), expected-on was 476 at step 500 and 385 at 560, still falling fast; 158 at 1,000 and 150 at 1,060 (about −5% per 60 steps); and only flat (136 → 135) between 1,250 and 1,300, as the cosine LR approached zero. Freezing then took it from 135 to 89. The gates settle mainly because the LR decays, so a stop rule under a long cosine would rarely fire early, and an early stop would end at a high LR. Validation loss was already flat from step 1,000 (1.2182 → 1.2174 at 1,400).
+Why fixed rather than an adaptive stop (considered and dropped): in Max's published run (`results/train/v2_reread_l06e-4_lr3e-3_s2/train_log.json@max`, rechecked here), expected-on was 476 at step 500 and 385 at 560, still falling fast; 158 at 1,000 and 150 at 1,060 (about −5% per 60 steps); and only flat (136 → 135) between 1,250 and 1,300, as the cosine LR approached zero. Freezing then took it from 135 to 89. The gates settle mainly because the LR decays, so a stop rule under a long cosine would rarely fire early, and an early stop would end at a high LR. Validation loss was already flat from step 1,000 (1.2182 → 1.2174 at 1,400).
 
 | Option considered | Steps (epochs) | Fixed-mask phase | Comment |
 |---|---|---|---|
@@ -69,7 +69,7 @@ Checkpoints: 0, 8, 16, 32, 64 (gold's), 128, 256, 512, 768, 960 (last continuous
 
 ### D6. λ
 
-**How Max chose λ.** He swept λ from 1e-4 to 3e-3 with up to 3 seeds, scored every run on held-out validation loss and on graded replies to evaluation prompts (does the model loop or repeat), and published "the sparsest run that loops no more than full fine-tuning" (`README.mdmax`). So λ was picked by a quality floor first, then maximum sparsity, on his own data. For rank 0 his notes report λ 6e-4–8e-4 at LR 3e-4–5e-4 giving 82–122 neurons (`RANK0.mdmax`). λ is a price per open neuron: each open gate must lower the training loss by more than about λ to stay open, so a higher λ means fewer survivors.
+**How Max chose λ.** He swept λ from 1e-4 to 3e-3 with up to 3 seeds, scored every run on held-out validation loss and on graded replies to evaluation prompts (does the model loop or repeat), and published "the sparsest run that loops no more than full fine-tuning" (`README.md@max`). So λ was picked by a quality floor first, then maximum sparsity, on his own data. For rank 0 his notes report λ 6e-4–8e-4 at LR 3e-4–5e-4 giving 82–122 neurons (`RANK0.md@max`). λ is a price per open neuron: each open gate must lower the training loss by more than about λ to stay open, so a higher λ means fewer survivors.
 
 What that tells us: on his task about 100 neurons were enough to match full fine-tuning's quality, and the count moved smoothly with λ. It does not tell us the right λ here: different model, task, data size, and 250,880 candidates vs his 442,368. The survivor count we get at 6e-4 is itself a result.
 
@@ -101,7 +101,7 @@ No suitable set exists. Proposed: 128 GSM8K **train** questions, `random.Random(
 
 **[user 2026-11-23]: use cohort150 for evaluation only, labelled exploratory.** It is the frozen 150-question GSM8K test cohort every arm has been evaluated on, so the sparse arms are directly comparable with untuned, gold-sft, Sampling SFT and both GRPO arms. Nothing in this pilot is chosen on it. Each new evaluation is registered as a prior use in `catalog/cohorts.yaml`.
 
-Why it was not called clean: its prior uses include greedy evaluation of gold-sft and online-grpo, GRPO behaviour runs, Stage 0, production-1 Stage D, and C attribution, which computed its scores and picked its frozen sets on these questions (`catalog/cohorts.yamlcatt`). **One caveat kept:** a result that combines "survivors overlap C's sets" with cohort150 accuracy is circular for the C side, because the same questions picked C's neurons.
+Why it was not called clean: its prior uses include greedy evaluation of gold-sft and online-grpo, GRPO behaviour runs, Stage 0, production-1 Stage D, and C attribution, which computed its scores and picked its frozen sets on these questions (`catalog/cohorts.yaml@catt`). **One caveat kept:** a result that combines "survivors overlap C's sets" with cohort150 accuracy is circular for the C side, because the same questions picked C's neurons.
 
 ### D13. Rank — decided
 
@@ -147,11 +147,11 @@ Gold enables it and trains in train mode. Max calls it but keeps the model in ev
 
 ### D16. Code reuse and license
 
-Max's repository has no license; only the upstream Sauers trainer is Apache-2.0, and the rewiring arm may be Max's own addition. Recommend a clean-room implementation in `pilot_eval/`, tested against the published equations, citing `maxa6dc314`. Optionally ask Max for a license.
+Max's repository has no license; only the upstream Sauers trainer is Apache-2.0, and the rewiring arm may be Max's own addition. Recommend a clean-room implementation in `pilot_eval/`, tested against the published equations, citing `max@a6dc314`. Optionally ask Max for a license.
 
 ### D17. Code base for implementation
 
-The catalog, IEEE helper, C outputs reader and neuron-audit helpers are on `c-attribution-pilot` only. **Recommend [proposed]: implement on `main` after `c-attribution-pilot` merges**, so the code builds on one reviewed base; if the merge is delayed, branch from `c-attribution-pilot7667739` and rebase later. This design PR is docs-only against `main`.
+The catalog, IEEE helper, C outputs reader and neuron-audit helpers are on `c-attribution-pilot` only. **Recommend [proposed]: implement on `main` after `c-attribution-pilot` merges**, so the code builds on one reviewed base; if the merge is delayed, branch from `c-attribution-pilot@7667739` and rebase later. This design PR is docs-only against `main`.
 
 ### D18. Hardware — decided
 
@@ -222,13 +222,17 @@ Not in the earlier scope; listed now because the researcher's analysis list impl
 
 Reverting random non-survivors alone would be a no-op (their change is zero), which is why the control transplants the survivors' changes instead. **Total, both arms: about 2–3 h** (arithmetic estimate, not measured).
 
-### D24. Checkpoint storage — proposed (from the disk-size lesson)
+### D24. Checkpoint storage — decided
 
-A full rank-0 checkpoint is about 9 GB (770.7 M FP32 factors, 3.1 GB, plus two Adam moments, 6.2 GB). Eleven would be about 100 GB per arm, beyond the Runpod default container disk that already failed once (`experiment-lessons.mdcatt`, 2026-11-12). Proposed: every checkpoint keeps factors, `logα`, scheduler and data cursor (rank 0 about 3.1 GB, so about 34 GB in all); optimizer and RNG state only at the latest two (resume points). Rank 1 is small either way and uses the same policy for one code path. Preflight checks the computed total against free disk with the existing 60% rule (`neuron_audit_pod.disk_problems`).
+**[user 2026-11-23]: store only the weights (read factors) and the masks (`logα`) at each checkpoint**, with a small seal (step, plan, runtime and code-commit hashes). No optimizer, scheduler or RNG state anywhere.
 
-### D25. ADR for the A100 departure — needed
+Why it came up: a full rank-0 checkpoint with Adam state would be about 9 GB, and 11 of them about 100 GB per arm, beyond the Runpod default container disk that already failed once (`experiment-lessons.md@catt`, 2026-11-12). Factors and masks are about 3.1 GB per rank-0 checkpoint (about 34 GB in all) and about 3.5 MB per rank-1 checkpoint.
 
-ADR 0018 says "Training still requires L4 to match gold SFT". D18 puts both sparse arms on an A100-80GB. That is the researcher's decision, but it departs from an accepted ADR, so a short ADR (ticket 20) records it: the sparse arms are new arms, not gold SFT reruns, and their behaviour comparisons with gold carry the runtime difference.
+Consequence: **a crash means a restart, not a resume.** An interrupted arm restarts from step 0 under the same plan; full determinism makes the restart reproduce the same trajectory (test 11). A completed and verified arm is kept, so a crash during rank 0 never reruns rank 1. Worst-case loss is one arm's training time (about 40–70 min for rank 1, 60–100 min for rank 0). The disk total sets the launch record's `disk` block, which `TransformersBackend.preflight` enforces.
+
+### D25. A100 supersedes ADR 0018's L4 rule for these arms — approved in substance
+
+**[user 2026-11-23]: L4 is not required for training.** ADR 0018 says "Training still requires L4 to match gold SFT". A short ADR (ticket 20) records that, for the sparse arms, the A100-80GB choice (D18) replaces that rule: the sparse arms are new arms, not gold SFT reruns, and their behaviour comparisons with gold carry the runtime difference.
 
 ## Not equivalent to the rank-1 LoRA arms
 

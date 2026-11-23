@@ -11,7 +11,7 @@ Each ticket is sized for one implementation thread. Groups are waves: tickets in
 | 05 | Plan and launch-record schema | ready-for-agent | — | A |
 | 06 | Dynamics logs and settle diagnostics | ready-for-agent | 03 | C |
 | 07 | Training loop | ready-for-agent | 03, 05, 06 | D |
-| 08 | Checkpoints, resume and storage policy | ready-for-agent | 07 | E |
+| 08 | Checkpoints and restart | ready-for-agent | 07 | E |
 | 09 | Evaluation wiring | ready-for-agent | 03 | C |
 | 10 | Attribution source manifest and comparison | ready-for-agent | — (real inputs need 01) | A |
 | 11 | Rank 1 vs rank 0 comparison | ready-for-agent | 03, 10 | C |

@@ -3,7 +3,7 @@
 ## Notes
 - Design input: `design-input.md` (researcher, 2026-11-22, unchanged). Filled design: `design.md`. Options: `decision-log.md`. Draft spec: `spec.md`. Tickets: `issues/01`–`20` (index in `issues/README.md`).
 - Docs-only effort so far. No code, GPU work or artifact change. The parallel C-attribution run (`c-production-1`) finished before this effort started and is read-only input here.
-- Evidence came from Git (`mainb1a541b`, `c-attribution-pilot7667739`, `maxa6dc314`) and the catalog. Saved run files were not reachable; ticket 01 reads them.
+- Evidence came from Git (`main@b1a541b`, `c-attribution-pilot@7667739`, `max@a6dc314`) and the catalog. Saved run files were not reachable; ticket 01 reads them.
 - Recomputed on CPU from code: the 512 training-ID digest and the cohort150 digest both match the catalog.
 
 ## Decisions so far
@@ -14,6 +14,7 @@
 - 2026-11-23: D14 revised (proposed, not signed off): microbatch 1 with one mask draw shared per 4 examples, matching Max's 2 draws per step.
 - 2026-11-23 (researcher): D5 512-step cap (1,024 considered, dropped); D18 one A100-80GB; D19 compare with C and production-1 attribution, GRPO arms first, code generic over arms; D20 cheap metrics every step; standalone analysis for both ranks (D22, ticket 12).
 - 2026-11-23 (researcher, later): D5 fixed 1,024 steps, freeze at 960, for both ranks (adaptive stop considered and dropped; settle metrics logged only); D6 λ 6e-4, no sweep; D12 cohort150 evaluation only; D20 val CE every 16 steps.
+- 2026-11-23 (researcher): D24 checkpoints hold only read factors and masks (crash = restart from step 0); D25 A100 supersedes ADR 0018's L4 rule; current C-attribution code wins over older lessons.
 - 2026-11-23 (proposed): D23 causal checks (ticket 19) need OK.
 
 ## Fog
