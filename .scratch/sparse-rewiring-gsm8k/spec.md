@@ -135,8 +135,8 @@ Every component names what it reuses. Paths are on `c-attribution-pilot7667739` 
 |---|---|---|
 | Gold data and loss | `sft.load_sft` (plan + hash checks), `sft_backend.CompletionCollator`, `sft_backend.completion_loss`, `sft_backend.PINS` | none |
 | Base identity | `sft_backend.frozen_weight_hash`; `c_attribution_bundle.check_base_model` / `pinned_identities` (HF per-file pins) | none |
-| Runtime precision | `neuron_audit_collector.set_ieee_precision` and `precision_backends` (readback) | none |
-| Training loop | the explicit loop in `sampling_sft_training_backend.train` (FP32 check, context-limit refusal, `use_reentrant=False` checkpointing, base-hash check, `foreach=False` AdamW, resume binding); `sampling_sft_training.checkpoint` / `seal` / `load` / `event`; `sampling_sft_training_backend.rng_state` / `restore_rng`; `workflow._hash` for plan and runtime hashes | Two parameter groups, the warmup + cosine `LambdaLR`, the L0 term and the freeze at 960. That loop has one group and a constant LR, and no mask parameters. Adapted, not rewritten: every check it enforces is kept (test 19) |
+| Runtime precision | `neuron_audit_collector.set_ieee_precision`, called through `c_attribution_backend.TransformersBackend` (`precision_readback`, `precision_problems`; preflight refuses if any backend is not `ieee`) | none. **Not** `sampling_sft_training_backend.open_engine`, which sets the legacy `allow_tf32` flags: they leave cuDNN at TF32 in torch 2.9, and mixing them with the new API warns or raises |
+| Training loop | the explicit loop in `sampling_sft_training_backend.train`, without its `open_engine` precision setup (FP32 check, context-limit refusal, `use_reentrant=False` checkpointing, base-hash check, `foreach=False` AdamW, resume binding); `sampling_sft_training.checkpoint` / `seal` / `load` / `event`; `sampling_sft_training_backend.rng_state` / `restore_rng`; `workflow._hash` for plan and runtime hashes | Two parameter groups, the warmup + cosine `LambdaLR`, the L0 term and the freeze at 960. That loop has one group and a constant LR, and no mask parameters. Adapted, not rewritten: every check it enforces is kept (test 19) |
 | Rewire module | none exists (no masked read-change module in the repo) | `rewire_module.py`: the method itself. Clean-room (D16) |
 | Hard-concrete gate, shared-mask cache | none | `hard_concrete.py`: Max's equations plus the D14 per-group `u` cache |
 | Plan and launch record | `c_attribution_chain.typecheck` / `validate` / `seal_launch_record` / `load_launch_record` (typed YAML, the lesson that PyYAML reads `19.5e12` as text) | the plan schema's new fields only |
@@ -152,6 +152,31 @@ Every component names what it reuses. Paths are on `c-attribution-pilot7667739` 
 | Catalog | `catalog.verify`; `c_attribution_report.register` / `_append_prior_uses` (prior uses from sealed units, comments kept) | the new arm and response entries |
 | Figures | `c_attribution_report._style` and `figures` conventions | the four dynamics panels and the analysis figures |
 | Standalone analyses | `numpy.linalg.svd`; `neuron_audit_collector.load_saved_factors` to read gold's LoRA `A` for the cosine | settle step, participation ratio and activation-shift hooks (no existing equivalent) |
+
+### FP32 and qualification: reuse of the fixing code
+
+The project's precision and qualification failures, the code that fixed each, and whether this spec calls that code or reimplements it. Rule: call the fixing code directly. Where it is coupled to PEFT or to attribution, extend it with a parameter (keeping its existing callers bit-identical and their tests green) rather than copy it.
+
+| Past failure (source) | Fixing code on `catt` | Here |
+|---|---|---|
+| FP32 weights alone did not stop TF32; a rewritten backend dropped the IEEE call (lessons 2026-11-20, ADR 0021) | `neuron_audit_collector.set_ieee_precision`; `c_attribution_backend.TransformersBackend.precision_readback` / `precision_problems` / `preflight` | **Calls it.** The run builds on `TransformersBackend` (load and save overridden for rewire checkpoints). Test 24 fails if any legacy `allow_tf32` setter runs |
+| `model.double()` is not FP64 for Qwen2; FP32 finite differences hit the resolution floor (lessons 2026-11-13, 2026-11-16) | `attribution_instrument.full_fp64`; the FP64 reference via `TransformersBackend.reference` | **Calls it** if a single-revert Δ (D23) falls under the FP32 floor: re-measure that revert under `full_fp64`. Not needed for training |
+| FP64 reference stayed live and inflated peak memory (lessons 2026-11-20) | `TransformersBackend.release`, plus dropping every owner (pattern in `c_attribution_stages.Stages.qualification`) | **Calls it** between gold references, rank 1 and rank 0 |
+| Greedy no-op check put its prompt on CPU with the model on CUDA (lessons 2026-11-19) | `c_attribution_checks.noop_check` | **Calls it** for the zero-change identity (off switch and step 0 vs untuned). Extended with a parameter-name filter: its `adapter_hash` hashes only `lora_` names, so on a rewired model it would hash nothing and pass vacuously |
+| Logits-processor check patched the wrong object (lessons 2026-11-19) | `c_attribution_checks.processor_check` / `resolve_processors` | **Calls it** to prove greedy evaluation resolves no repetition penalty or other processor |
+| KV-cache decoding vs a forced forward can differ | `c_attribution_checks.cached_vs_forced` | **Calls it** on rewired checkpoints, because the module runs inside cached decoding |
+| `pad_token_id` absent from Qwen2.5's config; fixtures hid it (lessons 2026-11-11) | `TransformersBackend.pad_token_id` from the tokenizer files | **Calls it** |
+| `2.9.0+cu128` rejected by an exact version check (lessons 2026-11-11) | `neuron_audit_preflight.check_interpreter` | **Calls it** |
+| Real preflight body passed a path where a dict belonged; YAML read `19.5e12` as text (lessons 2026-11-16) | `TransformersBackend.preflight` (disk, `HF_HOME`, offline worker, volume identity, private repo); `c_attribution_chain.typecheck` | **Calls them** |
+| Qualification marked complete without sign-off; stage receipts reused under another runtime (lessons 2026-11-14, 2026-11-19) | `c_attribution_chain.Chain` sign-off handling; `c_attribution_stages.Stages.preflight` (reruns every attempt, binds runtime, bundle, base model and code commit) | **Calls them** (ticket 14) |
+| Qualification row requirements impossible for some arms (lessons 2026-11-18) | `Stages._qualification_rows` (spread over length, required rows only where present) | **Same pattern**: longest example plus rows spread over length |
+| Gold's own preflight: zero write at init, finite gradients, real optimizer state allocated then restored (Pilot 2) | `sft_backend.HFTrainingEngine.preflight` | **Calls it**, extended so the zero-change test and trainable set are parameters (it now uses PEFT's `disable_adapter` and `lora_B`). Gold's call is unchanged |
+| Throughput and memory measured by hand | `attribution_gpu.StageMonitor`, `throughput`, `mfu`; `TransformersBackend.reset_peak` / `peak_memory` / `total_memory` with the record's `memory_fraction` | **Calls them** |
+| vLLM vs HF score mismatch (ADR 0021, IEEE Triton) | `sampling_sft_engine` runtime controls | Not relevant: no vLLM; evaluation uses HF `generate` |
+
+Attribution-only checks not reused because they test something this run does not compute: `surrogate_finite_difference`, the attribution identity check and `batch_invariance` (both take an attribution `Instrument`).
+
+**Qualification (ticket 15)** therefore runs the existing harness: `Stages.preflight` and `TransformersBackend.preflight`, then `noop_check`, `processor_check`, `cached_vs_forced`, the extended `HFTrainingEngine.preflight` on the longest example for each rank, and the peak-memory rule, all sealed with `attribution_units.seal_run`. New checks are only the ones specific to this method: the shared-mask cache on the real model (same gradients with and without checkpoint recompute) and the D24 disk total.
 
 ### Lessons applied (`docs/agents/experiment-lessons.mdcatt`, ADRs)
 
@@ -215,6 +240,8 @@ Not relevant here: PEFT `disable_adapter` unfreezing (no PEFT in training; gold'
 20. Real-path CPU chain: plan → preflight → train (3 steps, rank 1 and rank 0) → checkpoint → evaluate → seal → export → restore, on a saved tiny Qwen2 and the real launch-record YAML; only CUDA counters, volume, Hub and stop are stubbed.
 21. Storage policy (D24): every checkpoint keeps factors and `logα`; only the latest two keep optimizer and RNG; resume from an older checkpoint is refused with a clear message; the planned disk total is computed from shapes and checked by preflight.
 22. Pad and EOS IDs come from the tokenizer files; a fixture with `pad_token_id` in the model config is rejected as unrepresentative.
+24. Precision: a run-path test fails if `torch.backends.cuda.matmul.allow_tf32` or `cudnn.allow_tf32` is assigned anywhere, and preflight refuses unless every `fp32_precision` reads `ieee`.
+25. Extended checks keep old behaviour: `noop_check` and `HFTrainingEngine.preflight` give identical results for their existing callers (existing tests unchanged), and `noop_check` on a rewired fixture fails when the rewire parameters change inside the context.
 23. Device placement: cached `u`, `logα` and the rewire factors are on the model device; a meta-device fixture fails on any CPU tensor in the forward.
 
 GPU qualification (ticket 15) adds: real longest example forward/backward and peak memory, zero-update logits identity on the real model, a disposable few-step run (not the scientific run), throughput, save/restore.

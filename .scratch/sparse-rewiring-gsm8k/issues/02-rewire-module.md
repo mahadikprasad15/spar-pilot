@@ -10,6 +10,7 @@ Clean-room masked read-change module for the pinned Qwen2 MLP (`spec.md` §Modul
 - [ ] Red/green: spec tests 1–4 and 10b.
 - [ ] Shapes read from a saved config fixture, never a download.
 - [ ] Device placement: spec test 23.
+- [ ] Extend `c_attribution_checks.noop_check` with a parameter-name filter and `sft_backend.HFTrainingEngine.preflight` with pluggable zero-change and trainable-set hooks; existing callers unchanged. Spec test 25.
 
 ## Comments
 
