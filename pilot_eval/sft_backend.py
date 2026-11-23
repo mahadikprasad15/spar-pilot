@@ -23,10 +23,14 @@ PINS = {'torch': '2.9.0', 'transformers': '4.57.6', 'trl': '0.26.2',
         'huggingface-hub': '0.36.0'}
 
 
-def frozen_weight_hash(model):
+def frozen_weight_hash(model, trained=None):
+    """SHA-256 over every frozen (base) parameter. ``trained(name)`` names the trained parameters to leave out
+    (default: PEFT ``lora_`` names; a rewired model passes ``rewire_module.is_rewire_parameter``, which gives
+    the same hash as the untuned model because base parameter names are unchanged)."""
+    trained = trained or (lambda name: 'lora_' in name)
     digest = hashlib.sha256()
     for name, tensor in sorted(model.named_parameters()):
-        if 'lora_' not in name:
+        if not trained(name):
             digest.update(name.encode() + b'\0')
             digest.update(str(tuple(tensor.shape)).encode())
             digest.update(tensor.detach().cpu().contiguous().numpy().tobytes())
@@ -123,22 +127,44 @@ class HFTrainingEngine:
             raise ValueError('repository commit unavailable')
         return runtime
 
-    def preflight(self, directory):
+    @staticmethod
+    def lora_zero_change(model, inputs):
+        """Default zero-change hook: PEFT adapter on vs disabled is bit-identical and every ``lora_B`` is zero."""
         import torch
-        from transformers import enable_full_determinism
-        model = self.model
-        longest = max(self.rows, key=lambda row: len(row['input_ids']))
-        inputs = torch.tensor([longest['input_ids'][:min(8, longest['prompt_tokens'])]], device=model.device)
-        model.eval()
         with torch.no_grad():
             adapted = model(input_ids=inputs, use_cache=False).logits
             with model.disable_adapter():
                 untuned = model(input_ids=inputs, use_cache=False).logits
-        zero = torch.equal(adapted, untuned) and all(
+        return torch.equal(adapted, untuned) and all(
             torch.count_nonzero(p).item() == 0 for name, p in model.named_parameters() if 'lora_B' in name)
+
+    @staticmethod
+    def requires_grad_parameters(model):
+        """Default trainable-set hook: ``(name, parameter)`` for every parameter that requires grad."""
+        return [(name, p) for name, p in model.named_parameters() if p.requires_grad]
+
+    def preflight(self, directory, *, zero_change=None, trainable=None):
+        """Zero change at init, finite loss and gradients on the longest example, real optimizer state
+        allocated and then restored, base weights unchanged.
+
+        ``zero_change(model, inputs) -> bool`` and ``trainable(model) -> [(name, parameter)]`` default to the
+        PEFT LoRA behaviour (gold's call is unchanged); a rewired model passes
+        ``rewire_module.zero_change`` and ``rewire_module.trainable_parameters``. The trainable set must equal
+        exactly the parameters that require grad."""
+        import torch
+        from transformers import enable_full_determinism
+        zero_change = zero_change or self.lora_zero_change
+        trainable_set = trainable or self.requires_grad_parameters
+        model = self.model
+        named = list(trainable_set(model))
+        if not named or {id(p) for _, p in named} != {id(p) for p in model.parameters() if p.requires_grad}:
+            raise ValueError('trainable set does not equal the parameters that require grad')
+        longest = max(self.rows, key=lambda row: len(row['input_ids']))
+        inputs = torch.tensor([longest['input_ids'][:min(8, longest['prompt_tokens'])]], device=model.device)
+        model.eval()
+        zero = bool(zero_change(model, inputs))
         if not zero:
             raise ValueError('initial adapter does not have zero write')
-        del adapted, untuned
         if model.device.type == 'cuda':
             torch.cuda.reset_peak_memory_stats()
         model.train()
@@ -155,15 +181,14 @@ class HFTrainingEngine:
             loss_value += loss.item()
             loss.backward()
             del outputs, loss
-        gradients = [p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
+        trainable = [p for _, p in named]
+        gradients = [p.grad for p in trainable if p.grad is not None]
         finite = bool(gradients) and all(torch.isfinite(g).all().item() for g in gradients)
         if not finite:
             raise ValueError('nonfinite/missing preflight gradients')
-        torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0,
-                                      error_if_nonfinite=True)
+        torch.nn.utils.clip_grad_norm_(trainable, 1.0, error_if_nonfinite=True)
         # Allocate real optimizer state in this disposable preflight, then restore
         # adapter parameters exactly so preflight cannot become a scientific update.
-        trainable = [p for p in model.parameters() if p.requires_grad]
         originals = [p.detach().clone() for p in trainable]
         optimizer = torch.optim.AdamW(trainable, lr=1e-4, weight_decay=0, foreach=False)
         optimizer.step()
