@@ -52,19 +52,40 @@ class TestStepDynamicsAndSnapshots(unittest.TestCase):
             self.assertEqual(loaded['layers'], [0, 1])
             self.assertEqual(loaded['log_alpha'].dtype, np.float16)
 
-            recomputed = rd.recompute_counts_from_snapshot(loaded['log_alpha'], frozen=False)
+            recomputed = rd.recompute_counts_from_snapshot(loaded, frozen=False)
             self.assertAlmostEqual(row['expected_active'], recomputed['total']['expected_active'], places=2)
             self.assertEqual(row['nonzero_z_det'], recomputed['total']['nonzero_z_det'])
             self.assertIsNone(row['binary_survivors'])
             self.assertEqual(row['per_layer_nonzero'], [pl['nonzero_z_det'] for pl in recomputed['per_layer']])
 
-            # JSONL round-trip
+            # JSONL round-trip + monotonic guard
             log_path = Path(tmp) / 'logs/steps.jsonl'
-            rd.append_jsonl(log_path, row)
+            rd.append_jsonl(log_path, row, strict_monotonic_step=True, fsync=True)
+            with self.assertRaises(ValueError):
+                rd.append_jsonl(log_path, row, strict_monotonic_step=True)
             rows = rd.read_jsonl(log_path)
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]['step'], 16)
             self.assertEqual(rows[0]['nonzero_z_det'], 6)
+
+    def test_near_threshold_fp16_rounding_preserved_by_packed_hard_mask(self) -> None:
+        # -2.3975 is strictly above -ln(11) ~= -2.397895 in FP32 (ON), but rounds to -2.3984 in FP16 (OFF).
+        la_fp32 = [torch.tensor([-2.3975, -2.3975, -3.0, 1.0], dtype=torch.float32)]
+        zeros = [torch.zeros(4, dtype=torch.float32)]
+        row = rd.step_dynamics_row(step=16, log_alpha_by_layer=la_fp32, norms_gate_by_layer=zeros, norms_up_by_layer=zeros)
+        self.assertEqual(row['nonzero_z_det'], 3)  # both -2.3975 entries and 1.0 are ON in FP32
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snap_path = rd.save_log_alpha_snapshot(Path(tmp) / '16.npz', la_fp32, step=16)
+            loaded = rd.load_log_alpha_snapshot(snap_path)
+            # Raw FP16 alone WOULD flip -2.3975 to OFF (count == 1)
+            fp16_only = rd.recompute_counts_from_snapshot(loaded['log_alpha'], frozen=False)
+            self.assertEqual(fp16_only['total']['nonzero_z_det'], 1)
+            # Loaded snapshot with packed exact FP32 hard_mask recovers exact count == 3!
+            exact = rd.recompute_counts_from_snapshot(loaded, frozen=False)
+            self.assertEqual(exact['total']['nonzero_z_det'], 3)
+            self.assertEqual(exact['per_layer'][0]['nonzero_z_det'], 3)
+            self.assertEqual(loaded['hard_mask'].tolist(), [[True, True, False, True]])
 
     def test_norm_summaries_are_gauge_invariant(self) -> None:
         la = [torch.tensor([-3.0, 0.5, 1.5, -0.5], dtype=torch.float32)]
@@ -156,6 +177,13 @@ class TestSettleDiagnostics(unittest.TestCase):
         self.assertAlmostEqual(recs[1]['jaccard'], 1.0, places=6)
         self.assertAlmostEqual(recs[1]['expected_active_rel_change'], 0.0, places=6)
         self.assertTrue(recs[1]['meets_reference'])
+        self.assertFalse(recs[1]['post_freeze'])
+
+        # Post-freeze tag
+        post = rd.settle_diagnostic(
+            step=1024, prev_step=960, prev_log_alpha=base, curr_log_alpha=base, freeze_step=960
+        )
+        self.assertTrue(post['post_freeze'])
 
     def test_training_trajectory_bit_identical_with_diagnostics_on_vs_off(self) -> None:
         def _run(enable_diagnostics: bool) -> tuple[torch.Tensor, torch.Tensor, list[float]]:
