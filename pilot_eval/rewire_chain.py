@@ -1,24 +1,22 @@
 """Sparse rewiring ticket 14: Pod chain integration on ``c_attribution_chain.Chain`` and ``TransformersBackend``.
 
 Runs both sparse-rewiring arms (rank 1 and rank 0) through the existing ``c_attribution_chain.Chain``
-(no new runner) and ``c_attribution_backend.TransformersBackend``:
-- Precision strictly via ``neuron_audit_collector.set_ieee_precision`` + ``precision_readback`` /
-  ``precision_problems`` (never ``sampling_sft_training_backend.open_engine`` or legacy ``allow_tf32``).
-- Preflight enforces IEEE readback, the D24-sized ``disk`` block, ``HF_HOME`` off the volume,
-  ``HF_HUB_OFFLINE=1``, ``volume_identity``, private repo, and SHA-256 verification of every
-  downloaded file in ``inputs.model_dir``.
-- One training stage per arm: on a relaunch, verified completed arms are kept (all expected
-  checkpoints re-verified), while an interrupted arm's partial directory is discarded and restarted
-  cleanly from step 0 (D24).
-- Teardown (mirror, volume copy, export, closing summary before stop, ``stop_commands``) runs
-  unchanged through ``c_attribution_chain.Chain``.
+(no new runner), ``c_attribution_backend.TransformersBackend``, ``sparse_rewiring_plan`` (PR #6),
+and ``rewire_checkpoint.run_arm`` (PR #16):
+- Stage order: ``preflight -> qualification -> references -> train:<r1> -> eval:<r1> -> train:<r0> -> eval:<r0>``.
+  Qualification sign-off in ``Chain._check_signoff`` stays enforced for every stage after ``qualification``.
+- Precision strictly via ``TransformersBackend`` (``set_ieee_precision``, ``precision_readback``,
+  ``precision_problems``); never ``sampling_sft_training_backend.open_engine`` or legacy TF32 flags.
+- Base model files verified via ``c_attribution_bundle.check_base_model`` (streamed hashing).
+- Training and D24 restart-from-step-0 delegate to ``rewire_checkpoint.run_arm`` (verifies & keeps
+  completed arms, refuses damaged seals, moves interrupted attempts aside as ``.interrupted-<ns>``
+  and mirrors checkpoints via ``on_checkpoint``).
+- Model references are dropped (``model = None``) before ``backend.release()`` (lesson 2026-11-19),
+  and ``reset_peak()`` / ``peak_memory()`` are recorded per stage.
 """
 from __future__ import annotations
 
-import hashlib
-import json
-import shutil
-import sys
+import os
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -27,34 +25,18 @@ import torch
 
 from pilot_eval import attribution_units as au
 from pilot_eval import c_attribution_backend as cab
+from pilot_eval import c_attribution_bundle as cabundle
 from pilot_eval import c_attribution_chain as cc
+from pilot_eval import rewire_checkpoint as rckpt
 from pilot_eval import rewire_evaluation as reval
 from pilot_eval import rewire_module as rm
 from pilot_eval import rewire_training as rt
+from pilot_eval import sft_backend as sb
 from pilot_eval.workflow import _hash
 
 REWIRE_SUBTREE: str = f'{cc.SUBTREE}/sparse-rewiring'
 PREFLIGHT_DIR: str = f'{REWIRE_SUBTREE}/preflight'
-
-
-def hash_model_downloads(model_dir: str | Path, pinned: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """Hash every file in ``model_dir`` by SHA-256 and check against ``pinned`` if provided."""
-    root = Path(model_dir)
-    if not root.is_dir():
-        raise ValueError(f'model_dir does not exist: {root}')
-    hashes: dict[str, str] = {}
-    for path in sorted(p for p in root.rglob('*') if p.is_file()):
-        rel = path.relative_to(root).as_posix()
-        hashes[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
-    problems: list[str] = []
-    if pinned is not None:
-        for rel, expected in sorted(pinned.items()):
-            observed = hashes.get(rel)
-            if observed is None:
-                problems.append(f'missing model file: {rel}')
-            elif observed != expected:
-                problems.append(f'model file hash mismatch for {rel}: got {observed}, expected {expected}')
-    return {'files': hashes, 'problems': problems}
+REFERENCES_DIR: str = f'{REWIRE_SUBTREE}/references'
 
 
 class RewireBackend(cab.TransformersBackend):
@@ -62,36 +44,36 @@ class RewireBackend(cab.TransformersBackend):
 
     def __init__(self, record: Mapping[str, Any], volume_root: str | Path, *, device: str = 'cuda',
                  probes: Mapping[str, Any] | None = None, repo_root: Path = cab.REPO) -> None:
-        # Adapt sparse-rewiring record's ``evaluation.eos_token_id`` for TransformersBackend.__init__
         adapted = dict(record)
         if 'generation' not in adapted and 'evaluation' in adapted:
             adapted['generation'] = {'eos_token_id': int(adapted['evaluation']['eos_token_id'])}
         super().__init__(adapted, volume_root, device=device, probes=probes, repo_root=repo_root)
 
     def runtime(self) -> dict[str, Any]:
-        import transformers
         try:
-            import peft
-            peft_ver: str | None = peft.__version__
+            return super().runtime()
         except ImportError:
-            peft_ver = None
-        cudnn = torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None
-        return dict(
-            torch=torch.__version__,
-            transformers=transformers.__version__,
-            peft=peft_ver,
-            python=sys.version.split()[0],
-            dtype='float32',
-            attention='eager',
-            device=self.device,
-            device_name=torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu',
-            cuda_runtime=torch.version.cuda,
-            cudnn=cudnn,
-            cuda_libraries=cab.cuda_libraries(),
-            tokenizer=self.tokenizer_identity(),
-            autocast=False,
-            precision=self.precision_readback(),
-        )
+            # CPU-only test environments without peft installed; on GPU pods peft is pinned and super() runs.
+            import sys
+            import transformers
+
+            cudnn = torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None
+            return dict(
+                torch=torch.__version__,
+                transformers=transformers.__version__,
+                peft=None,
+                python=sys.version.split()[0],
+                dtype='float32',
+                attention='eager',
+                device=self.device,
+                device_name=torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu',
+                cuda_runtime=torch.version.cuda,
+                cudnn=cudnn,
+                cuda_libraries=cab.cuda_libraries(),
+                tokenizer=self.tokenizer_identity(),
+                autocast=False,
+                precision=self.precision_readback(),
+            )
 
     def load_base_model(self) -> torch.nn.Module:
         """Load the pinned local FP32 eager Qwen2 model and enforce spec test 22 (no model-config pad_token_id)."""
@@ -114,22 +96,20 @@ class RewireBackend(cab.TransformersBackend):
         return model
 
 
-def _arm_root(arm: str, run_id: str) -> str:
+def _arm_root(run_id: str) -> str:
     return f'{REWIRE_SUBTREE}/runs/{run_id}'
 
 
 def _stage_order(arms: Sequence[str]) -> list[str]:
-    order = ['preflight']
+    order = ['preflight', 'qualification', 'references']
     for arm in arms:
         order.append(f'train:{arm}')
         order.append(f'eval:{arm}')
     return order
 
 
-def _clear_partial_arm(arm_dir: Path) -> None:
-    """D24: an interrupted arm's partial unsealed directory is discarded before restarting from step 0."""
-    if arm_dir.exists():
-        shutil.rmtree(arm_dir)
+def _default_qualification_stub(_ctx: Any) -> dict[str, Any]:
+    raise NotImplementedError('ticket 15 GPU qualification must be supplied before running production training')
 
 
 def build_rewire_stages(
@@ -144,114 +124,169 @@ def build_rewire_stages(
     cohort150_questions: Mapping[str, Mapping[str, Any]] | None = None,
     cohort150_question_ids: Sequence[str] | None = None,
     arm_order: Sequence[str] | None = None,
+    expected_base_sha256: str | None = None,
+    execution_kind: str = 'real-cuda',
+    model_context_limit: int = 32768,
     gradient_checkpointing: bool = True,
+    qualification_fn: Callable[[Any], dict[str, Any]] | None = None,
+    references_fn: Callable[[Any], dict[str, Any]] | None = None,
 ) -> tuple[list[str], dict[str, Callable[[Any], dict[str, Any]]]]:
     """Build stage list and handlers for ``c_attribution_chain.Chain``."""
+    code_sha = record.get('code_commit')
+    if not isinstance(code_sha, str) or not code_sha or code_sha == 'unknown':
+        raise ValueError(f'a real code_commit is required in the launch record, got {code_sha!r}')
+
     arms = list(arm_order) if arm_order is not None else list(record['arms'])
     stage_names = _stage_order(arms)
-    code_sha = str(record.get('code_commit', 'unknown'))
     runtime_info: dict[str, Any] = {}
 
     def stage_preflight(ctx: Any) -> dict[str, Any]:
         problems = list(backend.preflight())
-        dl = hash_model_downloads(backend.model_dir, pinned=backend.pinned_base_model)
-        problems.extend(dl['problems'])
+        if backend.device != 'cpu' and not os.environ.get('CUBLAS_WORKSPACE_CONFIG'):
+            problems.append('CUBLAS_WORKSPACE_CONFIG must be set for deterministic CUDA training (D8)')
+        # Streamed per-file SHA-256 verification of the local base model via c_attribution_bundle
+        try:
+            cabundle.check_base_model(backend.model_dir, backend.bundle, pinned=backend.pinned_base_model)
+            model_files = dict(backend.bundle.get('base_model', {}).get('file_sha256', {}))
+        except Exception as exc:
+            model_files = {}
+            problems.append(f'base model check: {exc}')
         if problems:
             raise RuntimeError('preflight failed: ' + '; '.join(problems))
+        torch.use_deterministic_algorithms(True)
         rt_info = backend.runtime()
         runtime_info.clear()
         runtime_info.update(rt_info)
         rt_sha = _hash(rt_info)
-        ctx.chain.identity = {'runtime_sha256': rt_sha, 'code_commit': code_sha, 'model_files': dl['files']}
+        ctx.chain.identity = {
+            'runtime_sha256': rt_sha,
+            'code_commit': code_sha,
+            'model_files': model_files,
+        }
         receipt = {
             'runtime': rt_info,
             'runtime_sha256': rt_sha,
             'host': backend.host(),
-            'model_downloads': dl['files'],
+            'model_downloads': model_files,
             'precision': backend.precision_readback(),
+            'deterministic_algorithms': torch.are_deterministic_algorithms_enabled(),
+            'cublas_workspace_config': os.environ.get('CUBLAS_WORKSPACE_CONFIG'),
             'code_commit': code_sha,
         }
         au.seal_run(ctx.chain.local_root / PREFLIGHT_DIR, {'preflight.json': receipt})
         return {'outputs': [PREFLIGHT_DIR], 'runtime_sha256': rt_sha}
 
+    def stage_references(ctx: Any) -> dict[str, Any]:
+        if references_fn is not None:
+            return references_fn(ctx)
+        rt_sha = _hash(runtime_info or backend.runtime())
+        res = reval.evaluate_gold_references_in_child(
+            record=record,
+            volume_root=backend.volume_root,
+            out_dir=ctx.chain.local_root / REFERENCES_DIR,
+            val_items=val_items,
+            val_questions=val_questions,
+            val_question_ids=val_question_ids,
+            expected_runtime_sha256=rt_sha,
+            device=backend.device,
+            cap=int(record['evaluation']['cap']),
+            batch_size=int(record['evaluation']['batch_size']),
+        )
+        return {'outputs': [f'{REFERENCES_DIR}/summary'], 'references': res['references']}
+
     def _make_train_stage(arm: str) -> Callable[[Any], dict[str, Any]]:
         def stage_train(ctx: Any) -> dict[str, Any]:
-            arm_cfg = record['arms'][arm]
             plan = arm_plans[arm]
-            plan_sha = _hash(plan)
+            arm_cfg = record['arms'][arm]
             rt_sha = _hash(runtime_info or backend.runtime())
-            arm_rel = _arm_root(arm, arm_cfg['run_id'])
+            arm_rel = _arm_root(plan['run_id'])
             arm_dir = ctx.chain.local_root / arm_rel
-            # D24: if we reached here, either first run or interrupted/unverified -> discard partial and restart from 0
-            _clear_partial_arm(arm_dir)
+            train_holder: dict[str, Any] = {}
 
-            model = backend.load_rewired_model(
-                rank=int(arm_cfg['rank']),
-                seed=int(record['seeds']['read_init_base']),
-                mask_init=float(record['hard_concrete']['log_alpha_init']),
-            )
-            try:
-                summary = rt.train_rewire(
-                    model,
-                    training_rows,
-                    plan['step_batches'],
-                    arm_dir,
-                    rank=int(arm_cfg['rank']),
-                    read_lr=float(arm_cfg['read_lr']),
-                    mask_lr=float(record['optimizer']['masks']['lr']),
-                    l0_lambda=float(record['objective']['l0_lambda']),
-                    betas=tuple(float(b) for b in record['optimizer']['reads']['betas']),
-                    eps=float(record['optimizer']['reads']['eps']),
-                    max_grad_norm=float(record['optimizer']['reads']['clip_norm']),
-                    warmup_steps=int(record['training']['warmup_steps']),
-                    freeze_step=int(record['training']['freeze_after_step']),
-                    mask_seed=int(record['seeds']['mask_noise']),
-                    mask_group_size=int(record['data']['examples_per_mask']),
-                    checkpoint_steps=plan['checkpoint_steps'],
-                    snapshot_interval=int(record['cadences']['gate_snapshot_every']),
-                    settle_start=int(record['cadences']['settle']['first']),
-                    settle_interval=int(record['cadences']['settle']['every']),
-                    gradient_checkpointing=gradient_checkpointing,
-                    pad_token_id=backend.pad_token_id,
-                    plan_sha256=plan_sha,
-                    runtime_sha256=rt_sha,
-                    code_sha256=code_sha,
-                    val_ce_fn=lambda m, _step: reval.evaluate_validation_ce(m, val_items),
+            def _model_factory() -> torch.nn.Module:
+                return backend.load_rewired_model(
+                    rank=int(plan['rank']),
+                    seed=int(record['seeds']['read_init_base']),
+                    mask_init=float(record['hard_concrete']['log_alpha_init']),
                 )
-            finally:
-                backend.release(model)
 
-            summary_rel = f'{arm_rel}/train_summary'
-            au.seal_run(ctx.chain.local_root / summary_rel, {'train_summary.json': summary, 'plan.json': plan})
-            outputs = [summary_rel] + [f'{arm_rel}/checkpoints/checkpoint-{s}' for s in summary['checkpoint_steps']]
-            outputs += [f'{arm_rel}/masks/step-{s}' for s in summary['checkpoint_steps']]
-            return {'outputs': outputs, 'arm': arm, 'checkpoint_steps': summary['checkpoint_steps']}
+            def _train_fn(model: torch.nn.Module, p: Mapping[str, Any], sink: Any) -> None:
+                try:
+                    backend.reset_peak()
+                    summary = rt.train_rewire(
+                        model,
+                        training_rows,
+                        arm_dir,
+                        plan=p,
+                        sink=sink,
+                        mask_lr=float(record['optimizer']['masks']['lr']),
+                        betas=tuple(float(b) for b in record['optimizer']['reads']['betas']),
+                        eps=float(record['optimizer']['reads']['eps']),
+                        max_grad_norm=float(record['optimizer']['reads']['clip_norm']),
+                        snapshot_interval=int(record['cadences']['gate_snapshot_every']),
+                        settle_start=int(record['cadences']['settle']['first']),
+                        settle_interval=int(record['cadences']['settle']['every']),
+                        gradient_checkpointing=gradient_checkpointing,
+                        model_context_limit=int(model_context_limit),
+                        pad_token_id=backend.pad_token_id,
+                        expected_base_sha256=expected_base_sha256,
+                        execution_kind=execution_kind,
+                        val_ce_fn=lambda m, _step: reval.evaluate_validation_ce(m, val_items),
+                    )
+                    summary['peak_memory_bytes'] = backend.peak_memory()
+                    train_holder['summary'] = summary
+                finally:
+                    # Lesson 2026-11-19: drop local reference before calling backend.release()
+                    model = None
+                    backend.release()
+
+            # PR #16 run_arm handles prepare_arm (keep verified completed arm, refuse damaged seal,
+            # move interrupted attempt aside as .interrupted-<ns>), CheckpointSink, and seal_arm.
+            arm_res = rckpt.run_arm(
+                arm_dir,
+                plan,
+                model_factory=_model_factory,
+                train=_train_fn,
+                runtime_sha256=rt_sha,
+                code_commit=code_sha,
+                files=('logs/steps.jsonl',),
+                on_checkpoint=lambda _step, _folder: ctx.chain.mirror(),
+            )
+            outputs = [f'{arm_rel}/checkpoints/checkpoint-{s}' for s in plan['checkpoints']]
+            return {
+                'outputs': outputs,
+                'arm': arm,
+                'action': arm_res['action'],
+                'plan_sha256': plan['plan_sha256'],
+                'checkpoint_steps': list(plan['checkpoints']),
+                'peak_memory_bytes': train_holder.get('summary', {}).get('peak_memory_bytes'),
+            }
 
         return stage_train
 
     def _make_eval_stage(arm: str) -> Callable[[Any], dict[str, Any]]:
         def stage_eval(ctx: Any) -> dict[str, Any]:
-            arm_cfg = record['arms'][arm]
             plan = arm_plans[arm]
-            plan_sha = _hash(plan)
             rt_sha = _hash(runtime_info or backend.runtime())
-            arm_rel = _arm_root(arm, arm_cfg['run_id'])
+            arm_rel = _arm_root(plan['run_id'])
             arm_dir = ctx.chain.local_root / arm_rel
             final_step = int(record['training']['steps'])
             eval_cfg = record['evaluation']
             outputs: list[str] = []
             prior_uses: list[dict[str, Any]] = []
+            peak_bytes = 0
 
-            model = backend.load_base_model()
+            backend.reset_peak()
+            model: torch.nn.Module | None = backend.load_base_model()
             try:
-                for step in plan['checkpoint_steps']:
-                    ckpt_dir = arm_dir / 'checkpoints' / f'checkpoint-{step}'
-                    meta = reval.load_rewire_checkpoint(
+                for step in plan['checkpoints']:
+                    ckpt_dir = rckpt.checkpoint_dir(arm_dir, int(step))
+                    seal = reval.load_checkpoint_for_eval(
                         model,
                         ckpt_dir,
-                        expected_plan_sha256=plan_sha,
-                        expected_runtime_sha256=rt_sha,
-                        expected_code_sha256=code_sha,
+                        plan,
+                        runtime_sha256=rt_sha,
+                        code_commit=code_sha,
                     )
                     val_rel = f'{arm_rel}/eval/{step}/greedy-val'
                     val_res = reval.evaluate_greedy(
@@ -268,12 +303,11 @@ def build_rewire_stages(
                         cap=int(eval_cfg['cap']),
                         batch_size=int(eval_cfg['batch_size']),
                         final_step=final_step,
-                        checkpoint_meta=meta,
+                        checkpoint_meta=seal,
                     )
                     outputs.append(val_rel)
                     prior_uses.append(val_res['prior_use'])
 
-                    # D12: cohort150 only at configured steps (64 and final)
                     c150_steps = set(int(s) for s in eval_cfg['cohort150']['steps'])
                     if cohort150_questions is not None and cohort150_question_ids is not None and int(step) in c150_steps:
                         c150_rel = f'{arm_rel}/eval/{step}/greedy-cohort150'
@@ -291,21 +325,27 @@ def build_rewire_stages(
                             cap=int(eval_cfg['cap']),
                             batch_size=int(eval_cfg['batch_size']),
                             final_step=final_step,
-                            checkpoint_meta=meta,
+                            checkpoint_meta=seal,
                         )
                         outputs.append(c150_rel)
                         prior_uses.append(c150_res['prior_use'])
+                peak_bytes = backend.peak_memory()
             finally:
-                backend.release(model)
+                model = None
+                backend.release()
 
             eval_summary_rel = f'{arm_rel}/eval_summary'
             au.seal_run(ctx.chain.local_root / eval_summary_rel, {'prior_uses.json': prior_uses})
             outputs.append(eval_summary_rel)
-            return {'outputs': outputs, 'arm': arm, 'prior_uses': len(prior_uses)}
+            return {'outputs': outputs, 'arm': arm, 'prior_uses': len(prior_uses), 'peak_memory_bytes': peak_bytes}
 
         return stage_eval
 
-    handlers: dict[str, Callable[[Any], dict[str, Any]]] = {'preflight': stage_preflight}
+    handlers: dict[str, Callable[[Any], dict[str, Any]]] = {
+        'preflight': stage_preflight,
+        'qualification': qualification_fn or _default_qualification_stub,
+        'references': stage_references,
+    }
     for arm in arms:
         handlers[f'train:{arm}'] = _make_train_stage(arm)
         handlers[f'eval:{arm}'] = _make_eval_stage(arm)
@@ -326,7 +366,12 @@ def build_rewire_chain(
     cohort150_questions: Mapping[str, Mapping[str, Any]] | None = None,
     cohort150_question_ids: Sequence[str] | None = None,
     arm_order: Sequence[str] | None = None,
+    expected_base_sha256: str | None = None,
+    execution_kind: str = 'real-cuda',
+    model_context_limit: int = 32768,
     gradient_checkpointing: bool = True,
+    qualification_fn: Callable[[Any], dict[str, Any]] | None = None,
+    references_fn: Callable[[Any], dict[str, Any]] | None = None,
     exporter: Any = None,
     runner: Any = None,
     volume_identity: str | None = None,
@@ -344,7 +389,12 @@ def build_rewire_chain(
         cohort150_questions=cohort150_questions,
         cohort150_question_ids=cohort150_question_ids,
         arm_order=arm_order,
+        expected_base_sha256=expected_base_sha256,
+        execution_kind=execution_kind,
+        model_context_limit=model_context_limit,
         gradient_checkpointing=gradient_checkpointing,
+        qualification_fn=qualification_fn,
+        references_fn=references_fn,
     )
     chain_record = dict(record)
     chain_record.setdefault('run_id', str(record['label']))

@@ -467,6 +467,8 @@ class Chain:
 
     def _check_signoff(self, state):
         if 'qualification' not in self.stage_order:
+            if self.record.get('mode') != 'rehearsal':
+                raise RuntimeError('non-rehearsal chain must include a qualification stage with sign-off')
             return
         later = [s for s in self.stage_order[self.stage_order.index('qualification'):] if s in state['completed']]
         if not later:
