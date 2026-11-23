@@ -241,3 +241,16 @@ def test_seal_writes_tables_draws_and_resolved_manifest(tmp_path):
     csv = (out / 'overlaps.csv').read_text().splitlines()
     assert csv[0].startswith('survivors,source,arm,ranking,kind,set')
     assert json.loads((out / 'overlaps.json').read_text())['null']['seed'] == ra.NULL_SEED
+
+
+def test_cli_reads_survivor_exports_and_seals(tmp_path):
+    root, _, _ = c_root(tmp_path)
+    manifest = write_manifest(tmp_path, ra.c_production_entries(arms=('online-grpo',)), root)
+    (tmp_path / 'r1.json').write_text(json.dumps({'survivors': [{'layer': 0, 'neuron': 5}, {'layer': 3, 'neuron': 9}]}))
+    (tmp_path / 'r0.json').write_text(json.dumps([[0, 5]]))
+    out = tmp_path / 'compare'
+    ra.main(['--manifest', str(manifest), '--survivors', 'r1', str(tmp_path / 'r1.json'),
+             '--survivors', 'r0', str(tmp_path / 'r0.json'), '--out', str(out), '--draws', '20'])
+    result = json.loads((out / 'overlaps.json').read_text())
+    assert [c['survivors']['in_universe'] for c in result['comparisons']['r1']] == [2]
+    assert [c['survivors']['in_universe'] for c in result['comparisons']['r0']] == [1]
