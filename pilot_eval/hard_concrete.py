@@ -149,6 +149,7 @@ def freeze_log_alpha(
         )
         log_alpha.copy_(hardened)
     log_alpha.requires_grad_(False)
+    log_alpha.grad = None
     return survivors
 
 
@@ -189,7 +190,8 @@ class SharedMaskCache:
             raise ValueError(f'group_size must be >= 1, got {group_size}')
         self.seed = int(seed)
         self.group_size = int(group_size)
-        self.device = torch.device(device)
+        # Normalise once (e.g. 'cuda' -> torch.device('cuda:0')) so comparisons against real tensors match.
+        self.device = torch.empty(0, device=device).device
         self.eps = float(eps)
         self.beta = float(beta)
         self.gamma = float(gamma)
@@ -336,21 +338,30 @@ def row_change_norms(
 def _normalize_layer_tensors(
     values: Sequence[torch.Tensor] | Mapping[int, torch.Tensor] | Sequence[Any],
     *,
-    attr: str | None = None,
+    attr: str | Sequence[str] | None = None,
 ) -> dict[int, torch.Tensor]:
     if isinstance(values, Mapping):
         raw = {int(k): v for k, v in values.items()}
     else:
         raw = {idx: v for idx, v in enumerate(values)}
+    attrs = (attr,) if isinstance(attr, str) else tuple(attr or ())
     out: dict[int, torch.Tensor] = {}
     for layer_idx in sorted(raw):
         item = raw[layer_idx]
-        if attr is not None and not isinstance(item, torch.Tensor):
-            item = getattr(item, attr)
+        if attrs and not isinstance(item, torch.Tensor):
+            for name in attrs:
+                if hasattr(item, name):
+                    item = getattr(item, name)
+                    break
+            else:
+                raise AttributeError(f'layer {layer_idx}: {type(item).__name__} has none of attributes {attrs}')
         if not isinstance(item, torch.Tensor):
             raise TypeError(f'layer {layer_idx}: expected torch.Tensor, got {type(item).__name__}')
         out[layer_idx] = item.detach().float().reshape(-1)
     return out
+
+
+LOG_ALPHA_ATTRS: tuple[str, str] = ('rewire_log_alpha', 'log_alpha')
 
 
 def count_gates(
@@ -362,7 +373,7 @@ def count_gates(
     zeta: float = ZETA,
 ) -> dict[str, Any]:
     """Compute the three gate counts (expected-active, nonzero z_det, binary survivors) per layer and total."""
-    layers = _normalize_layer_tensors(log_alpha_by_layer, attr='log_alpha')
+    layers = _normalize_layer_tensors(log_alpha_by_layer, attr=LOG_ALPHA_ATTRS)
     per_layer: list[dict[str, Any]] = []
     total_expected = 0.0
     total_nonzero = 0
@@ -413,6 +424,7 @@ def export_survivors(
     norms_up_by_layer: Sequence[torch.Tensor] | Mapping[int, torch.Tensor] | None = None,
     step: int | None = None,
     meta: Mapping[str, Any] | None = None,
+    max_survivor_records: int | None = None,
     beta: float = BETA,
     gamma: float = GAMMA,
     zeta: float = ZETA,
@@ -420,37 +432,45 @@ def export_survivors(
     """Build the JSON-serialisable survivor export with zero-based ``(layer, neuron)`` records.
 
     Compatible with ``rewire_attribution.py`` (reads ``export['survivors']`` as ``[{'layer', 'neuron', ...}]``).
+    When ``not frozen`` and ``max_survivor_records`` is set and exceeded (e.g. checkpoint 0 where all
+    250,880 neurons are nonzero), per-neuron records are omitted while exact per-layer counts are kept.
     """
-    layers = _normalize_layer_tensors(log_alpha_by_layer, attr='log_alpha')
+    layers = _normalize_layer_tensors(log_alpha_by_layer, attr=LOG_ALPHA_ATTRS)
     gate_norms = _normalize_layer_tensors(norms_gate_by_layer) if norms_gate_by_layer is not None else None
     up_norms = _normalize_layer_tensors(norms_up_by_layer) if norms_up_by_layer is not None else None
     counts = count_gates(layers, frozen=frozen, beta=beta, gamma=gamma, zeta=zeta)
 
+    omit_records = (
+        not frozen
+        and max_survivor_records is not None
+        and counts['total']['nonzero_z_det'] > int(max_survivor_records)
+    )
     survivors: list[dict[str, Any]] = []
-    for layer_idx, la in layers.items():
-        z_det = deterministic_gate(la, gamma=gamma, zeta=zeta)
-        ng = gate_norms[layer_idx] if gate_norms is not None else None
-        nu = up_norms[layer_idx] if up_norms is not None else None
-        if ng is not None and ng.shape != la.shape:
-            raise ValueError(f'layer {layer_idx} gate norms shape {tuple(ng.shape)} != {tuple(la.shape)}')
-        if nu is not None and nu.shape != la.shape:
-            raise ValueError(f'layer {layer_idx} up norms shape {tuple(nu.shape)} != {tuple(la.shape)}')
-        active_indices = torch.nonzero(z_det > 0.0, as_tuple=False).reshape(-1).tolist()
-        for neuron_idx in active_indices:
-            zd_val = float(z_det[neuron_idx].item())
-            survivors.append(
-                {
-                    'layer': int(layer_idx),
-                    'neuron': int(neuron_idx),
-                    'log_alpha': float(la[neuron_idx].item()),
-                    'z_det': zd_val,
-                    'binary': bool(zd_val == 1.0) if frozen else None,
-                    'norm_gate': float(ng[neuron_idx].item()) if ng is not None else None,
-                    'norm_up': float(nu[neuron_idx].item()) if nu is not None else None,
-                }
-            )
+    if not omit_records:
+        for layer_idx, la in layers.items():
+            z_det = deterministic_gate(la, gamma=gamma, zeta=zeta)
+            ng = gate_norms[layer_idx] if gate_norms is not None else None
+            nu = up_norms[layer_idx] if up_norms is not None else None
+            if ng is not None and ng.shape != la.shape:
+                raise ValueError(f'layer {layer_idx} gate norms shape {tuple(ng.shape)} != {tuple(la.shape)}')
+            if nu is not None and nu.shape != la.shape:
+                raise ValueError(f'layer {layer_idx} up norms shape {tuple(nu.shape)} != {tuple(la.shape)}')
+            active_indices = torch.nonzero(z_det > 0.0, as_tuple=False).reshape(-1).tolist()
+            for neuron_idx in active_indices:
+                zd_val = float(z_det[neuron_idx].item())
+                survivors.append(
+                    {
+                        'layer': int(layer_idx),
+                        'neuron': int(neuron_idx),
+                        'log_alpha': float(la[neuron_idx].item()),
+                        'z_det': zd_val,
+                        'binary': bool(zd_val == 1.0) if frozen else None,
+                        'norm_gate': float(ng[neuron_idx].item()) if ng is not None else None,
+                        'norm_up': float(nu[neuron_idx].item()) if nu is not None else None,
+                    }
+                )
 
-    return {
+    out: dict[str, Any] = {
         'schema': SURVIVOR_EXPORT_SCHEMA,
         'step': int(step) if step is not None else None,
         'frozen': bool(frozen),
@@ -462,8 +482,14 @@ def export_survivors(
         },
         'counts': counts,
         'survivors': survivors,
+        'survivors_omitted': omit_records,
         'meta': dict(meta or {}),
     }
+    if omit_records:
+        out['survivors_omitted_reason'] = (
+            f'pre-freeze nonzero count {counts["total"]["nonzero_z_det"]} exceeds cap {int(max_survivor_records)}'
+        )
+    return out
 
 
 def seal_survivor_export(

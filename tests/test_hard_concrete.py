@@ -96,9 +96,11 @@ class TestHardConcreteEquations(unittest.TestCase):
         la = torch.nn.Parameter(
             torch.tensor([thresh - 1e-2, thresh - 1e-4, thresh + 1e-4, thresh + 1e-2, -5.0, 1.0], dtype=torch.float32)
         )
+        la.grad = torch.ones_like(la)
         survivors = hc.freeze_log_alpha(la)
         self.assertEqual(survivors.tolist(), [False, False, True, True, False, True])
         self.assertFalse(la.requires_grad)
+        self.assertIsNone(la.grad)
         z_after = hc.deterministic_gate(la)
         self.assertEqual(z_after.tolist(), [0.0, 0.0, 1.0, 1.0, 0.0, 1.0])
         self.assertEqual(la.tolist(), [-20.0, -20.0, 20.0, 20.0, -20.0, 20.0])
@@ -165,6 +167,18 @@ class TestSurvivorExportAndSealing(unittest.TestCase):
             (out_dir / '1024.json').write_text('{"tampered": true}\n')
             with self.assertRaises(ValueError):
                 au.verify_run(out_dir)
+
+    def test_rewire_log_alpha_attr_and_pre_freeze_record_cap(self) -> None:
+        import types
+
+        # Matches PR #12 RewireMLP.rewire_log_alpha attribute name directly
+        mods = [types.SimpleNamespace(rewire_log_alpha=torch.ones(5)), types.SimpleNamespace(rewire_log_alpha=torch.ones(5))]
+        counts = hc.count_gates(mods, frozen=False)
+        self.assertEqual(counts['total']['nonzero_z_det'], 10)
+        capped = hc.export_survivors(mods, frozen=False, max_survivor_records=4, step=0)
+        self.assertTrue(capped['survivors_omitted'])
+        self.assertEqual(capped['survivors'], [])
+        self.assertEqual(capped['counts']['total']['nonzero_z_det'], 10)
 
 
 class TestSharedMaskCacheD14(unittest.TestCase):
