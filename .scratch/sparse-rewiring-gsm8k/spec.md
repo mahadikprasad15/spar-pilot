@@ -47,7 +47,23 @@ A new arm `sparse-gold-sft` (catalog name **[proposed]**): the untuned model wit
 - Optimizer: one AdamW, `foreach=False`, two groups. Values **BLOCKED(D1, D2, D3)**; proposed reads lr 3e-3, masks lr 0.1, betas (0.9, 0.99), eps 1e-8, wd 0. Clip 1.0 on read factors only (D4). `LambdaLR` shared by both groups; schedule **BLOCKED(D5)**, proposed 20 warmup + cosine to 512, fixed masks for the last 64.
 - λ **BLOCKED(D6)**, proposed 6e-4.
 - Runtime (D8): FP32, `set_ieee_precision()`, eager attention, `use_cache=False`, gradient checkpointing (D15), full determinism, pinned packages from `sft_backend.PINS`.
-- Logged every step: CE, L0 term, total, LR per group, read-factor grad norm before clipping, mask grad norm, expected-active, nonzero-`z_det` count, examples seen. Every 32 steps: validation CE with deterministic masks.
+- Logged every step (`logs/steps.jsonl`): CE, L0 term, total, LR per group, read-factor grad norm before clipping, mask grad norm, examples seen, and the gate and read-change summaries listed under §Training dynamics.
+- Every 8 steps **[proposed, D20]** (`logs/validation.jsonl`): validation CE with deterministic masks, plus a per-layer gate snapshot (`masks/trace/<step>.npz`: `logα` as FP16 for all 250,880 neurons, about 0.5 MB each).
+
+### Training dynamics (figure requested by the researcher, 2026-11-23)
+
+One figure with step on a shared x axis, built on CPU from the saved logs (ticket 12). Its purpose is descriptive: it shows how gate shutting, read-change size and performance move together within one run. Co-movement is not evidence that one causes the other.
+
+| Panel | Quantities | Source and cadence |
+|---|---|---|
+| 1. Gates | expected-active `Σ P(z>0)`, nonzero deterministic count (`z_det > 0`), and binary survivors after the freeze, on a log y axis; a per-layer heatmap (layer × step) of nonzero-`z_det` counts | every step for the totals, every 8 steps for the per-layer counts |
+| 2. Read-change size | the gauge-invariant per-neuron row change `‖Δw_i‖ = z_i ‖b_i‖ ‖a‖` (rank 1; `‖b_i A‖` for rank k; `‖w_i‖` for rank 0), summed and as a median, for gate and up separately; once over all neurons and once over the currently nonzero (survivor) set | every step (totals), every 8 steps (survivor subsets) |
+| 3. Performance | validation CE (deterministic masks, dense); greedy flexible-v3 accuracy on validation at the checkpoints; cohort150 greedy only at 64 and 512 (D12); reference lines for untuned (step 0) and gold-sft step 64 evaluated on the same validation set | CE every 8 steps; accuracy at checkpoints |
+| 4. Events | vertical line at the freeze step (449); mask churn between consecutive checkpoints as the Jaccard overlap of their nonzero sets, plus counts that switched on and off | checkpoints |
+
+- Raw `‖a‖` or `‖b‖` alone is not reported as a size: rescaling `a` by k and `b` by 1/k leaves the change the same.
+- The gold reference lines need gold-sft checkpoints 0 and 64 evaluated on the new validation set (CE plus one greedy pass). That is a new, cheap use of existing adapters and is registered in the catalog.
+- Every panel shows the real evaluation points as markers; nothing is interpolated between checkpoints.
 - Checkpoints **[proposed]** 0/8/16/32/64/128/256/448/512, each with unmerged factors, all `logα`, optimizer, scheduler, both RNG streams, data cursor and seal; 448 and 512 bracket the hardening. Resume only from a complete sealed checkpoint with matching plan and runtime hashes.
 
 ### Outputs
@@ -58,6 +74,8 @@ artifacts/runs/sparse-rewiring/<run-id>/
   inputs/order.json  inputs/validation.items.json (+ exclusion record)
   checkpoints/checkpoint-<k>/  rewire_state.safetensors  optimizer.pt  scheduler.pt  rng.pt  complete.json
   masks/<k>.json             expected / nonzero / binary counts per layer; survivor list
+  masks/trace/<step>.npz     logα snapshot every 8 steps (FP16), for the per-layer heatmap and churn
+  dynamics/                  figure (PNG + SVG), its input table (CSV) and a provenance JSON
   hardening.json             rule, pre/post counts, validation CE before and after
   eval/<k>/greedy/           responses.jsonl  config.json  scores.json
   compare/                   overlap tables, null draws, figures (CPU)
@@ -91,6 +109,7 @@ artifacts/runs/sparse-rewiring/<run-id>/
 11. Uninterrupted vs resumed (at 8 and at a fixed-mask step) give identical factors, masks and logs.
 12. Validation sampler refuses an unreadable exclusion source and never returns an excluded ID.
 13. Comparison: layer-matched null preserves per-layer sizes; overlap on a planted fixture; missing attribution values excluded, not zero.
+14. Dynamics: the logged expected-active, nonzero and survivor counts equal a recomputation from the saved `logα` snapshots; the read-change norm is unchanged under `(a, b) → (k a, b / k)`; churn on a planted pair of mask sets; the figure builder refuses a log with missing steps instead of interpolating.
 
 GPU qualification (ticket 07) adds: real longest example forward/backward and peak memory, zero-update logits identity on the real model, a disposable few-step run (not the scientific run), throughput, save/restore.
 
@@ -100,4 +119,4 @@ GPU qualification (ticket 07) adds: real longest example forward/backward and pe
 
 ## Open decisions blocking a launch record
 
-D1, D5, D6 (criterion), D11 (needs `sequences-v2` IDs), D12, D13, D18. See `decision-log.md`.
+D1, D5, D6 (criterion), D11 (needs `sequences-v2` IDs), D12, D13, D18, D20. See `decision-log.md`.

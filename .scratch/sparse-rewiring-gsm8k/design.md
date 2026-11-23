@@ -204,10 +204,11 @@ Full option tables are in `decision-log.md`. Summary:
 | D17 | Code base | Branch implementation from `c-attribution-pilot` (or after it merges) | [proposed] |
 | D18 | Hardware | A100-80GB Pod via the existing runbook, or L4 for gold-hardware parity | OPEN (benchmark first) |
 | D19 | Comparison family | Primary: sparse survivors vs C global and per-layer top sets (GRPO). Secondary: production-1 single layer and joint-audit B/D | [proposed] |
+| D20 | Dynamics logging | Researcher-requested figure: gates, read-change norms and performance against step; validation CE every 8 steps, greedy at checkpoints | [proposed] cadence |
 
 ## 5. Recommended minimal pilot (once separately authorised)
 
-One rank-1 sparse gold-SFT run (rank per D13) from the untuned model, on the 512 gold examples with gold's loss/token contract and FP32 runtime, Max's hard-concrete/L0 objective and mask optimizer, λ 6e-4, 512-step cap with the first 64 steps on gold's exact batches, a 64-step fixed-mask finish, checkpoints at 0/8/16/32/64/128/256/448/512, validation-only monitoring, one greedy evaluation on cohort150 of the final (and step-64) checkpoints, and a CPU neuron-list comparison with `c-production-1`. Estimated GPU time: about 0.5–1 h on an A100 including validation and two evaluations (arithmetic estimate, `decision-log.md` §Compute). No λ sweep, no rank 4, no second seed in the minimal pilot.
+One rank-1 sparse gold-SFT run (rank per D13) from the untuned model, on the 512 gold examples with gold's loss/token contract and FP32 runtime, Max's hard-concrete/L0 objective and mask optimizer, λ 6e-4, 512-step cap with the first 64 steps on gold's exact batches, a 64-step fixed-mask finish, checkpoints at 0/8/16/32/64/128/256/448/512, validation-only monitoring, one greedy evaluation on cohort150 of the final (and step-64) checkpoints, and a CPU neuron-list comparison with `c-production-1`. Also the training-dynamics figure (D20). Estimated GPU time: about 1.5–2 h on an A100 including dense validation, greedy validation at checkpoints and two cohort150 evaluations (arithmetic estimate, `decision-log.md` §Compute). No λ sweep, no rank 4, no second seed in the minimal pilot.
 
 ## 6. Answers to the design input's questions (§9)
 

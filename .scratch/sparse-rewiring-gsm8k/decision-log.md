@@ -127,6 +127,10 @@ Secondary (descriptive): S vs production-1's single-layer read rankings for gold
 
 Not available: a full-universe attribution for any SFT arm. Missing means unmeasured, not zero.
 
+### D20. Training-dynamics logging cadence
+
+The researcher asked for a figure of gate shutting, read-change size and performance against step (`spec.md` §Training dynamics). Proposed cadence: gate totals and norms every step (free); validation CE and a `logα` snapshot every 8 steps (64 checks over 512 steps, about 10–15 min extra on an A100 by the same arithmetic as §Compute); greedy validation accuracy at the 9 checkpoints (about 9 × 128 answers, roughly 30–40 min); cohort150 only at 64 and 512. Alternatives: every 4 steps through step 128, where pruning is expected to be fastest (D1), then every 16; or greedy validation at fewer checkpoints to save time. Its value is descriptive, and one run cannot separate cause from co-movement.
+
 ## Not equivalent to the rank-1 LoRA arms
 
 - LoRA: `ΔW = B A` on 7 projection types (attention included) and on `down_proj` (writes). Rewiring: changes only gate/up reads, writes frozen.
@@ -145,7 +149,8 @@ Assumptions: about 250 tokens per training example (C spec records 115-token mea
 | Validation (128 × every 32 steps) | about 5 min |
 | Greedy cohort150, 2 checkpoints | about 10 min (C production: 2,250 answers in 4,500 s at batch 16) |
 | Setup, preflight, export | about 20 min |
-| **Total, A100** | **about 1 h**; L4 likely 2–3× |
+| Dynamics extras (D20) | about 45 min (dense validation CE, greedy validation at 9 checkpoints, gold references) |
+| **Total, A100** | **about 1.5–2 h** with D20; L4 likely 2–3× |
 | Rank-1 memory over gold | +0.84 M parameters, negligible |
 | Rank-0 memory over gold | +770 M parameters, about +12 GB |
 
