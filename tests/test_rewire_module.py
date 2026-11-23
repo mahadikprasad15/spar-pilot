@@ -146,7 +146,7 @@ def test_pre_activations_match_the_documented_equations_for_both_parts(rank):
     fill_coefficients(model)
     m = rw.modules(model)[1]
     z = torch.linspace(0.0, 1.0, 12)
-    m.gate = lambda log_alpha: z
+    m.gate = lambda layer, log_alpha: z
     x = torch.randn(2, 3, 8)
     with torch.no_grad():
         gate, up = m.pre_activations(x)
@@ -268,13 +268,23 @@ def test_gradients_at_init_and_after_one_step(rank):
 
 def test_mutation_detaching_the_gate_starves_the_mask_of_the_ce_gradient():
     _, model = rewired(1)
-    rw.set_gate(model, lambda log_alpha: rw.deterministic_gate(log_alpha).detach())
+    rw.set_gate(model, lambda layer, log_alpha: rw.deterministic_gate(log_alpha).detach())
     inputs = ids()
     optimizer = torch.optim.AdamW([p for _, p in rw.trainable_parameters(model)], lr=1e-2, foreach=False)
     objective(model, inputs).backward()
     optimizer.step()
     grads, l0 = _grads(model, inputs), _l0_only_grads(model)
     assert all(torch.equal(g, l0[n]) for n, g in grads.items() if 'log_alpha' in n)  # test 4 would fail
+
+
+def test_gate_hook_receives_the_zero_based_layer_index():
+    _, model = rewired(1)
+    seen = []
+    rw.set_gate(model, lambda layer, log_alpha: (seen.append(layer), rw.deterministic_gate(log_alpha))[1])
+    logits(model, ids())
+    assert seen == [0, 1]
+    rw.set_gate(model, None)
+    assert all(m.gate is rw.default_gate for m in rw.modules(model))
 
 
 def test_deterministic_gate_equation():

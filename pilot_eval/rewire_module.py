@@ -19,10 +19,10 @@ Parts are gate and up (researcher decision). One gate value per neuron is shared
 Init (spec, D10): ``A ~ N(0, 1)/√d`` drawn from a CPU ``torch.Generator`` seeded ``seed + layer``, gate part
 first, then up; ``B = 0`` and ``W = 0`` so the initial model equals the base model; ``logα = mask_init``.
 
-The gate values ``z`` come from a pluggable ``gate`` callable (``log_alpha -> z``). The default is the
-deterministic hard-concrete gate ``clip(σ(logα)(ζ−γ)+γ, 0, 1)``; the stochastic training gate with the
-shared per-group noise cache is ticket 03 (``hard_concrete.py``), which installs itself through
-``set_gate``.
+The gate values ``z`` come from a pluggable ``gate(layer, log_alpha) -> z`` callable. The default is the
+deterministic hard-concrete gate ``clip(σ(logα)(ζ−γ)+γ, 0, 1)``. The stochastic training gate with the
+shared per-group noise cache is ticket 03 (``hard_concrete.SharedMaskCache``); its bound ``cache.gate`` has
+this signature and plugs in through ``set_gate(model, cache.gate)``.
 
 The change is applied at every position the MLP sees. Under microbatch 1 there is no padding; under padded
 batches the attention mask already keeps padded positions from reaching unpadded ones.
@@ -48,6 +48,10 @@ def deterministic_gate(log_alpha):
     """``clip(σ(logα)(ζ−γ)+γ, 0, 1)``: the evaluation-time gate. Python-float constants only, so it never
     creates a tensor on another device."""
     return torch.clamp(torch.sigmoid(log_alpha) * (ZETA - GAMMA) + GAMMA, 0.0, 1.0)
+
+
+def default_gate(layer, log_alpha):
+    return deterministic_gate(log_alpha)
 
 
 def is_rewire_parameter(name):
@@ -82,7 +86,7 @@ class RewireMLP(nn.Module):
         self.layer, self.rank, self.seed = layer, rank, seed
         self.hidden_size, self.intermediate_size = hidden, neurons
         self.enabled = True
-        self.gate = gate if gate is not None else deterministic_gate
+        self.gate = gate if gate is not None else default_gate
         device, dtype = weight.device, weight.dtype
         if rank == 0:
             for part in PARTS:
@@ -106,7 +110,7 @@ class RewireMLP(nn.Module):
         return (x @ getattr(self, f'rewire_A_{part}').T) @ getattr(self, f'rewire_B_{part}').T
 
     def gate_values(self):
-        return self.gate(self.rewire_log_alpha)
+        return self.gate(self.layer, self.rewire_log_alpha)
 
     def pre_activations(self, x):
         """``(gate, up)`` pre-activations, each ``x.shape[:-1] + (n,)``, with the gated read change added when on."""
@@ -170,9 +174,10 @@ def modules(model):
 
 
 def set_gate(model, gate):
-    """Install one gate callable on every module (ticket 03 plugs the stochastic gate in here)."""
+    """Install one ``gate(layer, log_alpha)`` callable on every module (``None`` restores the deterministic
+    gate). Ticket 03 plugs its shared-mask cache in here."""
     for module in modules(model):
-        module.gate = gate if gate is not None else deterministic_gate
+        module.gate = gate if gate is not None else default_gate
 
 
 def trainable_parameters(model):
