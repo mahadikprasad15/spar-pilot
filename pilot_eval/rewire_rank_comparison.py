@@ -13,6 +13,7 @@ Note: one seed per arm, and the two arms differ in read LR (3e-3 vs 3e-4, D1) as
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -23,9 +24,11 @@ from pilot_eval import attribution_units as au
 from pilot_eval import c_attribution_generation as cg
 from pilot_eval import c_attribution_stability as cs
 from pilot_eval import neuron_audit_math as nm
+from pilot_eval import rewire_attribution as ra
 
 SCHEMA: str = 'sparse-rewiring-rank-comparison-v1'
-DEFAULT_SHAPE: tuple[int, int] = (28, 8960)
+SURVIVOR_EXPORT_SCHEMA: str = 'sparse-rewiring-survivors-v1'
+DEFAULT_SHAPE: tuple[int, int] = ra.SHAPE
 NULL_DRAWS: int = 10_000
 NULL_SEED: int = 20261124
 BOOTSTRAP_DRAWS: int = 10_000
@@ -37,9 +40,23 @@ LABELS: dict[str, str] = {
 }
 
 
-def _extract_pairs(value: Any, *, shape: tuple[int, int]) -> list[tuple[int, int]]:
-    """Extract sorted unique zero-based ``(layer, neuron)`` pairs from an export dict or pair sequence."""
-    raw = value['survivors'] if isinstance(value, Mapping) and 'survivors' in value else value
+def _extract_pairs(value: Any, *, shape: tuple[int, int], require_final: bool = True) -> list[tuple[int, int]]:
+    """Extract sorted unique zero-based ``(layer, neuron)`` pairs from a final binary export dict or pair sequence.
+
+    When ``value`` is a mapping (a Ticket 03 survivor export) and ``require_final=True``, refuses
+    pre-freeze / continuous exports so step-960 masks cannot be compared as final binary survivors by mistake.
+    """
+    if isinstance(value, Mapping):
+        if require_final:
+            if value.get('schema') != SURVIVOR_EXPORT_SCHEMA:
+                raise ValueError(
+                    f'expected survivor export schema {SURVIVOR_EXPORT_SCHEMA!r}, got {value.get("schema")!r}'
+                )
+            if value.get('frozen') is not True:
+                raise ValueError('D21 compares final binary survivor sets; refusing unfrozen (pre-freeze) export')
+        raw = value['survivors']
+    else:
+        raw = value
     n_layers, width = shape
     seen: set[tuple[int, int]] = set()
     for item in raw:
@@ -199,41 +216,62 @@ def compare_survivors(
     }
 
 
-def compare_three_way_c_sets(
+def compare_three_way_manifest(
     r1_export: Any,
     r0_export: Any,
-    c_sets: Mapping[str, Sequence[Any]],
+    entries: Sequence[Mapping[str, Any]],
     *,
-    shape: tuple[int, int] = DEFAULT_SHAPE,
-    universe: np.ndarray | None = None,
-    draws: int = NULL_DRAWS,
-    seed: int = NULL_SEED,
+    draws: int = ra.NULL_DRAWS,
+    seed: int = ra.NULL_SEED,
+    top_k: Sequence[int] = ra.TOP_K,
 ) -> dict[str, Any]:
-    """Compare r1, r0, and their intersection (r1 ∩ r0) against named C-attribution sets on the same universe."""
-    _, width = shape
-    uni = np.ones(shape, dtype=bool) if universe is None else np.asarray(universe, dtype=bool)
-    if uni.shape != shape:
-        raise ValueError(f'universe shape {uni.shape} != {shape}')
+    """Compare r1, r0, and their intersection (r1 ∩ r0) against loaded D19 attribution-manifest entries.
 
-    s1 = _extract_pairs(r1_export, shape=shape)
-    s0 = _extract_pairs(r0_export, shape=shape)
+    Routes every C-attribution overlap through ``rewire_attribution.compare`` so universes, NaN
+    exclusions, frozen selections, and layer-matched nulls match D19 identically.
+    """
+    s1 = _extract_pairs(r1_export, shape=ra.SHAPE)
+    s0 = _extract_pairs(r0_export, shape=ra.SHAPE)
     inter = sorted(set(s1) & set(s0))
-    f1, f0, fi = _to_flat(s1, width), _to_flat(s0, width), _to_flat(inter, width)
 
-    results: dict[str, Any] = {}
-    for set_name, raw_members in sorted(c_sets.items()):
-        c_pairs = _extract_pairs(raw_members, shape=shape)
-        fc = _to_flat(c_pairs, width)
-        results[set_name] = {
-            'c_set_size': len(fc),
-            'r1_vs_c': _overlap_with_null(fc, f1, uni, draws=draws, seed=nm.derive_seed(seed, set_name, 'r1')),
-            'r0_vs_c': _overlap_with_null(fc, f0, uni, draws=draws, seed=nm.derive_seed(seed, set_name, 'r0')),
-            'three_way_vs_c': _overlap_with_null(fc, fi, uni, draws=draws, seed=nm.derive_seed(seed, set_name, 'both')),
+    def _clean(comp: Mapping[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in comp.items() if k != '_draws'}
+
+    by_entry: dict[str, Any] = {}
+    for entry in entries:
+        key = f"{entry['source']}/{entry['arm']}/{entry['ranking']}"
+        by_entry[key] = {
+            'source': entry['source'],
+            'arm': entry['arm'],
+            'ranking': entry['ranking'],
+            'r1': _clean(ra.compare(s1, entry, label='sparse-gold-sft-r1', draws=draws, seed=seed, top_k=top_k)),
+            'r0': _clean(ra.compare(s0, entry, label='sparse-gold-sft-r0', draws=draws, seed=seed, top_k=top_k)),
+            'three_way': _clean(
+                ra.compare(inter, entry, label='sparse-gold-sft-r1-and-r0', draws=draws, seed=seed, top_k=top_k)
+            ),
         }
     return {
-        'universe_size': int(uni.sum()),
-        'sets': results,
+        'intersection_count': len(inter),
+        'entries': by_entry,
     }
+
+
+def load_verified_eval_responses(eval_dir: str | Path) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """Verify a sealed evaluation unit (``au.verify_run``) and return ``(responses_by_qid, provenance)``."""
+    directory = Path(eval_dir)
+    au.verify_run(directory)
+    seal = json.loads((directory / 'complete.json').read_text(encoding='utf-8'))
+    responses: dict[str, dict[str, Any]] = {}
+    for line in (directory / 'responses.jsonl').read_text(encoding='utf-8').splitlines():
+        if line.strip():
+            row = json.loads(line)
+            responses[str(row['question_id'])] = row
+    provenance = {
+        'unit_dir': str(directory),
+        'responses_sha256': seal['files']['responses.jsonl'],
+        'config_sha256': seal['files'].get('config.json'),
+    }
+    return responses, provenance
 
 
 def _reward_vector(responses: Mapping[str, Any], question_ids: Sequence[str]) -> np.ndarray:
@@ -255,15 +293,9 @@ def _paired_block(
     label_a: str,
     label_b: str,
 ) -> dict[str, Any]:
-    """Paired bootstrap interval of ``(b - a)`` in percentage points plus 2x2 table and McNemar exact p."""
-    q = vec_a.size
+    """Paired bootstrap interval of ``(b - a)`` in percentage points (reusing ``cg._interval``) + 2x2 + McNemar p."""
     diff = vec_b - vec_a
-    if q == 0:
-        interval = {'estimate': 0.0, 'p2.5': 0.0, 'p97.5': 0.0}
-    else:
-        boot = (counts @ diff) / q
-        lo, hi = np.percentile(boot, [2.5, 97.5])
-        interval = {'estimate': float(np.mean(diff)), 'p2.5': float(lo), 'p97.5': float(hi)}
+    interval = {'estimate': 0.0, 'p2.5': 0.0, 'p97.5': 0.0} if vec_a.size == 0 else cg._interval(diff, counts)
     a_ok = vec_a == 1.0
     b_ok = vec_b == 1.0
     both = int((a_ok & b_ok).sum())
@@ -367,8 +399,7 @@ def compare_ranks(
     r1_export: Any,
     r0_export: Any,
     shape: tuple[int, int] = DEFAULT_SHAPE,
-    c_sets: Mapping[str, Sequence[Any]] | None = None,
-    c_universe: np.ndarray | None = None,
+    manifest_entries: Sequence[Mapping[str, Any]] | None = None,
     val_ce: tuple[Any, Any] | None = None,
     hardening: tuple[Mapping[str, Any] | None, Mapping[str, Any] | None] = (None, None),
     paired_evals: Mapping[str, Mapping[str, Any]] | None = None,
@@ -382,9 +413,9 @@ def compare_ranks(
         'labels': dict(LABELS),
         'survivors': compare_survivors(r1_export, r0_export, shape=shape, draws=null_draws, seed=seed),
     }
-    if c_sets is not None:
-        out['three_way_c_sets'] = compare_three_way_c_sets(
-            r1_export, r0_export, c_sets, shape=shape, universe=c_universe, draws=null_draws, seed=seed
+    if manifest_entries is not None:
+        out['three_way_attribution'] = compare_three_way_manifest(
+            r1_export, r0_export, manifest_entries, draws=null_draws, seed=ra.NULL_SEED
         )
     if val_ce is not None:
         out['val_ce_and_hardening'] = compare_val_ce_and_hardening(

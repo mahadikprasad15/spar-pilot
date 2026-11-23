@@ -1,6 +1,7 @@
 """Sparse rewiring ticket 11 (D21): Rank 1 vs Rank 0 comparison tests. CPU, NumPy only."""
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
@@ -10,21 +11,56 @@ import numpy as np
 
 from pilot_eval import attribution_units as au
 from pilot_eval import c_attribution_generation as cg
+from pilot_eval import c_attribution_selection as sel
+from pilot_eval import rewire_attribution as ra
 from pilot_eval import rewire_rank_comparison as rrc
 
 
+def _final_export(pairs: list[tuple[int, int]], *, frozen: bool = True, schema: str = rrc.SURVIVOR_EXPORT_SCHEMA) -> dict:
+    return {
+        'schema': schema,
+        'frozen': frozen,
+        'counts': {'total': {'expected_active': float(len(pairs)), 'nonzero_z_det': len(pairs), 'binary_survivors': len(pairs) if frozen else None}},
+        'survivors': [{'layer': l, 'neuron': n} for l, n in pairs],
+    }
+
+
+def _sealed_c_entry(root: Path, *, arm: str = 'online-grpo', seed: int = 0) -> dict:
+    L, W = ra.SHAPE
+    d = np.random.default_rng(seed).normal(size=(L, W))
+    d[0, 5] = np.nan  # unmeasured neuron: must be excluded, never zero
+    globals_ = sel.top_positive(np.where(np.isfinite(d), d, 0.0).ravel(), 64)[0]
+    groups = {
+        'global64-reads': {
+            'kind': 'reads',
+            'targets': globals_,
+            'reads': sel._reads(globals_, np.repeat(np.arange(L), W), W),
+        }
+    }
+    buf = io.BytesIO()
+    np.savez(buf, dJdlambda=d, removal_J=-d)
+    au.seal_run(root / 'c-attribution/aggregate' / arm, {'neurons.npz': buf.getvalue()})
+    au.seal_run(
+        root / sel.FREEZE_DIR / arm,
+        {f'{arm}.json': {'schema': 'c-attribution-freeze-v1', 'arm': arm, 'groups': groups}},
+    )
+    entry_spec = ra.c_production_entries(arms=(arm,), groups=('global64-reads',))[0]
+    return ra.load_entry(root, entry_spec)
+
+
 class TestRankComparison(unittest.TestCase):
-    def test_survivor_overlap_unique_and_layer_matched_null(self) -> None:
+    def test_survivor_overlap_unique_layer_matched_null_and_final_export_guard(self) -> None:
         shape = (4, 50)
-        # Plant strong overlap in layer 0 (4 shared out of 5 each) and disjoint in layer 1
-        r1 = {
-            'counts': {'total': {'expected_active': 7.2, 'nonzero_z_det': 7, 'binary_survivors': 7}},
-            'survivors': [{'layer': 0, 'neuron': i} for i in (0, 1, 2, 3, 4)] + [{'layer': 1, 'neuron': 10}, {'layer': 1, 'neuron': 11}],
-        }
-        r0 = {
-            'counts': {'total': {'expected_active': 6.8, 'nonzero_z_det': 6, 'binary_survivors': 6}},
-            'survivors': [{'layer': 0, 'neuron': i} for i in (0, 1, 2, 3, 9)] + [{'layer': 1, 'neuron': 20}],
-        }
+        r1 = _final_export([(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 10), (1, 11)])
+        r0 = _final_export([(0, 0), (0, 1), (0, 2), (0, 3), (0, 9), (1, 20)])
+
+        # Pre-freeze (frozen=False) export must be refused
+        with self.assertRaises(ValueError):
+            rrc.compare_survivors(_final_export([(0, 0)], frozen=False), r0, shape=shape, draws=50)
+        # Wrong schema must be refused
+        with self.assertRaises(ValueError):
+            rrc.compare_survivors(_final_export([(0, 0)], schema='wrong-schema'), r0, shape=shape, draws=50)
+
         res = rrc.compare_survivors(r1, r0, shape=shape, draws=400, seed=20261124)
         self.assertEqual(res['intersection_count'], 4)
         self.assertEqual(res['union_count'], 9)
@@ -35,54 +71,70 @@ class TestRankComparison(unittest.TestCase):
         self.assertEqual(res['per_layer'][0]['intersection'], 4)
         self.assertEqual(res['per_layer'][1]['intersection'], 0)
         self.assertEqual(res['per_layer'][2]['jaccard'], 1.0)
-        # Planted overlap of 4/5 in width 50 should have very small upper-tail p
         self.assertLess(res['layer_matched_null']['exact']['p_upper'], 1e-3)
         self.assertEqual(res['layer_matched_null']['observed'], 4)
 
-    def test_three_way_c_sets_overlap(self) -> None:
-        shape = (3, 40)
-        r1 = [(0, 1), (0, 2), (0, 3), (1, 5)]
-        r0 = [(0, 1), (0, 2), (0, 8), (2, 7)]
-        c_sets = {
-            'global64-reads': [(0, 1), (0, 2), (0, 9), (1, 5)],
-            'layer64-reads': [(0, 1), (2, 7)],
-        }
-        res = rrc.compare_three_way_c_sets(r1, r0, c_sets, shape=shape, draws=200, seed=20261124)
-        self.assertEqual(res['universe_size'], 120)
-        g = res['sets']['global64-reads']
-        self.assertEqual(g['r1_vs_c']['observed'], 3)
-        self.assertEqual(g['r0_vs_c']['observed'], 2)
-        self.assertEqual(g['three_way_vs_c']['observed'], 2)
-        self.assertEqual(res['sets']['layer64-reads']['three_way_vs_c']['observed'], 1)
+    def test_three_way_attribution_routed_through_rewire_attribution_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            entry = _sealed_c_entry(Path(tmp), arm='online-grpo', seed=3)
+            g64 = entry['frozen']['global64-reads']
+            W = ra.SHAPE[1]
+            # Plant 2 shared neurons from global64-reads, 1 unmeasured neuron (0, 5), plus distinct neurons
+            p0, p1, p2 = (g64[0] // W, g64[0] % W), (g64[1] // W, g64[1] % W), (g64[2] // W, g64[2] % W)
+            r1 = _final_export([p0, p1, p2, (0, 5)])
+            r0 = _final_export([p0, p1, (0, 5), (1, 1)])
 
-    def test_paired_accuracy_mcnemar_and_bootstrap(self) -> None:
+            res = rrc.compare_three_way_manifest(r1, r0, [entry], draws=200, seed=ra.NULL_SEED)
+            key = 'c-production-1/online-grpo/dJdlambda'
+            block = res['entries'][key]
+            # Unmeasured (0, 5) is excluded, never counted as 0
+            self.assertEqual(block['r1']['survivors']['unmeasured'], 1)
+            self.assertEqual(block['r1']['frozen']['global64-reads']['observed'], 3)
+            self.assertEqual(block['r0']['frozen']['global64-reads']['observed'], 2)
+            self.assertEqual(block['three_way']['frozen']['global64-reads']['observed'], 2)
+            # Matches direct rewire_attribution.compare identically (same seed, same null)
+            direct_r1 = ra.compare([p0, p1, p2, (0, 5)], entry, label='sparse-gold-sft-r1', draws=200, seed=ra.NULL_SEED)
+            self.assertEqual(block['r1']['seed'], direct_r1['seed'])
+            self.assertEqual(block['r1']['frozen']['global64-reads'], direct_r1['frozen']['global64-reads'])
+
+    def test_paired_accuracy_mcnemar_bootstrap_and_verified_eval_loader(self) -> None:
         qids = [f'q{i}' for i in range(20)]
-        # r1 gets 10/20 (0..9); r0 gets 14/20 (0..13) -> r0_only=4, r1_only=0, both=10, neither=6
-        r1 = {q: {'reward': 1 if i < 10 else 0} for i, q in enumerate(qids)}
-        r0 = {q: {'reward': 1 if i < 14 else 0} for i, q in enumerate(qids)}
+        r1 = {q: {'question_id': q, 'reward': 1 if i < 10 else 0} for i, q in enumerate(qids)}
+        r0 = {q: {'question_id': q, 'reward': 1 if i < 14 else 0} for i, q in enumerate(qids)}
         untuned = {q: {'reward': 1 if i < 8 else 0} for i, q in enumerate(qids)}
         gold = {q: {'reward': 1 if i < 12 else 0} for i, q in enumerate(qids)}
 
-        res = rrc.compare_paired_accuracy(
-            r1, r0, qids, references={'untuned': untuned, 'gold-sft': gold}, bootstrap_draws=500, seed=20261124
-        )
-        self.assertAlmostEqual(res['accuracy']['r1'], 0.50, places=6)
-        self.assertAlmostEqual(res['accuracy']['r0'], 0.70, places=6)
-        pair = res['r0_vs_r1']
-        self.assertEqual(pair['both_correct'], 10)
-        self.assertEqual(pair['r0_only'], 4)
-        self.assertEqual(pair['r1_only'], 0)
-        self.assertEqual(pair['neither'], 6)
-        self.assertAlmostEqual(pair['delta_pp_b_minus_a']['estimate'], 20.0, places=6)
-        self.assertAlmostEqual(pair['mcnemar_exact_p'], cg.mcnemar_exact(4, 0), places=10)
-        self.assertGreater(pair['delta_pp_b_minus_a']['p2.5'], 0.0)
-        self.assertIn('gold-sft', res['vs_references'])
-        self.assertIn('untuned', res['vs_references'])
+        with tempfile.TemporaryDirectory() as tmp:
+            eval_dir = Path(tmp) / 'eval_r1'
+            jsonl = ''.join(json.dumps(r1[q]) + '\n' for q in qids)
+            au.seal_run(eval_dir, {'responses.jsonl': jsonl, 'config.json': {'arm': 'r1'}})
+            loaded_r1, prov = rrc.load_verified_eval_responses(eval_dir)
+            self.assertEqual(len(loaded_r1), 20)
+            self.assertTrue(len(prov['responses_sha256']) == 64)
+
+            res = rrc.compare_paired_accuracy(
+                loaded_r1, r0, qids, references={'untuned': untuned, 'gold-sft': gold}, bootstrap_draws=500, seed=20261124
+            )
+            self.assertAlmostEqual(res['accuracy']['r1'], 0.50, places=6)
+            self.assertAlmostEqual(res['accuracy']['r0'], 0.70, places=6)
+            pair = res['r0_vs_r1']
+            self.assertEqual(pair['both_correct'], 10)
+            self.assertEqual(pair['r0_only'], 4)
+            self.assertEqual(pair['r1_only'], 0)
+            self.assertEqual(pair['neither'], 6)
+            self.assertAlmostEqual(pair['delta_pp_b_minus_a']['estimate'], 20.0, places=6)
+            self.assertAlmostEqual(pair['mcnemar_exact_p'], cg.mcnemar_exact(4, 0), places=10)
+            self.assertGreater(pair['delta_pp_b_minus_a']['p2.5'], 0.0)
+
+            # Tampered sealed eval unit must be refused
+            (eval_dir / 'responses.jsonl').write_text('{"tampered": true}\n', encoding='utf-8')
+            with self.assertRaises(ValueError):
+                rrc.load_verified_eval_responses(eval_dir)
 
     def test_val_ce_hardening_and_seal_round_trip(self) -> None:
         shape = (2, 20)
-        r1 = [(0, 1), (1, 2)]
-        r0 = [(0, 1), (1, 3)]
+        r1 = _final_export([(0, 1), (1, 2)])
+        r0 = _final_export([(0, 1), (1, 3)])
         val_r1 = [{'step': 0, 'val_ce': 2.0}, {'step': 64, 'val_ce': 1.4}]
         val_r0 = [{'step': 0, 'val_ce': 2.0}, {'step': 64, 'val_ce': 1.3}]
         h_r1 = {'val_ce_before': 1.10, 'val_ce_after': 1.12, 'pre_nonzero': 5, 'post_binary': 4}
@@ -92,7 +144,6 @@ class TestRankComparison(unittest.TestCase):
             r1_export=r1,
             r0_export=r0,
             shape=shape,
-            c_sets={'global64-reads': [(0, 1)]},
             val_ce=(val_r1, val_r0),
             hardening=(h_r1, h_r0),
             null_draws=100,
