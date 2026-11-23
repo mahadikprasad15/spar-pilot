@@ -236,6 +236,8 @@ def train_rewire(
         examples_seen=0,
     )
     rd.append_jsonl(steps_log_path, row0)
+    if tracker is not None:
+        tracker.observe(0, la_map_0)
     if rd.should_snapshot(0, interval=snapshot_interval):
         rd.save_log_alpha_snapshot(out_path / 'masks' / 'trace' / '0.npz', la_map_0, step=0)
         _log_val(0)
