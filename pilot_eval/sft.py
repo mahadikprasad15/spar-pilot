@@ -24,6 +24,35 @@ def adapter_settings():
                 projections=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'])
 
 
+def gold_training_indices(n_train):
+    """The gold 512: seed-42 sample of GSM8K train indices, sorted (the Pilot 2 derivation)."""
+    return sorted(random.Random(42).sample(range(n_train), 512))
+
+
+def gold_item(tokenizer, row, index, *, dataset_revision, context_limit):
+    """One GSM8K train row in the gold format: prompt + reference answer through the single supervised
+    end-turn token, completion-only labels. Truncation is forbidden."""
+    prompt = build_gsm8k_prompt(row['question'], tokenizer)
+    full = tokenizer.apply_chat_template(
+        gsm8k_messages(row['question']) + [{'role': 'assistant', 'content': row['answer']}],
+        tokenize=False, add_generation_prompt=False)
+    prefix = tokenizer.encode(prompt, add_special_tokens=False)
+    tokens = tokenizer.encode(full, add_special_tokens=False)
+    if tokens[:len(prefix)] != prefix:
+        raise ValueError('prompt/completion token boundary mismatch')
+    ends = [i for i in range(len(prefix), len(tokens)) if tokens[i] == tokenizer.eos_token_id]
+    if len(ends) != 1:
+        raise ValueError('completion must contain exactly one supervised end-turn token')
+    tokens = tokens[:ends[0] + 1]  # No supervision on template whitespace after end-turn.
+    if len(tokens) > context_limit:
+        raise ValueError('full training sequence context overflow; truncation is forbidden')
+    return dict(id=f'gsm8k:train:{index}', source_index=index, source_split='train',
+                dataset_revision=dataset_revision, question=row['question'],
+                gold=row['answer'], prompt=prompt, rendered=full, input_ids=tokens,
+                prompt_tokens=len(prefix), labels=[-100] * len(prefix) + tokens[len(prefix):],
+                gold_tokens=len(tokenizer.encode(row['answer'], add_special_tokens=False)))
+
+
 def safe_name(name):
     if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
         raise ValueError('unsafe plan/run name')
@@ -120,31 +149,14 @@ def prepare_sft(source_config, output_root, name, *, dependencies=None, hardware
                 or item['gold'] != row['answer']):
             raise ValueError('source prompt/gold mismatch with pinned dataset')
         test_questions.add(' '.join(row['question'].split()))
-    indices = sorted(random.Random(42).sample(range(len(data['train'])), 512))
+    indices = gold_training_indices(len(data['train']))
     rows = []
     for index in indices:
         row = data['train'][index]
         if ' '.join(row['question'].split()) in test_questions:
             raise ValueError('training/evaluation question overlap')
-        prompt = build_gsm8k_prompt(row['question'], tokenizer)
-        full = tokenizer.apply_chat_template(
-            gsm8k_messages(row['question']) + [{'role': 'assistant', 'content': row['answer']}],
-            tokenize=False, add_generation_prompt=False)
-        prefix = tokenizer.encode(prompt, add_special_tokens=False)
-        tokens = tokenizer.encode(full, add_special_tokens=False)
-        if tokens[:len(prefix)] != prefix:
-            raise ValueError('prompt/completion token boundary mismatch')
-        ends = [i for i in range(len(prefix), len(tokens)) if tokens[i] == tokenizer.eos_token_id]
-        if len(ends) != 1:
-            raise ValueError('completion must contain exactly one supervised end-turn token')
-        tokens = tokens[:ends[0] + 1]  # No supervision on template whitespace after end-turn.
-        if len(tokens) > min(context, source['context_limit']):
-            raise ValueError('full training sequence context overflow; truncation is forbidden')
-        rows.append(dict(id=f'gsm8k:train:{index}', source_index=index, source_split='train',
-                         dataset_revision=source['dataset_revision'], question=row['question'],
-                         gold=row['answer'], prompt=prompt, rendered=full, input_ids=tokens,
-                         prompt_tokens=len(prefix), labels=[-100] * len(prefix) + tokens[len(prefix):],
-                         gold_tokens=len(tokenizer.encode(row['answer'], add_special_tokens=False))))
+        rows.append(gold_item(tokenizer, row, index, dataset_revision=source['dataset_revision'],
+                              context_limit=min(context, source['context_limit'])))
     plan_path = directory / 'analysis-plan.json'
     if plan_path.exists():
         plan = json.loads(plan_path.read_text())
