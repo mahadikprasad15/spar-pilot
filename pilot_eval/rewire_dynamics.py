@@ -13,6 +13,7 @@ medians, ratios, and Jaccard overlaps are well-defined finite numbers (never NaN
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,7 @@ SETTLE_LOG_SCHEMA: str = 'sparse-rewiring-settle-v1'
 def _stack_layers(
     values: Sequence[torch.Tensor] | Mapping[int, torch.Tensor] | Sequence[Any],
     *,
-    attr: str | None = None,
+    attr: str | Sequence[str] | None = None,
 ) -> tuple[list[int], torch.Tensor]:
     """Normalize per-layer 1D tensors into ``(sorted_layer_ids, stacked [L, W] float32 CPU tensor)``."""
     by_layer = hc._normalize_layer_tensors(values, attr=attr)
@@ -83,7 +84,7 @@ def step_dynamics_row(
     zeta: float = hc.ZETA,
 ) -> dict[str, Any]:
     """Build one per-step dynamics log row without mutating inputs or RNG state."""
-    la_layers, la_stack = _stack_layers(log_alpha_by_layer, attr='log_alpha')
+    la_layers, la_stack = _stack_layers(log_alpha_by_layer, attr=hc.LOG_ALPHA_ATTRS)
     gate_layers, gate_stack = _stack_layers(norms_gate_by_layer)
     up_layers, up_stack = _stack_layers(norms_up_by_layer)
     if la_layers != gate_layers or la_layers != up_layers:
@@ -142,44 +143,83 @@ def save_log_alpha_snapshot(
     log_alpha_by_layer: Sequence[torch.Tensor] | Mapping[int, torch.Tensor] | Sequence[Any],
     *,
     step: int,
+    gamma: float = hc.GAMMA,
+    zeta: float = hc.ZETA,
 ) -> Path:
-    """Save stacked ``[L, W]`` FP16 ``log_alpha`` snapshot to ``path`` (``masks/trace/<step>.npz``)."""
-    layer_ids, stacked = _stack_layers(log_alpha_by_layer, attr='log_alpha')
+    """Save stacked ``[L, W]`` FP16 ``log_alpha`` AND packed exact FP32 ``z_det > 0`` hard mask (~31 KB).
+
+    Saving the exact packed FP32 hard mask prevents FP16 rounding near ``-ln(11)`` (~0.002 spacing)
+    from flipping boundary neurons across ``z_det > 0`` when recomputing counts or churn.
+    """
+    layer_ids, stacked = _stack_layers(log_alpha_by_layer, attr=hc.LOG_ALPHA_ATTRS)
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     arr_fp16 = stacked.numpy().astype(np.float16)
+    hard_mask = hc.hard_survivor_mask(stacked, gamma=gamma, zeta=zeta).numpy().astype(bool)
+    packed = np.packbits(hard_mask.ravel())
     np.savez(
         out_path,
         step=np.int64(step),
         layers=np.asarray(layer_ids, dtype=np.int64),
         log_alpha=arr_fp16,
+        hard_mask_bits=packed,
+        hard_mask_shape=np.asarray(hard_mask.shape, dtype=np.int64),
     )
     return out_path
 
 
 def load_log_alpha_snapshot(path: str | Path) -> dict[str, Any]:
-    """Load an FP16 ``log_alpha`` snapshot without pickle."""
+    """Load an FP16 ``log_alpha`` snapshot and unpack its exact FP32 ``hard_mask`` without pickle."""
     with np.load(Path(path), allow_pickle=False) as npz:
+        la = np.asarray(npz['log_alpha'], dtype=np.float16)
+        if 'hard_mask_bits' in npz.files and 'hard_mask_shape' in npz.files:
+            shape = tuple(int(x) for x in np.asarray(npz['hard_mask_shape'], dtype=np.int64).tolist())
+            n_bits = int(np.prod(shape))
+            hard_mask = np.unpackbits(np.asarray(npz['hard_mask_bits'], dtype=np.uint8), count=n_bits).astype(bool).reshape(shape)
+        else:
+            hard_mask = hc.hard_survivor_mask(torch.as_tensor(la, dtype=torch.float32)).numpy().astype(bool)
         return {
             'step': int(npz['step']),
             'layers': np.asarray(npz['layers'], dtype=np.int64).tolist(),
-            'log_alpha': np.asarray(npz['log_alpha'], dtype=np.float16),
+            'log_alpha': la,
+            'hard_mask': hard_mask,
         }
 
 
 def recompute_counts_from_snapshot(
-    log_alpha: np.ndarray | torch.Tensor,
+    snapshot_or_log_alpha: Mapping[str, Any] | np.ndarray | torch.Tensor,
     *,
+    hard_mask: np.ndarray | None = None,
     frozen: bool = False,
     beta: float = hc.BETA,
     gamma: float = hc.GAMMA,
     zeta: float = hc.ZETA,
 ) -> dict[str, Any]:
-    """Recompute the three gate counts directly from a saved ``[L, W]`` ``log_alpha`` array."""
-    t = torch.as_tensor(log_alpha, dtype=torch.float32)
+    """Recompute the three gate counts from a saved snapshot (using exact packed ``hard_mask`` when present)."""
+    if isinstance(snapshot_or_log_alpha, Mapping):
+        la_arr = snapshot_or_log_alpha['log_alpha']
+        if hard_mask is None and 'hard_mask' in snapshot_or_log_alpha:
+            hard_mask = np.asarray(snapshot_or_log_alpha['hard_mask'], dtype=bool)
+    else:
+        la_arr = snapshot_or_log_alpha
+    t = torch.as_tensor(la_arr, dtype=torch.float32)
     if t.ndim != 2:
         raise ValueError(f'expected 2D [L, W] log_alpha array, got shape {tuple(t.shape)}')
-    return hc.count_gates([t[i] for i in range(t.shape[0])], frozen=frozen, beta=beta, gamma=gamma, zeta=zeta)
+    counts = hc.count_gates([t[i] for i in range(t.shape[0])], frozen=frozen, beta=beta, gamma=gamma, zeta=zeta)
+    if hard_mask is not None:
+        hm = np.asarray(hard_mask, dtype=bool)
+        if hm.shape != tuple(t.shape):
+            raise ValueError(f'hard_mask shape {hm.shape} != log_alpha shape {tuple(t.shape)}')
+        for i, pl in enumerate(counts['per_layer']):
+            nz = int(hm[i].sum())
+            pl['nonzero_z_det'] = nz
+            if frozen:
+                pl['binary_survivors'] = nz
+        total_nz = int(hm.sum())
+        counts['total']['nonzero_z_det'] = total_nz
+        if frozen:
+            counts['total']['binary_survivors'] = total_nz
+    return counts
 
 
 def _to_bool_array(mask: np.ndarray | torch.Tensor) -> np.ndarray:
@@ -234,6 +274,7 @@ def settle_diagnostic(
     prev_step: int,
     prev_log_alpha: np.ndarray | torch.Tensor,
     curr_log_alpha: np.ndarray | torch.Tensor,
+    freeze_step: int | None = None,
     jaccard_ref: float = SETTLE_JACCARD_REF,
     rel_change_ref: float = SETTLE_REL_CHANGE_REF,
     beta: float = hc.BETA,
@@ -279,6 +320,7 @@ def settle_diagnostic(
         'jaccard_ref': float(jaccard_ref),
         'rel_change_ref': float(rel_change_ref),
         'meets_reference': meets,
+        'post_freeze': bool(freeze_step is not None and int(step) > int(freeze_step)),
         'diagnostic_only': True,
     }
 
@@ -296,6 +338,7 @@ class SettleTracker:
         *,
         start: int = SETTLE_START_STEP,
         interval: int = SETTLE_INTERVAL,
+        freeze_step: int | None = 960,
         jaccard_ref: float = SETTLE_JACCARD_REF,
         rel_change_ref: float = SETTLE_REL_CHANGE_REF,
         beta: float = hc.BETA,
@@ -308,6 +351,7 @@ class SettleTracker:
             raise ValueError(f'start ({start}) must be >= interval ({interval})')
         self.start = int(start)
         self.interval = int(interval)
+        self.freeze_step = int(freeze_step) if freeze_step is not None else None
         self.jaccard_ref = float(jaccard_ref)
         self.rel_change_ref = float(rel_change_ref)
         self.beta = float(beta)
@@ -331,7 +375,7 @@ class SettleTracker:
         anchor_step = self.start - self.interval
         if s < anchor_step or (s - anchor_step) % self.interval != 0:
             return None
-        _, curr_stack = _stack_layers(log_alpha_by_layer, attr='log_alpha')
+        _, curr_stack = _stack_layers(log_alpha_by_layer, attr=hc.LOG_ALPHA_ATTRS)
         record: dict[str, Any] | None = None
         if should_check_settle(s, start=self.start, interval=self.interval):
             if self._baseline_step is None or self._baseline_log_alpha is None:
@@ -345,6 +389,7 @@ class SettleTracker:
                 prev_step=self._baseline_step,
                 prev_log_alpha=self._baseline_log_alpha,
                 curr_log_alpha=curr_stack,
+                freeze_step=self.freeze_step,
                 jaccard_ref=self.jaccard_ref,
                 rel_change_ref=self.rel_change_ref,
                 beta=self.beta,
@@ -357,13 +402,28 @@ class SettleTracker:
         return record
 
 
-def append_jsonl(path: str | Path, row: Mapping[str, Any]) -> None:
+def append_jsonl(
+    path: str | Path,
+    row: Mapping[str, Any],
+    *,
+    strict_monotonic_step: bool = False,
+    fsync: bool = False,
+) -> None:
     """Append one JSON-encoded row (NumPy-safe via ``attribution_units._json_default``) to a JSONL file."""
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if strict_monotonic_step and 'step' in row and out_path.is_file():
+        existing = read_jsonl(out_path)
+        if existing and 'step' in existing[-1] and int(row['step']) <= int(existing[-1]['step']):
+            raise ValueError(
+                f'refusing non-monotonic append to {out_path}: step {row["step"]} <= last logged {existing[-1]["step"]}'
+            )
     line = json.dumps(dict(row), sort_keys=True, default=au._json_default) + '\n'
     with out_path.open('a', encoding='utf-8') as stream:
         stream.write(line)
+        if fsync:
+            stream.flush()
+            os.fsync(stream.fileno())
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
