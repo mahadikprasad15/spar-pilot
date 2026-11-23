@@ -10,7 +10,7 @@ Every existing arm adapts dense rank-1 LoRA modules, and the neuron-level eviden
 
 ## Solution
 
-A new arm `sparse-gold-sft` (catalog name **[proposed]**): the untuned model with a `MaskedReRead`-style module on every MLP, trained on gold's frozen training items with gold's loss contract and runtime plus Max's L0 objective, then hardened to a binary survivor set. Saved factors, masks and full recovery state. Greedy evaluation and a CPU comparison against `c-production-1`.
+Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[proposed]**), identical except for rank and read LR **[user 2026-11-23]**: the untuned model with a `MaskedReRead`-style module on every MLP, trained on gold's frozen training items with gold's loss contract and runtime plus Max's L0 objective, then hardened to a binary survivor set. Saved factors, masks and full recovery state. Greedy evaluation, a rank-1 vs rank-0 comparison, and a CPU comparison of each with `c-production-1`.
 
 ## User stories
 
@@ -38,13 +38,13 @@ A new arm `sparse-gold-sft` (catalog name **[proposed]**): the untuned model wit
 
 - `pilot_eval/rewire_module.py` **[proposed name]**: wraps the pinned Qwen2 MLP and reproduces its forward exactly (`down(act(gate(x)) * up(x))`) plus `Δgate = z ⊙ ((x·a_g) b_g)` and `Δup = z ⊙ ((x·a_u) b_u)` for rank 1; `(x Aᵀ) Bᵀ` for rank k; `x Wᵀ` for rank 0. Read changes at every unpadded position (prompt included). Parts gate+up **[user]**.
 - Init: `a ~ N(0,1)/√d` from a CPU generator seeded per layer (D10); `b = 0`; `logα = 1.0`.
-- Hard concrete with β 2/3, γ −0.1, ζ 1.1; training noise: one uniform `u` per layer per group of 4 consecutive examples, drawn from a dedicated generator, cached, and reused by each single-example pass and by checkpoint recompute; `z` is recomputed from the cached `u` and the current `logα` (D14, [proposed]); deterministic gate `clip(σ(logα)(ζ−γ)+γ, 0, 1)`; expected-active `Σ σ(logα − β ln(−γ/ζ))`; freeze rule `z_det > 0` → binary. Rank: **BLOCKED(D13)** for the primary; the module supports 0, 1 and k.
+- Hard concrete with β 2/3, γ −0.1, ζ 1.1; training noise: one uniform `u` per layer per group of 4 consecutive examples, drawn from a dedicated generator, cached, and reused by each single-example pass and by checkpoint recompute; `z` is recomputed from the cached `u` and the current `logα` (D14, [proposed]); deterministic gate `clip(σ(logα)(ζ−γ)+γ, 0, 1)`; expected-active `Σ σ(logα − β ln(−γ/ζ))`; freeze rule `z_det > 0` → binary. Ranks: 1 and 0 are both run **[user 2026-11-23]**; the module also supports k > 1. Rank 0 adds 770.7 M FP32 read parameters, so the memory test in ticket 07 covers it explicitly.
 - An `off` switch returning the exact base MLP, and a per-neuron "remove new reads" intervention for later causal checks.
 
 ### Training
 
 - Explicit loop adapted from `sampling_sft_training_backend.train` (not TRL), reusing `sft_backend.completion_loss`, `CompletionCollator` and `frozen_weight_hash`. Objective per step: Σ over microbatches of `completion_loss(…, denominator = step's supervised tokens)` + `λ · expected_active` (once per step).
-- Optimizer: one AdamW, `foreach=False`, two groups. Values **BLOCKED(D1, D2, D3)**; proposed reads lr 3e-3, masks lr 0.1, betas (0.9, 0.99), eps 1e-8, wd 0. Clip 1.0 on read factors only (D4). `LambdaLR` shared by both groups; schedule **BLOCKED(D5)**, proposed 20 warmup + cosine to 512, fixed masks for the last 64.
+- Optimizer: one AdamW, `foreach=False`, two groups. Values **BLOCKED(D1, D2, D3)**; proposed reads lr 3e-3 (rank 1) / 3e-4 (rank 0), masks lr 0.1, betas (0.9, 0.99), eps 1e-8, wd 0. Clip 1.0 on read factors only (D4). `LambdaLR` shared by both groups; schedule **BLOCKED(D5)**, proposed 20 warmup + cosine to 512, fixed masks for the last 64.
 - λ **BLOCKED(D6)**, proposed 6e-4.
 - Runtime (D8): FP32, `set_ieee_precision()`, eager attention, `use_cache=False`, gradient checkpointing (D15), full determinism, pinned packages from `sft_backend.PINS`.
 - Logged every step (`logs/steps.jsonl`): CE, L0 term, total, LR per group, read-factor grad norm before clipping, mask grad norm, examples seen, and the gate and read-change summaries listed under §Training dynamics.
@@ -69,7 +69,7 @@ One figure with step on a shared x axis, built on CPU from the saved logs (ticke
 ### Outputs
 
 ```text
-artifacts/runs/sparse-rewiring/<run-id>/
+artifacts/runs/sparse-rewiring/<run-id>/        one run ID per arm (r1, r0); both share one plan except rank and read LR
   config.json  runtime.json  status.json  logs/steps.jsonl  logs/validation.jsonl
   inputs/order.json  inputs/validation.items.json (+ exclusion record)
   checkpoints/checkpoint-<k>/  rewire_state.safetensors  optimizer.pt  scheduler.pt  rng.pt  complete.json
@@ -87,6 +87,8 @@ artifacts/runs/sparse-rewiring/<run-id>/
 - Cohort150 greedy at 64 and 512 **BLOCKED(D12)**: existing harness, cap 1,024, EOS 151645, explicit repetition penalty 1.0, flexible-v3; paired per-question comparison with the stored untuned, gold-sft, online- and offline-grpo runs, labelled with runtime differences. Every run writes its config and all responses (AGENTS.md).
 
 ### Comparison
+
+- D21 (rank 1 vs rank 0, CPU): survivor counts; Jaccard overlap of the final binary sets and overlap per layer, with a layer-matched null; neurons unique to each arm; each arm's and the intersection's overlap with the C sets; validation CE and accuracy per checkpoint; cohort150 greedy at 64 and 512, paired by question; CE change across hardening; the dynamics figure side by side on shared axes.
 
 - D19. Inputs: survivor set at 512 (and 448 continuous gates as a secondary), `c-production-1` `aggregate/<arm>/neurons.npz` and `freeze/<arm>.json` read in place (never modified). Joins on zero-based `(layer, neuron)`; the loader asserts the C arrays are [28, 8960] and the index convention from the C freeze.
 
@@ -107,6 +109,7 @@ artifacts/runs/sparse-rewiring/<run-id>/
 9. Clipping touches reads only; mask LR follows the shared schedule.
 10. Checkpointed vs non-checkpointed backward identical for a fixed noise seed.
 10a. Shared-mask equivalence (D14): the summed read and `logα` gradients of 4 single-example passes with one cached `u` equal one 4-row forward with that `u`, within FP32 round-off; a mutation that re-draws `u` per pass fails; the logged group boundaries match the step order.
+10b. Rank 0 and rank 1 share one code path apart from the parameterisation: a rank-0 fixture with its rows set to `b_i a` reproduces a rank-1 fixture's forward and gradients with respect to the mask exactly.
 11. Uninterrupted vs resumed (at 8 and at a fixed-mask step) give identical factors, masks and logs.
 12. Validation sampler refuses an unreadable exclusion source and never returns an excluded ID.
 13. Comparison: layer-matched null preserves per-layer sizes; overlap on a planted fixture; missing attribution values excluded, not zero.
@@ -116,8 +119,8 @@ GPU qualification (ticket 07) adds: real longest example forward/backward and pe
 
 ## Out of scope
 
-λ sweeps, rank 4/rank 0 runs, second seeds, objective comparisons, sampled evaluation, causal removal experiments, any change to existing arms, the C-attribution records or ticket 14's held-out pool.
+λ sweeps, rank 4 runs, second seeds, per-example mask ablation, objective comparisons, sampled evaluation, causal removal experiments, any change to existing arms, the C-attribution records or ticket 14's held-out pool.
 
 ## Open decisions blocking a launch record
 
-D1, D5, D6 (criterion), D11 (needs `sequences-v2` IDs), D12, D13, D18, D20. See `decision-log.md`.
+D1, D5, D6 (criterion), D11 (needs `sequences-v2` IDs), D12, D18, D20, D21 (D13 decided: both ranks). See `decision-log.md`.

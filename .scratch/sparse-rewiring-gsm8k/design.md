@@ -185,7 +185,7 @@ Full option tables are in `decision-log.md`. Summary:
 
 | # | Decision | Recommendation | Status |
 |---|---|---|---|
-| D1 | Read-update LR | 3e-3 for rank 1/4 (Max's published value) primary; 1e-4 (gold) as one sensitivity run | [proposed] |
+| D1 | Read-update LR | rank 1: 3e-3 (Max's published value); rank 0: 3e-4 (`RANK0.md`); 1e-4 (gold) as one sensitivity run | [proposed] |
 | D2 | Mask optimizer | Max's: AdamW group, lr 0.1, same schedule as reads, unclipped | [proposed] |
 | D3 | Betas | Max's (0.9, 0.99) for both groups; gold's 0.999 recorded as a difference | [proposed] |
 | D4 | Clipping | 1.0 on read factors only (both projects clip at 1.0; masks unclipped as in Max) | [proposed] |
@@ -197,18 +197,19 @@ Full option tables are in `decision-log.md`. Summary:
 | D10 | Seeds | data order = gold (42); read init seed 42 + layer; mask noise seed 1042 | [proposed] |
 | D11 | Validation set | 128 GSM8K train questions, seeded, excluding the 512, `sequences-v2` and any other recorded train use; gold CE + greedy accuracy | [proposed]; blocked on `sequences-v2` IDs |
 | D12 | Cohort150 use | Allowed as a further exploratory evaluation; never for tuning | [proposed]; needs researcher OK |
-| D13 | Rank | Rank 1 first per the design input; **but** RANK0.md says rank 0 is Max's intended method and rank 1 has no released result | **researcher decision** |
+| D13 | Rank | Both rank 1 and rank 0 (full rows); everything else identical | **[user 2026-11-23]** |
 | D14 | Microbatch and mask noise | Microbatch 1 (gold), with one cached mask draw shared by each group of 4 examples: 2 draws per step, as in Max (revised 2026-11-23) | [proposed] |
 | D15 | Gradient checkpointing | On (gold), RNG-preserving recompute tested | [proposed] |
 | D16 | Code reuse | Clean-room reimplementation; ask Max for a license if copying is wanted | [proposed] |
 | D17 | Code base | Branch implementation from `c-attribution-pilot` (or after it merges) | [proposed] |
 | D18 | Hardware | A100-80GB Pod via the existing runbook, or L4 for gold-hardware parity | OPEN (benchmark first) |
 | D19 | Comparison family | Primary: sparse survivors vs C global and per-layer top sets (GRPO). Secondary: production-1 single layer and joint-audit B/D | [proposed] |
+| D21 | Rank comparison | Survivor Jaccard and per-layer overlap, overlap with C sets, paired accuracy, val CE, counts, dynamics side by side | [proposed] |
 | D20 | Dynamics logging | Researcher-requested figure: gates, read-change norms and performance against step; validation CE every 8 steps, greedy at checkpoints | [proposed] cadence |
 
 ## 5. Recommended minimal pilot (once separately authorised)
 
-One rank-1 sparse gold-SFT run (rank per D13) from the untuned model, on the 512 gold examples with gold's loss/token contract and FP32 runtime, Max's hard-concrete/L0 objective and mask optimizer, λ 6e-4, 512-step cap with the first 64 steps on gold's exact batches, a 64-step fixed-mask finish, checkpoints at 0/8/16/32/64/128/256/448/512, validation-only monitoring, one greedy evaluation on cohort150 of the final (and step-64) checkpoints, and a CPU neuron-list comparison with `c-production-1`. Also the training-dynamics figure (D20). Estimated GPU time: about 1.5–2 h on an A100 including dense validation, greedy validation at checkpoints and two cohort150 evaluations (arithmetic estimate, `decision-log.md` §Compute). No λ sweep, no rank 4, no second seed in the minimal pilot.
+Two sparse gold-SFT arms, **rank 1 and rank 0 [user 2026-11-23]**, from the untuned model, identical except rank and read LR. Each uses the 512 gold examples with gold's loss/token contract and FP32 runtime, Max's hard-concrete/L0 objective and mask optimizer with one mask draw per 4 examples (D14), and λ 6e-4. Read LR is 3e-3 for rank 1 and 3e-4 for rank 0 [proposed]. There is a 512-step cap whose first 64 steps are gold's exact batches, and a 64-step fixed-mask finish. Checkpoints are at 0/8/16/32/64/128/256/448/512. Monitoring uses validation only, plus the training-dynamics figure (D20). Each arm gets a greedy cohort150 evaluation at step 64 and the final step. On CPU: a rank-1 vs rank-0 comparison (D21) and a comparison of each with `c-production-1` (D19). Estimated GPU time: about 3–4 h for both arms in sequence on one A100 (arithmetic estimate, `decision-log.md` §Compute). No λ sweep, no rank 4, no second seed.
 
 ## 6. Answers to the design input's questions (§9)
 
@@ -216,6 +217,6 @@ One rank-1 sparse gold-SFT run (rank per D13) from the untuned model, on the 512
 2. **Gold SFT's actual settings.** §2.2. Differences in Max: trailing-newline label, 640 truncation, BF16, betas 0.99, warmup + cosine, mask group, unclipped masks, micro 4.
 3. **What attribution produces.** C: full 28 × 8,960 `down_proj` read-term J gradients for the two GRPO arms. Production-1: one layer per arm, trace/stop metrics, all 6 arms. Joint audit: descriptive A/B/D lists for all layers and arms. None is a gate/up-read measure.
 4. **Smallest budget.** Not measured. Arithmetic estimate in `decision-log.md`; ticket 07 measures it.
-5. **Researcher decisions before a launchable spec.** D1, D5, D6 acceptance criterion, D11 (and its data), D12, D13, D18.
+5. **Researcher decisions before a launchable spec.** D1, D5, D6 acceptance criterion, D11 (and its data), D12, D18, D20, D21 (D13 decided 2026-11-23).
 6. **Max's rank-1 result.** Unavailable: configured in `modal_runs.py`, no result directory, no rank-1 row in `RANK0.md`.
 7. **Reusable code.** In this repo: `sft.load_sft` and the frozen `training.items.json`; `sft_backend.completion_loss`, `CompletionCollator`, `frozen_weight_hash`; the explicit loop and recovery pattern in `sampling_sft_training_backend.train`; `neuron_audit_collector.set_ieee_precision@catt`; `scoring.score_gsm8k_flexible_v3`; the greedy evaluation used by Stage 0 / C generation; `catalog` register/verify; C-attribution `aggregate/<arm>/neurons.npz` and freeze files as comparison inputs. From Max: the method, not the code (§2.9).

@@ -6,7 +6,7 @@
 
 **Needs the researcher's approval and a GPU (D18).** Qualification only, not the scientific run.
 
-- [ ] Real longest training example: forward/backward, peak memory, IEEE precision readback.
+- [ ] Real longest training example for **both rank 1 and rank 0**: forward/backward, peak memory (rank 0 adds about 12 GB), IEEE precision readback.
 - [ ] Zero-update logits identity vs untuned on the real model; base hash.
 - [ ] A disposable few-step run under a separate name; save/restore and resume check; throughput per step, validation pass and greedy answer.
 - [ ] Replace the arithmetic estimate in `decision-log.md` with measured values.

@@ -4,7 +4,7 @@
 
 ## The minimal pilot in one paragraph
 
-Train one sparse-rewiring arm from the untuned Qwen2.5-1.5B-Instruct on the 512 gold-SFT examples, with gold's token/label/loss contract, FP32 IEEE runtime and microbatching, and Max's hard-concrete L0 objective, mask optimizer and fixed-mask finish. Rank 1 (pending D13), λ 6e-4, read LR 3e-3, mask LR 0.1, 512-step cap whose first 64 steps are gold's exact batches, last 64 steps fixed-mask. Monitor a new train-split validation set only. Evaluate the step-64 and final checkpoints greedily on cohort150 as exploratory. Compare the binary survivor set with `c-production-1`'s per-read J scores on CPU. One seed, no sweep.
+Train two sparse-rewiring arms, rank 1 and rank 0 (full per-neuron rows) **[user 2026-11-23]**, from the untuned Qwen2.5-1.5B-Instruct on the 512 gold-SFT examples, with gold's token/label/loss contract, FP32 IEEE runtime and microbatching, and Max's hard-concrete L0 objective, mask optimizer and fixed-mask finish. λ 6e-4 for both, read LR 3e-3 (rank 1) and 3e-4 (rank 0), mask LR 0.1, one mask draw per 4 examples, 512-step cap whose first 64 steps are gold's exact batches, last 64 steps fixed-mask. Monitor a new train-split validation set only. Evaluate the step-64 and final checkpoints greedily on cohort150 as exploratory. Compare each arm's binary survivor set with the other's and with `c-production-1`'s per-read J scores on CPU, and plot both arms' training dynamics side by side. One seed per arm, no sweep.
 
 ## Why not just reuse every gold setting
 
@@ -33,7 +33,9 @@ Gold trains 1.15 M LoRA parameters (r1 on 196 modules) with no selection mechani
 | **B. 3e-3 (Max, rank 4)** | The value the mask LR and λ were tuned with; the only published operating point | Rank-1 and rank-4 optima can differ; no rank-1 result exists |
 | C. 1e-4 and scale the mask LR down by 30 | Keeps gold's number | Two departures from Max instead of one; untested |
 
-**Recommend B**, with A as the single sensitivity run if budget allows. For rank 0, `RANK0.md` reports 3e-3 overfits and uses 3e-4.
+**Recommend B for rank 1**, with A as the single sensitivity run if budget allows.
+
+**Rank 0: recommend 3e-4 [proposed].** `RANK0.md` reports that at rank 4's 3e-3, rank 0 overfit (over 1,000 neurons, run `v2_reread_r0_l06e-4_lr3e-3_s*`). At 3e-4 to 5e-4 with λ 6e-4 to 8e-4 it gave 82 to 122 neurons, mostly the same neurons as rank 4. Max's explanation: Adam moves every element of a full row at the LR, so full rows need a lower rate. The rank-1 and rank-0 arms therefore differ in LR as well as rank; the comparison (D21) states this.
 
 ### D2. Mask optimizer and LR
 
@@ -85,15 +87,16 @@ No suitable set exists. Proposed: 128 GSM8K **train** questions, `random.Random(
 
 The cohort is not held out (C production selected on it today). A new greedy evaluation of the sparse arm there is comparable with every other arm and is a further prior use; label results exploratory and never tune on them. Needs the researcher's OK; register in `catalog/cohorts.yaml` when run.
 
-### D13. Rank (researcher decision)
+### D13. Rank — decided
 
-| Option | Status in Max's work | Connection here |
-|---|---|---|
-| Rank 1 (design input's choice **[user]**) | Configured, **no released result** | Closest in shape to the r1 LoRA arms, but not equivalent (one shared direction per layer and part, gated per neuron; no attention or down adapters) |
-| Rank 4 | Published case, but called an **oversight** by Max | Max-faithful to the released model |
-| Rank 0 | **Intended method** (`RANK0.md`), similar survivor counts, mostly same neurons; LR 3e-4 | 770 M trainable parameters (about 12 GB of FP32 parameters, gradients and Adam state) |
+**[user 2026-11-23]: run both rank 1 and rank 0 (full rows), with everything else identical** (gold data and loss contract, FP32, shared mask per 4 examples, schedule, checkpoints, evaluations, dynamics figure). Rank 4, the published but self-described oversight, is not run.
 
-The design input chose rank 1 first. Given `RANK0.md`, the question back to the researcher is whether rank 1 stays the primary, or whether rank 0 (intended) should replace rank 4 as the "Max-faithful" follow-up.
+| Arm | Status in Max's work | Trainable read parameters | Connection here |
+|---|---|---|---|
+| Rank 1 (`sparse-gold-sft-r1`) | Configured, **no released result** | 587,776 (28 layers × 2 parts × (1,536 + 8,960)) | Closest in shape to the r1 LoRA arms, but not equivalent |
+| Rank 0 (`sparse-gold-sft-r0`) | **Intended method** (`RANK0.md`) | 770,703,360 (28 × 2 × 8,960 × 1,536) | Each neuron learns its own new gate and up rows |
+
+Both arms have 250,880 mask logits. The arm names are proposed.
 
 ### D14. Microbatch and mask noise
 
@@ -136,7 +139,7 @@ The catalog, IEEE helper, C outputs reader and neuron-audit helpers are on `c-at
 
 ### D18. Hardware
 
-OPEN until ticket 07 measures it. L4 gives gold-hardware parity (gold and Sampling SFT trained on L4); A100-80GB Pod has a proven runbook and more memory (needed for rank 0). Different GPUs do not invalidate comparison of neuron lists, but behaviour comparisons record the runtime.
+Recommend **one A100-80GB for both arms** [proposed], so the rank comparison does not mix runtimes. Rank 0 needs about 12 GB more than gold (FP32 rows, gradients and Adam state), which is tight on an L4 (24 GB) next to the 6 GB FP32 model and activations. Ticket 07 measures both. Before this decision: L4 gives gold-hardware parity (gold and Sampling SFT trained on L4); A100-80GB Pod has a proven runbook and more memory (needed for rank 0). Different GPUs do not invalidate comparison of neuron lists, but behaviour comparisons record the runtime.
 
 ### D19. Comparison family
 
@@ -154,6 +157,17 @@ Not available: a full-universe attribution for any SFT arm. Missing means unmeas
 
 The researcher asked for a figure of gate shutting, read-change size and performance against step (`spec.md` §Training dynamics). Proposed cadence: gate totals and norms every step (free); validation CE and a `logα` snapshot every 8 steps (64 checks over 512 steps, about 10–15 min extra on an A100 by the same arithmetic as §Compute); greedy validation accuracy at the 9 checkpoints (about 9 × 128 answers, roughly 30–40 min); cohort150 only at 64 and 512. Alternatives: every 4 steps through step 128, where pruning is expected to be fastest (D1), then every 16; or greedy validation at fewer checkpoints to save time. Its value is descriptive, and one run cannot separate cause from co-movement.
 
+### D21. Rank-1 vs rank-0 comparison
+
+Requested by the researcher on 2026-11-23. It is descriptive: one seed per arm, and the arms differ in LR as well as rank (D1).
+
+- **Survivors:** counts (expected-active, nonzero, binary) per arm; Jaccard overlap of the two final binary sets, plus overlap per layer; a layer-matched random reference for the overlap (10,000 draws, seed 20261124 **[proposed]**); and the neurons unique to each arm.
+- **Against C attribution:** each arm's overlap with the `c-production-1` frozen sets and top-K lists (D19), plus the three-way intersection, all on the same universe and null.
+- **Performance:** validation CE and greedy validation accuracy at each checkpoint, and cohort150 greedy at 64 and 512. Arm vs arm is compared paired by question (paired bootstrap on question IDs, 10,000 draws), with gold-sft and untuned as references.
+- **Hardening:** the validation CE change across the freeze, per arm.
+- **Dynamics:** ticket 12's four panels for both arms side by side, on shared y axes.
+- **Read-change size:** the same gauge-invariant per-neuron norm (D20), so rank-0 `‖w_i‖` and rank-1 `‖b_i‖‖a‖` measure the same quantity: the norm of the change to neuron i's read row.
+
 ## Not equivalent to the rank-1 LoRA arms
 
 - LoRA: `ΔW = B A` on 7 projection types (attention included) and on `down_proj` (writes). Rewiring: changes only gate/up reads, writes frozen.
@@ -165,24 +179,22 @@ The researcher asked for a figure of gate shutting, read-change size and perform
 
 Assumptions: about 250 tokens per training example (C spec records 115-token mean prompts for test questions; gold answer length to be read from `lengths.json`), 2,000 tokens per step, about 8 × 1.54 × 10⁹ FLOPs per token with checkpointing, A100 FP32 IEEE peak 19.5 TFLOP/s at 30–50% utilisation.
 
-| Item | Estimate |
-|---|---|
-| One step | 2.5–4 s |
-| 512 steps | 20–35 min |
-| Validation (128 × every 32 steps) | about 5 min |
-| Greedy cohort150, 2 checkpoints | about 10 min (C production: 2,250 answers in 4,500 s at batch 16) |
-| Setup, preflight, export | about 20 min |
-| Dynamics extras (D20) | about 45 min (dense validation CE, greedy validation at 9 checkpoints, gold references) |
-| **Total, A100** | **about 1.5–2 h** with D20; L4 likely 2–3× |
-| Rank-1 memory over gold | +0.84 M parameters, negligible |
-| Rank-0 memory over gold | +770 M parameters, about +12 GB |
+| Item | Rank 1 | Rank 0 |
+|---|---|---|
+| One step | 2.5–4 s | 3.5–6 s (two extra 1,536 × 8,960 matmuls per layer: roughly +40% FLOPs) |
+| 512 steps | 20–35 min | 30–50 min |
+| Validation, greedy validation at checkpoints, gold references (D20) | about 45 min | about 45 min (gold references shared, run once) |
+| Greedy cohort150, 2 checkpoints | about 10 min | about 10 min |
+| Setup, preflight, export | about 20 min, shared | — |
+| **Total, one A100, run in sequence** | | **about 3–4 h** for both arms; L4 likely 2–3×, and rank 0 may not fit |
+| Memory over gold | +0.84 M parameters, negligible | +770 M parameters, about +12 GB |
 
 Ticket 07 replaces these with measured values before any launch record.
 
 ## Follow-ups, not in the minimal pilot
 
 1. Second seed at the same settings (stability of S).
-2. Rank 0 or rank 4 at matched λ, then at matched survivor count.
+2. Rank 0 and rank 1 at matched survivor count, or at a shared LR; rank 4 only if the published model needs reproducing.
 3. Read LR 1e-4 sensitivity (D1-A).
 4. Causal check: remove the new reads of a selected subset vs matched controls on validation inputs.
 5. Same-parameterisation objective comparison on a fixed offline pool (CE on correct draws vs offline GRPO).

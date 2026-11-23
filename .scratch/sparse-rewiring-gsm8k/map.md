@@ -10,6 +10,7 @@
 - 2026-11-22 (researcher, design input): gold-SFT data and settings where they improve comparability; Max's defining method; rank 1 first; gate+up parts; no training or GPU spend during design.
 - 2026-11-22 (Claude, proposed only): D1–D19 in `decision-log.md`.
 - 2026-11-23 (researcher): add a training-dynamics figure (gates, read-change norms, performance vs step). Spec §Training dynamics, D20, ticket 12.
+- 2026-11-23 (researcher): D13 decided — run both rank 1 and rank 0, everything else identical. Proposed rank-0 LR 3e-4; comparison D21.
 - 2026-11-23: D14 revised (proposed, not signed off): microbatch 1 with one mask draw shared per 4 examples, matching Max's 2 draws per step.
 
 ## Fog
