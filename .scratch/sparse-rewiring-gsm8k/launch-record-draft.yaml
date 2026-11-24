@@ -100,7 +100,7 @@ storage:                                 # [user 2026-11-23] D24
   gate_snapshot_dtype: float16
 
 evaluation:
-  validation: {questions: 128, ce_masks: deterministic, greedy_at: checkpoints}   # D11 [proposed]
+  validation: {questions: 128, ce_masks: deterministic, greedy_at: checkpoints}   # D11 [user 2026-11-24]
   cohort150: {steps: [64, 1024], role: evaluation-only}   # [user 2026-11-23] D12
   cap: 1024                              # [spec] protocol
   eos_token_id: 151645                   # [spec] protocol
@@ -119,7 +119,7 @@ decisions:                               # one line per decision (decision-log.m
   D8: '[user 2026-11-23] FP32, set_ieee_precision, eager attention, full determinism'
   D9: "[user 2026-11-23] gold's target and truncation contract"
   D10: '[user 2026-11-23] seeds: data order 42 (gold), read init 42 + layer (CPU generator), mask noise 1042'
-  D11: '[proposed] 128 GSM8K train questions, seeded exclusion sampler; blocked on ticket 01'
+  D11: '[user 2026-11-24] 128 GSM8K train questions, separate from cohort150, seeded exclusion sampler; real IDs need ticket 01'
   D12: '[user 2026-11-23] cohort150 evaluation only, at 64 and final, exploratory'
   D13: '[user 2026-11-23] rank 1 and rank 0, everything else identical'
   D14: '[user 2026-11-23] microbatch 1, one mask draw per 4 examples'
