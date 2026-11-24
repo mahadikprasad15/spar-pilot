@@ -1,0 +1,139 @@
+# Sparse gold-SFT rewiring — launch-record DRAFT (ticket 05). Not approved for any launch.
+#
+# Schema and rules: pilot_eval/sparse_rewiring_plan.py. Both arms share this record and differ only in rank and
+# read LR. The record cannot be sealed while any `decisions` entry still reads "[proposed]": `typecheck` refuses
+# it, so every value the researcher has not signed off stops the launch until it is signed.
+#
+#   $PY -m pilot_eval.sparse_rewiring_plan check <this file>        # lists unresolved and mistyped leaves
+#   $PY -m pilot_eval.sparse_rewiring_plan seal --draft <this file> --out $WORK/launch_record.json \
+#       --code-commit $(git rev-parse HEAD) --pod-id $RUNPOD_POD_ID --artifact-root ... --bundle ... \
+#       --model-dir ... --work-dir ...
+#   $PY -m pilot_eval.sparse_rewiring_plan plan --record $WORK/launch_record.json --code-commit ... \
+#       --arm sparse-gold-sft-r1 --training-items <gold>/training.items.json --gold-order <gold run>/inputs/order.json \
+#       --out $RUN/inputs/plan.json
+#
+# Legend: [user 2026-11-23] decided by the researcher / [proposed] awaiting sign-off (decision-log.md) /
+# [gold] gold SFT's value / [Max] Max's published value / [spec] fixed by spec.md / [C] carried from the
+# C-attribution production record / [ops] operational, set in tickets 14-16.
+#
+# YAML numbers: write a dot and a signed exponent (6.0e-4, not 6e-4). PyYAML reads 6e-4 and 19.5e12 as text,
+# and the typecheck refuses text where a number belongs.
+schema: sparse-rewiring/launch-record-v1
+mode: production
+label: production
+code_commit: null                        # filled by `seal` from the checkout
+
+pod_id: null                             # filled from RUNPOD_POD_ID by `seal`
+pod_stop_commands: ['runpodctl stop pod {id}', 'runpodctl pod stop {id}']   # [C] lesson pod-v1: both syntaxes
+volume_identity: sl-0                    # [ops] ticket 14
+export_repo: Prasadmahadik/spar-sampling-sft-artifacts   # [C] private export repo
+hourly_cost_usd: not-tracked             # [C] user 2026-11-20
+timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_join: 300}   # [C]
+marker_stale_seconds: 900                # [C]
+disk: {min_free_gb: 60, container_total_gb: 120}
+                                         # [ops] D24 planned writes are about 34 GB (rank 0 checkpoints); validate
+                                         # refuses a container below planned + min_free_gb. Ticket 15 measures.
+
+hardware: {gpu: A100-80GB, count: 1}     # [user 2026-11-23] D18
+
+arms:                                    # [user 2026-11-23] D13 rank 1 and rank 0; names [proposed]
+  sparse-gold-sft-r1: {run_id: sparse-gold-sft-r1-1, rank: 1, read_lr: 3.0e-3}   # D1 [user 2026-11-23]: Max's rank-4 LR
+  sparse-gold-sft-r0: {run_id: sparse-gold-sft-r0-1, rank: 0, read_lr: 3.0e-4}   # D1 [user 2026-11-23]: RANK0.md
+
+model: {layers: 28, hidden: 1536, intermediate: 8960, parts: [gate, up], positions: all-unpadded}
+                                         # [spec] Qwen2.5-1.5B-Instruct; gate+up reads [user 2026-11-22]
+
+data:
+  training_examples: 512                 # [gold] gsm8k-train-512
+  examples_per_step: 8                   # [gold]
+  microbatch: 1                          # [user 2026-11-23] D14
+  examples_per_mask: 4                   # [user 2026-11-23] D14: one mask draw per 4 examples (2 per step)
+  gold_order_steps: 64                   # D7 [user 2026-11-23]: steps 1-64 are gold's saved order exactly
+  later_epochs: reshuffle-per-epoch      # D7 [user 2026-11-23]: epoch e uses random.Random(42 + e - 1)
+  loss: gold-completion-loss-step-token-denominator   # D9 [user 2026-11-23]: gold's contract
+  targets: gold-frozen-training-items    # D9 [user 2026-11-23]: frozen labels, <|im_end|> supervised, no truncation
+
+training:
+  steps: 1024                            # [user 2026-11-23] D5 (16 epochs)
+  warmup_steps: 20                       # [user 2026-11-23] D5
+  schedule: linear-warmup-cosine-to-zero # [user 2026-11-23] D5: both groups, 0 at step 1024
+  freeze_after_step: 960                 # [user 2026-11-23] D5: steps 961-1024 train with fixed binary masks
+  freeze_rule: z_det>0                   # [spec] logα > −ln 11 → survivor
+
+objective: {l0_lambda: 6.0e-4, l0_term: once-per-step-expected-active}   # [user 2026-11-23] D6, no sweep
+
+optimizer:
+  name: adamw
+  implementation: foreach-off            # [gold] foreach=False
+  reads: {betas: [0.9, 0.99], eps: 1.0e-8, weight_decay: 0.0, clip_norm: 1.0}
+                                         # D3 [user 2026-11-23] Max's betas; D4 [user 2026-11-23] clip reads only; lr per arm (D1)
+  masks: {lr: 0.1, betas: [0.9, 0.99], eps: 1.0e-8, weight_decay: 0.0, clip: none}
+                                         # D2 [user 2026-11-23] Max's mask group; D4 [user 2026-11-23] masks unclipped
+
+hard_concrete: {beta: 0.6666666666666666, gamma: -0.1, zeta: 1.1, log_alpha_init: 1.0,
+                read_init: 'a~N(0,1)/sqrt(d);b=0'}   # [Max] equations and init
+
+seeds: {data_order_base: 42, read_init_base: 42, mask_noise: 1042}   # D10 [user 2026-11-23]
+
+runtime:                                 # D8 [user 2026-11-23] FP32 IEEE; D15 [user 2026-11-23] checkpointing
+  dtype: float32
+  precision: ieee
+  attention: eager
+  kv_cache: off-in-training
+  gradient_checkpointing: non-reentrant
+  determinism: full
+  cublas_workspace: ':4096:8'
+
+checkpoints: [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024]   # [user 2026-11-23] D5
+
+cadences:                                # [user 2026-11-23] D20
+  step_metrics_every: 1
+  validation_ce_every: 16                # 64 checks, 16..1024; step 0 is the untuned reference
+  gate_snapshot_every: 16                # FP16 logα snapshot
+  settle: {first: 256, every: 64, jaccard_min: 0.99, expected_change_max: 0.02}
+                                         # [user 2026-11-23] D5 logged only; reference values D22 [proposed]
+
+storage:                                 # [user 2026-11-23] D24
+  checkpoint_contents: [read_factors, log_alpha, seal]
+  optimizer_state: none
+  interruption: restart-from-step-0
+  gate_snapshot_dtype: float16
+
+evaluation:
+  validation: {questions: 128, ce_masks: deterministic, greedy_at: checkpoints}   # D11 [user 2026-11-24]
+  cohort150: {steps: [64, 1024], role: evaluation-only}   # [user 2026-11-23] D12
+  cap: 1024                              # [spec] protocol
+  eos_token_id: 151645                   # [spec] protocol
+  repetition_penalty: 1.0                # [spec] explicit
+  scorer: flexible-v3                    # [spec]
+  batch_size: 16                         # [C] qualified for C greedy; re-qualified in ticket 15
+
+decisions:                               # one line per decision (decision-log.md); "[proposed]" blocks sealing
+  D1: '[user 2026-11-23] read LR 3e-3 rank 1 (Max rank 4), 3e-4 rank 0 (RANK0.md)'
+  D2: '[user 2026-11-23] mask group: AdamW lr 0.1, wd 0, shared LambdaLR, logα init 1.0'
+  D3: '[user 2026-11-23] betas (0.9, 0.99) both groups, eps 1e-8'
+  D4: '[user 2026-11-23] clip 1.0 on read factors only; masks unclipped'
+  D5: '[user 2026-11-23] 1,024 steps, warmup 20 + cosine to 0, masks frozen after 960; 11 checkpoints. [user 2026-11-24] multiplier step/20 in warmup (0.05 at step 1), cosine to exactly 0 at step 1,024'
+  D6: '[user 2026-11-23] lambda 6e-4 both ranks, no sweep; a degenerate run is reported, not re-run'
+  D7: "[user 2026-11-23] steps 1-64 gold's saved order; epoch e >= 2 reshuffled with random.Random(42 + e - 1)"
+  D8: '[user 2026-11-23] FP32, set_ieee_precision, eager attention, full determinism'
+  D9: "[user 2026-11-23] gold's target and truncation contract"
+  D10: '[user 2026-11-23] seeds: data order 42 (gold), read init 42 + layer (CPU generator), mask noise 1042'
+  D11: '[user 2026-11-24] 128 GSM8K train questions, separate from cohort150, seeded exclusion sampler; real IDs need ticket 01'
+  D12: '[user 2026-11-23] cohort150 evaluation only, at 64 and final, exploratory'
+  D13: '[user 2026-11-23] rank 1 and rank 0, everything else identical'
+  D14: '[user 2026-11-23] microbatch 1, one mask draw per 4 examples'
+  D15: '[user 2026-11-23] gradient checkpointing on, non-reentrant; recompute replays the cached u'
+  D18: '[user 2026-11-23] one A100-80GB for both arms'
+  D20: '[user 2026-11-23] cheap metrics every step, validation CE every 16 steps'
+  D24: '[user 2026-11-23] checkpoints hold read factors and logα only; a crash restarts from step 0'
+  D25: '[user 2026-11-23] A100 supersedes ADR 0018 L4 rule for these arms (ADR in ticket 20)'
+
+inputs:
+  artifact_root: null                    # filled by `seal`
+  bundle: null                           # filled by `seal`
+  model_dir: null                        # filled by `seal`
+  work_dir: null                         # filled by `seal`
+  gold_plan: plans/pilot2-sft-fp32-l4-batch8-v1/sft.config.json   # [spec] read through sft.load_sft (ticket 01)
+  gold_order: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/inputs/order.json
+                                         # [spec] ticket 01 locates and hashes it
