@@ -11,7 +11,6 @@ from pilot_eval import sparse_rewiring_plan as sp
 from pilot_eval.attribution_chain import LaunchRefused
 
 DRAFT = Path(__file__).resolve().parents[1] / '.scratch/sparse-rewiring-gsm8k/launch-record-draft.yaml'
-UNSIGNED = ['D11']   # every other decision signed 2026-11-23
 FILL = {'inputs.artifact_root': '/w/inputs', 'inputs.bundle': '/w/b.json', 'inputs.model_dir': '/w/model',
         'inputs.work_dir': '/w'}
 
@@ -56,12 +55,22 @@ def _gold():
 
 # --- launch record -----------------------------------------------------------------------------------
 
-def test_draft_refused_until_every_proposed_decision_is_signed(tmp_path):
-    problems = sp.draft_problems(DRAFT)
-    assert sorted(p.split(' ')[0] for p in problems) == sorted(f'decisions.{d}' for d in UNSIGNED)
+def test_approved_draft_has_no_open_decisions_and_seals(tmp_path):
+    # Every decision was signed by 2026-11-24; only the fill-ins (commit, Pod, paths) remain null.
+    assert sp.draft_problems(DRAFT) == []
+    assert sp.main(['check', str(DRAFT)]) == 0
+    path = sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
+    assert sp.load_launch_record(path, code_commit='c0ffee')['decisions']['D11'].startswith('[user')
+
+
+def test_a_proposed_decision_blocks_sealing(tmp_path):
+    record = yaml.safe_load(DRAFT.read_text())
+    record['decisions']['D11'] = '[proposed] validation set'
+    draft = _write(tmp_path, record)
+    assert [p.split(' ')[0] for p in sp.draft_problems(draft)] == ['decisions.D11']
     with pytest.raises(LaunchRefused, match='unresolved'):
-        sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
-    assert sp.main(['check', str(DRAFT)]) == 1
+        sp.finalize_draft(draft, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
+    assert sp.main(['check', str(draft)]) == 1
 
 
 def test_signed_draft_seals_and_loads(tmp_path):

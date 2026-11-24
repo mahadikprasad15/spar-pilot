@@ -63,6 +63,10 @@ SCHEMA = {
     'evaluation': {'validation': {'questions': INT, 'ce_masks': TEXT, 'greedy_at': TEXT},
                    'cohort150': {'steps': [INT], 'role': TEXT},
                    'cap': INT, 'eos_token_id': INT, 'repetition_penalty': NUM, 'scorer': TEXT, 'batch_size': INT},
+    # GPU qualification (ticket 15, ``rewire_qualification``): the fixed tolerances of the automatic sign-off and
+    # the size of the disposable few-step run. Every mode carries them; nothing is chosen at run time.
+    'qualification': {'memory_fraction': NUM, 'disposable_steps': INT, 'greedy_questions': INT,
+                      'cached_vs_forced_rows': INT, 'cached_vs_forced_abs_max': NUM, 'recompute_rel_max': NUM},
     'decisions': {'*': TEXT},
     'inputs': {'artifact_root': TEXT, 'bundle': TEXT, 'model_dir': TEXT, 'work_dir': TEXT,
                'gold_plan': TEXT, 'gold_order': TEXT,
@@ -288,6 +292,16 @@ def _check_shape(record):
     hc = record['hard_concrete']
     if not (hc['gamma'] < 0 < 1 < hc['zeta'] and hc['beta'] > 0):
         raise LaunchRefused('hard concrete needs gamma < 0, zeta > 1, beta > 0')
+    q = record['qualification']
+    if not 0 < q['memory_fraction'] <= 1:
+        raise LaunchRefused('qualification.memory_fraction must be in (0, 1]')
+    if not 0 < q['disposable_steps'] <= min(steps, data['gold_order_steps']):
+        raise LaunchRefused('qualification.disposable_steps must be in 1..gold_order_steps (it replays the first '
+                            "steps of gold's order)")
+    if not 1 <= q['greedy_questions'] <= record['evaluation']['validation']['questions']:
+        raise LaunchRefused('qualification.greedy_questions must be in 1..evaluation.validation.questions')
+    if q['cached_vs_forced_rows'] < 1 or q['cached_vs_forced_abs_max'] <= 0 or q['recompute_rel_max'] < 0:
+        raise LaunchRefused('qualification tolerances out of range')
 
 
 def load_launch_record(path, *, code_commit):

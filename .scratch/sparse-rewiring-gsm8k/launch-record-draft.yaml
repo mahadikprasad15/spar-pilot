@@ -100,13 +100,21 @@ storage:                                 # [user 2026-11-23] D24
   gate_snapshot_dtype: float16
 
 evaluation:
-  validation: {questions: 128, ce_masks: deterministic, greedy_at: checkpoints}   # D11 [proposed]
+  validation: {questions: 128, ce_masks: deterministic, greedy_at: checkpoints}   # D11 [user 2026-11-24]
   cohort150: {steps: [64, 1024], role: evaluation-only}   # [user 2026-11-23] D12
   cap: 1024                              # [spec] protocol
   eos_token_id: 151645                   # [spec] protocol
   repetition_penalty: 1.0                # [spec] explicit
   scorer: flexible-v3                    # [spec]
   batch_size: 16                         # [C] qualified for C greedy; re-qualified in ticket 15
+
+qualification:                           # ticket 15 (pilot_eval.rewire_qualification); automatic sign-off rule
+  memory_fraction: 0.80                  # [C production] peak <= 80% of device memory, per rank, real longest row
+  disposable_steps: 4                    # [ops] few-step run under a separate name, run twice (restart reproduces)
+  greedy_questions: 16                   # [ops] one timed greedy validation pass on the first 16 questions
+  cached_vs_forced_rows: 8               # [ops] validation rows spread over length, cached decode vs forcing
+  cached_vs_forced_abs_max: 1.0e-3       # [C production] per-token log-prob tolerance
+  recompute_rel_max: 1.0e-5              # [spec] shared-mask gradients with vs without checkpoint recompute
 
 decisions:                               # one line per decision (decision-log.md); "[proposed]" blocks sealing
   D1: '[user 2026-11-23] read LR 3e-3 rank 1 (Max rank 4), 3e-4 rank 0 (RANK0.md)'
@@ -119,7 +127,7 @@ decisions:                               # one line per decision (decision-log.m
   D8: '[user 2026-11-23] FP32, set_ieee_precision, eager attention, full determinism'
   D9: "[user 2026-11-23] gold's target and truncation contract"
   D10: '[user 2026-11-23] seeds: data order 42 (gold), read init 42 + layer (CPU generator), mask noise 1042'
-  D11: '[proposed] 128 GSM8K train questions, seeded exclusion sampler; blocked on ticket 01'
+  D11: '[user 2026-11-24] 128 GSM8K train questions, separate from cohort150, seeded exclusion sampler; real IDs need ticket 01'
   D12: '[user 2026-11-23] cohort150 evaluation only, at 64 and final, exploratory'
   D13: '[user 2026-11-23] rank 1 and rank 0, everything else identical'
   D14: '[user 2026-11-23] microbatch 1, one mask draw per 4 examples'
@@ -139,4 +147,4 @@ inputs:
                                          # [spec] ticket 01 locates and hashes it
   sources:
     gold-sft:
-      adapter_role: adapter:gold-sft-step64   # [spec] gold step-64 reference adapter in the sealed bundle
+      adapter_role: adapter:gold-sft:64   # [spec] gold step-64 reference adapter in the sealed bundle

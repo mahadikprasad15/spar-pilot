@@ -122,7 +122,7 @@ def _save_tiny_qwen2_and_tokenizer(root: Path) -> tuple[Path, Path, dict[str, An
         'files': [
             {'role': 'tokenizer:tokenizer.json', 'path': 'tokenizer/tokenizer.json'},
             {'role': 'generation-config', 'path': 'generation_config.json'},
-            {'role': 'adapter:gold-sft-step64:adapter_model.safetensors', 'path': 'adapters/gold-sft-step64/adapter_model.safetensors'},
+            {'role': 'adapter:gold-sft:64:adapter_model.safetensors', 'path': 'adapters/gold-sft-step64/adapter_model.safetensors'},
         ],
     }
     bundle_path = root / 'artifacts' / 'bundle.json'
@@ -156,6 +156,8 @@ def _build_validated_record_and_canonical_plans(
     raw['evaluation']['eos_token_id'] = 2
     raw['evaluation']['batch_size'] = 2
     raw['evaluation']['cohort150']['steps'] = [3]
+    raw['qualification']['disposable_steps'] = 2
+    raw['qualification']['greedy_questions'] = 2
 
     draft_path = root / 'draft.yaml'
     draft_path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding='utf-8')
@@ -432,7 +434,7 @@ class TestRewirePodChainP1Regressions(unittest.TestCase):
                 self.assertEqual(summary1['state'], 'failed')
                 self.assertEqual(summary1['signoff']['decision'], 'accept')
                 # P1.3: qualified_identity is persisted and non-None!
-                vol_state = json.loads((cc.run_root(volume, record['label']) / cc.STATE_FILE).read_text(encoding='utf-8'))
+                vol_state = json.loads((cc.run_root(volume, rc.chain_run_id(record)) / cc.STATE_FILE).read_text(encoding='utf-8'))
                 self.assertIsNotNone(vol_state['qualified_identity'])
                 self.assertEqual(vol_state['qualified_identity']['rows_sha256'], rt.rows_content_sha256(rows))
 
@@ -472,7 +474,7 @@ class TestRewirePodChainP1Regressions(unittest.TestCase):
                 # P1.4: clean-directory restore from volume alone recovers everything needed to verify_arm & build dynamics figure!
                 clean_restore = root / 'clean_restore'
                 clean_restore.mkdir()
-                ac.restore_from_volume(cc.run_root(volume, record['label']), clean_restore, subtree=cc.SUBTREE)
+                ac.restore_from_volume(cc.run_root(volume, rc.chain_run_id(record)), clean_restore, subtree=cc.SUBTREE)
                 for arm in ('sparse-gold-sft-r1', 'sparse-gold-sft-r0'):
                     plan = arm_plans[arm]
                     restored_arm = clean_restore / rc._arm_root(plan['run_id'])
