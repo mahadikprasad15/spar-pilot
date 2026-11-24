@@ -30,7 +30,7 @@ Two new arms, `sparse-gold-sft-r1` and `sparse-gold-sft-r0` (catalog names **[pr
 
 ### Data
 
-- Read gold's frozen plan (`plans/pilot2-sft-fp32-l4-batch8-v1/sft.config.json`, `training.items.json`, `evaluation.items.json`) through `sft.load_sft` and its hash checks; never re-tokenize. Read `runs/…/pilot2-sft-fp32-l4-batch8-v1/inputs/order.json` for steps 1–64. **BLOCKED(ticket 01)** until those files are located and hashed.
+- Read gold's frozen plan (`plans/pilot2-sft-fp32-l4-batch8-v1/sft.config.json`, `training.items.json`, `evaluation.items.json`) through `sft.load_sft` and its hash checks; never re-tokenize. Read `runs/…/pilot2-sft-fp32-l4-batch8-v1/inputs/order.json` for steps 1–64. Located and hashed 2026-11-24 (`source-records.md`).
 - Order for steps 65+: **[proposed]** D7. The full step → example-ID list is frozen in the plan before training.
 - Validation set: **[proposed]** D11, **BLOCKED(D11, ticket 01)**. Built by a seeded, exclusion-list sampler; exclusion sources and their hashes recorded; an unreadable source fails, never "no overlap".
 
@@ -259,6 +259,6 @@ Explained to the researcher and kept as recorded: D1 (read LR 3e-3 rank 1, 3e-4 
 
 Proposed and used as the working plan, but not yet explicitly signed off: D2–D4 (Max's mask optimizer, betas, read-only clipping), D7 (epoch order), D8–D10 (FP32 IEEE, gold target contract, seeds), D15 (checkpointing), D16 (clean-room in `pilot_eval/`), D17 (implementation on `main` after the attribution branch merges), D21 details, D22 definitions (settle step, effective rank). D25's ADR text is ticket 20.
 
-Blocked on data, not on a decision: D11's validation set needs the `sequences-v2` question IDs and gold's saved run records (ticket 01, needs the artifact root); the comparison needs the `c-production-1` and production-1 output files located (ticket 01).
+Unblocked by ticket 01 (2026-11-24, `source-records.md`): D11's validation set is frozen and gold's records and the `c-production-1` files are located. Still on data: production-1's per-neuron ranking files are only on `sl-0`.
 
 Skipped for the pilot: D23 causal checks, a later follow-up on saved checkpoints. See `decision-log.md`.

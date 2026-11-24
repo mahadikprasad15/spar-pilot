@@ -11,4 +11,8 @@ Freeze the launch record from the plan: run IDs for both arms, hardware, seeds, 
 
 ## Comments
 
+- 2026-11-24 (ticket 01): inputs located and hashed (`../source-records.md`). PR 6's `plan` runs on the real
+  `training.items.json` and `order.json`: reconstruction `matches`, `gold_order_sha256` `18ba3e0a…`. Validation set
+  frozen (ticket 04 comment).
+
 ## Answer

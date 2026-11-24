@@ -13,4 +13,8 @@ Seeded 128-question GSM8K train sampler with an exclusion record (D11). Build an
 
 ## Comments
 
+- 2026-11-24 (ticket 01): real set frozen with PR 13's code at `3ef8e43` in
+  `artifacts/validation/sparse-rewiring-ticket04-v1/`: 128 IDs, `ids_sha256` `5ea47bc5…`, `items_sha256` `cc170735…`;
+  837 excluded (gold 512 + `sequences-v2` 325). See `../source-records.md`.
+
 ## Answer

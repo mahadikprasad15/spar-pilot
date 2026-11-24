@@ -17,9 +17,10 @@
 - 2026-11-23 (researcher): D24 checkpoints hold only read factors and masks (crash = restart from step 0); D25 A100 supersedes ADR 0018's L4 rule; current C-attribution code wins over older lessons.
 - 2026-11-23 (researcher): D14 decided (one mask per 4 examples); D23 causal checks skipped for the pilot (follow-up on saved checkpoints).
 
+- 2026-11-24 (ticket 01): gold's saved order, trainer arguments and checkpoint hashes match the reconstruction; `sequences-v2` IDs read; validation set frozen (`source-records.md`).
+
 ## Fog
-- Whether gold's saved order, resolved trainer arguments and checkpoint hashes match the code reconstruction.
-- `sequences-v2` IDs (needed to exclude them from validation).
+- Production-1 per-neuron ranking files: only on `sl-0`, not yet read (ticket 01 remainder).
 - Mask dynamics at rank 1 on GSM8K: survivor count, and whether λ 6e-4 is degenerate (reported, not re-run).
 - When each rank settles (diagnostic).
 - Actual GPU time and memory.
