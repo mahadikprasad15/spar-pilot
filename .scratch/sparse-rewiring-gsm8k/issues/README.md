@@ -4,7 +4,7 @@ Each ticket is sized for one implementation thread. Groups are waves: tickets in
 
 | # | Ticket | Status | Depends on | Group |
 |---|---|---|---|---|
-| 01 | Source records and artifact locations | needs-info | — | A |
+| 01 | Source records and artifact locations | done (production-1 rankings on sl-0 pending) | — | A |
 | 02 | Rewire module | ready-for-agent | — | A |
 | 03 | Hard-concrete gate, shared mask and survivor export | ready-for-agent | 02 | B |
 | 04 | Validation set sampler | ready-for-agent | — (real IDs need 01) | A |

@@ -1,0 +1,282 @@
+{
+ "schema": "sparse-rewiring/source-records-v1",
+ "ticket": "01",
+ "checked": "2026-11-24",
+ "storage": {
+  "pod_volume": {
+   "name": "sl-0",
+   "kind": "RunPod Global Volume",
+   "mount": "/workspace",
+   "vol_dir": "/workspace/neuron-audit",
+   "identity_file": "/workspace/neuron-audit/.neuron-audit-volume.json",
+   "source": "catalog/locations.yaml; .scratch/c-attribution-pilot/pod-runbook.md (VOL=/workspace/neuron-audit)"
+  },
+  "hf_mirror": {
+   "repo": "Prasadmahadik/spar-sampling-sft-artifacts",
+   "kind": "private HF dataset",
+   "note": "not reachable from the cloud container or the desktop VM (HTTPS proxy 403); not used for this check"
+  },
+  "local_roots": {
+   "pilot1": "~/spar/pilot1/artifacts (gold run, plans, sequences-v2, production-1 import)",
+   "pilot1-c-attr": "~/spar/pilot1-c-attr/artifacts (c-production-1 imports restored from HF)",
+   "production-1": "~/production-1/attribution (production-1 report copy)"
+  },
+  "drive": "My Drive/SPAR/spar-pilot/artifacts (gold SFT was trained on Colab L4; its original root)"
+ },
+ "gold": {
+  "plan": [
+   {
+    "path": "plans/pilot2-sft-fp32-l4-batch8-v1/sft.config.json",
+    "bytes": 16257,
+    "sha256": "e70679ab52600e5cca8c33daa1ee7c6206ed309daa5796346a9bc97c24da87e1",
+    "canonical_note": "load_sft OK"
+   },
+   {
+    "path": "plans/pilot2-sft-fp32-l4-batch8-v1/training.items.json",
+    "bytes": 3879974,
+    "sha256": "f27d0d75740438adafcdc3bf56104ac6fee06f80784366e5fc4e1a2c5850d260",
+    "canonical_sha256": "1b7a6be594be02fe3750bf298619f79809a27a6439b13e34acf85b4fccf751e2"
+   },
+   {
+    "path": "plans/pilot2-sft-fp32-l4-batch8-v1/evaluation.items.json",
+    "bytes": 156514,
+    "sha256": "76383395095c48a048b1477dc45ab1426bd0c3ca9d02f173c8a152f9e239874a",
+    "canonical_sha256": "22c5ed623cf591c31fb72e54b086ef8b55d75dbc4fbea0a3f9bc0bd46c01fbdc"
+   },
+   {
+    "path": "plans/pilot2-sft-fp32-l4-batch8-v1/analysis-plan.json",
+    "bytes": 900,
+    "sha256": "67da92c4025d5efedb0a2e1831cb99682399ab014942f1387981dcc90143bd87"
+   }
+  ],
+  "run": [
+   {
+    "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/inputs/order.json",
+    "bytes": 11174,
+    "sha256": "3a92872e79ef88c2b7534e997370fd53c21ca95b98ab36b73ec5a4b9c942c0ab",
+    "canonical_sha256": "18ba3e0a0179fed7817faa65100efbcd27de26d4f8e7e7c96b625d8d172e2b55"
+   },
+   {
+    "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/logs/steps.jsonl",
+    "bytes": 16826,
+    "sha256": "e4d711079fee23265d1cae2aa7edb73fb1f621f7ae7cb28ee49c5c30d7f1c284"
+   },
+   {
+    "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/meta/resolved_trainer.json",
+    "bytes": 4988,
+    "sha256": "11c793c62799ee9ad412d8b49c53265c23a5f64cc4c376e2dfed57d8eafac3b5"
+   },
+   {
+    "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/meta/run_manifest.json",
+    "bytes": 21303,
+    "sha256": "4813f48dc343662b2af9889fb53f0941b2c3ac73b00ea576b6be59d00b527ec6"
+   },
+   {
+    "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/meta/runtime.json",
+    "bytes": 2568,
+    "sha256": "4dc41a633b4164b577d8ee769a025a0f7335e44fe7f85b7760bbe2560742fdd8"
+   },
+   {
+    "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/results/results.json",
+    "bytes": 329,
+    "sha256": "f43039ae9f350370082ed52201504a1752d2f756d97fea8a40983522587757f4"
+   },
+   {
+    "path": "runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/results/preflight.json",
+    "bytes": 7764,
+    "sha256": "5ff9126aa1f13b9e5bd2fcb635d7125e1a38e7f8296d19867d5bd334621e62c7"
+   }
+  ],
+  "checkpoints": {
+   "0": {
+    "adapter_model_safetensors": "b26c524ab41540b2380ad384bba6a41df5bc9c86d228a9f130a60e89ee2ef7d5",
+    "complete_json": "f68112ac3d512ab7f87c9ca29b9b0c8433746d85fea4a76c2e49f3d6c6562704"
+   },
+   "8": {
+    "adapter_model_safetensors": "96323b9a251120f8868499cf6c35440a6121e386223bd3be9f0980800f3243a2",
+    "complete_json": "027cdc680f968db554190fd4eb89b7a48fafb97ccc682eaaf277f7ef777adaaf"
+   },
+   "16": {
+    "adapter_model_safetensors": "3af3cdb9c21b62a04241f0c5cb29778baaec0b5fd3dba668ccdeb05a84129aad",
+    "complete_json": "dd5c55262e90515a08cad189051a4d8b5b6583eb23e6f5c6d514c988a7129d98"
+   },
+   "32": {
+    "adapter_model_safetensors": "e161e14272bd442ce0224e35db7982f9fc48ba11a8476a4c46bc812f4d2ecf0b",
+    "complete_json": "ef98573e7d4ad3de7095cdb3979eceaf313462ede00b4e8f68df56e04ca8070f"
+   },
+   "64": {
+    "adapter_model_safetensors": "a20a344efabe576669b3c89701b161dd568efdf776bb512f7f128f9a8b75aeaa",
+    "complete_json": "587d01d4f1f8c2544b6bec0211d4c352437f423dd3ada9235b6473e1cff8f88f"
+   }
+  },
+  "lengths_json": "absent: no lengths.json exists in the plan or run directory; max_length 554 is in sft.config.json and resolved_trainer.json"
+ },
+ "sequences_v2": {
+  "files": [
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/complete.json",
+    "bytes": 673,
+    "sha256": "c0d2b1463536d0cc5edd582fd9c06a5bcf9234b9c4474360eb80a95856e6cf56"
+   },
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/manifest.json",
+    "bytes": 53303,
+    "sha256": "9a2ee322c2abc32dcce898ed22b113cd56a325fcc5a3221a76bf6e945a8efde9"
+   },
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/plan.json",
+    "bytes": 6930,
+    "sha256": "441a90ae6b1317c083ab11354679f3b726680b9709958e1b6cfe154d038baae0"
+   },
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/sequences.jsonl",
+    "bytes": 2166971,
+    "sha256": "3d68bccdfdfa28c68a08226e09478d0496dfebaea308df34372952f8df582340"
+   },
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/leakage_report.json",
+    "bytes": 24133,
+    "sha256": "10c8ce3dc2db17e1115b9c349874c01e6e4472e22b2e46033bd116e573d2eb72"
+   },
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/filter_report.json",
+    "bytes": 1551,
+    "sha256": "f242971e1a8014a44bc48d07e53db478c914b492e1f769cedad85bb5fe7e78c0"
+   },
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/meta/status.json",
+    "bytes": 380,
+    "sha256": "6e15dd0fdc19a591263d523240c4e64ff1e1840e80d9aa84906cb5f261961016"
+   },
+   {
+    "path": "runs/joint-neuron-adapter-audit/sequences/sequences-v2/review/review.json",
+    "bytes": 681,
+    "sha256": "c506ae31da872ceb12ca4d942c1c8ded9147c9f9053701cf8fd5ad083c525e62"
+   }
+  ],
+  "gsm8k_train_ids": 325,
+  "ids_sha256": "6f416b3cd0ef7c79ac149c709d3a553d610a82c93433fda06b8bdd629e4eb9e5",
+  "math_counts": {
+   "calibration": 25,
+   "discovery": 200,
+   "heldout": 100
+  },
+  "overlap_with_gold_512": 0,
+  "gsm8k_parquets": {
+   "train": "ea82612ea9582142387730c793eb67d3b12849002bc0b7fa6f8efafa7351419d",
+   "test": "ee7b8da9e381df27b9e3f7758a159ab2bdaa4dbaa910546cbbc47e0cb44e4f59"
+  }
+ },
+ "c_production_1": {
+  "online-grpo": {
+   "neurons_npz": {
+    "path": "imports/c-attribution-production/c-attribution/aggregate/online-grpo/neurons.npz",
+    "bytes": 311092460,
+    "sha256": "81e8542374202d7430f9f610686d80ec3cffd0d8934cae06829ad8b7c5a20d58"
+   },
+   "aggregate_seal": {
+    "path": "imports/c-attribution-production/c-attribution/aggregate/online-grpo/complete.json",
+    "bytes": 642,
+    "sha256": "299907c3d4fedc2a0cde5125e8d2bb118509c650a3b9d17a4fbd35eb051854b7"
+   },
+   "freeze": {
+    "path": "imports/c-attribution-production/c-attribution/freeze/online-grpo/online-grpo.json",
+    "bytes": 207965,
+    "sha256": "a50dd41d1f9037e42b17881769ea33dd7dbcf2d492a90cad671863fff6bf64b0"
+   },
+   "freeze_seal": {
+    "path": "imports/c-attribution-production/c-attribution/freeze/online-grpo/complete.json",
+    "bytes": 205,
+    "sha256": "fa03dab304bfc8758a6a5f6ac7cfce5abb4b791fd82772c9ff40bda88cb8b34b"
+   }
+  },
+  "offline-grpo": {
+   "neurons_npz": {
+    "path": "imports/c-attribution-production/c-attribution/aggregate/offline-grpo/neurons.npz",
+    "bytes": 311092460,
+    "sha256": "165ade28223bfa1a550fc34b52b177f5c34b85caf37f3db29ed061ac012f45a3"
+   },
+   "aggregate_seal": {
+    "path": "imports/c-attribution-production/c-attribution/aggregate/offline-grpo/complete.json",
+    "bytes": 643,
+    "sha256": "b62639291b89636e6ffb06543342d679dfdc04e5cc992dfacce876ac6b204e21"
+   },
+   "freeze": {
+    "path": "imports/c-attribution-production/c-attribution/freeze/offline-grpo/offline-grpo.json",
+    "bytes": 209267,
+    "sha256": "145463611470d20c6ab6411fb9b8bdc62a5d233076c928836bc5b34d72e597a4"
+   },
+   "freeze_seal": {
+    "path": "imports/c-attribution-production/c-attribution/freeze/offline-grpo/complete.json",
+    "bytes": 206,
+    "sha256": "026c2b7883975cfc12dfbcb0856c1b1bc4965b482eebd396753ed45093b5eaaa"
+   }
+  }
+ },
+ "c_production_1_conventions": {
+  "arrays": {
+   "dJdlambda": [
+    28,
+    8960
+   ],
+   "removal_J": [
+    28,
+    8960
+   ],
+   "S": [
+    150,
+    28,
+    8960
+   ],
+   "read_halves": [
+    2,
+    28,
+    8960
+   ],
+   "read_size": [
+    28,
+    8960
+   ]
+  },
+  "dtype": "float64",
+  "index": "flat layer*8960+neuron, zero-based (freeze targets, e.g. 132062 = layer 14 neuron 6622)",
+  "freeze_schema": "c-attribution-freeze-v1",
+  "seals": "every file hash in aggregate/<arm>/complete.json and freeze/<arm>/complete.json matches",
+  "volume_path": "/workspace/neuron-audit/c-attribution/c-production-1/c-attribution/",
+  "hf_receipts": [
+   {
+    "path": "imports/receipts/c-production-1.subtree.hf-upload.json",
+    "bytes": 655,
+    "sha256": "692e55a544b38c3da2cb1265363a8d82bd1a3b816612a95cff84ce7a2844356b"
+   },
+   {
+    "path": "imports/receipts/c-production-1.final-summary.hf-upload.json",
+    "bytes": 642,
+    "sha256": "cb1844eaecf2bdf628b18dac8a159304793b7b0aec6c4de5a41ca5425db08bfa"
+   }
+  ]
+ },
+ "production_1": {
+  "report": {
+   "path": "imports/attribution-production-1/attribution/report/report.json",
+   "bytes": 3782301,
+   "sha256": "ccccc0044ed7235db96ec0b6e650d6f672c532ca937431ac2af9052b5caa090c"
+  },
+  "top_down_proj_layer": {
+   "online-grpo": {
+    "trace": 13,
+    "stop": 14
+   },
+   "offline-grpo": {
+    "trace": 14,
+    "stop": 14
+   }
+  },
+  "top_layer_source": "report.json descriptive.concentration[arm][metric].layer (= freeze[arm][metric].down_proj.layer)",
+  "per_neuron_ranking_files": {
+   "status": "not local and not in the HF bundle; sl-0 only",
+   "freeze": "/workspace/neuron-audit/attribution/freeze/freeze.json",
+   "neuron_attributions": "/workspace/neuron-audit/attribution/store (BlockStore units unit_key('ab', arm, batch=i), keys ('examples'|'stop', layer, 'neuron_trace'|'neuron_stop'))"
+  }
+ }
+}
