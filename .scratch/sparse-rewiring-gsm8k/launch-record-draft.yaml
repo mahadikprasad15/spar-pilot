@@ -113,7 +113,7 @@ decisions:                               # one line per decision (decision-log.m
   D2: '[user 2026-11-23] mask group: AdamW lr 0.1, wd 0, shared LambdaLR, logα init 1.0'
   D3: '[user 2026-11-23] betas (0.9, 0.99) both groups, eps 1e-8'
   D4: '[user 2026-11-23] clip 1.0 on read factors only; masks unclipped'
-  D5: '[user 2026-11-23] 1,024 steps, warmup 20 + cosine to 0, masks frozen after 960; 11 checkpoints'
+  D5: '[user 2026-11-23] 1,024 steps, warmup 20 + cosine to 0, masks frozen after 960; 11 checkpoints. [user 2026-11-24] multiplier step/20 in warmup (0.05 at step 1), cosine to exactly 0 at step 1,024'
   D6: '[user 2026-11-23] lambda 6e-4 both ranks, no sweep; a degenerate run is reported, not re-run'
   D7: "[user 2026-11-23] steps 1-64 gold's saved order; epoch e >= 2 reshuffled with random.Random(42 + e - 1)"
   D8: '[user 2026-11-23] FP32, set_ieee_precision, eager attention, full determinism'
