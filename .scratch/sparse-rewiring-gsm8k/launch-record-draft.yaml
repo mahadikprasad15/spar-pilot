@@ -137,3 +137,6 @@ inputs:
   gold_plan: plans/pilot2-sft-fp32-l4-batch8-v1/sft.config.json   # [spec] read through sft.load_sft (ticket 01)
   gold_order: runs/pilot-2/Qwen--Qwen2.5-1.5B-Instruct/gsm8k/train-512-seed-42/rank1-float32/pilot2-sft-fp32-l4-batch8-v1/inputs/order.json
                                          # [spec] ticket 01 locates and hashes it
+  sources:
+    gold-sft:
+      adapter_role: adapter:gold-sft-step64   # [spec] gold step-64 reference adapter in the sealed bundle

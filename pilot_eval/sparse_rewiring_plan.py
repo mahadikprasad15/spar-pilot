@@ -65,7 +65,8 @@ SCHEMA = {
                    'cap': INT, 'eos_token_id': INT, 'repetition_penalty': NUM, 'scorer': TEXT, 'batch_size': INT},
     'decisions': {'*': TEXT},
     'inputs': {'artifact_root': TEXT, 'bundle': TEXT, 'model_dir': TEXT, 'work_dir': TEXT,
-               'gold_plan': TEXT, 'gold_order': TEXT},
+               'gold_plan': TEXT, 'gold_order': TEXT,
+               'sources': {'gold-sft': {'adapter_role': TEXT}}},
 }
 USER_FILLED = ('code_commit', 'pod_id', 'inputs.artifact_root', 'inputs.bundle', 'inputs.model_dir',
                'inputs.work_dir')

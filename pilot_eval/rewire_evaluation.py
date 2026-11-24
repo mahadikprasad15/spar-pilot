@@ -139,12 +139,24 @@ def evaluate_validation_ce(
 
 # --- Greedy evaluation (validation or cohort150) ---------------------------------------------------
 
-def check_cohort_step_allowed(cohort: str, step: int, *, final_step: int = DEFAULT_FINAL_STEP) -> None:
-    """Enforce D12: cohort150 may only be evaluated at step 64 and the final step."""
-    if cohort == COHORT150_NAME and int(step) not in {64, int(final_step)}:
-        raise ValueError(
-            f'cohort150 evaluation is restricted to step 64 and final step ({final_step}) per D12; got step {step}'
-        )
+def check_cohort_step_allowed(
+    cohort: str,
+    step: int,
+    *,
+    final_step: int = DEFAULT_FINAL_STEP,
+    mode: str = 'production',
+) -> None:
+    """Enforce D12 & lesson 2026-11-13: cohort150 is forbidden in rehearsal/qualification and restricted to
+    step 64 and the final step in production."""
+    if cohort == COHORT150_NAME:
+        if mode != 'production':
+            raise ValueError(
+                f'cohort150 evaluation is forbidden in {mode!r} mode (D12 / lesson 2026-11-13: validation only)'
+            )
+        if int(step) not in {64, int(final_step)}:
+            raise ValueError(
+                f'cohort150 evaluation is restricted to step 64 and final step ({final_step}) per D12; got step {step}'
+            )
 
 
 def evaluate_greedy(
@@ -162,6 +174,7 @@ def evaluate_greedy(
     cap: int = cg.CAP,
     batch_size: int = 16,
     final_step: int = DEFAULT_FINAL_STEP,
+    mode: str = 'production',
     strict_eos: bool = False,
     checkpoint_meta: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -169,7 +182,7 @@ def evaluate_greedy(
     and return a verified summary + prior-use record."""
     if strict_eos and int(eos_token_id) != cg.EOS:
         raise ValueError(f'eos_token_id {eos_token_id} differs from pinned protocol EOS {cg.EOS}')
-    check_cohort_step_allowed(cohort, step, final_step=final_step)
+    check_cohort_step_allowed(cohort, step, final_step=final_step, mode=mode)
     ids = list(question_ids)
     plan = cg.batches(ids, int(batch_size))
 

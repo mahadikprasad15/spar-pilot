@@ -36,6 +36,12 @@ from pilot_eval import rewire_dynamics as rd
 from pilot_eval import rewire_module as rm
 from pilot_eval import sft_backend as sb
 from pilot_eval import sparse_rewiring_plan as sp
+from pilot_eval.workflow import _hash
+
+
+def rows_content_sha256(rows: Sequence[Mapping[str, Any]]) -> str:
+    """Canonical SHA-256 of training rows (matching ``sparse_rewiring_plan.plan_from_files`` ``_hash(rows)``)."""
+    return _hash([dict(r) for r in rows])
 
 
 def warmup_cosine_multiplier(step_index: int, *, warmup_steps: int, total_steps: int) -> float:
@@ -125,6 +131,7 @@ def train_rewire(
     model_context_limit: int,
     pad_token_id: int,
     expected_base_sha256: str | None = None,
+    expected_rows_sha256: str | None = None,
     execution_kind: str = 'real-cuda',
     max_survivor_records: int | None = 10_000,
     val_ce_fn: Callable[[torch.nn.Module, int], Mapping[str, Any]] | None = None,
@@ -133,12 +140,37 @@ def train_rewire(
     """Run the explicit sparse-rewiring training loop and write logs, snapshots, survivor exports, and hardening record."""
     if not rows:
         raise ValueError('training rows must not be empty')
+    val_steps_set: set[int] | None = None
+    snap_steps_set: set[int] | None = None
     if plan is not None:
         resolved_rank = int(plan['rank']) if rank is None else int(rank)
-        resolved_read_lr = float(plan['read_lr']) if read_lr is None else float(read_lr)
+        # Canonical Ticket 05 plan stores read LR at plan['optimizer']['reads']['lr'] (P1.2)
+        if read_lr is not None:
+            resolved_read_lr = float(read_lr)
+        elif 'optimizer' in plan and 'reads' in plan['optimizer'] and 'lr' in plan['optimizer']['reads']:
+            resolved_read_lr = float(plan['optimizer']['reads']['lr'])
+        elif 'read_lr' in plan:
+            resolved_read_lr = float(plan['read_lr'])
+        else:
+            raise ValueError('plan must provide optimizer.reads.lr')
+        if 'optimizer' in plan:
+            opt_cfg = plan['optimizer']
+            if 'masks' in opt_cfg and 'lr' in opt_cfg['masks']:
+                mask_lr = float(opt_cfg['masks']['lr'])
+            if 'reads' in opt_cfg:
+                if 'betas' in opt_cfg['reads']:
+                    betas = (float(opt_cfg['reads']['betas'][0]), float(opt_cfg['reads']['betas'][1]))
+                if 'eps' in opt_cfg['reads']:
+                    eps = float(opt_cfg['reads']['eps'])
+                if 'clip_norm' in opt_cfg['reads']:
+                    max_grad_norm = float(opt_cfg['reads']['clip_norm'])
         plan_steps = list(plan['steps'])
         batches = [list(s['ids']) for s in plan_steps]
         resolved_ckpts = list(plan['checkpoints']) if checkpoint_steps is None else list(checkpoint_steps)
+        if 'validation_steps' in plan:
+            val_steps_set = set(int(s) for s in plan['validation_steps'])
+        if 'gate_snapshot_steps' in plan:
+            snap_steps_set = set(int(s) for s in plan['gate_snapshot_steps'])
         if 'settings' in plan and 'training' in plan['settings']:
             tr = plan['settings']['training']
             warmup_steps = int(tr['warmup_steps'])
@@ -149,6 +181,14 @@ def train_rewire(
             mask_seed = int(plan['settings']['seeds']['mask_noise'])
         if 'settings' in plan and 'data' in plan['settings']:
             mask_group_size = int(plan['settings']['data']['examples_per_mask'])
+        # P1.3: bind actual row tokens/labels to plan['inputs']['training_items_sha256']
+        plan_rows_sha = (plan.get('inputs') or {}).get('training_items_sha256')
+        if plan_rows_sha is not None:
+            observed_rows_sha = rows_content_sha256(rows)
+            if observed_rows_sha != plan_rows_sha:
+                raise ValueError(
+                    f'training rows content hash {observed_rows_sha} differs from plan training_items_sha256 {plan_rows_sha}'
+                )
     else:
         if step_batches is None or rank is None or read_lr is None:
             raise ValueError('when plan is None, step_batches, rank, and read_lr are required')
@@ -157,6 +197,13 @@ def train_rewire(
         plan_steps = None
         batches = [list(b) for b in step_batches]
         resolved_ckpts = list(checkpoint_steps) if checkpoint_steps is not None else [0, len(batches)]
+
+    if expected_rows_sha256 is not None:
+        observed_rows_sha = rows_content_sha256(rows)
+        if observed_rows_sha != expected_rows_sha256:
+            raise ValueError(
+                f'training rows content hash {observed_rows_sha} differs from expected {expected_rows_sha256}'
+            )
 
     if not batches:
         raise ValueError('step_batches must not be empty')
@@ -278,8 +325,13 @@ def train_rewire(
     rd.append_jsonl(steps_log_path, row0, strict_monotonic_step=True)
     if tracker is not None:
         tracker.observe(0, la_map_0)
-    if rd.should_snapshot(0, interval=snapshot_interval):
+    if (snap_steps_set is not None and 0 in snap_steps_set) or (
+        snap_steps_set is None and rd.should_snapshot(0, interval=snapshot_interval)
+    ):
         rd.save_log_alpha_snapshot(out_path / 'masks' / 'trace' / '0.npz', la_map_0, step=0)
+    if (val_steps_set is not None and 0 in val_steps_set) or (
+        val_steps_set is None and rd.should_snapshot(0, interval=snapshot_interval)
+    ):
         _log_val(0)
     _on_checkpoint_step(0, frozen=False)
 
@@ -386,8 +438,13 @@ def train_rewire(
                 if 'logs/settle.jsonl' not in sealed_files:
                     sealed_files.append('logs/settle.jsonl')
 
-        if rd.should_snapshot(step_idx, interval=snapshot_interval):
+        if (snap_steps_set is not None and step_idx in snap_steps_set) or (
+            snap_steps_set is None and rd.should_snapshot(step_idx, interval=snapshot_interval)
+        ):
             rd.save_log_alpha_snapshot(out_path / 'masks' / 'trace' / f'{step_idx}.npz', la_map, step=step_idx)
+        if (val_steps_set is not None and step_idx in val_steps_set) or (
+            val_steps_set is None and rd.should_snapshot(step_idx, interval=snapshot_interval)
+        ):
             _log_val(step_idx)
 
         # Save checkpoint BEFORE hardening so checkpoint 960 holds continuous log_alpha
