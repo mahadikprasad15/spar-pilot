@@ -89,6 +89,52 @@ class TestDynamicsFigure(unittest.TestCase):
                 rows = list(csv.DictReader(stream))
             self.assertEqual(len(rows), 20)
             self.assertEqual({r['arm'] for r in rows}, {'sparse-gold-sft-r1', 'sparse-gold-sft-r0'})
+            # P2.2: Panel-4 settle relative change & churn counts are persisted in plotted CSV
+            r1_by_step = {int(r['step']): r for r in rows if r['arm'] == 'sparse-gold-sft-r1'}
+            self.assertAlmostEqual(float(r1_by_step[6]['settle_expected_active_rel_change']), 0.05, places=6)
+            self.assertAlmostEqual(float(r1_by_step[8]['settle_expected_active_rel_change']), 0.01, places=6)
+            self.assertEqual(int(r1_by_step[4]['churn_switched_on']), 1)
+            self.assertEqual(int(r1_by_step[4]['churn_switched_off']), 2)
+            self.assertEqual(int(r1_by_step[8]['churn_switched_on']), 0)
+            self.assertEqual(int(r1_by_step[8]['churn_switched_off']), 1)
+
+    def test_p2_2_plan_binding_refuses_truncated_steps_and_missing_planned_series(self) -> None:
+        arm = _fixture_arm('sparse-gold-sft-r1', num_steps=10, freeze_step=8)
+        plan = {
+            'settings': {'training': {'steps': 9, 'freeze_after_step': 8}},
+            'validation_steps': [4, 8],
+            'checkpoints': [0, 8],
+            'cohort150_steps': [8],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'plan_bound'
+            # Happy path: exact match with plan (including cohort150)
+            prov = rdf.build_dynamics_figure(arm, out, name='ok', plan=plan, require_cohort150=True)
+            self.assertEqual(prov['freeze_step'], 8)
+
+            # Truncated step log (missing tail steps 6..9) is refused
+            truncated = dict(arm, step_rows=arm['step_rows'][:6])
+            with self.assertRaises(ValueError) as ctx:
+                rdf.build_dynamics_figure(truncated, out, name='trunc', plan=plan)
+            self.assertIn('step log', str(ctx.exception).lower())
+
+            # Missing planned validation_ce step
+            missing_val = dict(arm, val_ce_rows=[{'step': 0, 'val_ce': 1.8}, {'step': 4, 'val_ce': 1.4}])
+            with self.assertRaises(ValueError) as ctx:
+                rdf.build_dynamics_figure(missing_val, out, name='mval', plan=plan)
+            self.assertIn('validation ce', str(ctx.exception).lower())
+
+            # Missing planned val_acc checkpoint
+            missing_acc = dict(arm, val_acc_rows=[{'step': 0, 'accuracy': 0.55}])
+            with self.assertRaises(ValueError) as ctx:
+                rdf.build_dynamics_figure(missing_acc, out, name='macc', plan=plan)
+            self.assertIn('greedy accuracy', str(ctx.exception).lower())
+
+            # Missing planned cohort150 step when require_cohort150=True
+            missing_c150 = dict(arm, cohort150_rows=[])
+            with self.assertRaises(ValueError) as ctx:
+                rdf.build_dynamics_figure(missing_c150, out, name='mc150', plan=plan, require_cohort150=True)
+            self.assertIn('cohort150', str(ctx.exception).lower())
 
 
 if __name__ == '__main__':

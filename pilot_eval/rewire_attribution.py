@@ -214,11 +214,57 @@ def load_manifest(path, root=None):
     return dict(schema=MANIFEST_SCHEMA, path=str(path), sha256=_sha256(path), root=str(root), entries=entries)
 
 
-def load_survivors(path):
-    """A survivor export: a JSON list of [layer, neuron] / {layer, neuron}, or {'survivors': that list}."""
-    value = json.loads(Path(path).read_text())
-    pairs = value['survivors'] if isinstance(value, dict) else value
-    return [(p['layer'], p['neuron']) if isinstance(p, dict) else tuple(p) for p in pairs]
+SURVIVOR_EXPORT_SCHEMA = 'sparse-rewiring-survivors-v1'
+
+
+def load_survivors_with_provenance(path, *, require_final_sealed=True):
+    """Load a survivor export and return ``(pairs, provenance)``.
+
+    Refuses any export with ``survivors_omitted=True`` or ``frozen=False`` so an early checkpoint
+    (e.g. step 0 where 250,880 records were omitted) can never silently become a zero-overlap report.
+    When ``require_final_sealed=True``, requires a hash-verified sealed directory (``complete.json``)
+    and ``schema == 'sparse-rewiring-survivors-v1'`` with ``frozen is True``.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise ManifestError(f'survivor export {p} does not exist')
+    sealed = (p.parent / 'complete.json').is_file()
+    if sealed:
+        au.verify_run(p.parent)
+    elif require_final_sealed:
+        raise ManifestError(f'survivor export {p} is not in a sealed directory (complete.json required)')
+    digest = _sha256(p)
+    value = json.loads(p.read_text())
+    if isinstance(value, dict):
+        if value.get('survivors_omitted') is True:
+            raise ManifestError(f'survivor export {p} has survivors_omitted=True (incomplete pre-freeze export)')
+        if value.get('frozen') is False:
+            raise ManifestError(f'survivor export {p} is unfrozen (pre-freeze export cannot be used as final survivors)')
+        if require_final_sealed:
+            if value.get('schema') != SURVIVOR_EXPORT_SCHEMA:
+                raise ManifestError(
+                    f'survivor export {p} schema {value.get("schema")!r} != {SURVIVOR_EXPORT_SCHEMA!r}'
+                )
+            if value.get('frozen') is not True:
+                raise ManifestError(f'survivor export {p} must have frozen=True for final attribution comparison')
+        pairs = value['survivors']
+        step = value.get('step')
+        meta = value.get('meta') if isinstance(value.get('meta'), dict) else {}
+    else:
+        if require_final_sealed:
+            raise ManifestError(f'survivor export {p} must be a sealed {SURVIVOR_EXPORT_SCHEMA!r} dict, not a bare list')
+        pairs = value
+        step = None
+        meta = {}
+    parsed = [(p_['layer'], p_['neuron']) if isinstance(p_, dict) else tuple(p_) for p_ in pairs]
+    provenance = dict(path=str(p), sha256=digest, sealed=sealed, step=step, arm=meta.get('arm'), rank=meta.get('rank'))
+    return parsed, provenance
+
+
+def load_survivors(path, *, require_final_sealed=False):
+    """A survivor export: refuses ``survivors_omitted=True`` and ``frozen=False`` exports."""
+    pairs, _ = load_survivors_with_provenance(path, require_final_sealed=require_final_sealed)
+    return pairs
 
 
 def c_production_entries(arms=('online-grpo', 'offline-grpo'), *, groups=('global64-reads', 'layer64-reads')):
@@ -385,9 +431,10 @@ def _rows(result):
                                p_upper=o['exact']['p_upper'], labels=';'.join(c['labels']))
 
 
-def seal(directory, manifest, result):
-    """Seal compare/: the resolved manifest (with input hashes), overlap tables (JSON + CSV) and null draws."""
+def seal(directory, manifest, result, *, survivor_sources=None):
+    """Seal compare/: the resolved manifest (with input hashes & survivor export digests), overlap tables and null draws."""
     resolved = dict(schema=MANIFEST_SCHEMA, path=manifest['path'], sha256=manifest['sha256'], root=manifest['root'],
+                    survivor_sources=dict(survivor_sources or {}),
                     entries=[dict(source=e['source'], arm=e['arm'], ranking=e['ranking'], rank_by=e['rank_by'],
                                   sign_convention=e['sign_convention'], selected_on=e['selected_on'],
                                   declared=int(e['declared'].sum()), measured=int(e['universe'].sum()),
@@ -416,9 +463,13 @@ def main(argv=None):
     parser.add_argument('--seed', type=int, default=NULL_SEED)
     args = parser.parse_args(argv)
     manifest = load_manifest(args.manifest, args.root)
-    result = run(manifest, {label: load_survivors(path) for label, path in args.survivors},
-                 draws=args.draws, seed=args.seed)
-    print(seal(args.out, manifest, result), args.out)
+    survivor_sets, survivor_sources = {}, {}
+    for label, path in args.survivors:
+        pairs, prov = load_survivors_with_provenance(path, require_final_sealed=True)
+        survivor_sets[label] = pairs
+        survivor_sources[label] = prov
+    result = run(manifest, survivor_sets, draws=args.draws, seed=args.seed)
+    print(seal(args.out, manifest, result, survivor_sources=survivor_sources), args.out)
 
 
 if __name__ == '__main__':

@@ -84,7 +84,14 @@ PRODUCTION = {
     'data.training_examples': 512, 'data.gold_order_steps': 64,                       # gold, D7
     'training.steps': 1024, 'training.warmup_steps': 20, 'training.freeze_after_step': 960,   # D5
     'objective.l0_lambda': 6e-4,                                                      # D6
-    'checkpoints': [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024],                # D5
+    'optimizer.reads.betas': [0.9, 0.99], 'optimizer.reads.eps': 1e-8,                # D3
+    'optimizer.reads.weight_decay': 0.0, 'optimizer.reads.clip_norm': 1.0,            # D3, D4
+    'optimizer.masks.lr': 0.1, 'optimizer.masks.betas': [0.9, 0.99],                  # D2, D3
+    'optimizer.masks.eps': 1e-8, 'optimizer.masks.weight_decay': 0.0,                 # D2, D3
+    'hard_concrete.beta': 2.0 / 3.0, 'hard_concrete.gamma': -0.1,                     # Louizos 2018 / D2
+    'hard_concrete.zeta': 1.1, 'hard_concrete.log_alpha_init': 1.0,                   # D2
+    'seeds.data_order_base': 42, 'seeds.read_init_base': 42, 'seeds.mask_noise': 1042,  # D10
+    'checkpoints': [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024],                 # D5
     'cadences.step_metrics_every': 1, 'cadences.validation_ce_every': 16,             # D20
     'cadences.gate_snapshot_every': 16,
     'evaluation.cohort150.steps': [64, 1024], 'evaluation.cohort150.role': 'evaluation-only',   # D12

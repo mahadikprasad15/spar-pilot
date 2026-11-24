@@ -94,6 +94,44 @@ def _extract_series(arm_data: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_against_plan(
+    series: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    *,
+    require_cohort150: bool = False,
+) -> None:
+    """Bind figure inputs to the frozen plan's expected steps and evaluation cadence (P2.2).
+
+    Refuses a truncated step log or missing validation/checkpoint/cohort150 evaluation points.
+    """
+    total_steps = int(plan['settings']['training']['steps'])
+    expected_steps = list(range(0, total_steps + 1))
+    actual_steps = series['steps'].tolist()
+    if actual_steps != expected_steps:
+        raise ValueError(
+            f"step log ({actual_steps[0]}..{actual_steps[-1]}, n={len(actual_steps)}) does not cover "
+            f"planned 0..{total_steps} (refusing truncated or incomplete log)"
+        )
+    if 'validation_steps' in plan:
+        expected_val = sorted(int(s) for s in plan['validation_steps'])
+        actual_val = sorted(st for st, _ in series['val_ce'])
+        missing_val = sorted(set(expected_val) - set(actual_val))
+        if missing_val:
+            raise ValueError(f'validation CE log missing planned steps: {missing_val[:10]}')
+    if 'checkpoints' in plan:
+        expected_ckpts = sorted(int(s) for s in plan['checkpoints'])
+        actual_acc = sorted(st for st, _ in series['val_acc'])
+        missing_acc = sorted(set(expected_ckpts) - set(actual_acc))
+        if missing_acc:
+            raise ValueError(f'validation greedy accuracy missing planned checkpoints: {missing_acc[:10]}')
+    if require_cohort150 and 'cohort150_steps' in plan:
+        expected_c150 = sorted(int(s) for s in plan['cohort150_steps'])
+        actual_c150 = sorted(st for st, _ in series['cohort150_acc'])
+        missing_c150 = sorted(set(expected_c150) - set(actual_c150))
+        if missing_c150:
+            raise ValueError(f'cohort150 accuracy missing planned steps: {missing_c150[:10]}')
+
+
 def _write_plotted_csv(path: Path, series_list: Sequence[dict[str, Any]]) -> None:
     fieldnames = [
         'arm',
@@ -111,7 +149,10 @@ def _write_plotted_csv(path: Path, series_list: Sequence[dict[str, Any]]) -> Non
         'val_acc',
         'cohort150_acc',
         'settle_jaccard',
+        'settle_expected_active_rel_change',
         'churn_jaccard',
+        'churn_switched_on',
+        'churn_switched_off',
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', newline='', encoding='utf-8') as stream:
@@ -121,10 +162,14 @@ def _write_plotted_csv(path: Path, series_list: Sequence[dict[str, Any]]) -> Non
             val_ce_map = dict(s['val_ce'])
             val_acc_map = dict(s['val_acc'])
             c150_map = dict(s['cohort150_acc'])
-            settle_map = {st: jac for st, jac, _ in s['settle']}
-            churn_map = {st: jac for st, jac, _, _ in s['churn']}
+            settle_jac_map = {st: jac for st, jac, _ in s['settle']}
+            settle_rel_map = {st: rel for st, _, rel in s['settle']}
+            churn_jac_map = {st: jac for st, jac, _, _ in s['churn']}
+            churn_on_map = {st: on for st, _, on, _ in s['churn']}
+            churn_off_map = {st: off for st, _, _, off in s['churn']}
             for i, step in enumerate(s['steps'].tolist()):
                 b_val = s['binary_survivors'][i]
+                rel_val = settle_rel_map.get(step)
                 writer.writerow(
                     {
                         'arm': s['label'],
@@ -141,8 +186,11 @@ def _write_plotted_csv(path: Path, series_list: Sequence[dict[str, Any]]) -> Non
                         'val_ce': val_ce_map.get(step, ''),
                         'val_acc': val_acc_map.get(step, ''),
                         'cohort150_acc': c150_map.get(step, ''),
-                        'settle_jaccard': settle_map.get(step, ''),
-                        'churn_jaccard': churn_map.get(step, ''),
+                        'settle_jaccard': settle_jac_map.get(step, ''),
+                        'settle_expected_active_rel_change': '' if rel_val is None else float(rel_val),
+                        'churn_jaccard': churn_jac_map.get(step, ''),
+                        'churn_switched_on': churn_on_map.get(step, ''),
+                        'churn_switched_off': churn_off_map.get(step, ''),
                     }
                 )
 
@@ -218,26 +266,40 @@ def _plot_arm_column(axes: Sequence[Any], s: dict[str, Any], *, freeze_step: int
     if h1 or h2:
         ax_perf.legend(h1 + h2, l1 + l2, loc='best', fontsize=7.5)
 
-    # 4. Events (settle Jaccard & checkpoint churn)
+    # 4. Events (settle Jaccard + expected-active rel change; checkpoint churn Jaccard + switched on/off)
     ax_evt.set_title('4. Events: settle diagnostics & checkpoint churn')
     if s['settle']:
         xs = [t[0] for t in s['settle']]
         ys = [t[1] for t in s['settle']]
         ax_evt.plot(xs, ys, 'o-', markersize=4.5, label='settle Jaccard (64-step)', color='#2a78d6')
+        rel_pts = [(t[0], float(t[2])) for t in s['settle'] if t[2] is not None]
+        if rel_pts:
+            rxs, rys = zip(*rel_pts)
+            ax_evt.plot(rxs, rys, 'x--', markersize=5.0, label='settle |Δexp_active|/exp', color='#7570b3')
+    ax_evt_cnt = ax_evt.twinx()
+    ax_evt_cnt.spines['top'].set_visible(False)
     if s['churn']:
         xs = [t[0] for t in s['churn']]
         ys = [t[1] for t in s['churn']]
+        ons = [t[2] for t in s['churn']]
+        offs = [t[3] for t in s['churn']]
         ax_evt.plot(xs, ys, 'D', markersize=4.5, label='checkpoint churn Jaccard', color='#d95f02')
+        ax_evt_cnt.plot(xs, ons, '^', markersize=4.5, label='switched on', color='#1b9e77', alpha=0.8)
+        ax_evt_cnt.plot(xs, offs, 'v', markersize=4.5, label='switched off', color='#a32a2a', alpha=0.8)
+        ax_evt_cnt.set_ylabel('switched count')
     ax_evt.set_ylim(-0.02, 1.05)
-    ax_evt.set_ylabel('Jaccard')
+    ax_evt.set_ylabel('Jaccard / rel. change')
     ax_evt.set_xlabel('training step')
-    ax_evt.legend(loc='lower right', fontsize=8)
+    eh1, el1 = ax_evt.get_legend_handles_labels()
+    eh2, el2 = ax_evt_cnt.get_legend_handles_labels()
+    if eh1 or eh2:
+        ax_evt.legend(eh1 + eh2, el1 + el2, loc='lower right', fontsize=7.5)
 
     if freeze_step is not None:
         for ax in (ax_gate, ax_heat, ax_norm, ax_perf, ax_evt):
             ax.axvline(float(freeze_step), color='#a32a2a', linestyle='--', linewidth=1.1, alpha=0.8)
 
-    return [ax_acc]
+    return [ax_acc, ax_evt_cnt]
 
 
 def _save_bundle(
@@ -287,19 +349,37 @@ def _save_bundle(
     return provenance
 
 
+_UNSET: Any = object()
+
+
+def _resolve_freeze_step(freeze_step: Any, plan: Mapping[str, Any] | None) -> int | None:
+    if freeze_step is not _UNSET:
+        return int(freeze_step) if freeze_step is not None else None
+    if plan is not None:
+        tr = (plan.get('settings') or {}).get('training') or {}
+        if 'freeze_after_step' in tr and tr['freeze_after_step'] is not None:
+            return int(tr['freeze_after_step'])
+    return 960
+
+
 def build_dynamics_figure(
     arm_data: Mapping[str, Any],
     out_dir: str | Path,
     *,
     name: str = 'dynamics',
-    freeze_step: int | None = 960,
+    freeze_step: int | None = _UNSET,
+    plan: Mapping[str, Any] | None = None,
+    require_cohort150: bool = False,
 ) -> dict[str, Any]:
     """Render the single-arm training-dynamics figure (PNG, SVG, CSV, provenance JSON)."""
     s = _extract_series(arm_data)
+    if plan is not None:
+        validate_against_plan(s, plan, require_cohort150=require_cohort150)
+    resolved_freeze = _resolve_freeze_step(freeze_step, plan)
     plt = car._style()
     fig, axes = plt.subplots(5, 1, figsize=(8.5, 12.5), sharex=True, gridspec_kw={'height_ratios': [1.2, 1.0, 1.1, 1.2, 1.0]})
-    _plot_arm_column(axes, s, freeze_step=freeze_step)
-    return _save_bundle(fig, plt, Path(out_dir), name=name, series_list=[s], freeze_step=freeze_step)
+    _plot_arm_column(axes, s, freeze_step=resolved_freeze)
+    return _save_bundle(fig, plt, Path(out_dir), name=name, series_list=[s], freeze_step=resolved_freeze)
 
 
 def build_side_by_side_dynamics_figure(
@@ -308,11 +388,19 @@ def build_side_by_side_dynamics_figure(
     out_dir: str | Path,
     *,
     name: str = 'dynamics_r1_vs_r0',
-    freeze_step: int | None = 960,
+    freeze_step: int | None = _UNSET,
+    plan_left: Mapping[str, Any] | None = None,
+    plan_right: Mapping[str, Any] | None = None,
+    require_cohort150: bool = False,
 ) -> dict[str, Any]:
     """Render rank-1 and rank-0 training dynamics side by side on shared y axes (D21)."""
     s_left = _extract_series(arm_left)
     s_right = _extract_series(arm_right)
+    if plan_left is not None:
+        validate_against_plan(s_left, plan_left, require_cohort150=require_cohort150)
+    if plan_right is not None:
+        validate_against_plan(s_right, plan_right, require_cohort150=require_cohort150)
+    resolved_freeze = _resolve_freeze_step(freeze_step, plan_left or plan_right)
     plt = car._style()
     fig, axes = plt.subplots(
         5,
@@ -322,6 +410,6 @@ def build_side_by_side_dynamics_figure(
         sharey='row',
         gridspec_kw={'height_ratios': [1.2, 1.0, 1.1, 1.2, 1.0]},
     )
-    _plot_arm_column([axes[r, 0] for r in range(5)], s_left, freeze_step=freeze_step)
-    _plot_arm_column([axes[r, 1] for r in range(5)], s_right, freeze_step=freeze_step)
-    return _save_bundle(fig, plt, Path(out_dir), name=name, series_list=[s_left, s_right], freeze_step=freeze_step)
+    _plot_arm_column([axes[r, 0] for r in range(5)], s_left, freeze_step=resolved_freeze)
+    _plot_arm_column([axes[r, 1] for r in range(5)], s_right, freeze_step=resolved_freeze)
+    return _save_bundle(fig, plt, Path(out_dir), name=name, series_list=[s_left, s_right], freeze_step=resolved_freeze)

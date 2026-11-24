@@ -43,6 +43,7 @@ from pilot_eval import rewire_dynamics as rd
 from pilot_eval import rewire_dynamics_figure as rdf
 from pilot_eval import rewire_evaluation as reval
 from pilot_eval import rewire_module as rm
+from pilot_eval import rewire_standalone as rs
 from pilot_eval import rewire_training as rt
 from pilot_eval import sft_backend as sb
 from pilot_eval import sparse_rewiring_plan as sp
@@ -247,7 +248,7 @@ class TestRewirePodChainP1Regressions(unittest.TestCase):
                         expected_base_sha256=base_sha,
                         execution_kind='real-cuda',
                         model_context_limit=64,
-                        gradient_checkpointing=False,
+                        gradient_checkpointing=True,
                         exporter=lambda *a, **kw: {'readback_verified': True, 'completeness': 'complete'},
                         runner=_stub_runner,
                     )
@@ -409,7 +410,7 @@ class TestRewirePodChainP1Regressions(unittest.TestCase):
                     expected_base_sha256=base_sha,
                     execution_kind='real-cuda',
                     model_context_limit=64,
-                    gradient_checkpointing=False,
+                    gradient_checkpointing=True,
                     qualification_fn=_qual_ok,
                     references_fn=_refs_stub,
                     exporter=_stub_exporter,
@@ -454,7 +455,7 @@ class TestRewirePodChainP1Regressions(unittest.TestCase):
                     expected_base_sha256=base_sha,
                     execution_kind='real-cuda',
                     model_context_limit=64,
-                    gradient_checkpointing=False,
+                    gradient_checkpointing=True,
                     qualification_fn=_qual_ok,
                     references_fn=_refs_stub,
                     exporter=_stub_exporter,
@@ -483,12 +484,31 @@ class TestRewirePodChainP1Regressions(unittest.TestCase):
                     self.assertEqual([r['step'] for r in step_rows], [0, 1, 2, 3])
                     self.assertEqual([r['step'] for r in val_rows], list(plan['validation_steps']))
                     self.assertTrue((restored_arm / 'masks' / 'trace' / f"{plan['gate_snapshot_steps'][0]}.npz").is_file())
-                    # Build dynamics figure directly from the clean-restored logs
+                    # P2.2: load_arm_artifacts reads & verifies the clean-restored arm end-to-end
+                    loaded = rs.load_arm_artifacts(restored_arm, plan, code_commit='deadbeef')
+                    self.assertEqual(loaded['arm'], arm)
+                    self.assertEqual(loaded['rank'], plan['rank'])
+                    self.assertTrue(loaded['final_export']['frozen'])
+                    self.assertFalse(loaded['final_export']['survivors_omitted'])
+                    self.assertIn(plan['gate_snapshot_steps'][0], loaded['snapshots'])
+                    self.assertEqual([r['step'] for r in loaded['step_rows']], [0, 1, 2, 3])
+                    self.assertEqual([r['step'] for r in loaded['val_ce_rows']], list(plan['validation_steps']))
+                    self.assertEqual(loaded['hardening']['freeze_step'], 2)
+                    self.assertIsNotNone(loaded['hardening']['post_binary'])
+                    self.assertIsNotNone(loaded['hardening']['val_ce_before'])
+                    self.assertIsNotNone(loaded['hardening']['val_ce_after'])
+                    # Build plan-bound dynamics figure directly from the clean-restored logs
+                    val_acc_rows = [{'step': s, 'accuracy': 0.5} for s in plan['checkpoints']]
                     prov = rdf.build_dynamics_figure(
-                        {'label': arm, 'step_rows': step_rows, 'val_ce_rows': val_rows},
+                        {
+                            'label': arm,
+                            'step_rows': loaded['step_rows'],
+                            'val_ce_rows': loaded['val_ce_rows'],
+                            'val_acc_rows': val_acc_rows,
+                        },
                         restored_arm / 'dynamics',
                         name=arm,
-                        freeze_step=2,
+                        plan=plan,
                     )
                     self.assertTrue((restored_arm / 'dynamics' / f'{arm}.png').is_file())
                     self.assertEqual(prov['freeze_step'], 2)

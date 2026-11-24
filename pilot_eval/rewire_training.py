@@ -77,11 +77,16 @@ def _assert_step0_zero_coefficients(modules: Sequence[rm.RewireMLP]) -> None:
                 raise ValueError(f'step 0 initialization check failed: layer {mod.layer} {part} coefficient is nonzero')
 
 
-def _layer_norms(modules: Sequence[rm.RewireMLP]) -> tuple[dict[int, torch.Tensor], dict[int, torch.Tensor]]:
+def _layer_norms(
+    modules: Sequence[rm.RewireMLP],
+    *,
+    gamma: float = hc.GAMMA,
+    zeta: float = hc.ZETA,
+) -> tuple[dict[int, torch.Tensor], dict[int, torch.Tensor]]:
     gate_norms: dict[int, torch.Tensor] = {}
     up_norms: dict[int, torch.Tensor] = {}
     for mod in modules:
-        z_det = hc.deterministic_gate(mod.rewire_log_alpha)
+        z_det = hc.deterministic_gate(mod.rewire_log_alpha, gamma=gamma, zeta=zeta)
         if mod.rank == 0:
             gate_norms[mod.layer] = hc.row_change_norms(rank=0, w=mod.rewire_W_gate, z=z_det)
             up_norms[mod.layer] = hc.row_change_norms(rank=0, w=mod.rewire_W_up, z=z_det)
@@ -117,7 +122,14 @@ def train_rewire(
     l0_lambda: float = 6e-4,
     betas: tuple[float, float] = (0.9, 0.99),
     eps: float = 1e-8,
+    weight_decay: float = 0.0,
+    mask_betas: tuple[float, float] | None = None,
+    mask_eps: float | None = None,
+    mask_weight_decay: float | None = None,
     max_grad_norm: float = 1.0,
+    hc_beta: float = hc.BETA,
+    hc_gamma: float = hc.GAMMA,
+    hc_zeta: float = hc.ZETA,
     warmup_steps: int = 20,
     freeze_step: int | None = 960,
     mask_seed: int = 1042,
@@ -155,15 +167,24 @@ def train_rewire(
             raise ValueError('plan must provide optimizer.reads.lr')
         if 'optimizer' in plan:
             opt_cfg = plan['optimizer']
-            if 'masks' in opt_cfg and 'lr' in opt_cfg['masks']:
-                mask_lr = float(opt_cfg['masks']['lr'])
             if 'reads' in opt_cfg:
                 if 'betas' in opt_cfg['reads']:
                     betas = (float(opt_cfg['reads']['betas'][0]), float(opt_cfg['reads']['betas'][1]))
                 if 'eps' in opt_cfg['reads']:
                     eps = float(opt_cfg['reads']['eps'])
+                if 'weight_decay' in opt_cfg['reads']:
+                    weight_decay = float(opt_cfg['reads']['weight_decay'])
                 if 'clip_norm' in opt_cfg['reads']:
                     max_grad_norm = float(opt_cfg['reads']['clip_norm'])
+            if 'masks' in opt_cfg:
+                if 'lr' in opt_cfg['masks']:
+                    mask_lr = float(opt_cfg['masks']['lr'])
+                if 'betas' in opt_cfg['masks']:
+                    mask_betas = (float(opt_cfg['masks']['betas'][0]), float(opt_cfg['masks']['betas'][1]))
+                if 'eps' in opt_cfg['masks']:
+                    mask_eps = float(opt_cfg['masks']['eps'])
+                if 'weight_decay' in opt_cfg['masks']:
+                    mask_weight_decay = float(opt_cfg['masks']['weight_decay'])
         plan_steps = list(plan['steps'])
         batches = [list(s['ids']) for s in plan_steps]
         resolved_ckpts = list(plan['checkpoints']) if checkpoint_steps is None else list(checkpoint_steps)
@@ -177,6 +198,20 @@ def train_rewire(
             freeze_step = int(tr['freeze_after_step'])
         if 'settings' in plan and 'objective' in plan['settings']:
             l0_lambda = float(plan['settings']['objective']['l0_lambda'])
+        if 'settings' in plan and 'hard_concrete' in plan['settings']:
+            hc_cfg = plan['settings']['hard_concrete']
+            if 'beta' in hc_cfg:
+                hc_beta = float(hc_cfg['beta'])
+            if 'gamma' in hc_cfg:
+                hc_gamma = float(hc_cfg['gamma'])
+            if 'zeta' in hc_cfg:
+                hc_zeta = float(hc_cfg['zeta'])
+        if 'settings' in plan and 'runtime' in plan['settings']:
+            gc_rule = plan['settings']['runtime'].get('gradient_checkpointing')
+            if gc_rule == 'non-reentrant' and not gradient_checkpointing and execution_kind != 'cpu-fixture':
+                raise ValueError(
+                    'plan requires runtime.gradient_checkpointing="non-reentrant"; cannot disable on non-fixture run'
+                )
         if 'settings' in plan and 'seeds' in plan['settings']:
             mask_seed = int(plan['settings']['seeds']['mask_noise'])
         if 'settings' in plan and 'data' in plan['settings']:
@@ -239,14 +274,27 @@ def train_rewire(
     read_params, mask_params = split_read_and_mask_parameters(model)
     total_steps = len(batches)
 
+    resolved_mask_betas = betas if mask_betas is None else mask_betas
+    resolved_mask_eps = eps if mask_eps is None else mask_eps
+    resolved_mask_wd = weight_decay if mask_weight_decay is None else mask_weight_decay
+
     optimizer = torch.optim.AdamW(
         [
-            {'params': read_params, 'lr': resolved_read_lr},
-            {'params': mask_params, 'lr': float(mask_lr)},
+            {
+                'params': read_params,
+                'lr': resolved_read_lr,
+                'betas': (float(betas[0]), float(betas[1])),
+                'eps': float(eps),
+                'weight_decay': float(weight_decay),
+            },
+            {
+                'params': mask_params,
+                'lr': float(mask_lr),
+                'betas': (float(resolved_mask_betas[0]), float(resolved_mask_betas[1])),
+                'eps': float(resolved_mask_eps),
+                'weight_decay': float(resolved_mask_wd),
+            },
         ],
-        betas=(float(betas[0]), float(betas[1])),
-        eps=float(eps),
-        weight_decay=0.0,
         foreach=False,
     )
     if plan_steps is not None:
@@ -256,7 +304,14 @@ def train_rewire(
         lr_fn = lambda i: warmup_cosine_multiplier(i, warmup_steps=warmup_steps, total_steps=total_steps)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [lr_fn, lr_fn])
 
-    cache = hc.SharedMaskCache(seed=int(mask_seed), group_size=int(mask_group_size), device=device)
+    cache = hc.SharedMaskCache(
+        seed=int(mask_seed),
+        group_size=int(mask_group_size),
+        device=device,
+        beta=hc_beta,
+        gamma=hc_gamma,
+        zeta=hc_zeta,
+    )
     rm.set_gate(model, cache.gate)
     layer_shapes = {m.layer: tuple(m.rewire_log_alpha.shape) for m in mods}
 
@@ -270,7 +325,14 @@ def train_rewire(
     sealed_files: list[str] = ['logs/steps.jsonl']
 
     tracker = (
-        rd.SettleTracker(start=int(settle_start), interval=int(settle_interval), freeze_step=freeze_step)
+        rd.SettleTracker(
+            start=int(settle_start),
+            interval=int(settle_interval),
+            freeze_step=freeze_step,
+            beta=hc_beta,
+            gamma=hc_gamma,
+            zeta=hc_zeta,
+        )
         if enable_settle_diagnostics and int(settle_start) >= int(settle_interval)
         else None
     )
@@ -289,7 +351,7 @@ def train_rewire(
         if step in ckpt_set:
             if sb.frozen_weight_hash(model, trained=rm.is_rewire_parameter) != base_before:
                 raise ValueError('Training modified a frozen base parameter.')
-            gate_norms, up_norms = _layer_norms(mods)
+            gate_norms, up_norms = _layer_norms(mods, gamma=hc_gamma, zeta=hc_zeta)
             la_map = {m.layer: m.rewire_log_alpha for m in mods}
             surv = hc.export_survivors(
                 la_map,
@@ -299,6 +361,9 @@ def train_rewire(
                 step=step,
                 meta={'rank': resolved_rank},
                 max_survivor_records=max_survivor_records,
+                beta=hc_beta,
+                gamma=hc_gamma,
+                zeta=hc_zeta,
             )
             rel = f'masks/step-{step}/{step}.json'
             hc.seal_survivor_export(out_path / 'masks' / f'step-{step}', surv, filename=f'{step}.json')
@@ -309,7 +374,7 @@ def train_rewire(
 
     # Step 0 baseline snapshot, dynamics row, validation CE, and sink(0, model)
     frozen = False
-    gate_norms_0, up_norms_0 = _layer_norms(mods)
+    gate_norms_0, up_norms_0 = _layer_norms(mods, gamma=hc_gamma, zeta=hc_zeta)
     la_map_0 = {m.layer: m.rewire_log_alpha for m in mods}
     row0 = rd.step_dynamics_row(
         step=0,
@@ -320,6 +385,9 @@ def train_rewire(
         lr_reads=float(optimizer.param_groups[0]['lr']),
         lr_masks=float(optimizer.param_groups[1]['lr']),
         examples_seen=0,
+        beta=hc_beta,
+        gamma=hc_gamma,
+        zeta=hc_zeta,
     )
     row0['mask_group_log'] = None
     rd.append_jsonl(steps_log_path, row0, strict_monotonic_step=True)
@@ -328,7 +396,7 @@ def train_rewire(
     if (snap_steps_set is not None and 0 in snap_steps_set) or (
         snap_steps_set is None and rd.should_snapshot(0, interval=snapshot_interval)
     ):
-        rd.save_log_alpha_snapshot(out_path / 'masks' / 'trace' / '0.npz', la_map_0, step=0)
+        rd.save_log_alpha_snapshot(out_path / 'masks' / 'trace' / '0.npz', la_map_0, step=0, gamma=hc_gamma, zeta=hc_zeta)
     if (val_steps_set is not None and 0 in val_steps_set) or (
         val_steps_set is None and rd.should_snapshot(0, interval=snapshot_interval)
     ):
@@ -381,7 +449,9 @@ def train_rewire(
 
         ce_total = math.fsum(ce_parts)
         if not frozen and float(l0_lambda) > 0.0:
-            exp_active_sum = sum(hc.expected_active(m.rewire_log_alpha) for m in mods)
+            exp_active_sum = sum(
+                hc.expected_active(m.rewire_log_alpha, beta=hc_beta, gamma=hc_gamma, zeta=hc_zeta) for m in mods
+            )
             l0_term = float(l0_lambda) * exp_active_sum
             l0_val = float(l0_term.detach().item())
             l0_term.backward()
@@ -409,7 +479,7 @@ def train_rewire(
             raise ValueError(f'step {step_idx}: optimizer/scheduler progress or parameter finiteness failed')
 
         examples_seen += len(selected)
-        gate_norms, up_norms = _layer_norms(mods)
+        gate_norms, up_norms = _layer_norms(mods, gamma=hc_gamma, zeta=hc_zeta)
         la_map = {m.layer: m.rewire_log_alpha for m in mods}
 
         dyn_row = rd.step_dynamics_row(
@@ -426,6 +496,9 @@ def train_rewire(
             grad_norm_reads=grad_norm_reads,
             grad_norm_masks=grad_norm_masks,
             examples_seen=examples_seen,
+            beta=hc_beta,
+            gamma=hc_gamma,
+            zeta=hc_zeta,
         )
         dyn_row['mask_group_log'] = cache.step_logs[-1]
         rd.append_jsonl(steps_log_path, dyn_row, strict_monotonic_step=True)
@@ -441,7 +514,9 @@ def train_rewire(
         if (snap_steps_set is not None and step_idx in snap_steps_set) or (
             snap_steps_set is None and rd.should_snapshot(step_idx, interval=snapshot_interval)
         ):
-            rd.save_log_alpha_snapshot(out_path / 'masks' / 'trace' / f'{step_idx}.npz', la_map, step=step_idx)
+            rd.save_log_alpha_snapshot(
+                out_path / 'masks' / 'trace' / f'{step_idx}.npz', la_map, step=step_idx, gamma=hc_gamma, zeta=hc_zeta
+            )
         if (val_steps_set is not None and step_idx in val_steps_set) or (
             val_steps_set is None and rd.should_snapshot(step_idx, interval=snapshot_interval)
         ):
@@ -452,14 +527,16 @@ def train_rewire(
 
         # Hardening / freeze after freeze_step (D5: 960 is last continuous-mask step)
         if freeze_step is not None and step_idx == int(freeze_step):
-            pre_counts = hc.count_gates(la_map, frozen=False)
+            pre_counts = hc.count_gates(la_map, frozen=False, beta=hc_beta, gamma=hc_gamma, zeta=hc_zeta)
             val_before = dict(val_ce_fn(model, step_idx)) if val_ce_fn is not None else None
             for m in mods:
-                hc.freeze_log_alpha(m.rewire_log_alpha)
+                hc.freeze_log_alpha(m.rewire_log_alpha, gamma=hc_gamma, zeta=hc_zeta)
             cache.freeze()
             rm.set_gate(model, None)
             frozen = True
-            post_counts = hc.count_gates({m.layer: m.rewire_log_alpha for m in mods}, frozen=True)
+            post_counts = hc.count_gates(
+                {m.layer: m.rewire_log_alpha for m in mods}, frozen=True, beta=hc_beta, gamma=hc_gamma, zeta=hc_zeta
+            )
             val_after = dict(val_ce_fn(model, step_idx)) if val_ce_fn is not None else None
             hardening_record = {
                 'freeze_step': int(freeze_step),

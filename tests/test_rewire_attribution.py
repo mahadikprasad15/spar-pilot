@@ -246,11 +246,79 @@ def test_seal_writes_tables_draws_and_resolved_manifest(tmp_path):
 def test_cli_reads_survivor_exports_and_seals(tmp_path):
     root, _, _ = c_root(tmp_path)
     manifest = write_manifest(tmp_path, ra.c_production_entries(arms=('online-grpo',)), root)
-    (tmp_path / 'r1.json').write_text(json.dumps({'survivors': [{'layer': 0, 'neuron': 5}, {'layer': 3, 'neuron': 9}]}))
-    (tmp_path / 'r0.json').write_text(json.dumps([[0, 5]]))
+    r1_dir = tmp_path / 'r1_export'
+    r0_dir = tmp_path / 'r0_export'
+    au.seal_run(
+        r1_dir,
+        {
+            '1024.json': {
+                'schema': ra.SURVIVOR_EXPORT_SCHEMA,
+                'step': 1024,
+                'frozen': True,
+                'survivors_omitted': False,
+                'meta': {'arm': 'sparse-gold-sft-r1', 'rank': 1},
+                'survivors': [{'layer': 0, 'neuron': 5}, {'layer': 3, 'neuron': 9}],
+            }
+        },
+    )
+    au.seal_run(
+        r0_dir,
+        {
+            '1024.json': {
+                'schema': ra.SURVIVOR_EXPORT_SCHEMA,
+                'step': 1024,
+                'frozen': True,
+                'survivors_omitted': False,
+                'meta': {'arm': 'sparse-gold-sft-r0', 'rank': 0},
+                'survivors': [{'layer': 0, 'neuron': 5}],
+            }
+        },
+    )
     out = tmp_path / 'compare'
-    ra.main(['--manifest', str(manifest), '--survivors', 'r1', str(tmp_path / 'r1.json'),
-             '--survivors', 'r0', str(tmp_path / 'r0.json'), '--out', str(out), '--draws', '20'])
+    ra.main(['--manifest', str(manifest), '--survivors', 'r1', str(r1_dir / '1024.json'),
+             '--survivors', 'r0', str(r0_dir / '1024.json'), '--out', str(out), '--draws', '20'])
     result = json.loads((out / 'overlaps.json').read_text())
     assert [c['survivors']['in_universe'] for c in result['comparisons']['r1']] == [2]
     assert [c['survivors']['in_universe'] for c in result['comparisons']['r0']] == [1]
+    sealed_manifest = json.loads((out / 'manifest.json').read_text())
+    assert set(sealed_manifest['survivor_sources']) == {'r1', 'r0'}
+    assert sealed_manifest['survivor_sources']['r1']['sealed'] is True
+    assert sealed_manifest['survivor_sources']['r1']['step'] == 1024
+    assert len(sealed_manifest['survivor_sources']['r1']['sha256']) == 64
+
+
+def test_p2_2_survivor_loader_refuses_omitted_unfrozen_and_unsealed_exports(tmp_path):
+    root, _, _ = c_root(tmp_path)
+    manifest = write_manifest(tmp_path, ra.c_production_entries(arms=('online-grpo',)), root)
+
+    # 1. Step-0 export with survivors_omitted=True must ALWAYS be refused (even non-strict load_survivors)
+    omitted_dir = tmp_path / 'step0'
+    au.seal_run(
+        omitted_dir,
+        {'0.json': {'schema': ra.SURVIVOR_EXPORT_SCHEMA, 'step': 0, 'frozen': False, 'survivors_omitted': True, 'survivors': []}},
+    )
+    with pytest.raises(ra.ManifestError, match='survivors_omitted'):
+        ra.load_survivors(omitted_dir / '0.json')
+    with pytest.raises(ra.ManifestError, match='survivors_omitted'):
+        ra.main(['--manifest', str(manifest), '--survivors', 'r1', str(omitted_dir / '0.json'), '--out', str(tmp_path / 'o1')])
+
+    # 2. Pre-freeze export (e.g. step 960, frozen=False) must ALWAYS be refused
+    unfrozen_dir = tmp_path / 'step960'
+    au.seal_run(
+        unfrozen_dir,
+        {'960.json': {'schema': ra.SURVIVOR_EXPORT_SCHEMA, 'step': 960, 'frozen': False, 'survivors_omitted': False,
+                      'survivors': [{'layer': 0, 'neuron': 1}]}},
+    )
+    with pytest.raises(ra.ManifestError, match='unfrozen'):
+        ra.load_survivors(unfrozen_dir / '960.json')
+    with pytest.raises(ra.ManifestError, match='unfrozen'):
+        ra.main(['--manifest', str(manifest), '--survivors', 'r1', str(unfrozen_dir / '960.json'), '--out', str(tmp_path / 'o2')])
+
+    # 3. Unsealed export (no complete.json) must be refused by CLI / require_final_sealed=True
+    unsealed = tmp_path / 'loose.json'
+    unsealed.write_text(json.dumps({'schema': ra.SURVIVOR_EXPORT_SCHEMA, 'step': 1024, 'frozen': True,
+                                    'survivors_omitted': False, 'survivors': [{'layer': 0, 'neuron': 1}]}))
+    with pytest.raises(ra.ManifestError, match='sealed'):
+        ra.load_survivors_with_provenance(unsealed, require_final_sealed=True)
+    with pytest.raises(ra.ManifestError, match='sealed'):
+        ra.main(['--manifest', str(manifest), '--survivors', 'r1', str(unsealed), '--out', str(tmp_path / 'o3')])

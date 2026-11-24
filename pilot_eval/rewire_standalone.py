@@ -434,6 +434,69 @@ def flip_table(
     }
 
 
+def load_arm_artifacts(
+    arm_dir: str | Path,
+    plan: Mapping[str, Any],
+    *,
+    runtime_sha256: str | None = None,
+    code_commit: str | None = None,
+) -> dict[str, Any]:
+    """Read and hash-verify a completed production/rehearsal arm directory for standalone analysis (P2.2).
+
+    Restores ``arm_evidence`` if needed, runs ``rewire_checkpoint.verify_arm``, loads step/validation/settle
+    logs, ``hardening.json``, every ``masks/trace/*.npz`` snapshot, the final sealed binary survivor export,
+    and the final checkpoint tensors.
+    """
+    import json
+
+    from pilot_eval import rewire_chain as rc
+    from pilot_eval import rewire_checkpoint as rckpt
+    from pilot_eval import rewire_dynamics as rd
+
+    root = Path(arm_dir)
+    if (root / rc.ARM_EVIDENCE_DIR / 'complete.json').is_file():
+        rc.restore_arm_evidence(root)
+    arm_seal = rckpt.verify_arm(root, plan, runtime_sha256=runtime_sha256, code_commit=code_commit)
+    final_step = int(plan['checkpoints'][-1])
+    final_ckpt_seal, final_tensors = rckpt.load_tensors(
+        rckpt.checkpoint_dir(root, final_step),
+        plan,
+        runtime_sha256=arm_seal['runtime_sha256'],
+        code_commit=arm_seal['code_commit'],
+    )
+    final_mask_dir = root / 'masks' / f'step-{final_step}'
+    au.verify_run(final_mask_dir)
+    final_export = json.loads((final_mask_dir / f'{final_step}.json').read_text(encoding='utf-8'))
+    if final_export.get('frozen') is not True or final_export.get('survivors_omitted') is True:
+        raise ValueError(f'{final_mask_dir}: final survivor export must be frozen=True with full survivor records')
+
+    snapshots: dict[int, dict[str, Any]] = {}
+    trace_dir = root / 'masks' / 'trace'
+    if trace_dir.is_dir():
+        for npz in sorted(trace_dir.glob('*.npz')):
+            snap = rd.load_log_alpha_snapshot(npz)
+            snapshots[int(snap['step'])] = snap
+
+    hardening = (
+        json.loads((root / 'hardening.json').read_text(encoding='utf-8'))
+        if (root / 'hardening.json').is_file()
+        else None
+    )
+    return {
+        'arm': plan['arm'],
+        'rank': int(plan['rank']),
+        'arm_seal': arm_seal,
+        'final_checkpoint_seal': final_ckpt_seal,
+        'final_tensors': final_tensors,
+        'final_export': final_export,
+        'step_rows': rd.read_jsonl(root / 'logs' / 'steps.jsonl'),
+        'val_ce_rows': rd.read_jsonl(root / 'logs' / 'validation.jsonl'),
+        'settle_rows': rd.read_jsonl(root / 'logs' / 'settle.jsonl'),
+        'hardening': hardening,
+        'snapshots': snapshots,
+    }
+
+
 def seal_standalone_analysis(
     directory: str | Path,
     analysis: Mapping[str, Any],

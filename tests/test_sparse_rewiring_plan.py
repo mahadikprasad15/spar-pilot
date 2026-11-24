@@ -110,6 +110,22 @@ def test_mistyped_yaml_value_is_refused(tmp_path, line, typo):
     ('hardware.gpu', 'L4', 'hardware'),
     ('evaluation.cohort150.steps', [64, 512, 1024], 'cohort150'),
     ('checkpoints', [0, 8, 16, 32, 64, 128, 256, 512, 960, 1024], 'checkpoints'),
+    # P2.1: optimizer, hard-concrete, and seed production locks (D2-D4, D10)
+    ('optimizer.masks.lr', 0.05, 'optimizer.masks.lr'),
+    ('optimizer.reads.betas', [0.9, 0.999], 'optimizer.reads.betas'),
+    ('optimizer.masks.betas', [0.9, 0.999], 'optimizer.masks.betas'),
+    ('optimizer.reads.eps', 1e-7, 'optimizer.reads.eps'),
+    ('optimizer.masks.eps', 1e-7, 'optimizer.masks.eps'),
+    ('optimizer.reads.weight_decay', 0.01, 'optimizer.reads.weight_decay'),
+    ('optimizer.masks.weight_decay', 0.01, 'optimizer.masks.weight_decay'),
+    ('optimizer.reads.clip_norm', 0.5, 'optimizer.reads.clip_norm'),
+    ('hard_concrete.beta', 0.5, 'hard_concrete.beta'),
+    ('hard_concrete.gamma', -0.2, 'hard_concrete.gamma'),
+    ('hard_concrete.zeta', 1.2, 'hard_concrete.zeta'),
+    ('hard_concrete.log_alpha_init', 0.0, 'hard_concrete.log_alpha_init'),
+    ('seeds.data_order_base', 99, 'seeds.data_order_base'),
+    ('seeds.read_init_base', 99, 'seeds.read_init_base'),
+    ('seeds.mask_noise', 7, 'seeds.mask_noise'),
 ])
 def test_production_holds_the_decided_values(dotted, value, match):
     with pytest.raises(LaunchRefused, match=match):
@@ -229,7 +245,7 @@ def test_plan_round_trip_and_refusals(tmp_path):
     assert sp.load_plan(path, record, 'sparse-gold-sft-r1')['plan_sha256'] == plan['plan_sha256']
     with pytest.raises(LaunchRefused, match='another arm'):
         sp.load_plan(path, record, 'sparse-gold-sft-r0')
-    other = sp.validate(_record(**{'seeds.mask_noise': 7}), code_commit='c0ffee')
+    other = sp.validate(_record(mode='rehearsal', label='rehearsal-other', **{'seeds.mask_noise': 7}), code_commit='c0ffee')
     with pytest.raises(LaunchRefused, match='another arm or launch record'):
         sp.load_plan(path, other, 'sparse-gold-sft-r1')
     tampered = json.loads(path.read_text())
