@@ -142,6 +142,8 @@ def _build_validated_record_and_plans(
     raw['evaluation']['eos_token_id'] = 2
     raw['evaluation']['batch_size'] = 2
     raw['evaluation']['cohort150']['steps'] = [3]
+    raw['qualification']['disposable_steps'] = 2
+    raw['qualification']['greedy_questions'] = 2
 
     draft_path = root / 'draft.yaml'
     draft_path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding='utf-8')

@@ -351,6 +351,11 @@ def run_in_child_process(
         if not readback or problems:
             raise RuntimeError('child process precision check failed: ' + '; '.join(problems or ['empty readback']))
     res = envelope['result']
+    if require_ieee and isinstance(res, Mapping) and res.get('precision_readback') is not None:
+        # Read again after the work: a library call during the run must not have changed the precision.
+        late = _precision_problems(res['precision_readback'])
+        if late:
+            raise RuntimeError('child process precision changed during the run: ' + '; '.join(late))
     if expected_runtime_sha256 is not None:
         child_rt = res.get('runtime_sha256') if isinstance(res, Mapping) else None
         if child_rt != expected_runtime_sha256:
@@ -363,7 +368,7 @@ def run_in_child_process(
 def _gold_reference_child_worker(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Child-process entrypoint: build a ``TransformersBackend`` (sets IEEE), evaluate untuned (step 0)
     and ``gold-sft`` (step 64) on validation CE + greedy validation, and seal outputs."""
-    from pilot_eval import c_attribution_backend as cab
+    from pilot_eval.rewire_chain import RewireBackend
 
     record = payload['record']
     volume_root = payload['volume_root']
@@ -375,10 +380,9 @@ def _gold_reference_child_worker(payload: Mapping[str, Any]) -> dict[str, Any]:
     cap = int(payload['cap'])
     batch_size = int(payload['batch_size'])
 
-    adapted = dict(record)
-    if 'generation' not in adapted and 'evaluation' in adapted:
-        adapted['generation'] = {'eos_token_id': int(adapted['evaluation']['eos_token_id'])}
-    backend = cab.TransformersBackend(adapted, volume_root, device=device)
+    # The same backend class as the parent, so the runtime fingerprints compare like for like and ``load('gold-sft')``
+    # resolves the bundled gold adapter.
+    backend = RewireBackend(record, volume_root, device=device)
     probs = backend.precision_problems()
     if probs:
         raise RuntimeError('; '.join(probs))

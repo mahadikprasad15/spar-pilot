@@ -37,6 +37,15 @@ from pilot_eval.workflow import _hash
 REWIRE_SUBTREE: str = f'{cc.SUBTREE}/sparse-rewiring'
 PREFLIGHT_DIR: str = f'{REWIRE_SUBTREE}/preflight'
 REFERENCES_DIR: str = f'{REWIRE_SUBTREE}/references'
+# The gold-SFT step-64 adapter in the input bundle (``rewire_bundle``): ``TransformersBackend.load('gold-sft')``
+# resolves it through ``inputs.sources``, which the sparse launch record does not carry.
+GOLD_ADAPTER_ROLE: str = 'adapter:gold-sft:64'
+
+
+def chain_run_id(record: Mapping[str, Any]) -> str:
+    """The chain's volume run ID (``$VOL/c-attribution/<run id>``): the label, namespaced so a sparse rehearsal never
+    shares a run directory with a C-attribution one."""
+    return f"sparse-rewiring-{record['label']}"
 
 
 class RewireBackend(cab.TransformersBackend):
@@ -47,6 +56,9 @@ class RewireBackend(cab.TransformersBackend):
         adapted = dict(record)
         if 'generation' not in adapted and 'evaluation' in adapted:
             adapted['generation'] = {'eos_token_id': int(adapted['evaluation']['eos_token_id'])}
+        inputs = dict(adapted['inputs'])
+        inputs.setdefault('sources', {'gold-sft': {'adapter_role': GOLD_ADAPTER_ROLE}})
+        adapted['inputs'] = inputs
         super().__init__(adapted, volume_root, device=device, probes=probes, repo_root=repo_root)
 
     def runtime(self) -> dict[str, Any]:
@@ -108,8 +120,7 @@ def _stage_order(arms: Sequence[str]) -> list[str]:
     return order
 
 
-def _default_qualification_stub(_ctx: Any) -> dict[str, Any]:
-    raise NotImplementedError('ticket 15 GPU qualification must be supplied before running production training')
+QUALIFICATION_DIR: str = f'{REWIRE_SUBTREE}/qualification'
 
 
 def build_rewire_stages(
@@ -124,7 +135,7 @@ def build_rewire_stages(
     cohort150_questions: Mapping[str, Mapping[str, Any]] | None = None,
     cohort150_question_ids: Sequence[str] | None = None,
     arm_order: Sequence[str] | None = None,
-    expected_base_sha256: str | None = None,
+    expected_base_sha256: str | Callable[[], str] | None = None,
     execution_kind: str = 'real-cuda',
     model_context_limit: int = 32768,
     gradient_checkpointing: bool = True,
@@ -158,11 +169,13 @@ def build_rewire_stages(
         runtime_info.clear()
         runtime_info.update(rt_info)
         rt_sha = _hash(rt_info)
-        ctx.chain.identity = {
+        identity = {
             'runtime_sha256': rt_sha,
             'code_commit': code_sha,
             'model_files': model_files,
+            'bundle_sha256': backend.bundle.get('sha256'),
         }
+        ctx.chain.identity = identity
         receipt = {
             'runtime': rt_info,
             'runtime_sha256': rt_sha,
@@ -174,7 +187,8 @@ def build_rewire_stages(
             'code_commit': code_sha,
         }
         au.seal_run(ctx.chain.local_root / PREFLIGHT_DIR, {'preflight.json': receipt})
-        return {'outputs': [PREFLIGHT_DIR], 'runtime_sha256': rt_sha}
+        # ``identity`` is what qualification is valid for: the chain refuses a resume under another one.
+        return {'outputs': [PREFLIGHT_DIR], 'runtime_sha256': rt_sha, 'identity': identity}
 
     def stage_references(ctx: Any) -> dict[str, Any]:
         if references_fn is not None:
@@ -193,6 +207,32 @@ def build_rewire_stages(
             batch_size=int(record['evaluation']['batch_size']),
         )
         return {'outputs': [f'{REFERENCES_DIR}/summary'], 'references': res['references']}
+
+    def _expected_base() -> str | None:
+        return expected_base_sha256() if callable(expected_base_sha256) else expected_base_sha256
+
+    def run_training(model: torch.nn.Module, p: Mapping[str, Any], sink: Any, out_dir: Path) -> dict[str, Any]:
+        """The real loop with this record's settings: the scientific arms and qualification's disposable run."""
+        return rt.train_rewire(
+            model,
+            training_rows,
+            out_dir,
+            plan=p,
+            sink=sink,
+            mask_lr=float(record['optimizer']['masks']['lr']),
+            betas=tuple(float(b) for b in record['optimizer']['reads']['betas']),
+            eps=float(record['optimizer']['reads']['eps']),
+            max_grad_norm=float(record['optimizer']['reads']['clip_norm']),
+            snapshot_interval=int(record['cadences']['gate_snapshot_every']),
+            settle_start=int(record['cadences']['settle']['first']),
+            settle_interval=int(record['cadences']['settle']['every']),
+            gradient_checkpointing=gradient_checkpointing,
+            model_context_limit=int(model_context_limit),
+            pad_token_id=backend.pad_token_id,
+            expected_base_sha256=_expected_base(),
+            execution_kind=execution_kind,
+            val_ce_fn=lambda m, _step: reval.evaluate_validation_ce(m, val_items),
+        )
 
     def _make_train_stage(arm: str) -> Callable[[Any], dict[str, Any]]:
         def stage_train(ctx: Any) -> dict[str, Any]:
@@ -213,26 +253,7 @@ def build_rewire_stages(
             def _train_fn(model: torch.nn.Module, p: Mapping[str, Any], sink: Any) -> None:
                 try:
                     backend.reset_peak()
-                    summary = rt.train_rewire(
-                        model,
-                        training_rows,
-                        arm_dir,
-                        plan=p,
-                        sink=sink,
-                        mask_lr=float(record['optimizer']['masks']['lr']),
-                        betas=tuple(float(b) for b in record['optimizer']['reads']['betas']),
-                        eps=float(record['optimizer']['reads']['eps']),
-                        max_grad_norm=float(record['optimizer']['reads']['clip_norm']),
-                        snapshot_interval=int(record['cadences']['gate_snapshot_every']),
-                        settle_start=int(record['cadences']['settle']['first']),
-                        settle_interval=int(record['cadences']['settle']['every']),
-                        gradient_checkpointing=gradient_checkpointing,
-                        model_context_limit=int(model_context_limit),
-                        pad_token_id=backend.pad_token_id,
-                        expected_base_sha256=expected_base_sha256,
-                        execution_kind=execution_kind,
-                        val_ce_fn=lambda m, _step: reval.evaluate_validation_ce(m, val_items),
-                    )
+                    summary = run_training(model, p, sink, arm_dir)
                     summary['peak_memory_bytes'] = backend.peak_memory()
                     train_holder['summary'] = summary
                 finally:
@@ -341,9 +362,17 @@ def build_rewire_stages(
 
         return stage_eval
 
+    if qualification_fn is None:
+        from pilot_eval.rewire_qualification import Qualification
+
+        qualification_fn = Qualification(
+            record=record, backend=backend, arm_plans=arm_plans, training_rows=training_rows, val_items=val_items,
+            val_questions=val_questions, val_question_ids=val_question_ids, arm_order=arms, train_arm=run_training,
+            expected_base_sha256=_expected_base, runtime_sha256=lambda: _hash(runtime_info or backend.runtime()),
+            code_commit=code_sha, out_rel=QUALIFICATION_DIR, gradient_checkpointing=gradient_checkpointing)
     handlers: dict[str, Callable[[Any], dict[str, Any]]] = {
         'preflight': stage_preflight,
-        'qualification': qualification_fn or _default_qualification_stub,
+        'qualification': qualification_fn,
         'references': stage_references,
     }
     for arm in arms:
@@ -366,7 +395,7 @@ def build_rewire_chain(
     cohort150_questions: Mapping[str, Mapping[str, Any]] | None = None,
     cohort150_question_ids: Sequence[str] | None = None,
     arm_order: Sequence[str] | None = None,
-    expected_base_sha256: str | None = None,
+    expected_base_sha256: str | Callable[[], str] | None = None,
     execution_kind: str = 'real-cuda',
     model_context_limit: int = 32768,
     gradient_checkpointing: bool = True,
@@ -397,7 +426,7 @@ def build_rewire_chain(
         references_fn=references_fn,
     )
     chain_record = dict(record)
-    chain_record.setdefault('run_id', str(record['label']))
+    chain_record.setdefault('run_id', chain_run_id(record))
     kwargs: dict[str, Any] = dict(
         local_root=local_root,
         volume=volume,

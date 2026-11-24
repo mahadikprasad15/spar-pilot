@@ -108,6 +108,14 @@ evaluation:
   scorer: flexible-v3                    # [spec]
   batch_size: 16                         # [C] qualified for C greedy; re-qualified in ticket 15
 
+qualification:                           # ticket 15 (pilot_eval.rewire_qualification); automatic sign-off rule
+  memory_fraction: 0.80                  # [C production] peak <= 80% of device memory, per rank, real longest row
+  disposable_steps: 4                    # [ops] few-step run under a separate name, run twice (restart reproduces)
+  greedy_questions: 16                   # [ops] one timed greedy validation pass on the first 16 questions
+  cached_vs_forced_rows: 8               # [ops] validation rows spread over length, cached decode vs forcing
+  cached_vs_forced_abs_max: 1.0e-3       # [C production] per-token log-prob tolerance
+  recompute_rel_max: 1.0e-5              # [spec] shared-mask gradients with vs without checkpoint recompute
+
 decisions:                               # one line per decision (decision-log.md); "[proposed]" blocks sealing
   D1: '[user 2026-11-23] read LR 3e-3 rank 1 (Max rank 4), 3e-4 rank 0 (RANK0.md)'
   D2: '[user 2026-11-23] mask group: AdamW lr 0.1, wd 0, shared LambdaLR, logα init 1.0'

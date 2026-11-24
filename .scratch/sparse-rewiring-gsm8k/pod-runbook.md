@@ -1,0 +1,117 @@
+# Sparse rewiring: Pod rehearsal runbook (ticket 15)
+
+One A100 Pod, one tmux window, one launch. The chain runs **preflight → qualification (automatic sign-off) →
+gold references → rank 1 (16 steps, evaluated at 0, 12, 16) → rank 0 (same) → verified volume copy → HF export →
+Pod stop**. It is a machinery and measurement run: the label is `rehearsal-pod-1`, its numbers are not results, and
+cohort150 is never touched (the launcher refuses it). If any qualification check fails, the chain stops before the
+references and before any training, copies what it has, and stops the Pod. That is a finding to send back, not
+something to work around.
+
+Record: `.scratch/sparse-rewiring-gsm8k/launch-record-rehearsal.yaml` (the production draft with only the run
+length, checkpoints, cadences, label and run IDs changed; `tests/test_rewire_launch.py` checks that).
+
+## 0. Once, on your Mac (the machine that holds the artifact root)
+
+The bundle needs gold's plan and run files, the gold step-64 adapter, ticket 04's validation set, the tokenizer files
+and the base model, all under one artifact root. Ticket 01 found the gold files in `~/spar/pilot1/artifacts`.
+
+```bash
+cd ~/spar-pilot && git fetch && git checkout claude/project-thread-7tozx7 && git pull
+ROOT=~/spar/pilot1/artifacts
+# ticket 04's frozen validation set (committed by ticket 01 in PR #18 under the repo's artifacts/):
+mkdir -p $ROOT/validation && cp -R artifacts/validation/sparse-rewiring-ticket04-v1 $ROOT/validation/
+# the pinned tokenizer files, generation config and base model, if $ROOT/inputs/models/<rev>/ is missing them:
+REV=989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+python -c "from huggingface_hub import snapshot_download as d; d('Qwen/Qwen2.5-1.5B-Instruct', revision='$REV', \
+  allow_patterns=['config.json','model.safetensors','generation_config.json','tokenizer.json', \
+  'tokenizer_config.json','vocab.json','merges.txt'], local_dir='$ROOT/inputs/models/$REV')"
+# build (hashes every file against ticket 01's values and the base model against HF's pins), upload with
+# readback to the private dataset, write the receipt:
+python -m pilot_eval.rewire_bundle export --artifact-root $ROOT --label rehearsal-pod-1 \
+  --receipt .scratch/sparse-rewiring-gsm8k/bundle-receipt-rehearsal-pod-1.json
+git add .scratch/sparse-rewiring-gsm8k/bundle-receipt-rehearsal-pod-1.json
+git commit -m "Sparse rewiring: rehearsal input bundle receipt" && git push
+```
+
+`export` refuses a missing file, a file whose hash differs from ticket 01's, a validation set that is not ticket 04's
+(`ids_sha256 5ea47bc5…`), uncommitted `catalog/` changes, and an existing receipt.
+
+## 1. Pod
+
+- 1× **A100-SXM4-80GB**, Global Volume **sl-0** attached (it holds `/workspace/neuron-audit/.neuron-audit-volume.json`).
+- **120 GB container disk** (the default 50 GB is too small; preflight refuses it).
+- Pod secret **`HF_TOKEN`** with write access to `Prasadmahadik/spar-sampling-sft-artifacts`. Never echo it.
+
+## 2. Environment
+
+```bash
+export REPO=/root/spar-pilot WORK=/root/sparse VOL=/workspace/neuron-audit PY=/root/venv/bin/python
+tmux new -s sparse
+git clone --branch claude/project-thread-7tozx7 https://github.com/mahadikprasad15/spar-pilot.git $REPO
+python3 -m venv /root/venv
+$PY -m pip install -q torch==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+$PY -m pip install -q transformers==4.57.6 peft==0.18.0 accelerate==1.12.0 huggingface-hub==0.36.0 \
+    tokenizers==0.22.1 safetensors pyyaml pyarrow jinja2 nvidia-ml-py numpy
+export HF_HOME=/root/hf-home PYTHONUNBUFFERED=1 PYTHONPATH=$REPO CUBLAS_WORKSPACE_CONFIG=:4096:8
+source /root/venv/bin/activate && cd $REPO && mkdir -p $WORK
+$PY -m pilot_eval.neuron_audit_pod facts --volume_dir $VOL --work $WORK
+```
+
+Check: the device is an A100-80GB, `$VOL` is on a different mount from the container disk, no `disk_problems`.
+
+## 3. Inputs (the only online steps)
+
+```bash
+HF_HUB_OFFLINE=0 $PY -m pilot_eval.rewire_bundle restore \
+    --receipt .scratch/sparse-rewiring-gsm8k/bundle-receipt-rehearsal-pod-1.json --clean-root $WORK/inputs
+#   -> prints verified_files and bundle_manifest; keep the bundle_manifest path for step 4
+HF_HUB_OFFLINE=0 $PY -c "from huggingface_hub import snapshot_download as d; d('Qwen/Qwen2.5-1.5B-Instruct', \
+    revision='989aa7980e4cf806f80c7fef2b1adb7bc71aa306', allow_patterns=['config.json', 'model.safetensors'], \
+    local_dir='$WORK/model')"
+```
+
+## 4. Seal the record
+
+```bash
+$PY -m pilot_eval.rewire_launch seal --draft .scratch/sparse-rewiring-gsm8k/launch-record-rehearsal.yaml \
+    --out $WORK/launch_record.json --artifact-root $WORK/inputs --bundle <bundle_manifest from step 3> \
+    --model-dir $WORK/model --work-dir $WORK
+```
+
+`seal` fills in the code commit of this checkout and the Pod ID (`RUNPOD_POD_ID`) and refuses anything empty or
+mistyped.
+
+## 5. Launch
+
+```bash
+export HF_HUB_OFFLINE=1
+PY=$PY bash scripts/rewire_launch.sh $WORK/launch_record.json $WORK/local $VOL 2>&1 | tee $WORK/launch-1.console.log
+```
+
+The launcher takes a lock, runs `precheck`, starts the chain and the independent watchdog (no time caps: it acts
+only if the chain dies without finishing, then copies sealed work and stops the Pod). Progress is in
+`$VOL/c-attribution/sparse-rewiring-rehearsal-pod-1/c-attribution/chain/progress.json`.
+
+- **If it prints `NO RUN STARTED`**, nothing is running and the Pod is still billing: fix the named problem and
+  relaunch, or `runpodctl stop pod $RUNPOD_POD_ID`.
+- **If it prints `STOP WITHHELD`**, no backup holds all the work, so the Pod was left running. The reason and the
+  next step are in `chain/stop_withheld.json`.
+- **A relaunch on the same Pod** (after a crash) re-verifies and skips completed stages; an interrupted arm
+  restarts from step 0 (D24). Wait until `precheck` prints ok (a dead writer's heartbeat must be 900 s old).
+
+## 6. Afterwards (the Pod has stopped itself)
+
+Results are on sl-0 under `$VOL/c-attribution/sparse-rewiring-rehearsal-pod-1/` and in the HF dataset. On a cheap
+CPU Pod with sl-0 attached (or from the HF export), send back:
+
+```bash
+R=$VOL/c-attribution/sparse-rewiring-rehearsal-pod-1/c-attribution
+cat $R/chain/stop_record.json $R/chain/last_attempt_end.json
+cat $R/summaries/attempt-001/final/run_summary.md
+cat $R/sparse-rewiring/qualification/summary/qualification.json | head -c 30000
+cat $R/sparse-rewiring/references/summary/references.json
+```
+
+`qualification.json` holds every check and the measurements that replace the arithmetic estimates in
+`decision-log.md`: peak memory per rank on the longest row, seconds per step, one validation CE pass, one 16-question
+greedy pass, and the extrapolated production hours.

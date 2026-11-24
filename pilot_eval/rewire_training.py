@@ -135,7 +135,9 @@ def train_rewire(
         raise ValueError('training rows must not be empty')
     if plan is not None:
         resolved_rank = int(plan['rank']) if rank is None else int(rank)
-        resolved_read_lr = float(plan['read_lr']) if read_lr is None else float(read_lr)
+        # PR #6's frozen plan carries the arm's read LR in ``optimizer.reads.lr``; a hand-built plan may say ``read_lr``.
+        plan_lr = plan['read_lr'] if 'read_lr' in plan else plan['optimizer']['reads']['lr']
+        resolved_read_lr = float(plan_lr) if read_lr is None else float(read_lr)
         plan_steps = list(plan['steps'])
         batches = [list(s['ids']) for s in plan_steps]
         resolved_ckpts = list(plan['checkpoints']) if checkpoint_steps is None else list(checkpoint_steps)
