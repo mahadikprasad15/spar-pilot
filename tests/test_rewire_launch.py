@@ -34,7 +34,6 @@ from pilot_eval import rewire_chain as rc
 from pilot_eval import rewire_launch as rl
 from pilot_eval import rewire_qualification as rq
 from pilot_eval import sparse_rewiring_plan as sp
-from pilot_eval.attribution_chain import LaunchRefused
 
 FIXTURE_CONFIG = Path(__file__).resolve().parent / 'fixtures' / 'rewire' / 'config.json'
 REHEARSAL_YAML = Path(__file__).resolve().parents[1] / '.scratch' / 'sparse-rewiring-gsm8k' / 'launch-record-rehearsal.yaml'
@@ -91,7 +90,8 @@ def _world(root: Path):
     files = {
         rb.ROLES['gold:sft-config']: {'training_items_path': rb.ROLES['gold:training-items']},
         rb.ROLES['gold:training-items']: rows,
-        rb.ROLES['gold:evaluation-items']: [],
+        rb.ROLES['gold:evaluation-items']: [dict(id=f'gsm8k:test:{i}', source_index=i, prompt=f'tok5 tok6 tok{20 + i % 40}',
+                                                 gold=f'#### {i % 10}') for i in range(rb.COHORT150_SIZE)],
         rb.ROLES['gold:order']: order,
         rb.ROLES['validation:items']: val,
         rb.ROLES['validation:exclusions']: {'ids': [v['id'] for v in val],
@@ -173,7 +173,7 @@ class TestRehearsalLauncher(unittest.TestCase):
             p.stop()
         self.tmp.cleanup()
 
-    def _chain(self, record, *, peak=1):
+    def _chain(self, record, *, peak=1, stop_pod=True):
         def exporter(local_root, **kwargs):
             self.exports.append(kwargs)
             return {'readback_verified': True, 'completeness': 'complete'}
@@ -184,7 +184,7 @@ class TestRehearsalLauncher(unittest.TestCase):
 
         backend = rc.RewireBackend(record, self.root / 'volume', device='cpu', probes=_probes(self.w, record, peak=peak))
         return rl.build(record, self.root / 'local', self.root / 'volume', backend=backend, exporter=exporter,
-                        runner=runner, volume_identity='vol-test-01', current_pod='pod-cpu-1')
+                        runner=runner, volume_identity='vol-test-01', current_pod='pod-cpu-1', stop_pod=stop_pod)
 
     def test_rehearsal_runs_preflight_qualification_references_both_arms_and_stops(self):
         record = _record(self.root, self.w)
@@ -225,10 +225,40 @@ class TestRehearsalLauncher(unittest.TestCase):
         self.assertNotIn('references', summary['stages'])
         self.assertFalse(any(k.startswith('train:') for k in summary['stages']))
 
-    def test_production_record_is_refused_by_the_rehearsal_launcher(self):
+    def test_production_scores_cohort150_at_the_final_step_only_and_keeps_the_pod(self):
+        # The tiny record with its mode switched after sealing (a real production record is 1,024 steps, which
+        # ``validate`` enforces); cohort150 is gold's frozen file, checked against ticket 01's hash.
         record = dict(_record(self.root, self.w), mode='production')
-        with self.assertRaises(LaunchRefused):
-            rl.build(record, self.root / 'local', self.root / 'volume')
+        bundle = json.loads(Path(record['inputs']['bundle']).read_text())
+        cohort = rb.path_of(bundle, self.w['art'], 'gold:evaluation-items')
+        with self.assertRaises(cb.BundleError):   # not ticket 01's bytes
+            rl.load_inputs(record)
+        self.patches.append(mock.patch.dict(rb.EXPECTED, {'gold:evaluation-items': cb.sha256(cohort)}))
+        self.patches[-1].start()
+        (self.root / 'volume').mkdir()
+        summary = self._chain(record, stop_pod=False).run()
+        self.assertEqual(summary['state'], 'complete', summary.get('failures'))
+        final = str(record['training']['steps'])
+        for arm in rl.ARM_ORDER:
+            ev = self.root / 'local' / rc.REWIRE_SUBTREE / 'runs' / record['arms'][arm]['run_id'] / 'eval'
+            self.assertEqual(sorted(p.parent.name for p in ev.glob('*/greedy-cohort150')), [final])
+            scores = json.loads((ev / final / 'greedy-cohort150' / 'scores.json').read_text())
+            self.assertTrue(scores['exploratory'])
+        responses = (ev / final / 'greedy-cohort150' / 'responses.jsonl').read_text().splitlines()
+        self.assertEqual(len(responses), rb.COHORT150_SIZE)
+        self.assertEqual(self.stops, [])   # no --stop-pod: backed up, verified, Pod left running
+        self.assertTrue(summary['stop']['kept'] and not summary['stop']['requested'])
+        self.assertIn('runpodctl stop pod pod-cpu-1', summary['stop']['reason'])
+
+    def test_cohort150_must_be_150_gold_test_items(self):
+        record = _record(self.root, self.w)
+        bundle = json.loads(Path(record['inputs']['bundle']).read_text())
+        cohort = rb.path_of(bundle, self.w['art'], 'gold:evaluation-items')
+        items = json.loads(cohort.read_text())
+        cohort.write_text(json.dumps(items[:149]))
+        with mock.patch.dict(rb.EXPECTED, {'gold:evaluation-items': cb.sha256(cohort)}):
+            with self.assertRaises(cb.BundleError):
+                rb.check_cohort150(bundle, self.w['art'])
 
     def test_disposable_plan_keeps_the_frozen_steps_under_its_own_name(self):
         record = _record(self.root, self.w)
@@ -256,13 +286,16 @@ class TestRehearsalLauncher(unittest.TestCase):
 
 class TestRecordFiles(unittest.TestCase):
     def test_rehearsal_and_production_drafts_have_no_unresolved_leaves(self):
-        for name in ('launch-record-rehearsal.yaml', 'launch-record-draft.yaml'):
-            self.assertEqual(sp.draft_problems(REHEARSAL_YAML.with_name(name)), [], name)
+        self.assertEqual(sp.draft_problems(REHEARSAL_YAML), [])
+        # production waits only on D1's rank-0 LR (back to 3e-4, 2026-11-25) until the researcher signs it
+        self.assertEqual([p.split(' ')[0] for p in sp.draft_problems(REHEARSAL_YAML.with_name('launch-record-draft.yaml'))],
+                         ['decisions.D1'])
 
     def test_rehearsal_draft_differs_from_production_only_in_length_and_names(self):
         reh = yaml.safe_load(REHEARSAL_YAML.read_text())
         prod = yaml.safe_load(REHEARSAL_YAML.with_name('launch-record-draft.yaml').read_text())
-        differing = {k for k in prod if prod[k] != reh[k]}
+        self.assertEqual({k for k in prod['decisions'] if prod['decisions'][k] != reh['decisions'][k]}, {'D1'})
+        differing = {k for k in prod if k != 'decisions' and prod[k] != reh[k]}
         self.assertEqual(differing, {'mode', 'label', 'arms', 'data', 'training', 'checkpoints', 'cadences',
                                      'evaluation'})
         for arm in prod['arms']:

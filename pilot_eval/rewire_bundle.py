@@ -83,6 +83,24 @@ def check_validation(bundle, artifact_root, *, questions):
     return items
 
 
+COHORT150_SIZE = 150
+
+
+def check_cohort150(bundle, artifact_root):
+    """Gold's frozen cohort150 (``evaluation.items.json``): ticket 01's file hash and 150 ``gsm8k:test`` items, each
+    with its rendered prompt and gold answer. Production only (D12: evaluated at the final step)."""
+    path = path_of(bundle, artifact_root, 'gold:evaluation-items')
+    if cb.sha256(path) != EXPECTED['gold:evaluation-items']:
+        raise cb.BundleError("the bundled cohort150 is not ticket 01's evaluation.items.json")
+    items = json.loads(path.read_text())
+    ids = [i.get('id') for i in items]
+    if (len(items) != COHORT150_SIZE or len(set(ids)) != COHORT150_SIZE
+            or not all(str(q).startswith('gsm8k:test:') for q in ids)
+            or not all(isinstance(i.get('prompt'), str) and i['prompt'] and i.get('gold') for i in items)):
+        raise cb.BundleError('the bundled cohort150 is not 150 distinct gsm8k:test items with prompt and gold')
+    return items
+
+
 def main(argv=None, *, client=None):
     parser = argparse.ArgumentParser(description='Sparse rewiring input bundle')
     sub = parser.add_subparsers(dest='command', required=True)

@@ -405,6 +405,7 @@ def build_rewire_chain(
     runner: Any = None,
     volume_identity: str | None = None,
     current_pod: str | None = None,
+    stop_pod: bool = False,
 ) -> cc.Chain:
     """Create a ``c_attribution_chain.Chain`` configured for the sparse-rewiring two-arm run."""
     stage_order, stages = build_rewire_stages(
@@ -434,6 +435,7 @@ def build_rewire_chain(
         volume_identity=volume_identity or record['volume_identity'],
         current_pod=current_pod if current_pod is not None else record['pod_id'],
         stage_order=stage_order,
+        stop_pod=stop_pod,
     )
     if exporter is not None:
         kwargs['exporter'] = exporter

@@ -343,8 +343,11 @@ class Context:
 class Chain:
     def __init__(self, record, *, local_root, volume, stages, exporter=None, runner=subprocess.run,
                  volume_identity=None, host=None, copier=None, current_pod=None,
-                 stage_order=None, subtree=None):
+                 stage_order=None, subtree=None, stop_pod=True):
         self.record, self.stages = record, stages
+        # False: teardown never requests the stop, even after a complete verified backup (the sparse launcher's
+        # default since 2026-11-25: the researcher stops the Pod himself unless he passes --stop-pod).
+        self.stop_pod = bool(stop_pod)
         self.stage_order = list(STAGES) if stage_order is None else list(stage_order)
         self.subtree = SUBTREE if subtree is None else subtree
         self.record_sha256 = record_sha256(record)
@@ -669,7 +672,7 @@ class Chain:
             # A real stop ends this container inside the stop call (rehearsal, 2026-11-22): every closing record
             # (stop record, attempt end, released marker, done) is written first, then the stop is requested.
             (self.volume_root / STOP_WITHHELD_FILE).unlink(missing_ok=True)
-            commands = [' '.join(c) for c in stop_commands(self.record)] if self.pod_confirmed else []
+            commands = [' '.join(c) for c in stop_commands(self.record)] if self.pod_confirmed and self.stop_pod else []
             self._close(summary, steps + ['stop_requesting'], safe,
                         stop=dict(requested='in progress', commands=commands, externally_verified=False),
                         outcome='requesting')
@@ -734,6 +737,10 @@ class Chain:
         return 'ok', box.get('value')
 
     def _stop(self):
+        if not self.stop_pod:
+            return dict(requested=False, kept=True, attempts=[],
+                        reason='launched without --stop-pod: the Pod is left running. Stop it by hand: '
+                               f"{' '.join(stop_commands(self.record)[0])}")
         if not self.pod_confirmed:  # the record's Pod may not be this one: never stop it (review 06-10, P1)
             return dict(requested=False, reason="the launch record's Pod was not confirmed as this Pod; nothing "
                                                 'was stopped. Stop this Pod by hand.', attempts=[])

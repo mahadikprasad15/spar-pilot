@@ -343,6 +343,7 @@ class TestRewirePodChain(unittest.TestCase):
                     references_fn=_refs_stub,
                     exporter=_stub_exporter,
                     runner=_stub_runner,
+                    stop_pod=True,
                 )
                 summary2 = chain2.run()
 

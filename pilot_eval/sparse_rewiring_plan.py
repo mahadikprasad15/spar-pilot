@@ -82,7 +82,7 @@ REQUIRED_DECISIONS = ('D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10
 PRODUCTION = {
     'hardware': {'gpu': 'A100-80GB', 'count': 1},                                     # D18
     'arms': {'sparse-gold-sft-r1': {'rank': 1, 'read_lr': 3e-3},                      # D1, D13
-             'sparse-gold-sft-r0': {'rank': 0, 'read_lr': 3e-5}},   # D1 2026-11-25
+             'sparse-gold-sft-r0': {'rank': 0, 'read_lr': 3e-4}},   # D1 (256-step probe, 2026-11-25)
     'data.examples_per_step': 8, 'data.microbatch': 1, 'data.examples_per_mask': 4,  # gold, D14
     'data.training_examples': 512, 'data.gold_order_steps': 64,                       # gold, D7
     'training.steps': 1024, 'training.warmup_steps': 20, 'training.freeze_after_step': 960,   # D5

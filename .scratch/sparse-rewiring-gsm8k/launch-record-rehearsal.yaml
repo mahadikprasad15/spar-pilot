@@ -26,7 +26,7 @@ hardware: {gpu: A100-80GB, count: 1}     # [user 2026-11-23] D18
 
 arms:                                    # [user 2026-11-23] D13 rank 1 and rank 0; names [proposed]
   sparse-gold-sft-r1: {run_id: sparse-gold-sft-r1-rehearsal-1, rank: 1, read_lr: 3.0e-3}   # D1 [user 2026-11-23]: Max's rank-4 LR
-  sparse-gold-sft-r0: {run_id: sparse-gold-sft-r0-rehearsal-1, rank: 0, read_lr: 3.0e-5}   # D1 [user 2026-11-25]: rehearsal LR probe (3e-4 collapsed)
+  sparse-gold-sft-r0: {run_id: sparse-gold-sft-r0-rehearsal-1, rank: 0, read_lr: 3.0e-4}   # D1: mirrors the production draft
 
 model: {layers: 28, hidden: 1536, intermediate: 8960, parts: [gate, up], positions: all-unpadded}
                                          # [spec] Qwen2.5-1.5B-Instruct; gate+up reads [user 2026-11-22]
@@ -105,7 +105,7 @@ qualification:                           # ticket 15 (pilot_eval.rewire_qualific
   recompute_rel_max: 1.0e-5              # [spec] shared-mask gradients with vs without checkpoint recompute
 
 decisions:                               # one line per decision (decision-log.md); "[proposed]" blocks sealing
-  D1: '[user 2026-11-23] read LR 3e-3 rank 1 (Max rank 4); [user 2026-11-25] 3e-5 rank 0 (rehearsal LR probe; 3e-4 collapsed)'
+  D1: '[user 2026-11-23] read LR 3e-3 rank 1 (Max rank 4), 3e-4 rank 0; rehearsal copy of the production draft (its D1 awaits re-signing, 2026-11-25)'
   D2: '[user 2026-11-23] mask group: AdamW lr 0.1, wd 0, shared LambdaLR, logα init 1.0'
   D3: '[user 2026-11-23] betas (0.9, 0.99) both groups, eps 1e-8'
   D4: '[user 2026-11-23] clip 1.0 on read factors only; masks unclipped'

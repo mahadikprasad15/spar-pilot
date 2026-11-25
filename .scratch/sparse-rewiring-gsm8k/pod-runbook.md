@@ -86,10 +86,14 @@ mistyped.
 ```bash
 export HF_HUB_OFFLINE=1
 PY=$PY bash scripts/rewire_launch.sh $WORK/launch_record.json $WORK/local $VOL 2>&1 | tee $WORK/launch-1.console.log
+# add --stop-pod as a 4th argument only if you want the Pod stopped after a complete verified backup
 ```
 
 The launcher takes a lock, runs `precheck`, starts the chain and the independent watchdog (no time caps: it acts
-only if the chain dies without finishing, then copies sealed work and stops the Pod). Progress is in
+only if the chain dies without finishing, then copies sealed work). Without `--stop-pod` (the default since
+2026-11-25) nothing stops the Pod: the chain copies, exports and verifies, then prints the stop command for you.
+For production, seal `launch-record-draft.yaml` instead of the rehearsal YAML (it refuses to seal while D1 is
+unsigned); cohort150 is then scored at step 1,024 only. Progress is in
 `$VOL/c-attribution/sparse-rewiring-rehearsal-pod-1/c-attribution/chain/progress.json`.
 
 - **If it prints `NO RUN STARTED`**, nothing is running and the Pod is still billing: fix the named problem and
@@ -99,7 +103,7 @@ only if the chain dies without finishing, then copies sealed work and stops the 
 - **A relaunch on the same Pod** (after a crash) re-verifies and skips completed stages; an interrupted arm
   restarts from step 0 (D24). Wait until `precheck` prints ok (a dead writer's heartbeat must be 900 s old).
 
-## 6. Afterwards (the Pod has stopped itself)
+## 6. Afterwards (stop the Pod yourself unless you passed --stop-pod)
 
 Results are on sl-0 under `$VOL/c-attribution/sparse-rewiring-rehearsal-pod-1/` and in the HF dataset. On a cheap
 CPU Pod with sl-0 attached (or from the HF export), send back:

@@ -10,12 +10,16 @@ is the existing ``c_attribution_chain.Chain`` driven by ``rewire_chain.build_rew
 
 ``run`` builds every input from the sealed launch record and the restored input bundle (``rewire_bundle``): the
 512 gold training rows, gold's saved order and each arm's frozen plan (``sparse_rewiring_plan.plan_from_files``),
-and ticket 04's validation set. A rehearsal never passes cohort150; a production launch is refused here until
-ticket 16 wires and approves it.
+and ticket 04's validation set. A rehearsal never passes cohort150. A production record (ticket 16) also passes gold's
+frozen cohort150 (``rewire_bundle.check_cohort150``), which the eval stage scores only at the final step (D12).
+
+The Pod is never stopped unless ``run`` gets ``--stop-pod`` (researcher, 2026-11-25): without it, teardown still
+copies, exports and verifies, then leaves the Pod running and prints the stop command.
 
     python -m pilot_eval.rewire_launch seal --draft <yaml> --out $WORK/launch_record.json --artifact-root ... \\
         --bundle ... --model-dir ... --work-dir ...
     python -m pilot_eval.rewire_launch {precheck,paths,watchdog-copy,run} --record ... --local ... --volume ...
+    python -m pilot_eval.rewire_launch run ... --stop-pod      # stop the Pod after a complete verified backup
 """
 import argparse
 import json
@@ -54,8 +58,15 @@ def load_inputs(record):
     val_items = rb.check_validation(bundle, root, questions=record['evaluation']['validation']['questions'])
     val_questions = {i['id']: {'prompt_ids': list(i['input_ids'][:int(i['prompt_tokens'])]), 'gold': i['gold']}
                      for i in val_items}
+    cohort150 = rb.check_cohort150(bundle, root) if record['mode'] == 'production' else None
     return dict(training_rows=training_rows, arm_plans=plans, val_items=val_items, val_questions=val_questions,
-                val_question_ids=[i['id'] for i in val_items], bundle=bundle)
+                val_question_ids=[i['id'] for i in val_items], bundle=bundle, cohort150_items=cohort150)
+
+
+def cohort150_questions(items, encode):
+    """Gold's rendered cohort150 prompts, tokenized as C attribution does (no special tokens), in cohort order."""
+    return ({i['id']: {'prompt_ids': [int(t) for t in encode(i['prompt'])], 'prompt': i['prompt'], 'gold': i['gold']}
+             for i in items}, [i['id'] for i in items])
 
 
 def base_hash_once(backend):
@@ -78,22 +89,25 @@ def base_hash_once(backend):
 
 
 def build(record, local, volume, *, backend=None, probes=None, device='cuda', exporter=None, runner=None,
-          volume_identity=None, current_pod=None, references_fn=None, gradient_checkpointing=True):
-    """The chain for a sealed record (the CPU rehearsal test calls this with the tiny model and stubs)."""
+          volume_identity=None, current_pod=None, references_fn=None, gradient_checkpointing=True, stop_pod=False):
+    """The chain for a sealed record (the CPU tests call this with the tiny model and stubs)."""
     from pilot_eval import rewire_chain as rc
-    if record['mode'] != 'rehearsal':
-        raise LaunchRefused('this launcher runs rehearsals only; the production launch (cohort150 at the final step) '
-                            'is ticket 16/17 and needs its own approved record and wiring')
+    if record['mode'] not in ('rehearsal', 'production'):
+        raise LaunchRefused(f"unknown launch mode {record['mode']!r}")
     data = load_inputs(record)
     backend = backend or rc.RewireBackend(record, volume, device=device, probes=probes)
+    c150, c150_ids = (None, None)
+    if data['cohort150_items'] is not None:
+        c150, c150_ids = cohort150_questions(data['cohort150_items'], backend.encode)
     return rc.build_rewire_chain(
         record=record, backend=backend, local_root=local, volume=volume,
         training_rows=data['training_rows'], arm_plans=data['arm_plans'], val_items=data['val_items'],
         val_questions=data['val_questions'], val_question_ids=data['val_question_ids'],
-        cohort150_questions=None, cohort150_question_ids=None, arm_order=list(ARM_ORDER),
+        cohort150_questions=c150, cohort150_question_ids=c150_ids, arm_order=list(ARM_ORDER),
         expected_base_sha256=base_hash_once(backend), execution_kind='real-cuda',
         gradient_checkpointing=gradient_checkpointing, references_fn=references_fn,
-        exporter=exporter, runner=runner, volume_identity=volume_identity, current_pod=current_pod)
+        exporter=exporter, runner=runner, volume_identity=volume_identity, current_pod=current_pod,
+        stop_pod=stop_pod)
 
 
 def main(argv=None):
@@ -110,6 +124,9 @@ def main(argv=None):
         p.add_argument('--local', required=True)
         p.add_argument('--volume', required=True)
         p.add_argument('--record', required=True)
+        if name == 'run':
+            p.add_argument('--stop-pod', action='store_true',
+                           help='stop the Pod after a complete verified backup (default: leave it running)')
     args = parser.parse_args(argv)
     if args.command == 'seal':
         fill = {f'inputs.{k}': getattr(args, k) for k in ('artifact_root', 'bundle', 'model_dir', 'work_dir')}
@@ -138,7 +155,7 @@ def main(argv=None):
         print(json.dumps(dict(precheck='ok', run_id=crec['run_id'], decision=decision['decision'])))
         return 0
     identity = pc.observed_volume_identity(args.volume, args.local, expected=record['volume_identity'])
-    chain = build(record, args.local, args.volume, volume_identity=identity)
+    chain = build(record, args.local, args.volume, volume_identity=identity, stop_pod=args.stop_pod)
     summary = chain.run()
     print(json.dumps(dict(state=summary['state'], backups=summary['backups']['statement'], stop=summary['stop']),
                      indent=2, default=str))

@@ -55,16 +55,19 @@ def _gold():
 
 # --- launch record -----------------------------------------------------------------------------------
 
-def test_approved_draft_has_no_open_decisions_and_seals(tmp_path):
-    # Every decision was signed by 2026-11-24; only the fill-ins (commit, Pod, paths) remain null.
-    assert sp.draft_problems(DRAFT) == []
-    assert sp.main(['check', str(DRAFT)]) == 0
-    path = sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
+def test_draft_waits_only_on_d1_and_seals_once_signed(tmp_path):
+    # Every other decision was signed by 2026-11-25; D1's rank-0 LR (back to 3e-4) awaits the researcher, so the
+    # draft cannot be sealed as is. Only the fill-ins (commit, Pod, paths) remain null.
+    assert [p.split(' ')[0] for p in sp.draft_problems(DRAFT)] == ['decisions.D1']
+    assert sp.main(['check', str(DRAFT)]) == 1
+    with pytest.raises(LaunchRefused, match='unresolved'):
+        sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
+    path = _seal(tmp_path, _signed())
     assert sp.load_launch_record(path, code_commit='c0ffee')['decisions']['D11'].startswith('[user')
 
 
 def test_a_proposed_decision_blocks_sealing(tmp_path):
-    record = yaml.safe_load(DRAFT.read_text())
+    record = _signed()
     record['decisions']['D11'] = '[proposed] validation set'
     draft = _write(tmp_path, record)
     assert [p.split(' ')[0] for p in sp.draft_problems(draft)] == ['decisions.D11']
@@ -78,7 +81,7 @@ def test_signed_draft_seals_and_loads(tmp_path):
     record = sp.load_launch_record(path, code_commit='c0ffee')
     assert record['objective']['l0_lambda'] == 6e-4
     assert {k: (v['rank'], v['read_lr']) for k, v in record['arms'].items()} == {
-        'sparse-gold-sft-r1': (1, 3e-3), 'sparse-gold-sft-r0': (0, 3e-5)}
+        'sparse-gold-sft-r1': (1, 3e-3), 'sparse-gold-sft-r0': (0, 3e-4)}
     with pytest.raises(LaunchRefused, match='code commit'):
         sp.load_launch_record(path, code_commit='other')
     tampered = json.loads(path.read_text())
@@ -226,7 +229,7 @@ def test_arms_share_one_plan_except_rank_and_read_lr():
     record, ids, gold, r1 = _plan()
     r0 = sp.build_plan(record, 'sparse-gold-sft-r0', ids, gold, inputs_sha256={'training_items_sha256': 'x'})
     assert r1['steps'] == r0['steps'] and r1['settings'] == r0['settings']
-    assert (r0['rank'], r0['optimizer']['reads']['lr']) == (0, 3e-5)
+    assert (r0['rank'], r0['optimizer']['reads']['lr']) == (0, 3e-4)
     assert r0['trainable_parameters'] == {'reads': 770_703_360, 'log_alpha': 250_880}
     assert r1['trainable_parameters'] == {'reads': 587_776, 'log_alpha': 250_880}
     assert r1['plan_sha256'] != r0['plan_sha256']
