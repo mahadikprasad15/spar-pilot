@@ -169,10 +169,10 @@ def find(catalog, *, arm=None, mode=None, kind=None, cohort=None, c_suitability=
 
 def _resolve(ref, catalog, roots):
     loc = catalog['locations'][ref['location']]
-    if loc['kind'] not in LOCAL_KINDS:
-        return None
-    if ref['location'] in roots:
+    if ref['location'] in roots:   # an explicit --root NAME=PATH: that location is mounted here (e.g. sl-0 on a Pod)
         base = Path(roots[ref['location']])
+    elif loc['kind'] not in LOCAL_KINDS:
+        return None
     elif loc['kind'] == 'local-path' and loc.get('path'):
         base = Path(loc['path']).expanduser()
     else:
