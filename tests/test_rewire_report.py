@@ -104,6 +104,30 @@ class TestRewireReport(unittest.TestCase):
         with self.assertRaises(rr.ReportError):   # never overwrites
             rr.register(self.run_root, catalog, location='sl-0')
 
+    def test_activation_shift_pass_seals_one_unit_per_arm(self):
+        import torch
+        from transformers import AutoModelForCausalLM
+        from pilot_eval import attribution_units as au
+        from pilot_eval import rewire_activation_shift as ras
+        root = self.root / 'act-shift'
+        shutil.copytree(self.run_root, root)
+        loader = lambda: AutoModelForCausalLM.from_pretrained(self.w['model_dir'], torch_dtype=torch.float32,
+                                                              attn_implementation='eager')
+        written = ras.run(root, device='cpu', model_loader=loader)
+        self.assertEqual(sorted(written), sorted(self.record['arms']))
+        for arm, out in written.items():
+            au.verify_run(Path(out))
+            body = json.loads((Path(out) / 'activation_shift.json').read_text())
+            export = json.loads(next((root / rc.REWIRE_SUBTREE / 'runs' / self.record['arms'][arm]['run_id'] /
+                                      'masks').glob('step-3/3.json')).read_text())
+            self.assertEqual(len(body['survivors']), len(export['survivors']))
+            ref = body['per_neuron_mean_abs_shift']['non_survivor_reference']
+            self.assertEqual(ref['count'], 2 * (32 - 0) - len(export['survivors']))   # tiny: every non-survivor
+            self.assertGreater(body['tokens'], 0)
+            self.assertGreaterEqual(ref['mean_abs'], abs(body['per_neuron_mean_shift']['non_survivor_reference']['mean']))
+        report = rr.build(root)   # the report lists the analysis units it finds
+        self.assertTrue(report['analyses'])
+
     def test_tampered_eval_unit_is_refused(self):
         arm = next(iter(self.record['arms']))
         unit = (self.run_root / rc.REWIRE_SUBTREE / 'runs' / self.record['arms'][arm]['run_id'] / 'eval' /

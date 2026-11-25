@@ -165,7 +165,17 @@ $PY -m pilot_eval.rewire_lr_probe --record $WORK/probe64_record.json --volume $V
 Probes and rehearsal-style checks are launched without `--stop-pod` (researcher, 2026-11-25): the researcher stops
 the Pod after reading the results. Results reach the volume after each LR either way.
 
-## 9. Production report and catalog (ticket 18)
+## 9. Activation-shift pass (ticket 17's GPU analysis)
+
+After the chain, on an A100 with sl-0. A fresh Pod needs sections 2 and 3 first at the same paths (`$WORK=/root/sparse`),
+because the sealed record names `$WORK/inputs` and `$WORK/model`. About 10 minutes:
+
+```bash
+R=$VOL/c-attribution/sparse-rewiring-production
+$PY -m pilot_eval.rewire_activation_shift --root $R      # seals c-attribution/sparse-rewiring/analysis/activation-shift-<arm>/
+```
+
+## 10. Production report and catalog (ticket 18)
 
 After the production chain finishes (`state complete` in the final summary), on the same Pod or any Pod with sl-0:
 
