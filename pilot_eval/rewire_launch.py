@@ -143,23 +143,30 @@ def main(argv=None):
                               stop_timeout=crec['timeouts_seconds']['stop_attempt'])))
         return 0
     if args.command == 'watchdog-copy':
+        try:
+            pc.observed_volume_identity(args.volume, args.local, expected=record['volume_identity'])
+        except ResumeRefused as exc:
+            print(f'watchdog-copy refused: {exc}', file=sys.stderr)
+            return 3
         result = cc.copy_sealed(args.local, root)
         print(json.dumps(result, indent=2))
         return 0 if result['verified'] and not result['problems'] else 1
     if args.command == 'precheck':
         try:
+            identity = pc.observed_volume_identity(args.volume, args.local, expected=record['volume_identity'])
             decision = cc.precheck(crec, args.volume)
         except ResumeRefused as exc:
             print(f'precheck refused: {exc}', file=sys.stderr)
             return 3
-        print(json.dumps(dict(precheck='ok', run_id=crec['run_id'], decision=decision['decision'])))
+        print(json.dumps(dict(precheck='ok', run_id=crec['run_id'], volume_identity=identity,
+                              decision=decision['decision'])))
         return 0
     identity = pc.observed_volume_identity(args.volume, args.local, expected=record['volume_identity'])
     chain = build(record, args.local, args.volume, volume_identity=identity, stop_pod=args.stop_pod)
     summary = chain.run()
     print(json.dumps(dict(state=summary['state'], backups=summary['backups']['statement'], stop=summary['stop']),
                      indent=2, default=str))
-    return 0
+    return 0 if summary['state'] == 'complete' else 1
 
 
 if __name__ == '__main__':

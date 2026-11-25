@@ -84,6 +84,7 @@ mistyped.
 ## 5. Launch
 
 ```bash
+set -o pipefail
 export HF_HUB_OFFLINE=1
 PY=$PY bash scripts/rewire_launch.sh $WORK/launch_record.json $WORK/local $VOL 2>&1 | tee $WORK/launch-1.console.log
 # add --stop-pod as a 4th argument only if you want the Pod stopped after a complete verified backup

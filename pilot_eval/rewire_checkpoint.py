@@ -365,8 +365,11 @@ def verify_arm(run_dir, plan, *, runtime_sha256=None, code_commit=None):
 
 
 def discard_attempt(run_dir, *, reason):
-    """Move an interrupted attempt aside as evidence and drop its tensor payloads (D24 disk budget); the seals,
-    logs and a list of what was removed stay. Returns the evidence directory."""
+    """Move an interrupted attempt aside as evidence and drop its tensor payloads (D24 disk budget); archive
+    each prior checkpoint's ``complete.json`` as ``discarded_seal.json`` so no broken seal remains in the
+    recursively scanned backup tree, and seal the evidence directory itself as a self-contained unit."""
+    from pilot_eval import attribution_units as au
+
     run_dir = Path(run_dir)
     evidence = run_dir.with_name(f'{run_dir.name}.interrupted-{time.time_ns()}')
     os.replace(run_dir, evidence)
@@ -374,8 +377,31 @@ def discard_attempt(run_dir, *, reason):
     for payload in sorted(evidence.rglob('*.safetensors')):
         removed.append(dict(path=str(payload.relative_to(evidence)), bytes=payload.stat().st_size))
         payload.unlink()
-    (evidence / 'discarded.json').write_text(json.dumps(dict(reason=reason, removed_payloads=removed),
-                                                        indent=1, sort_keys=True) + '\n')
+    # Rename nested complete.json seals to discarded_seal.json so copy_sealed never hits a broken seal
+    archived_seals = []
+    for nested_seal in sorted(evidence.rglob(SEAL_FILE)):
+        if nested_seal.parent == evidence:
+            continue
+        target = nested_seal.with_name('discarded_seal.json')
+        os.replace(nested_seal, target)
+        archived_seals.append(str(target.relative_to(evidence)))
+    (evidence / 'discarded.json').write_text(
+        json.dumps(
+            dict(reason=reason, removed_payloads=removed, archived_seals=archived_seals),
+            indent=1,
+            sort_keys=True,
+        ) + '\n'
+    )
+    # Seal the evidence directory itself as one verifiable run unit for copy_sealed
+    digests = {
+        p.relative_to(evidence).as_posix(): file_hash(p)
+        for p in sorted(evidence.rglob('*'))
+        if p.is_file() and p.name != SEAL_FILE
+    }
+    seal_payload = dict(schema=au.RUN_SCHEMA, files=digests, sealed_unix=time.time())
+    tmp = evidence / f'{SEAL_FILE}.tmp'
+    tmp.write_bytes(au._encode(seal_payload))
+    os.replace(tmp, evidence / SEAL_FILE)
     return evidence
 
 

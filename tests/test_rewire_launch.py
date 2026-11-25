@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,7 +22,10 @@ from unittest import mock
 
 import torch
 import yaml
-from peft import LoraConfig, get_peft_model
+try:
+    from peft import LoraConfig, get_peft_model
+except ImportError:
+    LoraConfig = get_peft_model = None
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
@@ -152,6 +156,7 @@ def _probes(w, record, *, peak=1):
     }
 
 
+@unittest.skipUnless(LoraConfig is not None, 'peft is not installed in this environment')
 class TestRehearsalLauncher(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -208,6 +213,11 @@ class TestRehearsalLauncher(unittest.TestCase):
         self.assertNotEqual(refs['gold-sft']['val_ce'], refs['untuned']['val_ce'])  # the adapter really loaded
         for arm in rl.ARM_ORDER:
             run_id = record['arms'][arm]['run_id']
+            self.assertTrue((local / rc.REWIRE_SUBTREE / 'runs' / run_id / rc.ARM_EVIDENCE_DIR / 'complete.json').is_file())
+            vol_arm = (self.root / 'volume' / 'c-attribution' / 'sparse-rewiring-rehearsal-pod-1'
+                       / rc.REWIRE_SUBTREE / 'runs' / run_id)
+            self.assertTrue((vol_arm / rc.ARM_EVIDENCE_DIR / 'complete.json').is_file())
+            self.assertTrue((vol_arm / rc.ARM_EVIDENCE_DIR / 'logs' / 'steps.jsonl').is_file())
             for step in record['checkpoints']:
                 self.assertTrue((local / rc.REWIRE_SUBTREE / 'runs' / run_id / 'eval' / str(step) / 'greedy-val' /
                                  'complete.json').is_file())
@@ -345,13 +355,64 @@ class TestCommandLine(unittest.TestCase):
         self.assertEqual(paths['stop'], ['runpodctl stop pod pod-cli-1', 'runpodctl pod stop pod-cli-1'])
 
     def test_precheck_accepts_a_fresh_run_and_refuses_a_finished_one(self):
-        code, out = self._main('precheck')
-        self.assertEqual(code, 0, out)
-        done = self.root / 'vol' / 'c-attribution' / 'sparse-rewiring-rehearsal-pod-1' / 'c-attribution' / 'chain' / 'done'
-        done.parent.mkdir(parents=True)
-        done.write_text('complete\n')
-        code, _ = self._main('precheck')
-        self.assertEqual(code, 3)
+        from pilot_eval import attribution_chain as pc
+
+        with mock.patch.object(pc, 'observed_volume_identity', return_value='sl-0'):
+            code, out = self._main('precheck')
+            self.assertEqual(code, 0, out)
+            done = self.root / 'vol' / 'c-attribution' / 'sparse-rewiring-rehearsal-pod-1' / 'c-attribution' / 'chain' / 'done'
+            done.parent.mkdir(parents=True)
+            done.write_text('complete\n')
+            code, _ = self._main('precheck')
+            self.assertEqual(code, 3)
+
+    def test_precheck_and_watchdog_copy_refuse_ordinary_local_directory_as_volume(self):
+        from pilot_eval import attribution_units as au
+
+        local_dir = self.root / 'local'
+        vol_dir = self.root / 'vol'
+        vol_dir.mkdir(parents=True, exist_ok=True)
+        # Write a real sealed unit on local disk (same filesystem as vol_dir)
+        au.seal_run(local_dir / 'c-attribution' / 'sparse-rewiring' / 'unit', {'a.json': {'ok': True}})
+
+        # Real observed_volume_identity (unmocked): ordinary directory must be refused before arming watchdog
+        code_pre, _ = self._main('precheck')
+        self.assertEqual(code_pre, 3)
+
+        # And watchdog-copy must also refuse and NOT copy anything into the ordinary local directory
+        code_wd, _ = self._main('watchdog-copy')
+        self.assertEqual(code_wd, 3)
+        self.assertEqual(list(vol_dir.iterdir()), [])
+
+        # Real launch script refuses ordinary local directory before arming watchdog
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'rewire_launch.sh'
+        env = dict(os.environ, RUNPOD_POD_ID='pod-cli-1', PY=os.environ.get('PY', sys.executable))
+        proc = subprocess.run(
+            ['bash', str(script), str(self.record_path), str(local_dir), str(vol_dir)],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn('NO RUN STARTED', proc.stderr)
+        self.assertEqual(list(vol_dir.iterdir()), [])
+
+    def test_cli_run_returns_nonzero_on_stopped_or_failed_and_zero_on_complete(self):
+        from pilot_eval import attribution_chain as pc
+
+        def _stub_chain(state):
+            class _C:
+                def run(self_inner):
+                    return {'state': state, 'backups': {'statement': 'ok'}, 'stop': {'requested': False}}
+            return _C()
+
+        with mock.patch.object(pc, 'observed_volume_identity', return_value='sl-0'):
+            for state, expected_code in (('stopped', 1), ('failed', 1), ('complete', 0)):
+                with mock.patch.object(rl, 'build', return_value=_stub_chain(state)):
+                    code, out = self._main('run')
+                    self.assertEqual(code, expected_code, f'state={state!r} returned {code} ({out})')
+                    self.assertEqual(json.loads(out)['state'], state)
+
+        runbook = (Path(__file__).resolve().parents[1] / '.scratch' / 'sparse-rewiring-gsm8k' / 'pod-runbook.md').read_text()
+        self.assertIn('set -o pipefail', runbook)
 
     def test_launch_script_refuses_a_missing_record_without_starting(self):
         script = Path(__file__).resolve().parents[1] / 'scripts' / 'rewire_launch.sh'
