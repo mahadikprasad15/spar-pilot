@@ -30,11 +30,24 @@ from typing import Any
 ARM = 'sparse-gold-sft-r0'
 
 
-def probe_plan(plan: dict[str, Any], lr: float) -> dict[str, Any]:
-    """The arm's frozen plan with only the read LR changed, under its own run ID and plan hash."""
+def probe_plan(plan: dict[str, Any], lr: float, *, steps: int | None = None,
+               checkpoints: list[int] | None = None) -> dict[str, Any]:
+    """The arm's frozen plan with only the read LR changed, under its own run ID and plan hash. With ``steps``, the
+    plan is cut to its first ``steps`` steps (each step's IDs, mask groups, LR multiplier and mask phase unchanged,
+    so a cut production plan follows production's own schedule) and checkpointed at ``checkpoints``."""
     from pilot_eval import sparse_rewiring_plan as sp
     cut = copy.deepcopy(plan)
     cut.pop('plan_sha256', None)
+    if steps is not None:
+        steps = int(steps)
+        if not 0 < steps <= len(plan['steps']):
+            raise ValueError(f'cut of {steps} steps does not fit the plan ({len(plan["steps"])} steps)')
+        cut['steps'] = cut['steps'][:steps]
+        points = sorted({0, steps, *(int(c) for c in (checkpoints or []))})
+        if points[-1] != steps:
+            raise ValueError(f'checkpoints {points} go past the cut at step {steps}')
+        cut['checkpoints'] = points
+        cut['cut_of_steps'] = len(plan['steps'])
     cut['run_id'] = f"{plan['run_id']}-lr{lr:g}".replace('.', 'p').replace('+', '')
     cut['optimizer']['reads']['lr'] = float(lr)
     cut.pop('read_lr', None)
@@ -43,7 +56,8 @@ def probe_plan(plan: dict[str, Any], lr: float) -> dict[str, Any]:
     return cut
 
 
-def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commit, log=print):
+def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commit, log=print, cut_steps=None,
+              checkpoints=None):
     import torch
     from pilot_eval import rewire_checkpoint as rckpt
     from pilot_eval import rewire_evaluation as reval
@@ -60,12 +74,12 @@ def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commi
     work, volume_out, out = Path(work), Path(out), Path(work) / 'results'
     out.mkdir(parents=True, exist_ok=True)
     results = dict(arm=ARM, rank=int(base_plan['rank']), baseline_lr=base_plan['optimizer']['reads']['lr'],
-                   steps=len(base_plan['steps']), checkpoints=base_plan['checkpoints'], code_commit=code_commit,
+                   steps=cut_steps or len(base_plan['steps']), cut_of=len(base_plan['steps']) if cut_steps else None, code_commit=code_commit,
                    runtime_sha256=rt_sha, lrs={})
     summary_path = out / 'lr-probe.json'
 
     for lr in lrs:
-        plan = probe_plan(base_plan, lr)
+        plan = probe_plan(base_plan, lr, steps=cut_steps, checkpoints=checkpoints)
         run_dir = work / plan['run_id']
         if run_dir.exists():
             shutil.rmtree(run_dir)
@@ -165,6 +179,10 @@ def main(argv=None):
     parser.add_argument('--lrs', nargs='+', type=float, default=[3e-5, 1e-5])
     parser.add_argument('--greedy-steps', nargs='+', type=int, default=None,
                         help='checkpoints that get the 128-question greedy pass (default: the last)')
+    parser.add_argument('--cut-steps', type=int, default=None,
+                        help="run only the plan's first N steps (its own schedule), e.g. 64 of production's 1,024")
+    parser.add_argument('--checkpoints', nargs='+', type=int, default=None,
+                        help='checkpoints for a cut run (0 and the last step are always added)')
     parser.add_argument('--stop-pod', action='store_true')
     args = parser.parse_args(argv)
 
@@ -190,9 +208,11 @@ def main(argv=None):
             problems.append('CUBLAS_WORKSPACE_CONFIG must be set (D8)')
         if problems:
             raise RuntimeError('preflight failed: ' + '; '.join(map(str, problems)))
-        greedy = set(args.greedy_steps or [record['checkpoints'][-1]])
+        last = args.cut_steps or record['checkpoints'][-1]
+        greedy = set(args.greedy_steps or [last])
         results = run_probe(record, backend, data, lrs=args.lrs, work=args.work, out=args.out,
-                            greedy_steps=greedy, code_commit=commit, log=log)
+                            greedy_steps=greedy, code_commit=commit, log=log, cut_steps=args.cut_steps,
+                            checkpoints=args.checkpoints)
         for lr, row in results['lrs'].items():
             log(f'RESULT lr {lr}: ' + json.dumps(row['evals']))
         status = 0

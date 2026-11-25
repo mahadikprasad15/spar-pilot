@@ -46,6 +46,12 @@ class TestLrProbe(unittest.TestCase):
         self.assertEqual({k: v for k, v in cut.items() if k not in ('optimizer', 'run_id', 'plan_sha256', 'probe_of')},
                          {k: v for k, v in base.items() if k not in ('optimizer', 'run_id', 'plan_sha256')})
 
+        short = lp.probe_plan(base, 1e-5, steps=2, checkpoints=[1])
+        self.assertEqual(short['steps'], base['steps'][:2])
+        self.assertEqual(short['checkpoints'], [0, 1, 2])
+        with self.assertRaises(ValueError):
+            lp.probe_plan(base, 1e-5, steps=2, checkpoints=[3])
+
         # The Pod's network volume refuses utime/chmod (2026-11-25): results must still reach it.
         self.patches.append(mock.patch('os.utime', side_effect=PermissionError(1, 'Operation not permitted')))
         self.patches[-1].start()
@@ -63,6 +69,13 @@ class TestLrProbe(unittest.TestCase):
             self.assertFalse((self.root / 'work-probe' / row['run_id'] / 'checkpoints').exists())
         self.assertNotEqual(res['lrs']['0.01']['evals'][last]['val_ce'], res['lrs']['3e-05']['evals'][last]['val_ce'])
         self.assertEqual(json.loads((out / 'lr-probe.json').read_text())['arm'], lp.ARM)
+
+        cut = lp.run_probe(record, backend, data, lrs=[1e-5], work=self.root / 'work-cut', out=self.root / 'out-cut',
+                           greedy_steps={2}, code_commit='deadbeef', log=lambda _m: None, cut_steps=2,
+                           checkpoints=[1])
+        self.assertEqual(sorted(cut['lrs']['1e-05']['evals']), ['1', '2'])
+        self.assertIn('accuracy', cut['lrs']['1e-05']['evals']['2'])
+        self.assertEqual(cut['steps'], 2)
 
 
 if __name__ == '__main__':

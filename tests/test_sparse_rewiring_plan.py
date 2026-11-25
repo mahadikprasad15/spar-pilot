@@ -78,7 +78,7 @@ def test_signed_draft_seals_and_loads(tmp_path):
     record = sp.load_launch_record(path, code_commit='c0ffee')
     assert record['objective']['l0_lambda'] == 6e-4
     assert {k: (v['rank'], v['read_lr']) for k, v in record['arms'].items()} == {
-        'sparse-gold-sft-r1': (1, 3e-3), 'sparse-gold-sft-r0': (0, 3e-4)}
+        'sparse-gold-sft-r1': (1, 3e-3), 'sparse-gold-sft-r0': (0, 3e-5)}
     with pytest.raises(LaunchRefused, match='code commit'):
         sp.load_launch_record(path, code_commit='other')
     tampered = json.loads(path.read_text())
@@ -226,7 +226,7 @@ def test_arms_share_one_plan_except_rank_and_read_lr():
     record, ids, gold, r1 = _plan()
     r0 = sp.build_plan(record, 'sparse-gold-sft-r0', ids, gold, inputs_sha256={'training_items_sha256': 'x'})
     assert r1['steps'] == r0['steps'] and r1['settings'] == r0['settings']
-    assert (r0['rank'], r0['optimizer']['reads']['lr']) == (0, 3e-4)
+    assert (r0['rank'], r0['optimizer']['reads']['lr']) == (0, 3e-5)
     assert r0['trainable_parameters'] == {'reads': 770_703_360, 'log_alpha': 250_880}
     assert r1['trainable_parameters'] == {'reads': 587_776, 'log_alpha': 250_880}
     assert r1['plan_sha256'] != r0['plan_sha256']

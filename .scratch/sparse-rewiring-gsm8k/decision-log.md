@@ -37,6 +37,17 @@ Gold trains 1.15 M LoRA parameters (r1 on 196 modules) with no selection mechani
 
 **Rank 0: recommend 3e-4 [proposed].** `RANK0.md` reports that at rank 4's 3e-3, rank 0 overfit (over 1,000 neurons, run `v2_reread_r0_l06e-4_lr3e-3_s*`). At 3e-4 to 5e-4 with λ 6e-4 to 8e-4 it gave 82 to 122 neurons, mostly the same neurons as rank 4. Max's explanation: Adam moves every element of a full row at the LR, so full rows need a lower rate. The rank-1 and rank-0 arms therefore differ in LR as well as rank; the comparison (D21) states this.
 
+**Rank 0: changed to 3e-5 [user 2026-11-25], superseding 3e-4.** The A100 rehearsal (`rehearsal-pod-1`, 16 steps, gold's order, masks frozen at 12) took rank 0 at 3e-4 from 103/128 validation questions correct at step 0 to 36/128 at step 12 and 12/128 at step 16; its 4-step qualification run reached validation CE 0.88 (base 0.573) with all 16 greedy answers at the 1,024-token cap. Rank 1 at 3e-3 reached 82/128. The rank-0 LR probe (`pilot_eval.rewire_lr_probe`, the same 16-step plan with only the read LR changed, `sparse-rewiring-lr-probe-1` on sl-0) gave at step 16:
+
+| Rank-0 read LR | Correct /128 | Val CE step 12 → 16 |
+|---|---|---|
+| 3e-4 | 12 | — |
+| 1e-4 | 29 | 0.432 → 0.513 |
+| **3e-5** | **79** | 0.395 → 0.416 |
+| 1e-5 | 73 | 0.394 → 0.408 |
+
+References: base 103/128 (CE 0.573), gold SFT step 64 92/128 (CE 0.395). 3e-5 and 1e-5 are within noise of each other (one standard error is about ±5 questions); the researcher chose 3e-5 without a longer check. Open risk carried into production: 16 steps is short of gold's 64 and production's 1,024, and option A's concern above (a low read LR lets the L0 term prune nearly every mask before the reads matter) was not measured at this LR; the production run's checkpoints at 8, 16, 32 and 64 show it early.
+
 ### D2. Mask optimizer and LR
 
 Recommend Max's exactly: a second AdamW parameter group, lr 0.1, weight decay 0, same `LambdaLR` multiplier as the reads (warmup + cosine apply to masks too), no gradient clipping on masks, `logα` init 1.0. Gold has no counterpart, so nothing is inherited from it. Record the resolved parameter groups in the run config.
