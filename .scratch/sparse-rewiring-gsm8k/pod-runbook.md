@@ -115,3 +115,26 @@ cat $R/sparse-rewiring/references/summary/references.json
 `qualification.json` holds every check and the measurements that replace the arithmetic estimates in
 `decision-log.md`: peak memory per rank on the longest row, seconds per step, one validation CE pass, one 16-question
 greedy pass, and the extrapolated production hours.
+
+## 7. Rank-0 read-LR probe (decision 2026-11-25)
+
+The rehearsal showed rank 0 at read LR 3e-4 falling from 103/128 to 36/128 (step 12) and 12/128 (step 16).
+`pilot_eval.rewire_lr_probe` trains rank 0 alone under the rehearsal's frozen plan with only the read LR changed,
+and reports validation CE at steps 12 and 16 plus 128-question greedy accuracy at step 16. No chain, no sign-off,
+no cohort150. About 12 minutes per LR on an A100. Rank-0 checkpoints stay on the container disk and are deleted
+once evaluated; results go to the volume.
+
+A fresh A100 Pod with sl-0 and 120 GB disk, then sections 2 and 3 as before (same receipt), then:
+
+```bash
+export HF_HUB_OFFLINE=1
+$PY -m pilot_eval.rewire_launch seal --draft .scratch/sparse-rewiring-gsm8k/launch-record-rehearsal.yaml \
+    --out $WORK/probe_record.json --artifact-root $WORK/inputs \
+    --bundle $WORK/inputs/bundles/c-attribution/sparse-rewiring-rehearsal-pod-1/bundle-f4c4112263f23ae4.json \
+    --model-dir $WORK/model --work-dir $WORK
+$PY -m pilot_eval.rewire_lr_probe --record $WORK/probe_record.json --volume $VOL --work $WORK/lr-probe \
+    --out $VOL/c-attribution/sparse-rewiring-lr-probe-1 --lrs 1e-4 3e-5 1e-5 --stop-pod 2>&1 | tee $WORK/lr-probe.log
+```
+
+It prints one `RESULT` line per LR and stops the Pod at the end, even on failure. The numbers are in
+`$VOL/c-attribution/sparse-rewiring-lr-probe-1/lr-probe.json`.
