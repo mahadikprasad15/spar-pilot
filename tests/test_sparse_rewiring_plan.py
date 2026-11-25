@@ -217,7 +217,7 @@ def test_plan_schedule_masks_and_cadences():
     assert plan['checkpoints'] == [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024]
     assert plan['validation_steps'] == list(range(16, 1025, 16)) and len(plan['validation_steps']) == 64
     assert plan['settle_steps'][0] == 256 and plan['settle_steps'][-1] == 960
-    assert plan['cohort150_steps'] == [64, 1024]
+    assert plan['cohort150_steps'] == [1024]
     assert plan['read_init_seeds'] == list(range(42, 70))
     assert plan['optimizer']['reads']['lr'] == 3e-3 and plan['optimizer']['masks']['lr'] == 0.1
 

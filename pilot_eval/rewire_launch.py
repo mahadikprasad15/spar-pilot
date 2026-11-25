@@ -82,7 +82,7 @@ def build(record, local, volume, *, backend=None, probes=None, device='cuda', ex
     """The chain for a sealed record (the CPU rehearsal test calls this with the tiny model and stubs)."""
     from pilot_eval import rewire_chain as rc
     if record['mode'] != 'rehearsal':
-        raise LaunchRefused('this launcher runs rehearsals only; the production launch (cohort150 at 64 and final) '
+        raise LaunchRefused('this launcher runs rehearsals only; the production launch (cohort150 at the final step) '
                             'is ticket 16/17 and needs its own approved record and wiring')
     data = load_inputs(record)
     backend = backend or rc.RewireBackend(record, volume, device=device, probes=probes)

@@ -140,10 +140,11 @@ def evaluate_validation_ce(
 # --- Greedy evaluation (validation or cohort150) ---------------------------------------------------
 
 def check_cohort_step_allowed(cohort: str, step: int, *, final_step: int = DEFAULT_FINAL_STEP) -> None:
-    """Enforce D12: cohort150 may only be evaluated at step 64 and the final step."""
-    if cohort == COHORT150_NAME and int(step) not in {64, int(final_step)}:
+    """Enforce D12 (researcher, 2026-11-25): cohort150 is evaluated once, at the final step only. A step-64
+    deterministic evaluation of a sparse arm equals the untuned model (every gate is below the line then)."""
+    if cohort == COHORT150_NAME and int(step) != int(final_step):
         raise ValueError(
-            f'cohort150 evaluation is restricted to step 64 and final step ({final_step}) per D12; got step {step}'
+            f'cohort150 evaluation is restricted to the final step ({final_step}) per D12; got step {step}'
         )
 
 

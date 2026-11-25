@@ -140,6 +140,9 @@ No suitable set exists. Proposed: 128 GSM8K **train** questions, `random.Random(
 
 Why it was not called clean: its prior uses include greedy evaluation of gold-sft and online-grpo, GRPO behaviour runs, Stage 0, production-1 Stage D, and C attribution, which computed its scores and picked its frozen sets on these questions (`catalog/cohorts.yaml@catt`). **One caveat kept:** a result that combines "survivors overlap C's sets" with cohort150 accuracy is circular for the C side, because the same questions picked C's neurons.
 
+
+**Changed [user 2026-11-25]: cohort150 at the final step (1,024) only.** The 64- and 256-step probes showed that every deterministic gate is below the line at step 64, so a step-64 evaluation of a sparse arm equals the untuned model (rank 1's validation CE at 64 was 0.5727914, the untuned value). cohort150 is used once per arm, on the fixed-mask model; the 128 validation questions track every checkpoint.
+
 ### D13. Rank — decided
 
 **[user 2026-11-23]: run both rank 1 and rank 0 (full rows), with everything else identical** (gold data and loss contract, FP32, shared mask per 4 examples, schedule, checkpoints, evaluations, dynamics figure). Rank 4, the published but self-described oversight, is not run.

@@ -90,7 +90,7 @@ PRODUCTION = {
     'checkpoints': [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024],                # D5
     'cadences.step_metrics_every': 1, 'cadences.validation_ce_every': 16,             # D20
     'cadences.gate_snapshot_every': 16,
-    'evaluation.cohort150.steps': [64, 1024], 'evaluation.cohort150.role': 'evaluation-only',   # D12
+    'evaluation.cohort150.steps': [1024], 'evaluation.cohort150.role': 'evaluation-only',   # D12
     'evaluation.cap': 1024, 'evaluation.eos_token_id': 151645,                        # protocol
 }
 # Fixed in every mode: what the method and the comparability contract are, not how long the run is.

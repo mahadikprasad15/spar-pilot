@@ -101,7 +101,7 @@ storage:                                 # [user 2026-11-23] D24
 
 evaluation:
   validation: {questions: 128, ce_masks: deterministic, greedy_at: checkpoints}   # D11 [user 2026-11-24]
-  cohort150: {steps: [64, 1024], role: evaluation-only}   # [user 2026-11-23] D12
+  cohort150: {steps: [1024], role: evaluation-only}   # D12 [user 2026-11-25]: final step only
   cap: 1024                              # [spec] protocol
   eos_token_id: 151645                   # [spec] protocol
   repetition_penalty: 1.0                # [spec] explicit
@@ -128,7 +128,7 @@ decisions:                               # one line per decision (decision-log.m
   D9: "[user 2026-11-23] gold's target and truncation contract"
   D10: '[user 2026-11-23] seeds: data order 42 (gold), read init 42 + layer (CPU generator), mask noise 1042'
   D11: '[user 2026-11-24] 128 GSM8K train questions, separate from cohort150, seeded exclusion sampler; real IDs need ticket 01'
-  D12: '[user 2026-11-23] cohort150 evaluation only, at 64 and final, exploratory'
+  D12: '[user 2026-11-23] cohort150 evaluation only, exploratory; [user 2026-11-25] final step only (step 64 equals the untuned model)'
   D13: '[user 2026-11-23] rank 1 and rank 0, everything else identical'
   D14: '[user 2026-11-23] microbatch 1, one mask draw per 4 examples'
   D15: '[user 2026-11-23] gradient checkpointing on, non-reentrant; recompute replays the cached u'
