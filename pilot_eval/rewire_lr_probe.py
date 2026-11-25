@@ -7,7 +7,8 @@ and reports validation CE at every checkpoint and greedy accuracy on the 128 val
 steps. It is a measurement, not a result: no chain, no sign-off, and cohort150 is never touched.
 
 Each LR trains in ``--work`` (container disk; rank-0 checkpoints are ~2.9 GB each and are deleted once evaluated);
-logs, greedy responses and ``lr-probe.json`` go to ``--out`` (put it on the volume). With ``--stop-pod`` the Pod is
+logs, greedy responses and ``lr-probe.json`` are written under ``--work``/results and mirrored after each LR to
+``--out`` (put it on the volume) with plain byte copies. With ``--stop-pod`` the Pod is
 stopped when the probe ends, whether it succeeded or not.
 
     python -m pilot_eval.rewire_lr_probe --record $WORK/probe_record.json --volume $VOL --work $WORK/lr-probe \\
@@ -54,7 +55,9 @@ def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commi
     rt_sha = _hash(backend.runtime())
     expected_base = base_hash_once(backend)
     base_plan = data['arm_plans'][ARM]
-    work, out = Path(work), Path(out)
+    # Everything is written on the container disk first, then mirrored to ``out`` with plain byte copies: the
+    # network volume refuses metadata calls (utime/chmod), so shutil.copy2/copytree fail there (Pod 2026-11-25).
+    work, volume_out, out = Path(work), Path(out), Path(work) / 'results'
     out.mkdir(parents=True, exist_ok=True)
     results = dict(arm=ARM, rank=int(base_plan['rank']), baseline_lr=base_plan['optimizer']['reads']['lr'],
                    steps=len(base_plan['steps']), checkpoints=base_plan['checkpoints'], code_commit=code_commit,
@@ -92,7 +95,7 @@ def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commi
         (lr_out / 'logs').mkdir(parents=True, exist_ok=True)
         for name in ('steps.jsonl', 'validation.jsonl', 'settle.jsonl'):
             if (run_dir / 'logs' / name).is_file():
-                shutil.copy2(run_dir / 'logs' / name, lr_out / 'logs' / name)
+                shutil.copyfile(run_dir / 'logs' / name, lr_out / 'logs' / name)
         row = dict(run_id=plan['run_id'], plan_sha256=plan['plan_sha256'], train_seconds=train_seconds, evals={})
         for step in plan['checkpoints'][1:]:
             model = backend.load_base_model()
@@ -117,7 +120,24 @@ def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commi
         shutil.rmtree(run_dir / 'checkpoints', ignore_errors=True)  # ~2.9 GB each; the numbers are kept
         results['lrs'][f'{lr:g}'] = row
         summary_path.write_text(json.dumps(results, indent=2, default=str) + '\n')
+        mirror(out, volume_out, log)
     return results
+
+
+def mirror(src, dst, log=print):
+    """Copy every file under ``src`` to ``dst`` by bytes only (no copystat), reporting rather than raising."""
+    src, dst = Path(src), Path(dst)
+    failed = []
+    for path in sorted(p for p in src.rglob('*') if p.is_file()):
+        target = dst / path.relative_to(src)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+        except OSError as exc:
+            failed.append(f'{path.relative_to(src)}: {exc}')
+    if failed:
+        log(f'mirror to {dst}: {len(failed)} files not copied, first: {failed[0]}')
+    return failed
 
 
 def _stop_pod(log):

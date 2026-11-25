@@ -46,6 +46,11 @@ class TestLrProbe(unittest.TestCase):
         self.assertEqual({k: v for k, v in cut.items() if k not in ('optimizer', 'run_id', 'plan_sha256', 'probe_of')},
                          {k: v for k, v in base.items() if k not in ('optimizer', 'run_id', 'plan_sha256')})
 
+        # The Pod's network volume refuses utime/chmod (2026-11-25): results must still reach it.
+        self.patches.append(mock.patch('os.utime', side_effect=PermissionError(1, 'Operation not permitted')))
+        self.patches[-1].start()
+        self.patches.append(mock.patch('os.chmod', side_effect=PermissionError(1, 'Operation not permitted')))
+        self.patches[-1].start()
         backend = rc.RewireBackend(record, self.root / 'volume', device='cpu', probes=_probes(self.w, record))
         out = self.root / 'out'
         res = lp.run_probe(record, backend, data, lrs=[3e-5, 1e-2], work=self.root / 'work-probe', out=out,
