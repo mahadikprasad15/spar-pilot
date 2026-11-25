@@ -230,7 +230,7 @@ def main(argv=None):
                             checkpoints=args.checkpoints, arm=args.arm)
         for lr, row in results['lrs'].items():
             log(f'RESULT {results["arm"]} lr {lr}: ' + json.dumps(row['evals']))
-            log(f'GATES {results["arm"]} lr {lr}: ' + json.dumps({k: {g: v.get(g) for g in ('nonzero_z_det', 'binary_survivors')} for k, v in row['gates'].items()}))
+            log(f'GATES {results["arm"]} lr {lr}: ' + json.dumps({k: {g: v.get(g) for g in ('expected_active', 'nonzero_z_det', 'ce_loss')} for k, v in row['gates'].items()}))
         status = 0
     except Exception as exc:  # noqa: BLE001 - always reach the stop below
         log(f'FAILED: {type(exc).__name__}: {exc}')
