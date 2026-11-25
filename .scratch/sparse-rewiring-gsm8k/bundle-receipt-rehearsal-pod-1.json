@@ -1,0 +1,16 @@
+{
+  "archive": "neuron-audit/sparse-rewiring-rehearsal-pod-1/bc4c64c5a33ffb9a6c80869e0996e51b372bad3183f0b3d15d4c6e3bc686c73c/bundle.tar.gz",
+  "archive_bytes": 8415200,
+  "archive_sha256": "40cb4f0994b6112c166ebecbb17c3a6957f9b29b626fd91069e9a682c72d678e",
+  "bundle_manifest": "bundles/c-attribution/sparse-rewiring-rehearsal-pod-1/bundle-f4c4112263f23ae4.json",
+  "bundle_sha256": "f4c4112263f23ae42cf49a53749cd38e51cf0fd348e4d1919cc15df06b0a96a0",
+  "completeness": "complete",
+  "file_count": 14,
+  "repo": "Prasadmahadik/spar-sampling-sft-artifacts",
+  "revision": "3f07b2c5f465b729ca689e0d66639ca613038a30",
+  "schema_version": 1,
+  "snapshot_path": "exports/joint-neuron-adapter-audit/sparse-rewiring-rehearsal-pod-1/snapshot-bc4c64c5a33ffb9a.json",
+  "snapshot_sha256": "bc4c64c5a33ffb9a6c80869e0996e51b372bad3183f0b3d15d4c6e3bc686c73c",
+  "unpacked_bytes": 21183470,
+  "upload_seconds": 54.87249470899951
+}
