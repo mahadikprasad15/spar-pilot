@@ -138,3 +138,21 @@ $PY -m pilot_eval.rewire_lr_probe --record $WORK/probe_record.json --volume $VOL
 
 It prints one `RESULT` line per LR and stops the Pod at the end, even on failure. The numbers are in
 `$VOL/c-attribution/sparse-rewiring-lr-probe-1/lr-probe.json`.
+
+## 8. Rank-0 64-step probe at 3e-5 (decision 2026-11-25)
+
+The 16-step probe could not show pruning: gates start open (logα 1.0) and none can close before about step 34. This
+runs rank 0 at 3e-5 over production's own first 64 steps (`launch-record-lrprobe64.yaml` is the production draft
+with only mode, label and run IDs changed): checkpoints 16, 32 and 64 with validation CE and open-gate counts, and
+128-question greedy accuracy at 64. About 30–35 minutes on an A100. Same Pod and sections 2–3 as before, then:
+
+```bash
+export HF_HUB_OFFLINE=1
+$PY -m pilot_eval.rewire_launch seal --draft .scratch/sparse-rewiring-gsm8k/launch-record-lrprobe64.yaml \
+    --out $WORK/probe64_record.json --artifact-root $WORK/inputs \
+    --bundle $WORK/inputs/bundles/c-attribution/sparse-rewiring-rehearsal-pod-1/bundle-f4c4112263f23ae4.json \
+    --model-dir $WORK/model --work-dir $WORK
+$PY -m pilot_eval.rewire_lr_probe --record $WORK/probe64_record.json --volume $VOL --work $WORK/lr-probe-64 \
+    --out $VOL/c-attribution/sparse-rewiring-lr-probe-64 --lrs 3e-5 --cut-steps 64 --checkpoints 16 32 \
+    --stop-pod 2>&1 | tee $WORK/lr-probe-64.log
+```

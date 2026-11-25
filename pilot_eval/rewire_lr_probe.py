@@ -110,7 +110,8 @@ def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commi
         for name in ('steps.jsonl', 'validation.jsonl', 'settle.jsonl'):
             if (run_dir / 'logs' / name).is_file():
                 shutil.copyfile(run_dir / 'logs' / name, lr_out / 'logs' / name)
-        row = dict(run_id=plan['run_id'], plan_sha256=plan['plan_sha256'], train_seconds=train_seconds, evals={})
+        row = dict(run_id=plan['run_id'], plan_sha256=plan['plan_sha256'], train_seconds=train_seconds, evals={},
+                   gates=gate_counts(run_dir / 'logs' / 'steps.jsonl', plan['checkpoints'][1:]))
         for step in plan['checkpoints'][1:]:
             model = backend.load_base_model()
             try:
@@ -136,6 +137,19 @@ def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commi
         summary_path.write_text(json.dumps(results, indent=2, default=str) + '\n')
         mirror(out, volume_out, log)
     return results
+
+
+def gate_counts(steps_log, steps):
+    """Open-gate counts from the step log at ``steps`` (expected active, deterministic-gate nonzero, binary
+    survivors): whether the masks prune selectively or wholesale."""
+    wanted, out = {int(s) for s in steps}, {}
+    if Path(steps_log).is_file():
+        for line in Path(steps_log).read_text().splitlines():
+            r = json.loads(line) if line else {}
+            if r.get('step') in wanted:
+                out[str(r['step'])] = {k: r.get(k) for k in ('expected_active', 'nonzero_z_det', 'binary_survivors',
+                                                            'ce_loss', 'l0_loss')}
+    return out
 
 
 def mirror(src, dst, log=print):

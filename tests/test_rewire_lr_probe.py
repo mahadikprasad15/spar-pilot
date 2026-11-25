@@ -74,6 +74,8 @@ class TestLrProbe(unittest.TestCase):
                            greedy_steps={2}, code_commit='deadbeef', log=lambda _m: None, cut_steps=2,
                            checkpoints=[1])
         self.assertEqual(sorted(cut['lrs']['1e-05']['evals']), ['1', '2'])
+        self.assertEqual(sorted(cut['lrs']['1e-05']['gates']), ['1', '2'])
+        self.assertIn('nonzero_z_det', cut['lrs']['1e-05']['gates']['2'])
         self.assertIn('accuracy', cut['lrs']['1e-05']['evals']['2'])
         self.assertEqual(cut['steps'], 2)
 
