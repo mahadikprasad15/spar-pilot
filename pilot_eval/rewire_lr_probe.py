@@ -57,7 +57,7 @@ def probe_plan(plan: dict[str, Any], lr: float, *, steps: int | None = None,
 
 
 def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commit, log=print, cut_steps=None,
-              checkpoints=None):
+              checkpoints=None, arm=ARM):
     import torch
     from pilot_eval import rewire_checkpoint as rckpt
     from pilot_eval import rewire_evaluation as reval
@@ -68,15 +68,15 @@ def run_probe(record, backend, data, *, lrs, work, out, greedy_steps, code_commi
     torch.use_deterministic_algorithms(True)
     rt_sha = _hash(backend.runtime())
     expected_base = base_hash_once(backend)
-    base_plan = data['arm_plans'][ARM]
+    base_plan = data['arm_plans'][arm]
     # Everything is written on the container disk first, then mirrored to ``out`` with plain byte copies: the
     # network volume refuses metadata calls (utime/chmod), so shutil.copy2/copytree fail there (Pod 2026-11-25).
     work, volume_out, out = Path(work), Path(out), Path(work) / 'results'
     out.mkdir(parents=True, exist_ok=True)
-    results = dict(arm=ARM, rank=int(base_plan['rank']), baseline_lr=base_plan['optimizer']['reads']['lr'],
+    results = dict(arm=arm, rank=int(base_plan['rank']), baseline_lr=base_plan['optimizer']['reads']['lr'],
                    steps=cut_steps or len(base_plan['steps']), cut_of=len(base_plan['steps']) if cut_steps else None, code_commit=code_commit,
                    runtime_sha256=rt_sha, lrs={})
-    summary_path = out / 'lr-probe.json'
+    summary_path = out / f'lr-probe-{arm}.json' if arm != ARM else out / 'lr-probe.json'
 
     for lr in lrs:
         plan = probe_plan(base_plan, lr, steps=cut_steps, checkpoints=checkpoints)
@@ -197,6 +197,7 @@ def main(argv=None):
                         help="run only the plan's first N steps (its own schedule), e.g. 64 of production's 1,024")
     parser.add_argument('--checkpoints', nargs='+', type=int, default=None,
                         help='checkpoints for a cut run (0 and the last step are always added)')
+    parser.add_argument('--arm', default=ARM, choices=['sparse-gold-sft-r0', 'sparse-gold-sft-r1'])
     parser.add_argument('--stop-pod', action='store_true')
     args = parser.parse_args(argv)
 
@@ -226,9 +227,10 @@ def main(argv=None):
         greedy = set(args.greedy_steps or [last])
         results = run_probe(record, backend, data, lrs=args.lrs, work=args.work, out=args.out,
                             greedy_steps=greedy, code_commit=commit, log=log, cut_steps=args.cut_steps,
-                            checkpoints=args.checkpoints)
+                            checkpoints=args.checkpoints, arm=args.arm)
         for lr, row in results['lrs'].items():
-            log(f'RESULT lr {lr}: ' + json.dumps(row['evals']))
+            log(f'RESULT {results["arm"]} lr {lr}: ' + json.dumps(row['evals']))
+            log(f'GATES {results["arm"]} lr {lr}: ' + json.dumps({k: {g: v.get(g) for g in ('nonzero_z_det', 'binary_survivors')} for k, v in row['gates'].items()}))
         status = 0
     except Exception as exc:  # noqa: BLE001 - always reach the stop below
         log(f'FAILED: {type(exc).__name__}: {exc}')

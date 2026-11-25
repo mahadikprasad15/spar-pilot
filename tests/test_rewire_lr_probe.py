@@ -79,6 +79,12 @@ class TestLrProbe(unittest.TestCase):
         self.assertIn('accuracy', cut['lrs']['1e-05']['evals']['2'])
         self.assertEqual(cut['steps'], 2)
 
+        r1 = lp.run_probe(record, backend, data, lrs=[3e-3], work=self.root / 'work-r1', out=self.root / 'out-r1',
+                          greedy_steps={2}, code_commit='deadbeef', log=lambda _m: None, cut_steps=2,
+                          arm='sparse-gold-sft-r1')
+        self.assertEqual((r1['arm'], r1['rank']), ('sparse-gold-sft-r1', 1))
+        self.assertTrue((self.root / 'out-r1' / 'lr-probe-sparse-gold-sft-r1.json').is_file())
+
 
 if __name__ == '__main__':
     unittest.main()
