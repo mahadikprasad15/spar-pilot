@@ -61,6 +61,19 @@ References: base 103/128 (CE 0.573), gold SFT step 64 92/128 (CE 0.395). 3e-5 an
 
 Every deterministic gate was open at 32 and 0–3 were at 64, so every step-64 deterministic eval equals the untuned model; the noisy training gates still fire and training CE stays below base. This is Max's early phase (91% expected-on at step 10, about 1% at 150, about 100 final survivors). The read LR changes only how much the reads learn; the rehearsal's 3e-4 collapse came from freezing the masks at step 12. Consequence for D12: a step-64 deterministic eval of a sparse arm (including cohort150 at 64) reads as the base model. Rank-0 LR decision pending (recommended: back to 3e-4).
 
+**256-step probes [measured 2026-11-25]: survivors emerge after step 64 for both ranks.** Production's first 256 steps (`sparse-rewiring-probe-256` on sl-0), rank 1 at 3e-3 and rank 0 at 3e-4 side by side on one A100 (about 62 minutes):
+
+| Step | 64 | 128 | 192 | 256 |
+|---|---|---|---|---|
+| rank 1 @ 3e-3: deterministic open gates | 0 | 4 | 8 | 9 |
+| rank 1: expected-on | 11,067 | 2,578 | 1,358 | 839 |
+| rank 1: validation CE | 0.5727914 | 0.544 | 0.496 | 0.444 |
+| rank 0 @ 3e-4: deterministic open gates | 3 | 5 | 10 | 12 |
+| rank 0: expected-on | 11,120 | 2,590 | 1,360 | 835 |
+| rank 0: validation CE | 0.564 | 0.501 | 0.451 | 0.426 |
+
+Greedy validation at 256: rank 1 70/128 (capped 5), rank 0 65/128 (capped 1); base 103/128, gold step 64 92/128. λ 6e-4 is not too strong for GSM8K: gates return above the line and validation CE falls towards gold's 0.395 with about ten neurons changed. Rank 0 at 3e-4 behaves like rank 1, supporting the original D1 value. Accuracy falls while CE improves, as for gold itself (a property of training on gold here, not a fault). Rank 1's step-64 validation CE equals the untuned model's exactly, so a step-64 deterministic evaluation (D12's cohort150 at 64) measures the base model; that evaluation step needs a decision before production.
+
 ### D2. Mask optimizer and LR
 
 Recommend Max's exactly: a second AdamW parameter group, lr 0.1, weight decay 0, same `LambdaLR` multiplier as the reads (warmup + cosine apply to masks too), no gradient clipping on masks, `logα` init 1.0. Gold has no counterpart, so nothing is inherited from it. Record the resolved parameter groups in the run config.
