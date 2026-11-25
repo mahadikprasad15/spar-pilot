@@ -48,6 +48,8 @@ Gold trains 1.15 M LoRA parameters (r1 on 196 modules) with no selection mechani
 
 References: base 103/128 (CE 0.573), gold SFT step 64 92/128 (CE 0.395). 3e-5 and 1e-5 are within noise of each other (one standard error is about ±5 questions); the researcher chose 3e-5 without a longer check. Open risk carried into production: 16 steps is short of gold's 64 and production's 1,024, and option A's concern above (a low read LR lets the L0 term prune nearly every mask before the reads matter) was not measured at this LR; the production run's checkpoints at 8, 16, 32 and 64 show it early.
 
+**3e-5 fails over 64 steps [measured 2026-11-25]; D1 for rank 0 is on hold.** The 64-step probe on production's own schedule (`launch-record-lrprobe64.yaml`, `sparse-rewiring-lr-probe-64` on sl-0) gave validation CE 0.385 at step 16 and 0.402 at step 32, then at step 64 CE 0.5727914086 and 103/128 correct: identical to the untuned model, so every gate had closed. Option A's concern is confirmed at this LR. The rehearsal's 3e-4 collapse was measured with masks frozen at step 12, before pruning could act, so 3e-4 is not ruled out for production's schedule. Next: the same 64-step probe at rank-0 3e-4 and 1e-4 and rank-1 3e-3.
+
 ### D2. Mask optimizer and LR
 
 Recommend Max's exactly: a second AdamW parameter group, lr 0.1, weight decay 0, same `LambdaLR` multiplier as the reads (warmup + cosine apply to masks too), no gradient clipping on masks, `logα` init 1.0. Gold has no counterpart, so nothing is inherited from it. Record the resolved parameter groups in the run config.
