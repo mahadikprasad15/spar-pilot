@@ -164,3 +164,21 @@ $PY -m pilot_eval.rewire_lr_probe --record $WORK/probe64_record.json --volume $V
 
 Probes and rehearsal-style checks are launched without `--stop-pod` (researcher, 2026-11-25): the researcher stops
 the Pod after reading the results. Results reach the volume after each LR either way.
+
+## 9. Production report and catalog (ticket 18)
+
+After the production chain finishes (`state complete` in the final summary), on the same Pod or any Pod with sl-0:
+
+```bash
+R=$VOL/c-attribution/sparse-rewiring-production
+$PY -m pilot_eval.rewire_report build --root $R          # seals $R/c-attribution/sparse-rewiring/report/report.json
+cat $R/c-attribution/sparse-rewiring/report.md            # send this back
+$PY -m pilot_eval.rewire_report register --root $R --location sl-0 \
+    --prefix c-attribution/sparse-rewiring-production --catalog catalog
+$PY -m pilot_eval.catalog verify --root sl-0=$VOL         # the new entries must all pass
+git add catalog && git commit -m "Catalog: sparse rewiring production arms, responses, prior uses" && git push
+```
+
+`build` refuses any missing or hash-mismatched unit. It lists the ticket 10–13 analyses it did not find under
+`c-attribution/sparse-rewiring/analysis/` instead of inventing them; rerun `build` after they are sealed there.
+
