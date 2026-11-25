@@ -74,7 +74,7 @@ Every deterministic gate was open at 32 and 0–3 were at 64, so every step-64 d
 
 Greedy validation at 256: rank 1 70/128 (capped 5), rank 0 65/128 (capped 1); base 103/128, gold step 64 92/128. λ 6e-4 is not too strong for GSM8K: gates return above the line and validation CE falls towards gold's 0.395 with about ten neurons changed. Rank 0 at 3e-4 behaves like rank 1, supporting the original D1 value. Accuracy falls while CE improves, as for gold itself (a property of training on gold here, not a fault). Rank 1's step-64 validation CE equals the untuned model's exactly, so a step-64 deterministic evaluation (D12's cohort150 at 64) measures the base model; that evaluation step needs a decision before production.
 
-Proposed 2026-11-25 (ticket 16), awaiting the researcher: rank 0 back to **3e-4**. The 3e-4 collapse in the rehearsal was the masks freezing at step 12 during the normal early gate drain, not the LR; at 256 steps on the production schedule rank 0 at 3e-4 matches rank 1. The production draft carries 3e-4 with D1 marked `[proposed]`, so `seal` refuses it until signed. The rehearsal YAML mirrors 3e-4.
+Decided by the researcher 2026-11-25 (ticket 16): rank 0 uses **3e-4**, the LR the 256-step probe showed works, superseding the earlier 3e-5. The 3e-4 collapse in the rehearsal was the masks freezing at step 12 during the normal early gate drain, not the LR; at 256 steps on the production schedule rank 0 at 3e-4 matches rank 1. The production draft and the rehearsal YAML carry 3e-4.
 
 ### D2. Mask optimizer and LR
 

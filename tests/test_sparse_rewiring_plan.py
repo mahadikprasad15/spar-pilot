@@ -55,15 +55,12 @@ def _gold():
 
 # --- launch record -----------------------------------------------------------------------------------
 
-def test_draft_waits_only_on_d1_and_seals_once_signed(tmp_path):
-    # Every other decision was signed by 2026-11-25; D1's rank-0 LR (back to 3e-4) awaits the researcher, so the
-    # draft cannot be sealed as is. Only the fill-ins (commit, Pod, paths) remain null.
-    assert [p.split(' ')[0] for p in sp.draft_problems(DRAFT)] == ['decisions.D1']
-    assert sp.main(['check', str(DRAFT)]) == 1
-    with pytest.raises(LaunchRefused, match='unresolved'):
-        sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
-    path = _seal(tmp_path, _signed())
-    assert sp.load_launch_record(path, code_commit='c0ffee')['decisions']['D11'].startswith('[user')
+def test_approved_draft_has_no_open_decisions_and_seals(tmp_path):
+    # Every decision is signed (D1's rank-0 LR on 2026-11-25); only the fill-ins (commit, Pod, paths) remain null.
+    assert sp.draft_problems(DRAFT) == []
+    assert sp.main(['check', str(DRAFT)]) == 0
+    path = sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
+    assert sp.load_launch_record(path, code_commit='c0ffee')['decisions']['D1'].endswith('supersedes the earlier 3e-5)')
 
 
 def test_a_proposed_decision_blocks_sealing(tmp_path):

@@ -92,8 +92,8 @@ PY=$PY bash scripts/rewire_launch.sh $WORK/launch_record.json $WORK/local $VOL 2
 The launcher takes a lock, runs `precheck`, starts the chain and the independent watchdog (no time caps: it acts
 only if the chain dies without finishing, then copies sealed work). Without `--stop-pod` (the default since
 2026-11-25) nothing stops the Pod: the chain copies, exports and verifies, then prints the stop command for you.
-For production, seal `launch-record-draft.yaml` instead of the rehearsal YAML (it refuses to seal while D1 is
-unsigned); cohort150 is then scored at step 1,024 only. Progress is in
+For production, seal `launch-record-draft.yaml` instead of the rehearsal YAML; cohort150 is then scored at step
+1,024 only. Progress is in
 `$VOL/c-attribution/sparse-rewiring-rehearsal-pod-1/c-attribution/chain/progress.json`.
 
 - **If it prints `NO RUN STARTED`**, nothing is running and the Pod is still billing: fix the named problem and

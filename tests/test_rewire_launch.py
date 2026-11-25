@@ -286,16 +286,13 @@ class TestRehearsalLauncher(unittest.TestCase):
 
 class TestRecordFiles(unittest.TestCase):
     def test_rehearsal_and_production_drafts_have_no_unresolved_leaves(self):
-        self.assertEqual(sp.draft_problems(REHEARSAL_YAML), [])
-        # production waits only on D1's rank-0 LR (back to 3e-4, 2026-11-25) until the researcher signs it
-        self.assertEqual([p.split(' ')[0] for p in sp.draft_problems(REHEARSAL_YAML.with_name('launch-record-draft.yaml'))],
-                         ['decisions.D1'])
+        for name in ('launch-record-rehearsal.yaml', 'launch-record-draft.yaml'):
+            self.assertEqual(sp.draft_problems(REHEARSAL_YAML.with_name(name)), [], name)
 
     def test_rehearsal_draft_differs_from_production_only_in_length_and_names(self):
         reh = yaml.safe_load(REHEARSAL_YAML.read_text())
         prod = yaml.safe_load(REHEARSAL_YAML.with_name('launch-record-draft.yaml').read_text())
-        self.assertEqual({k for k in prod['decisions'] if prod['decisions'][k] != reh['decisions'][k]}, {'D1'})
-        differing = {k for k in prod if k != 'decisions' and prod[k] != reh[k]}
+        differing = {k for k in prod if prod[k] != reh[k]}
         self.assertEqual(differing, {'mode', 'label', 'arms', 'data', 'training', 'checkpoints', 'cadences',
                                      'evaluation'})
         for arm in prod['arms']:
