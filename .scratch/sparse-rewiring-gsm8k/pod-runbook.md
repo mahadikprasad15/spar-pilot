@@ -133,10 +133,10 @@ $PY -m pilot_eval.rewire_launch seal --draft .scratch/sparse-rewiring-gsm8k/laun
     --bundle $WORK/inputs/bundles/c-attribution/sparse-rewiring-rehearsal-pod-1/bundle-f4c4112263f23ae4.json \
     --model-dir $WORK/model --work-dir $WORK
 $PY -m pilot_eval.rewire_lr_probe --record $WORK/probe_record.json --volume $VOL --work $WORK/lr-probe \
-    --out $VOL/c-attribution/sparse-rewiring-lr-probe-1 --lrs 1e-4 3e-5 1e-5 --stop-pod 2>&1 | tee $WORK/lr-probe.log
+    --out $VOL/c-attribution/sparse-rewiring-lr-probe-1 --lrs 1e-4 3e-5 1e-5 2>&1 | tee $WORK/lr-probe.log
 ```
 
-It prints one `RESULT` line per LR and stops the Pod at the end, even on failure. The numbers are in
+It prints one `RESULT` line per LR. Probes do not stop the Pod (researcher, 2026-11-25): stop it yourself after reading the results. The numbers are in
 `$VOL/c-attribution/sparse-rewiring-lr-probe-1/lr-probe.json`.
 
 ## 8. Rank-0 64-step probe at 3e-5 (decision 2026-11-25)
@@ -154,5 +154,8 @@ $PY -m pilot_eval.rewire_launch seal --draft .scratch/sparse-rewiring-gsm8k/laun
     --model-dir $WORK/model --work-dir $WORK
 $PY -m pilot_eval.rewire_lr_probe --record $WORK/probe64_record.json --volume $VOL --work $WORK/lr-probe-64 \
     --out $VOL/c-attribution/sparse-rewiring-lr-probe-64 --lrs 3e-5 --cut-steps 64 --checkpoints 16 32 \
-    --stop-pod 2>&1 | tee $WORK/lr-probe-64.log
+    2>&1 | tee $WORK/lr-probe-64.log
 ```
+
+Probes and rehearsal-style checks are launched without `--stop-pod` (researcher, 2026-11-25): the researcher stops
+the Pod after reading the results. Results reach the volume after each LR either way.
