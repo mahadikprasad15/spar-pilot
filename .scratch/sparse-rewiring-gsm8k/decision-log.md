@@ -48,7 +48,18 @@ Gold trains 1.15 M LoRA parameters (r1 on 196 modules) with no selection mechani
 
 References: base 103/128 (CE 0.573), gold SFT step 64 92/128 (CE 0.395). 3e-5 and 1e-5 are within noise of each other (one standard error is about ±5 questions); the researcher chose 3e-5 without a longer check. Open risk carried into production: 16 steps is short of gold's 64 and production's 1,024, and option A's concern above (a low read LR lets the L0 term prune nearly every mask before the reads matter) was not measured at this LR; the production run's checkpoints at 8, 16, 32 and 64 show it early.
 
-**3e-5 fails over 64 steps [measured 2026-11-25]; D1 for rank 0 is on hold.** The 64-step probe on production's own schedule (`launch-record-lrprobe64.yaml`, `sparse-rewiring-lr-probe-64` on sl-0) gave validation CE 0.385 at step 16 and 0.402 at step 32, then at step 64 CE 0.5727914086 and 103/128 correct: identical to the untuned model, so every gate had closed. Option A's concern is confirmed at this LR. The rehearsal's 3e-4 collapse was measured with masks frozen at step 12, before pruning could act, so 3e-4 is not ruled out for production's schedule. Next: the same 64-step probe at rank-0 3e-4 and 1e-4 and rank-1 3e-3.
+**Corrected below: the step-64 reading in this paragraph was wrong.** The 64-step probe on production's own schedule (`launch-record-lrprobe64.yaml`, `sparse-rewiring-lr-probe-64` on sl-0) gave validation CE 0.385 at step 16 and 0.402 at step 32, then at step 64 CE 0.5727914086 and 103/128 correct: identical to the untuned model, so every gate had closed. Option A's concern is confirmed at this LR. The rehearsal's 3e-4 collapse was measured with masks frozen at step 12, before pruning could act, so 3e-4 is not ruled out for production's schedule. Next: the same 64-step probe at rank-0 3e-4 and 1e-4 and rank-1 3e-3.
+
+**64-step probes, all arms [measured 2026-11-25]: the runs are alive; the gates drain identically at every LR.** Expected-on (of 250,880) at steps 16 / 32 / 64, and training CE at 64:
+
+| Run | 16 | 32 | 64 | train CE @64 | val CE @32 |
+|---|---|---|---|---|---|
+| rank 1 @ 3e-3 | 218,278 | 131,103 | 11,067 | 0.415 | 0.403 |
+| rank 0 @ 3e-4 | 218,288 | 131,263 | 11,120 | 0.401 | 0.409 |
+| rank 0 @ 1e-4 | 218,279 | 131,126 | 11,080 | 0.437 | 0.394 |
+| rank 0 @ 3e-5 | 218,277 | 131,097 | 11,069 | 0.473 | 0.402 |
+
+Every deterministic gate was open at 32 and 0–3 were at 64, so every step-64 deterministic eval equals the untuned model; the noisy training gates still fire and training CE stays below base. This is Max's early phase (91% expected-on at step 10, about 1% at 150, about 100 final survivors). The read LR changes only how much the reads learn; the rehearsal's 3e-4 collapse came from freezing the masks at step 12. Consequence for D12: a step-64 deterministic eval of a sparse arm (including cohort150 at 64) reads as the base model. Rank-0 LR decision pending (recommended: back to 3e-4).
 
 ### D2. Mask optimizer and LR
 
