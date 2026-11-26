@@ -148,3 +148,7 @@ Rehearsal `rehearsal-pod-1` on a Runpod A100-SXM4-80GB with sl-0 (code `25db8a2`
 - **The sl-0 network volume refuses file metadata calls.** `shutil.copy2` into it failed on `utime` after an LR had trained. Write locally and copy bytes only (`shutil.copyfile`); the probe's test runs with `os.utime`/`os.chmod` refused. Fixed in `91d5043`.
 - **Runpod images set `HF_HUB_ENABLE_HF_TRANSFER=1` without the package.** `snapshot_download` then fails; export `HF_HUB_ENABLE_HF_TRANSFER=0` in the Pod steps.
 - **A stopped Pod wipes the container disk, including tmux logs.** Put results on the volume as each unit finishes so a dropped SSH session or a closed laptop loses nothing; rehearsals and probes leave the Pod running (researcher, 2026-11-25) and `--stop-pod` is opt-in; reattach with `tmux attach -t sparse`.
+
+## Sparse rewiring interpretation review, 2026-11-26
+
+- **Label decoded-vector associations as hypotheses when causal effects have not been measured.** At `9258e2c`, the Gold report attributed the CE and accuracy tradeoff to formatting and stopping neurons using decoded frozen output directions, while D23's causal checks were deferred. The report text and decision record establish the gap. [Review](../../.scratch/sparse-rewiring-sampling-k2/review-9258e2c.md)

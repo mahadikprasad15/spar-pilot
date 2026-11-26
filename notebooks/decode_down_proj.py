@@ -147,6 +147,19 @@ def _fetch_range(url: str, start: int, end: int) -> bytes:
         return b''.join(chunks)
 
 
+def _safetensors_header_sha256(st_path: Path) -> str:
+    """Hash the safetensors JSON header so local and HTTP-streamed decodes share an identical model fingerprint."""
+    with st_path.open('rb') as fh:
+        raw_len = fh.read(8)
+        if len(raw_len) != 8:
+            raise ValueError(f'{st_path}: truncated safetensors header')
+        header_len = struct.unpack('<Q', raw_len)[0]
+        header_bytes = fh.read(header_len)
+        if len(header_bytes) != header_len:
+            raise ValueError(f'{st_path}: truncated safetensors header bytes')
+    return hashlib.sha256(header_bytes).hexdigest()
+
+
 def _load_weights_local(model_dir: Path, needed_layers: list[int]):
     st_path = model_dir / 'model.safetensors'
     tok_path = model_dir / 'tokenizer.json'
@@ -157,6 +170,7 @@ def _load_weights_local(model_dir: Path, needed_layers: list[int]):
     tok = Tokenizer.from_file(str(tok_path))
     hashes = {
         'model.safetensors': _sha256_file(st_path),
+        'model.safetensors:header': _safetensors_header_sha256(st_path),
         'tokenizer.json': _sha256_file(tok_path),
     }
     return norm_weight, W_U, downs, tok, hashes

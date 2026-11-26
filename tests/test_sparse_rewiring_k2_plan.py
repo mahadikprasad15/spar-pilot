@@ -502,6 +502,163 @@ class TestSparseRewiringK2(unittest.TestCase):
                 written = bdr.build_gold_report(cache_path=GOLD_CACHE, out_paths=[gold_out])
                 self.assertEqual(written, [gold_out])
                 self.assertGreater(gold_out.stat().st_size, 100_000)
+                gold_html = gold_out.read_text(encoding='utf-8')
+                self.assertIn('correlational findings &amp; hypothesis', gold_html)
+                self.assertIn('hypothesis, not yet causally tested', gold_html)
+                self.assertNotIn('Strong confirmation of your Section 7 hypothesis', gold_html)
+
+    def test_p2_9_comparative_report_against_actual_gold_cache(self):
+        """Real comparative Gold-vs-K2 report succeeds against the existing legacy 25 MB Gold cache."""
+        if not GOLD_CACHE.is_file():
+            self.skipTest(f'Gold cache not present at {GOLD_CACHE}')
+        gold_data = torch.load(str(GOLD_CACHE), map_location='cpu', weights_only=False)
+        id_to_str = list(gold_data['id_to_str'])
+        vocab_size = len(id_to_str)
+        d_model = int(gold_data['transported_u']['rlens'].shape[1])
+        lens_names = list(gold_data['lens_names'])
+
+        g = torch.Generator().manual_seed(7)
+        k2_surv = [
+            {'layer': 17, 'idx': 6230, 'v_norm': 1.2, 'v_norm_pct': 78.1},
+            {'layer': 19, 'idx': 999, 'v_norm': 0.9, 'v_norm_pct': 41.0},
+        ]
+        n = len(k2_surv)
+        k2_cache = {
+            'model_id': ddp.QWEN_MODEL_ID,
+            'model_revision': ddp.QWEN_MODEL_REVISION,
+            'lens_repo': ddp.LENS_REPO,
+            'lens_revision': '4fdc576695c5b4f0b173ba00f48e589b3789c452',
+            'lens_meta': gold_data['lens_meta'],
+            'asset_sha256': {
+                'model.safetensors': 'full-local-sha',
+                'model.safetensors:header': 'hdr-sha',
+                'tokenizer.json': 'tok-sha',
+                'lenses': {'jlens': 'j1', 'jpp': 'j2', 'rlens': 'r1'},
+            },
+            'survivors': k2_surv,
+            'lens_names': lens_names,
+            'raw_v': torch.randn(n, d_model, generator=g),
+            'transported_u': {ln: torch.randn(n, d_model, generator=g) for ln in lens_names},
+            'u_raw_norms': {ln: torch.ones(n) for ln in lens_names},
+            'logits_fp16': {ln: torch.randn(n, vocab_size, generator=g).to(torch.float16) for ln in lens_names},
+            'id_to_str': id_to_str,
+            'top_k_records': {
+                ln: [
+                    {'pos': [(0, id_to_str[0], 2.0)], 'neg': [(1, id_to_str[1], -2.0)], 'std': 1.0}
+                    for _ in range(n)
+                ]
+                for ln in lens_names
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            td_p = Path(td)
+            k2_pt = td_p / 'k2_real_gold_compat.pt'
+            out_html = td_p / 'k2_vs_real_gold.html'
+            torch.save(k2_cache, k2_pt)
+
+            res = bdr.build_comparative_report(
+                k2_pt,
+                gold_cache_path=GOLD_CACHE,
+                out_paths=[out_html],
+                experiment_meta={'lambda_regime': 'matched', 'l0_lambda': 6e-4, 'seed': 42},
+            )
+            self.assertTrue(out_html.is_file())
+            self.assertEqual(res['payload']['overlap']['gold_count'], 18)
+            self.assertEqual(res['payload']['overlap']['k2_count'], 2)
+            self.assertEqual(res['payload']['overlap']['shared_count'], 1)
+            self.assertEqual(res['payload']['overlap']['shared_neurons'], ['L17 #6230'])
+            self.assertEqual(len(res['payload']['principal_angles']['rlens_transported']['angles_deg']), 2)
+
+            # Mismatched lens_meta provenance against the real Gold cache MUST be refused
+            bad_k2 = dict(k2_cache)
+            bad_k2['lens_meta'] = {
+                'rlens': {'provenance': {'source': 'bubskee/dolos-qwen25-workspace-lenses@deadbeef'}},
+            }
+            bad_k2_pt = td_p / 'bad_k2.pt'
+            torch.save(bad_k2, bad_k2_pt)
+            with self.assertRaises(ValueError):
+                bdr.build_comparative_report(bad_k2_pt, gold_cache_path=GOLD_CACHE, out_paths=[td_p / 'bad.html'])
+
+    def test_p2_10_local_vs_streamed_cache_compatibility_and_header_hash(self):
+        """Pod-local and Mac HTTP-streamed decodes share model.safetensors:header and compare cleanly."""
+        import hashlib
+        import struct
+        from safetensors.torch import save_file
+
+        with tempfile.TemporaryDirectory() as td:
+            td_p = Path(td)
+            st_path = td_p / 'model.safetensors'
+            save_file({'w': torch.arange(6, dtype=torch.float32).reshape(2, 3)}, str(st_path))
+            raw = st_path.read_bytes()
+            hdr_len = struct.unpack('<Q', raw[:8])[0]
+            expected_hdr_sha = hashlib.sha256(raw[8:8 + hdr_len]).hexdigest()
+            self.assertEqual(ddp._safetensors_header_sha256(st_path), expected_hdr_sha)
+
+            vocab = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '####', '<|endoftext|>', '\n', '\n\n', ' ']
+            lens_names = ['logit_lens', 'jlens', 'jpp', 'rlens']
+
+            def _make(surv, asset_sha256):
+                g = torch.Generator().manual_seed(11)
+                n = len(surv)
+                return {
+                    'model_id': ddp.QWEN_MODEL_ID,
+                    'model_revision': ddp.QWEN_MODEL_REVISION,
+                    'lens_repo': ddp.LENS_REPO,
+                    'lens_revision': '4fdc576695c5b4f0b173ba00f48e589b3789c452',
+                    'asset_sha256': asset_sha256,
+                    'survivors': surv,
+                    'lens_names': lens_names,
+                    'raw_v': torch.randn(n, 8, generator=g),
+                    'transported_u': {ln: torch.randn(n, 8, generator=g) for ln in lens_names},
+                    'u_raw_norms': {ln: torch.ones(n) for ln in lens_names},
+                    'logits_fp16': {ln: torch.randn(n, len(vocab), generator=g).to(torch.float16) for ln in lens_names},
+                    'id_to_str': vocab,
+                    'top_k_records': {
+                        ln: [{'pos': [(0, '0', 1.0)], 'neg': [(1, '1', -1.0)], 'std': 1.0} for _ in range(n)]
+                        for ln in lens_names
+                    },
+                }
+
+            local_assets = {
+                'model.safetensors': 'full-file-sha256-pod',
+                'model.safetensors:header': expected_hdr_sha,
+                'tokenizer.json': 'tok-sha-same',
+                'lenses': {'jlens': 'j1', 'jpp': 'j2', 'rlens': 'r1'},
+            }
+            streamed_assets = {
+                'model.safetensors:header': expected_hdr_sha,
+                'tokenizer.json': 'tok-sha-same',
+                'lenses': {'jlens': 'j1', 'jpp': 'j2', 'rlens': 'r1'},
+            }
+            k2_pt = td_p / 'k2_local.pt'
+            gold_pt = td_p / 'gold_streamed.pt'
+            torch.save(_make([{'layer': 17, 'idx': 6230, 'v_norm': 1.0, 'v_norm_pct': 50.0}], local_assets), k2_pt)
+            torch.save(_make([{'layer': 17, 'idx': 6230, 'v_norm': 1.0, 'v_norm_pct': 50.0}], streamed_assets), gold_pt)
+
+            out_html = td_p / 'local_vs_streamed.html'
+            res = bdr.build_comparative_report(k2_pt, gold_cache_path=gold_pt, out_paths=[out_html])
+            self.assertEqual(res['payload']['overlap']['shared_count'], 1)
+
+            # Different model header hash MUST be refused
+            bad_streamed = dict(streamed_assets, **{'model.safetensors:header': '0' * 64})
+            bad_gold_pt = td_p / 'gold_bad_hdr.pt'
+            torch.save(_make([{'layer': 17, 'idx': 6230, 'v_norm': 1.0, 'v_norm_pct': 50.0}], bad_streamed), bad_gold_pt)
+            with self.assertRaises(ValueError):
+                bdr.build_comparative_report(k2_pt, gold_cache_path=bad_gold_pt, out_paths=[td_p / 'x.html'])
+
+            # Different tokenizer hash MUST be refused
+            bad_tok = dict(streamed_assets, **{'tokenizer.json': 'tok-different'})
+            bad_tok_pt = td_p / 'gold_bad_tok.pt'
+            torch.save(_make([{'layer': 17, 'idx': 6230, 'v_norm': 1.0, 'v_norm_pct': 50.0}], bad_tok), bad_tok_pt)
+            with self.assertRaises(ValueError):
+                bdr.build_comparative_report(k2_pt, gold_cache_path=bad_tok_pt, out_paths=[td_p / 'y.html'])
+
+            # Different lens file hash MUST be refused
+            bad_lens = dict(streamed_assets, lenses={'jlens': 'j1', 'jpp': 'j2', 'rlens': 'r-wrong'})
+            bad_lens_pt = td_p / 'gold_bad_lens.pt'
+            torch.save(_make([{'layer': 17, 'idx': 6230, 'v_norm': 1.0, 'v_norm_pct': 50.0}], bad_lens), bad_lens_pt)
+            with self.assertRaises(ValueError):
+                bdr.build_comparative_report(k2_pt, gold_cache_path=bad_lens_pt, out_paths=[td_p / 'z.html'])
 
     def test_p2_7_asymmetric_lens_orientation_and_immutable_revision_guard(self):
         """Asymmetric orientation check accepts J_true, rejects transposed J_true.T, and refuses mutable main."""

@@ -123,6 +123,92 @@ def _fmt_tok(s: str) -> str:
     return repr(s)[1:-1] if any(ch in s for ch in ('\n', '\r', '\t')) else s
 
 
+def _lens_meta_sources(cache: Mapping[str, Any]) -> dict[str, str]:
+    meta = cache.get('lens_meta')
+    if not isinstance(meta, dict):
+        return {}
+    out: dict[str, str] = {}
+    for ln, entry in meta.items():
+        if isinstance(entry, dict):
+            src = (entry.get('provenance') or {}).get('source') if isinstance(entry.get('provenance'), dict) else None
+            if src:
+                out[str(ln)] = str(src)
+    return out
+
+
+def _check_cache_compatibility(k2_data: Mapping[str, Any], gold_data: Mapping[str, Any]) -> None:
+    """Verify two decoded caches come from the same base model and lens assets.
+
+    Supports:
+    - comparing Pod-local decodes (``model.safetensors`` + ``model.safetensors:header``) with
+      Mac HTTP-streamed decodes (``model.safetensors:header``) via their shared header/tokenizer/lens hashes;
+    - comparing a newly generated K2 cache against the existing legacy Gold cache
+      (``notebooks/cache/down_proj_decoded.pt``), which carries ``model_id``, ``lens_repo``, and
+      per-lens cryptographic ``lens_meta.*.provenance.source`` hashes.
+    """
+    for req_key in ('model_id', 'lens_repo'):
+        kv, gv = k2_data.get(req_key), gold_data.get(req_key)
+        if not kv or not gv:
+            raise ValueError(f'cannot compare caches when either lacks {req_key!r}: k2={kv!r}, gold={gv!r}')
+        if kv != gv:
+            raise ValueError(f'cannot compare caches with different {req_key}: k2={kv!r} vs gold={gv!r}')
+
+    k_mrev, g_mrev = k2_data.get('model_revision'), gold_data.get('model_revision')
+    k_lrev, g_lrev = k2_data.get('lens_revision'), gold_data.get('lens_revision')
+    k_sources = _lens_meta_sources(k2_data)
+    g_sources = _lens_meta_sources(gold_data)
+
+    # Model revision: must match when both present; legacy cache without model_revision requires known lens_meta provenance
+    if k_mrev and g_mrev:
+        if k_mrev != g_mrev:
+            raise ValueError(f'cannot compare caches with different model_revision: k2={k_mrev!r} vs gold={g_mrev!r}')
+    else:
+        for label, mrev, sources in (('k2', k_mrev, k_sources), ('gold', g_mrev, g_sources)):
+            if not mrev and not sources:
+                raise ValueError(
+                    f'cannot compare caches: {label} cache lacks both model_revision and lens_meta provenance'
+                )
+
+    # Lens identity: compare cryptographic lens_meta sources and/or lens_revision
+    if k_sources and g_sources:
+        shared_lenses = sorted(set(k_sources) & set(g_sources))
+        if not shared_lenses:
+            raise ValueError('cannot compare caches with disjoint lens_meta provenance entries')
+        for ln in shared_lenses:
+            if k_sources[ln] != g_sources[ln]:
+                raise ValueError(f'cannot compare caches with different {ln} provenance: {k_sources[ln]!r} vs {g_sources[ln]!r}')
+    if k_lrev and g_lrev:
+        if k_lrev != g_lrev and 'local-verified-assets' not in (k_lrev, g_lrev):
+            raise ValueError(f'cannot compare caches with different lens_revision: k2={k_lrev!r} vs gold={g_lrev!r}')
+    elif not (k_sources and g_sources):
+        for label, lrev, sources in (('k2', k_lrev, k_sources), ('gold', g_lrev, g_sources)):
+            if not lrev and not sources:
+                raise ValueError(
+                    f'cannot compare caches: {label} cache lacks both lens_revision and lens_meta provenance'
+                )
+
+    # Asset SHA-256 comparison across local vs HTTP-streamed representations
+    ka, ga = k2_data.get('asset_sha256'), gold_data.get('asset_sha256')
+    if isinstance(ka, dict) and isinstance(ga, dict):
+        # Prefer the shared safetensors header hash (present in BOTH local and streamed decodes!)
+        if 'model.safetensors:header' in ka and 'model.safetensors:header' in ga:
+            if ka['model.safetensors:header'] != ga['model.safetensors:header']:
+                raise ValueError('cannot compare caches with different model.safetensors:header SHA-256')
+        elif 'model.safetensors' in ka and 'model.safetensors' in ga:
+            if ka['model.safetensors'] != ga['model.safetensors']:
+                raise ValueError('cannot compare caches with different model.safetensors SHA-256')
+        elif any(k in ka for k in ('model.safetensors', 'model.safetensors:header')) or any(
+            k in ga for k in ('model.safetensors', 'model.safetensors:header')
+        ):
+            raise ValueError('cannot compare caches: no common model.safetensors hash key between caches')
+        if 'tokenizer.json' in ka and 'tokenizer.json' in ga and ka['tokenizer.json'] != ga['tokenizer.json']:
+            raise ValueError('cannot compare caches with different tokenizer.json SHA-256')
+        if isinstance(ka.get('lenses'), dict) and isinstance(ga.get('lenses'), dict):
+            for ln in sorted(set(ka['lenses']) & set(ga['lenses'])):
+                if ka['lenses'][ln] != ga['lenses'][ln]:
+                    raise ValueError(f'cannot compare caches with different {ln} lens file SHA-256')
+
+
 def build_comparative_report(
     k2_cache_path: str | Path,
     *,
@@ -153,19 +239,7 @@ def build_comparative_report(
 
     if gold_cache_path is not None and Path(gold_cache_path).is_file():
         gold_data = torch.load(str(gold_cache_path), map_location='cpu', weights_only=False)
-        for req_key in ('model_id', 'model_revision', 'lens_repo', 'lens_revision'):
-            kv, gv = k2_data.get(req_key), gold_data.get(req_key)
-            if not kv or not gv:
-                raise ValueError(
-                    f'cannot compare caches when either cache lacks {req_key!r}: k2={kv!r}, gold={gv!r}'
-                )
-            if kv != gv:
-                raise ValueError(
-                    f'cannot compare caches with different {req_key}: k2={kv!r} vs gold={gv!r}'
-                )
-        ka, ga = k2_data.get('asset_sha256'), gold_data.get('asset_sha256')
-        if (ka is not None or ga is not None) and ka != ga:
-            raise ValueError('cannot compare caches with different verified model/tokenizer/lens asset_sha256')
+        _check_cache_compatibility(k2_data, gold_data)
         gold_surv = list(gold_data['survivors'])
         gold_labels = [s.get('label', f"L{s['layer']} #{s['idx']}") for s in gold_surv]
         k2_set = {(int(s['layer']), int(s['idx'])) for s in k2_surv}
