@@ -266,40 +266,81 @@ def run(root: str | Path, *, gold_adapter: str | Path | None = None, attribution
     refs = load_references(root)
     done: dict[str, Any] = {}
 
-    def unit(name: str, directory: Path, files) -> None:
+    def unit(name: str, directory: Path, files, *, input_fingerprint: dict[str, Any] | None = None,
+             fingerprint_file: str | None = None) -> None:
         if name.split(':')[0] in redo:
             _supersede(directory)
+        elif _sealed_exists(directory) and input_fingerprint is not None and fingerprint_file is not None:
+            saved_body = _j(directory / fingerprint_file)
+            if saved_body.get('analysis_inputs') != input_fingerprint:
+                _supersede(directory)
         if _sealed_exists(directory):
             done[name] = f'kept (already sealed): {directory}'
             return
         au.seal_run(directory, files() if callable(files) else files)
         done[name] = str(directory)
 
+    from pilot_eval.training import file_hash as _file_hash
+
     manifest = None
+    manifest_sha = None
     if attribution_root is not None and ('attribution' in only or 'rank-comparison' in only):
         if 'attribution' in redo:
             _supersede(base / 'attribution-inputs')
         manifest = attribution_manifest(attribution_root, base / 'attribution-inputs')
+        manifest_sha = _file_hash(base / 'attribution-inputs' / 'complete.json')
+
+    gold_adapter_sha = None
+    if gold_adapter is not None:
+        ga_file = Path(gold_adapter) / 'adapter_model.safetensors'
+        gold_adapter_sha = _file_hash(ga_file) if ga_file.is_file() else str(Path(gold_adapter).resolve())
 
     if 'standalone' in only:
         for name, a in sorted(arms.items()):
             shift_dir = base / f'activation-shift-{name}'
             shift = None
+            shift_sha = None
             if _sealed_exists(shift_dir):
                 body = _j(shift_dir / 'activation_shift.json')
                 shift = {k: body[k] for k in ('per_neuron_mean_shift', 'per_neuron_mean_abs_shift', 'tokens')}
+                shift_sha = _file_hash(shift_dir / 'complete.json')
+            standalone_fp = {
+                'gold_adapter_sha256': gold_adapter_sha,
+                'activation_shift_complete_sha256': shift_sha,
+            }
             from pilot_eval import rewire_standalone as rs
-            unit(f'standalone:{name}', base / f'standalone-{name}',
-                 lambda a=a, shift=shift: {'standalone_analysis.json': dict(schema=rs.SCHEMA, **standalone(
-                     a, refs, gold_adapter=gold_adapter, activation_shift=shift))})
+            unit(
+                f'standalone:{name}',
+                base / f'standalone-{name}',
+                lambda a=a, shift=shift, fp=standalone_fp: {
+                    'standalone_analysis.json': dict(
+                        schema=rs.SCHEMA,
+                        analysis_inputs=fp,
+                        **standalone(a, refs, gold_adapter=gold_adapter, activation_shift=shift),
+                    )
+                },
+                input_fingerprint=standalone_fp,
+                fingerprint_file='standalone_analysis.json',
+            )
     ranks = {a['rank']: a for a in arms.values()}
     if 'rank-comparison' in only:
         if set(ranks) != {0, 1}:
             done['rank-comparison'] = f'skipped: arms have ranks {sorted(ranks)}, not 0 and 1'
         else:
-            unit('rank-comparison', base / 'rank-comparison',
-                 lambda: {'rank_comparison.json': rank_comparison(ranks[1], ranks[0], refs,
-                                                                  manifest_entries=(manifest or {}).get('entries'))})
+            rc_fp = {'attribution_manifest_sha256': manifest_sha}
+            unit(
+                'rank-comparison',
+                base / 'rank-comparison',
+                lambda fp=rc_fp: {
+                    'rank_comparison.json': dict(
+                        analysis_inputs=fp,
+                        **rank_comparison(ranks[1], ranks[0], refs,
+                                          manifest_entries=(manifest or {}).get('entries')),
+                    )
+                },
+                input_fingerprint=rc_fp,
+                fingerprint_file='rank_comparison.json',
+            )
     if 'dynamics' in only:
         unit('dynamics', base / 'dynamics', lambda: dynamics(arms, refs))
     if 'attribution' in only:

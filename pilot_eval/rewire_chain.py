@@ -318,9 +318,14 @@ def build_rewire_stages(
                 restore_arm_evidence(arm_dir)
 
             def _model_factory() -> torch.nn.Module:
+                plan_seeds = plan.get('settings', {}).get('seeds', {})
+                arm_seed = int(
+                    plan_seeds['read_init_base'] if 'read_init_base' in plan_seeds
+                    else record['seeds']['read_init_base']
+                )
                 return backend.load_rewired_model(
                     rank=int(plan['rank']),
-                    seed=int(record['seeds']['read_init_base']),
+                    seed=arm_seed,
                     mask_init=float(record['hard_concrete']['log_alpha_init']),
                 )
 

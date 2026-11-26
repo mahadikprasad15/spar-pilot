@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What do the surviving neurons write? · Sparse Rewiring down_proj Interpretation</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #f9fafb;
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+    --text: #111827;
+    --text-2: #374151;
+    --muted: #6b7280;
+    --shared: #15803d;
+    --shared-bg: #ecfdf5;
+    --shared-bd: #bbf7d0;
+    --r0: #b43c12;
+    --r0-bg: #fff7ed;
+    --r0-bd: #fed7aa;
+    --r1: #1d4ed8;
+    --r1-bg: #eff6ff;
+    --r1-bd: #bfdbfe;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Source Serif 4", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    padding: 40px 20px 80px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: 36px;
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    margin: 0 0 14px;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .lead {
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--text-2);
+    margin: 0 0 24px;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 700;
+    margin: 44px 0 14px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+    color: #0f172a;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 22px 0 10px;
+    color: var(--text);
+  }
+  p { margin: 0 0 14px; color: var(--text-2); }
+  .mono { font-family: var(--mono); }
+  .nowrap { white-space: nowrap; }
+  .muted { color: var(--muted); }
+  .muted-sm { color: var(--text-2); font-size: 13px; line-height: 1.48; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .num-pos { color: #991b1b; }
+  .num-neg { color: #1e40af; }
+
+  /* Cards */
+  .card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin: 16px 0;
+  }
+  .summary-card ol {
+    margin: 0 0 14px;
+    padding-left: 20px;
+  }
+  .summary-card li {
+    margin-bottom: 10px;
+    color: var(--text-2);
+  }
+  .summary-card li strong { color: var(--text); }
+  .pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .pill {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 11px;
+  }
+
+  /* Formula box */
+  .formula-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.85;
+    overflow-x: auto;
+    margin: 16px 0;
+  }
+  .c-g { color: var(--shared); font-weight: 600; }
+  .c-r { color: var(--r0); font-weight: 600; }
+  .c-b { color: var(--r1); font-weight: 600; }
+
+  /* Grids */
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+  @media (max-width: 720px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  }
+  .mini-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .mini-card h4 {
+    margin: 0 0 6px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .mini-card p { margin: 0; font-size: 12.8px; line-height: 1.5; color: var(--muted); }
+  .stat-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .stat-val {
+    font-family: var(--mono);
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.15;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+  .stat-desc { font-size: 12.8px; color: var(--muted); line-height: 1.45; }
+
+  /* Pipeline strip */
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+    margin: 16px 0;
+  }
+  @media (max-width: 760px) { .pipeline { grid-template-columns: 1fr; } }
+  .pipe-step {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 11px 12px;
+    background: var(--surface);
+    position: relative;
+  }
+  .pipe-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .pipe-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .pipe-body { font-size: 12px; color: var(--muted); line-height: 1.42; }
+
+  /* Tables */
+  .table-wrap {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 16px 0;
+    background: var(--bg);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th {
+    background: var(--surface);
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-2);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.2px;
+  }
+  td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  /* Badges & Token Chips */
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .b-shared { color: var(--shared); background: var(--shared-bg); border-color: var(--shared-bd); }
+  .b-r0     { color: var(--r0);     background: var(--r0-bg);     border-color: var(--r0-bd); }
+  .b-r1     { color: var(--r1);     background: var(--r1-bg);     border-color: var(--r1-bd); }
+  .badge-wrap { display: flex; flex-wrap: wrap; gap: 5px; }
+
+  .tok-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .tok {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 1.5px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    white-space: pre;
+  }
+  .tok-pos { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .tok-neg { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+  .pole-lbl {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    width: 24px;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .pole-pos { color: #991b1b; }
+  .pole-neg { color: #1e40af; }
+  .lens-sub {
+    display: grid;
+    grid-template-columns: 74px 1fr;
+    gap: 6px;
+    padding: 5px 0;
+    border-bottom: 1px dashed #e5e7eb;
+  }
+  .lens-sub:last-child { border-bottom: none; padding-bottom: 0; }
+  .lens-tag { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--muted); padding-top: 2px; }
+
+  /* Interactive Tabs */
+  .tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 12px 0 14px;
+  }
+  .tab-label { font-size: 12px; color: var(--muted); font-weight: 600; margin-right: 4px; }
+  .tab-btn {
+    font-family: var(--sans);
+    font-size: 12.2px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .tab-btn:hover { background: var(--surface); }
+  .tab-btn.active {
+    background: #111827;
+    color: #ffffff;
+    border-color: #111827;
+  }
+
+  /* Figure Cards & SVG */
+  .fig-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px 14px;
+    margin: 18px 0;
+    background: #fff;
+  }
+  .fig-caption {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 10px;
+    line-height: 1.5;
+  }
+  .fig-caption strong { color: var(--text); }
+  .svg-fig { width: 100%; height: auto; display: block; }
+  .svg-sub { font-family: var(--mono); font-size: 11px; fill: #6b7280; }
+  .svg-lbl { font-family: var(--mono); font-size: 11px; font-weight: 700; }
+  .svg-tick { font-family: var(--mono); font-size: 10px; fill: #4b5563; }
+  .svg-legend { font-family: var(--sans); font-size: 11.5px; fill: #374151; font-weight: 600; }
+  .svg-axis { font-family: var(--sans); font-size: 11px; fill: #4b5563; font-weight: 600; }
+  .svg-annot { font-family: var(--mono); font-size: 10px; font-weight: 700; }
+
+  /* Heatmaps */
+  .hm-wrap { overflow-x: auto; }
+  .hm-grid {
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 10px;
+    margin: 0 auto;
+  }
+  .hm-grid th {
+    background: transparent;
+    border: none;
+    padding: 3px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+  .hm-grid th.col-rot {
+    height: 82px;
+    vertical-align: bottom;
+    padding-bottom: 6px;
+  }
+  .hm-grid th.col-rot > div {
+    transform: rotate(-48deg);
+    transform-origin: bottom left;
+    width: 24px;
+    margin-left: 12px;
+  }
+  .hm-cell {
+    width: 34px;
+    height: 24px;
+    text-align: center;
+    vertical-align: middle;
+    padding: 0;
+    border: 1px solid rgba(255,255,255,0.45);
+    font-size: 9.5px;
+    cursor: default;
+    transition: outline 0.08s ease;
+  }
+  .hm-cell:hover { outline: 2px solid #111827; z-index: 2; position: relative; }
+  .hm-div-r td, .hm-div-r th { border-bottom: 2px solid #111827 !important; }
+  .hm-div-c { border-right: 2px solid #111827 !important; }
+  .hm-dash-c { border-right: 1.5px dashed #4b5563 !important; }
+  .hm-colorbar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .hm-grad {
+    width: 220px;
+    height: 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: linear-gradient(90deg, #1e3a8a 0%, #60a5fa 25%, #f9fafb 50%, #f87171 75%, #991b1b 100%);
+  }
+
+  /* Callout note */
+  .callout {
+    border-left: 3px solid var(--shared);
+    background: var(--surface);
+    padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+    margin: 14px 0;
+    font-size: 13.5px;
+    color: var(--text-2);
+  }
+  .callout strong { color: var(--text); }
+
+  /* Next-step cards */
+  .todo-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 10px 0;
+    background: #fff;
+  }
+  .todo-card h4 { margin: 0 0 5px; font-size: 14px; color: var(--text); }
+  .todo-card p { margin: 0; font-size: 13.2px; color: var(--text-2); }
+
+  /* Floating tooltip */
+  #tooltip {
+    position: fixed;
+    display: none;
+    pointer-events: none;
+    background: #111827;
+    color: #f9fafb;
+    padding: 8px 11px;
+    border-radius: 7px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+    z-index: 9999;
+    max-width: 340px;
+  }
+
+  /* Print-to-PDF polish */
+  @media print {
+    body { padding: 0; font-size: 12px; }
+    .page { max-width: 100%; }
+    .tab-bar { display: none !important; }
+    .card, .fig-card, .stat-card, .todo-card, .table-wrap, .mini-card { break-inside: avoid; }
+    h2 { break-after: avoid; margin-top: 26px; padding-top: 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="eyebrow">SPARSE REWIRING · DOWN_PROJ INTERPRETATION · 26 NOV 2026</div>
+  <h1>What do the surviving neurons write?</h1>
+  <p class="lead">
+    Because sparse L0 rewiring froze every MLP neuron’s output column (<span class="mono">down_proj</span>), the 18 surviving neurons across Rank 0 and Rank 1 could only steer <span class="mono">Qwen2.5-1.5B-Instruct</span> along pre-existing output directions. We decode all 18 frozen vectors using Logit Lens and three Jacobian-lens variants (<span class="mono">J-Lens</span>, <span class="mono">J++</span>, <span class="mono">R-Lens</span>) to see what concepts and tokens they control.
+  </p>
+
+  <div class="card summary-card">
+    <ol>
+      <li><strong>The 5 shared neurons form a GSM8K-vs-Qwen style &amp; EOS switchboard.</strong> All five sit in mid-late layers (L11–L19) and align strongly with formatting, LaTeX, and stopping: <span class="mono">L19 #5606</span> hits +2.9σ to +8.2σ on every markup/delimiter token (<span class="mono">**</span>, <span class="mono">\[</span>, <span class="mono">####</span>, <span class="mono">###</span>, <span class="mono">&lt;&lt;</span>, <span class="mono">&gt;&gt;</span>, <span class="mono">boxed</span>), <span class="mono">L16 #5569</span> separates markdown/LaTeX from <span class="mono">&lt;|endoftext|&gt;</span> (−7.8σ), and <span class="mono">L11 #8235</span> separates plain-text arithmetic (<span class="mono">=</span>, <span class="mono">&lt;&lt;</span>, digits) from LaTeX.</li>
+      <li><strong>Both arms independently found L27 digit knobs and cross-layer formatting substitutes.</strong> Rank 0 picked <span class="mono">L27 #7926</span> (digits +3.1σ, <span class="mono">&lt;|im_end|&gt;</span> −2.6σ) and <span class="mono">L27 #4914</span> (English number words); Rank 1 picked <span class="mono">L27 #6214</span> (all 10 digits 0–9 at −11.8σ). Across layers, Rank 0’s <span class="mono">L12 #6760</span> and Rank 1’s <span class="mono">L6 #5466</span> are direct substitutes (R-Lens cos <strong>+0.66</strong>; both +14.8σ/+14.9σ on <span class="mono">\n\n</span> and +3–4σ on <span class="mono">####</span>).</li>
+      <li><strong>Functional overlap exceeds the 5-of-18 index overlap.</strong> Excluding the 5 shared neurons entirely, the 7 Rank-0-only and 6 Rank-1-only subspaces still share two strong directions in final-layer R-Lens space (top principal-angle cosines <strong>0.78</strong> and <strong>0.58</strong>).</li>
+      <li><strong>Matches the CE-vs-accuracy trade-off without ruling out all reasoning effects.</strong> The heavy concentration of formatting, newline, EOS, and digit directions directly supports the style-compression reading of the −14 pt accuracy drop—while a few early/mid neurons (<span class="mono">L3 #574</span> math/teacher domain, <span class="mono">L17 #6230</span> assertion/inequalities) point beyond pure punctuation.</li>
+    </ol>
+    <div class="pills">
+      <span class="pill">Frozen down_proj only — active sign (Δact) not yet measured</span>
+      <span class="pill">Pre-fitted Wikitext lenses (n = 64 prompts)</span>
+      <span class="pill">L27 has no downstream blocks (J = I)</span>
+      <span class="pill">25 MB local decoded cache (zero 3 GB model stored)</span>
+    </div>
+  </div>
+
+  <!-- SECTION 1 -->
+  <h2>1 · Setup &amp; Method</h2>
+  <p>
+    In the production sparse-rewiring run, only the input read rows (<span class="mono">gate_proj</span>, <span class="mono">up_proj</span>) of each MLP neuron were allowed to change; the write matrix <span class="mono">down_proj</span> remained frozen at its base <span class="mono">Qwen2.5-1.5B-Instruct</span> weights. Whenever surviving neuron <em>j</em> in layer <em>L</em> changes its activation by <span class="mono">Δa_j(x)</span>, it injects a scalar multiple of the fixed vector <span class="mono">v_j = W_down^(L)[:, j] ∈ ℝ^1536</span> into the post-block residual stream.
+  </p>
+
+  <div class="formula-box">
+    v_j        = W_down^(L)[:, j]                                  <span class="muted"># frozen output column in ℝ^1536</span><br>
+    u_j        = <span class="c-b">J_lens^(L)</span> · v_j                                  <span class="muted"># linear transport L → L27 (identity for Logit Lens &amp; L27)</span><br>
+    u_readout  = (u_j / RMS(u_j)) ⊙ <span class="c-g">γ_final</span>                        <span class="muted"># unit-RMS scale + final RMSNorm gain</span><br>
+    logits_j   = <span class="c-r">W_U</span> · u_readout  −  mean(W_U · u_readout)          <span class="muted"># project to 151,936 vocab tokens, mean-center</span><br>
+    z_j(w)     = logits_j(w) / std(logits_j)                       <span class="muted"># standardized vocab z-score (+v promoted, −v suppressed)</span>
+  </div>
+
+  <div class="grid-4">
+    <div class="mini-card">
+      <h4>Logit Lens</h4>
+      <p>No transport (<span class="mono">J = I</span>). Direct projection through final RMSNorm gain &amp; <span class="mono">W_U</span>. Exact at L27, noisy in early layers.</p>
+    </div>
+    <div class="mini-card">
+      <h4>J-Lens (<span class="mono">jlens</span>)</h4>
+      <p>Corpus-averaged input–output Jacobian <span class="mono">E[∂h_27 / ∂h_L]</span> over Wikitext. Transports intermediate vectors to final-layer coordinates.</p>
+    </div>
+    <div class="mini-card">
+      <h4>J++ Lens (<span class="mono">jpp</span>)</h4>
+      <p>Jacobian-filtered variant (Ayonrinde &amp; Lindsey, 2026) designed to remove early-layer noise and improve workspace coherence.</p>
+    </div>
+    <div class="mini-card">
+      <h4>R-Lens (<span class="mono">rlens</span>)</h4>
+      <p>LRP-modified backward pass (Blank, Bhatia &amp; Nanda, 2026). Cleanest early-layer fidelity and highest cross-depth consistency here.</p>
+    </div>
+  </div>
+
+  <div class="fig-card">
+    <svg viewBox="0 0 820 195" class="svg-fig" role="img" aria-label="Surviving neurons per layer">
+<text x="410.0" y="18" text-anchor="middle" class="svg-sub">layer (0 = first, 27 = last); each block is one surviving neuron</text>
+<line x1="50" y1="98" x2="802" y2="98" stroke="#9ca3af" stroke-width="1.2"/>
+<text x="8" y="52" class="svg-lbl" fill="#b43c12">Rank 0</text>
+<text x="8" y="154" class="svg-lbl" fill="#1d4ed8">Rank 1</text>
+<text x="69.2" y="183" text-anchor="middle" class="svg-tick">0</text>
+<rect x="113.1" y="102.0" width="18" height="22" rx="3" fill="#1d4ed8"><title>L2 #4005 (r1_only) — Plain paragraphs, no markdown/LaTeX</title></rect>
+<text x="148.5" y="183" text-anchor="middle" class="svg-tick">3</text>
+<rect x="139.5" y="72.0" width="18" height="22" rx="3" fill="#b43c12"><title>L3 #574 (r0_only) — Math / school word-problem domain</title></rect>
+<rect x="165.9" y="72.0" width="18" height="22" rx="3" fill="#b43c12"><title>L4 #1398 (r0_only) — Structured workflow / enterprise jargon</title></rect>
+<text x="227.8" y="183" text-anchor="middle" class="svg-tick">6</text>
+<rect x="218.8" y="72.0" width="18" height="22" rx="3" fill="#b43c12"><title>L6 #1362 (r0_only) — CoT / boxed / newline suppressor</title></rect>
+<rect x="218.8" y="102.0" width="18" height="22" rx="3" fill="#1d4ed8"><title>L6 #5466 (r1_only) — Paragraph break &amp; &#x27;####&#x27; vs. &#x27;\n&#x27;</title></rect>
+<text x="307.1" y="183" text-anchor="middle" class="svg-tick">9</text>
+<rect x="350.9" y="72.0" width="18" height="22" rx="3" fill="#15803d"><title>L11 #8235 (shared) — Plain-text arithmetic vs. LaTeX / breaks</title></rect>
+<rect x="350.9" y="102.0" width="18" height="22" rx="3" fill="#15803d"><title>L11 #8235 (shared) — Plain-text arithmetic vs. LaTeX / breaks</title></rect>
+<text x="386.4" y="183" text-anchor="middle" class="svg-tick">12</text>
+<rect x="377.4" y="72.0" width="18" height="22" rx="3" fill="#b43c12"><title>L12 #6760 (r0_only) — Paragraph break &amp; &#x27;####&#x27; vs. &#x27;\n&#x27; / EOS</title></rect>
+<rect x="430.2" y="102.0" width="18" height="22" rx="3" fill="#1d4ed8"><title>L14 #3925 (r1_only) — Markdown / boxed / newline / EOS suppressor</title></rect>
+<text x="465.6" y="183" text-anchor="middle" class="svg-tick">15</text>
+<rect x="483.1" y="72.0" width="18" height="22" rx="3" fill="#15803d"><title>L16 #5569 (shared) — Markdown/LaTeX vs. EOS &amp; newlines</title></rect>
+<rect x="483.1" y="102.0" width="18" height="22" rx="3" fill="#15803d"><title>L16 #5569 (shared) — Markdown/LaTeX vs. EOS &amp; newlines</title></rect>
+<rect x="509.5" y="72.0" width="18" height="22" rx="3" fill="#15803d"><title>L17 #6230 (shared) — Assertion / equation evaluation</title></rect>
+<rect x="509.5" y="47.0" width="18" height="22" rx="3" fill="#15803d"><title>L17 #7054 (shared) — LaTeX &amp; heading-newline delimiters</title></rect>
+<rect x="509.5" y="102.0" width="18" height="22" rx="3" fill="#15803d"><title>L17 #6230 (shared) — Assertion / equation evaluation</title></rect>
+<rect x="509.5" y="127.0" width="18" height="22" rx="3" fill="#15803d"><title>L17 #7054 (shared) — LaTeX &amp; heading-newline delimiters</title></rect>
+<text x="544.9" y="183" text-anchor="middle" class="svg-tick">18</text>
+<rect x="535.9" y="72.0" width="18" height="22" rx="3" fill="#b43c12"><title>L18 #4890 (r0_only) — Sentence-ending newline specialist</title></rect>
+<rect x="562.4" y="72.0" width="18" height="22" rx="3" fill="#15803d"><title>L19 #5606 (shared) — Master markup / delimiter switch</title></rect>
+<rect x="562.4" y="102.0" width="18" height="22" rx="3" fill="#15803d"><title>L19 #5606 (shared) — Master markup / delimiter switch</title></rect>
+<text x="624.2" y="183" text-anchor="middle" class="svg-tick">21</text>
+<text x="703.5" y="183" text-anchor="middle" class="svg-tick">24</text>
+<rect x="747.4" y="102.0" width="18" height="22" rx="3" fill="#1d4ed8"><title>L26 #8751 (r1_only) — Word-problem / completion cues</title></rect>
+<text x="782.8" y="183" text-anchor="middle" class="svg-tick">27</text>
+<rect x="773.8" y="72.0" width="18" height="22" rx="3" fill="#b43c12"><title>L27 #4914 (r0_only) — Spelled-out English number words</title></rect>
+<rect x="773.8" y="47.0" width="18" height="22" rx="3" fill="#b43c12"><title>L27 #7926 (r0_only) — ASCII digits &amp; chat EOS (&lt;|im_end|&gt;)</title></rect>
+<rect x="773.8" y="102.0" width="18" height="22" rx="3" fill="#1d4ed8"><title>L27 #1683 (r1_only) — Short lowercase token fragments</title></rect>
+<rect x="773.8" y="127.0" width="18" height="22" rx="3" fill="#1d4ed8"><title>L27 #6214 (r1_only) — Pure ASCII digits 0–9 specialist</title></rect>
+<rect x="555" y="27" width="10" height="10" rx="2" fill="#15803d"/>
+<text x="569" y="36" class="svg-legend">Shared (5)</text>
+<rect x="643" y="27" width="10" height="10" rx="2" fill="#b43c12"/>
+<text x="657" y="36" class="svg-legend">Rank 0 only (7)</text>
+<rect x="731" y="27" width="10" height="10" rx="2" fill="#1d4ed8"/>
+<text x="745" y="36" class="svg-legend">Rank 1 only (6)</text>
+</svg>
+    <div class="fig-caption"><strong>Figure 0. Surviving neurons by layer (reference map).</strong> Rank 0 (12) above the axis, Rank 1 (11) below. All 5 shared neurons (green) sit in L11–L19; early layers (L2–L6) and final layers (L26–L27) have zero index overlap yet both arms pick neurons there. Hover any block for its functional role.</div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:20%">Setting</th><th style="width:42%">Value</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Base weights</strong></td><td class="mono">Qwen/Qwen2.5-1.5B-Instruct (BF16 → FP32)</td><td>Identical frozen <span class="mono">down_proj</span>, <span class="mono">model.norm.weight</span>, and tied <span class="mono">embed_tokens / lm_head</span> weights used in sparse rewiring.</td></tr>
+        <tr><td><strong>Pre-fitted lenses</strong></td><td class="mono">neuronpedia/jacobian-lens<br>qwen2.5-1.5b-it/{jlens,jpp,rlens}/Salesforce-wikitext/</td><td>Covers all 27 source layers <span class="mono">L0–L26</span> (<span class="mono">capture_point = block_output</span>, <span class="mono">target_layer = 27</span>, FP16, 64 Wikitext prompts). At L27, <span class="mono">J = I</span>.</td></tr>
+        <tr><td><strong>Tensor extraction</strong></td><td>HTTP byte-range streaming of 15 tensors (~824 MB temp) → 25.05 MB local cache</td><td>Avoids downloading the full 3.09 GB model; temporary downloads &amp; 382 MB lenses deleted after caching.</td></tr>
+        <tr><td><strong>Orientation check</strong></td><td class="mono">J @ e vs. J.T @ e on token embeddings (L2, L11, L17, L25)</td><td>Verified <span class="mono">J @ v</span> wins across all 3 lenses: <span class="mono">jlens</span> +13.44 vs +11.40, <span class="mono">jpp</span> +18.75 vs +18.41, <span class="mono">rlens</span> +18.94 vs +18.38.</td></tr>
+        <tr><td><strong>Both poles (+v / −v)</strong></td><td>Top-30 promoted (<span class="mono">+v</span>) &amp; Top-30 suppressed (<span class="mono">−v</span>)</td><td>SwiGLU activations are signed and rewiring can suppress a neuron; both directions must be inspected until <span class="mono">Δact</span> signs are measured.</td></tr>
+        <tr><td><strong>Vocab centering</strong></td><td>Subtract mean across all 151,936 tokens &amp; z-score</td><td>Removes shared frequency/anisotropy offset in Qwen2.5’s tied unembedding matrix and puts all layers/lenses on a comparable σ scale.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- SECTION 2 -->
+  <h2>2 · Pipeline &amp; Diagnostics</h2>
+
+  <div class="pipeline">
+    <div class="pipe-step">
+      <div class="pipe-num">Step 1</div>
+      <div class="pipe-title">Registry</div>
+      <div class="pipe-body">Load the 18 survivor <span class="mono">(L, idx)</span> pairs grouped into Shared (5), R0-only (7), R1-only (6).</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">Step 2</div>
+      <div class="pipe-title">Stream Tensors</div>
+      <div class="pipe-body">HTTP Range-fetch only <span class="mono">norm</span>, <span class="mono">embed_tokens</span>, and 13 <span class="mono">down_proj</span> layers + 3 lenses.</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">Step 3</div>
+      <div class="pipe-title">4-Lens Decode</div>
+      <div class="pipe-body">Compute <span class="mono">u = J_L v</span>, apply <span class="mono">γ</span> &amp; <span class="mono">W_U</span>, save 25 MB cache for &lt;2 s iteration.</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">Step 4</div>
+      <div class="pipe-title">Geometry</div>
+      <div class="pipe-body">Measure lens agreement, 18×18 cosine matrices, output PR, and subspace overlap.</div>
+    </div>
+    <div class="pipe-step">
+      <div class="pipe-num">Step 5</div>
+      <div class="pipe-title">GSM8K Probe</div>
+      <div class="pipe-body">Score all 18 neurons on 18 targeted GSM8K, markdown/LaTeX, and EOS tokens.</div>
+    </div>
+  </div>
+
+  <div class="fig-card">
+    <svg viewBox="0 0 840 315" class="svg-fig" role="img" aria-label="Cross-lens agreement by layer depth">
+<line x1="54" y1="234.5" x2="816" y2="234.5" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="46" y="238.0" text-anchor="end" class="svg-tick">-0.4</text>
+<line x1="54" y1="208.5" x2="816" y2="208.5" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="46" y="212.0" text-anchor="end" class="svg-tick">-0.2</text>
+<line x1="54" y1="182.5" x2="816" y2="182.5" stroke="#9ca3af" stroke-width="1.1"/>
+<text x="46" y="186.0" text-anchor="end" class="svg-tick">0.0</text>
+<line x1="54" y1="156.5" x2="816" y2="156.5" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="46" y="160.0" text-anchor="end" class="svg-tick">0.2</text>
+<line x1="54" y1="130.4" x2="816" y2="130.4" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="46" y="133.9" text-anchor="end" class="svg-tick">0.4</text>
+<line x1="54" y1="104.4" x2="816" y2="104.4" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="46" y="107.9" text-anchor="end" class="svg-tick">0.6</text>
+<line x1="54" y1="78.4" x2="816" y2="78.4" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="46" y="81.9" text-anchor="end" class="svg-tick">0.8</text>
+<line x1="54" y1="52.4" x2="816" y2="52.4" stroke="#e5e7eb" stroke-width="0.8"/>
+<text x="46" y="55.9" text-anchor="end" class="svg-tick">1.0</text>
+<line x1="54" y1="18" x2="78" y2="18" stroke="#6b7280" stroke-width="2.4" stroke-dasharray="5,4"/>
+<circle cx="66" cy="18" r="3.5" fill="#6b7280"/>
+<text x="84" y="22" class="svg-legend">Logit Lens vs R-Lens</text>
+<line x1="244" y1="18" x2="268" y2="18" stroke="#b43c12" stroke-width="2.4"/>
+<circle cx="256" cy="18" r="3.5" fill="#b43c12"/>
+<text x="274" y="22" class="svg-legend">J-Lens vs R-Lens</text>
+<line x1="434" y1="18" x2="458" y2="18" stroke="#1d4ed8" stroke-width="2.4"/>
+<circle cx="446" cy="18" r="3.5" fill="#1d4ed8"/>
+<text x="464" y="22" class="svg-legend">J++ vs R-Lens</text>
+<polyline fill="none" stroke="#6b7280" stroke-width="1.8" stroke-dasharray="5,4" points="54.0,158.5 98.8,165.6 143.6,146.4 188.5,157.4 233.3,129.1 278.1,126.0 322.9,125.2 367.8,138.4 412.6,119.0 457.4,96.6 502.2,96.6 547.1,82.6 591.9,88.2 636.7,53.8 681.5,52.4 726.4,52.4 771.2,52.4 816.0,52.4"/>
+<circle cx="54.0" cy="158.5" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L2 #4005 (r1_only): Logit Lens vs R-Lens = +0.184</title></circle>
+<circle cx="98.8" cy="165.6" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L3 #574 (r0_only): Logit Lens vs R-Lens = +0.130</title></circle>
+<circle cx="143.6" cy="146.4" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L4 #1398 (r0_only): Logit Lens vs R-Lens = +0.277</title></circle>
+<circle cx="188.5" cy="157.4" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L6 #1362 (r0_only): Logit Lens vs R-Lens = +0.193</title></circle>
+<circle cx="233.3" cy="129.1" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L6 #5466 (r1_only): Logit Lens vs R-Lens = +0.410</title></circle>
+<circle cx="278.1" cy="126.0" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L11 #8235 (shared): Logit Lens vs R-Lens = +0.434</title></circle>
+<circle cx="322.9" cy="125.2" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L12 #6760 (r0_only): Logit Lens vs R-Lens = +0.440</title></circle>
+<circle cx="367.8" cy="138.4" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L14 #3925 (r1_only): Logit Lens vs R-Lens = +0.339</title></circle>
+<circle cx="412.6" cy="119.0" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L16 #5569 (shared): Logit Lens vs R-Lens = +0.488</title></circle>
+<circle cx="457.4" cy="96.6" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L17 #6230 (shared): Logit Lens vs R-Lens = +0.660</title></circle>
+<circle cx="502.2" cy="96.6" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L17 #7054 (shared): Logit Lens vs R-Lens = +0.660</title></circle>
+<circle cx="547.1" cy="82.6" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L18 #4890 (r0_only): Logit Lens vs R-Lens = +0.768</title></circle>
+<circle cx="591.9" cy="88.2" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L19 #5606 (shared): Logit Lens vs R-Lens = +0.725</title></circle>
+<circle cx="636.7" cy="53.8" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L26 #8751 (r1_only): Logit Lens vs R-Lens = +0.989</title></circle>
+<circle cx="681.5" cy="52.4" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L27 #1683 (r1_only): Logit Lens vs R-Lens = +1.000</title></circle>
+<circle cx="726.4" cy="52.4" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L27 #4914 (r0_only): Logit Lens vs R-Lens = +1.000</title></circle>
+<circle cx="771.2" cy="52.4" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L27 #6214 (r1_only): Logit Lens vs R-Lens = +1.000</title></circle>
+<circle cx="816.0" cy="52.4" r="4.0" fill="#6b7280" stroke="#fff" stroke-width="1"><title>L27 #7926 (r0_only): Logit Lens vs R-Lens = +1.000</title></circle>
+<polyline fill="none" stroke="#b43c12" stroke-width="2.2" points="54.0,146.4 98.8,109.0 143.6,97.7 188.5,119.0 233.3,59.3 278.1,72.8 322.9,60.5 367.8,72.7 412.6,73.1 457.4,71.7 502.2,76.2 547.1,59.9 591.9,62.2 636.7,53.4 681.5,52.4 726.4,52.4 771.2,52.4 816.0,52.4"/>
+<circle cx="54.0" cy="146.4" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L2 #4005 (r1_only): J-Lens vs R-Lens = +0.277</title></circle>
+<circle cx="98.8" cy="109.0" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L3 #574 (r0_only): J-Lens vs R-Lens = +0.565</title></circle>
+<circle cx="143.6" cy="97.7" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L4 #1398 (r0_only): J-Lens vs R-Lens = +0.652</title></circle>
+<circle cx="188.5" cy="119.0" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L6 #1362 (r0_only): J-Lens vs R-Lens = +0.488</title></circle>
+<circle cx="233.3" cy="59.3" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L6 #5466 (r1_only): J-Lens vs R-Lens = +0.947</title></circle>
+<circle cx="278.1" cy="72.8" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L11 #8235 (shared): J-Lens vs R-Lens = +0.843</title></circle>
+<circle cx="322.9" cy="60.5" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L12 #6760 (r0_only): J-Lens vs R-Lens = +0.938</title></circle>
+<circle cx="367.8" cy="72.7" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L14 #3925 (r1_only): J-Lens vs R-Lens = +0.844</title></circle>
+<circle cx="412.6" cy="73.1" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L16 #5569 (shared): J-Lens vs R-Lens = +0.841</title></circle>
+<circle cx="457.4" cy="71.7" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L17 #6230 (shared): J-Lens vs R-Lens = +0.852</title></circle>
+<circle cx="502.2" cy="76.2" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L17 #7054 (shared): J-Lens vs R-Lens = +0.817</title></circle>
+<circle cx="547.1" cy="59.9" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L18 #4890 (r0_only): J-Lens vs R-Lens = +0.942</title></circle>
+<circle cx="591.9" cy="62.2" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L19 #5606 (shared): J-Lens vs R-Lens = +0.925</title></circle>
+<circle cx="636.7" cy="53.4" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L26 #8751 (r1_only): J-Lens vs R-Lens = +0.992</title></circle>
+<circle cx="681.5" cy="52.4" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L27 #1683 (r1_only): J-Lens vs R-Lens = +1.000</title></circle>
+<circle cx="726.4" cy="52.4" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L27 #4914 (r0_only): J-Lens vs R-Lens = +1.000</title></circle>
+<circle cx="771.2" cy="52.4" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L27 #6214 (r1_only): J-Lens vs R-Lens = +1.000</title></circle>
+<circle cx="816.0" cy="52.4" r="4.0" fill="#b43c12" stroke="#fff" stroke-width="1"><title>L27 #7926 (r0_only): J-Lens vs R-Lens = +1.000</title></circle>
+<polyline fill="none" stroke="#1d4ed8" stroke-width="2.2" points="54.0,60.3 98.8,56.4 143.6,69.2 188.5,75.0 233.3,102.0 278.1,67.4 322.9,115.5 367.8,77.4 412.6,87.4 457.4,81.1 502.2,87.3 547.1,223.4 591.9,54.7 636.7,81.8 681.5,52.4 726.4,52.4 771.2,52.4 816.0,52.4"/>
+<circle cx="54.0" cy="60.3" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L2 #4005 (r1_only): J++ vs R-Lens = +0.939</title></circle>
+<circle cx="98.8" cy="56.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L3 #574 (r0_only): J++ vs R-Lens = +0.969</title></circle>
+<circle cx="143.6" cy="69.2" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L4 #1398 (r0_only): J++ vs R-Lens = +0.871</title></circle>
+<circle cx="188.5" cy="75.0" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L6 #1362 (r0_only): J++ vs R-Lens = +0.826</title></circle>
+<circle cx="233.3" cy="102.0" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L6 #5466 (r1_only): J++ vs R-Lens = +0.619</title></circle>
+<circle cx="278.1" cy="67.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L11 #8235 (shared): J++ vs R-Lens = +0.885</title></circle>
+<circle cx="322.9" cy="115.5" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L12 #6760 (r0_only): J++ vs R-Lens = +0.515</title></circle>
+<circle cx="367.8" cy="77.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L14 #3925 (r1_only): J++ vs R-Lens = +0.808</title></circle>
+<circle cx="412.6" cy="87.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L16 #5569 (shared): J++ vs R-Lens = +0.731</title></circle>
+<circle cx="457.4" cy="81.1" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L17 #6230 (shared): J++ vs R-Lens = +0.779</title></circle>
+<circle cx="502.2" cy="87.3" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L17 #7054 (shared): J++ vs R-Lens = +0.732</title></circle>
+<circle cx="547.1" cy="223.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L18 #4890 (r0_only): J++ vs R-Lens = -0.315</title></circle>
+<circle cx="591.9" cy="54.7" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L19 #5606 (shared): J++ vs R-Lens = +0.982</title></circle>
+<circle cx="636.7" cy="81.8" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L26 #8751 (r1_only): J++ vs R-Lens = +0.774</title></circle>
+<circle cx="681.5" cy="52.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L27 #1683 (r1_only): J++ vs R-Lens = +1.000</title></circle>
+<circle cx="726.4" cy="52.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L27 #4914 (r0_only): J++ vs R-Lens = +1.000</title></circle>
+<circle cx="771.2" cy="52.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L27 #6214 (r1_only): J++ vs R-Lens = +1.000</title></circle>
+<circle cx="816.0" cy="52.4" r="4.0" fill="#1d4ed8" stroke="#fff" stroke-width="1"><title>L27 #7926 (r0_only): J++ vs R-Lens = +1.000</title></circle>
+<text x="106.8" y="50.3" class="svg-annot" fill="#1d4ed8">L3 #574: J++↔R = 0.97</text>
+<text x="537.1" y="238.4" text-anchor="middle" class="svg-annot" fill="#1d4ed8">J++ sign flip (−0.32)</text>
+<text x="630.7" y="97.8" text-anchor="end" class="svg-annot" fill="#1d4ed8">J++ L26 atten.</text>
+<text x="54.0" y="253.0" transform="rotate(-42 54.0 253.0)" text-anchor="end" class="svg-tick" fill="#1d4ed8" font-weight="600">L2 #4005</text>
+<text x="98.8" y="253.0" transform="rotate(-42 98.8 253.0)" text-anchor="end" class="svg-tick" fill="#b43c12" font-weight="600">L3 #574</text>
+<text x="143.6" y="253.0" transform="rotate(-42 143.6 253.0)" text-anchor="end" class="svg-tick" fill="#b43c12" font-weight="600">L4 #1398</text>
+<text x="188.5" y="253.0" transform="rotate(-42 188.5 253.0)" text-anchor="end" class="svg-tick" fill="#b43c12" font-weight="600">L6 #1362</text>
+<text x="233.3" y="253.0" transform="rotate(-42 233.3 253.0)" text-anchor="end" class="svg-tick" fill="#1d4ed8" font-weight="600">L6 #5466</text>
+<text x="278.1" y="253.0" transform="rotate(-42 278.1 253.0)" text-anchor="end" class="svg-tick" fill="#15803d" font-weight="600">L11 #8235</text>
+<text x="322.9" y="253.0" transform="rotate(-42 322.9 253.0)" text-anchor="end" class="svg-tick" fill="#b43c12" font-weight="600">L12 #6760</text>
+<text x="367.8" y="253.0" transform="rotate(-42 367.8 253.0)" text-anchor="end" class="svg-tick" fill="#1d4ed8" font-weight="600">L14 #3925</text>
+<text x="412.6" y="253.0" transform="rotate(-42 412.6 253.0)" text-anchor="end" class="svg-tick" fill="#15803d" font-weight="600">L16 #5569</text>
+<text x="457.4" y="253.0" transform="rotate(-42 457.4 253.0)" text-anchor="end" class="svg-tick" fill="#15803d" font-weight="600">L17 #6230</text>
+<text x="502.2" y="253.0" transform="rotate(-42 502.2 253.0)" text-anchor="end" class="svg-tick" fill="#15803d" font-weight="600">L17 #7054</text>
+<text x="547.1" y="253.0" transform="rotate(-42 547.1 253.0)" text-anchor="end" class="svg-tick" fill="#b43c12" font-weight="600">L18 #4890</text>
+<text x="591.9" y="253.0" transform="rotate(-42 591.9 253.0)" text-anchor="end" class="svg-tick" fill="#15803d" font-weight="600">L19 #5606</text>
+<text x="636.7" y="253.0" transform="rotate(-42 636.7 253.0)" text-anchor="end" class="svg-tick" fill="#1d4ed8" font-weight="600">L26 #8751</text>
+<text x="681.5" y="253.0" transform="rotate(-42 681.5 253.0)" text-anchor="end" class="svg-tick" fill="#1d4ed8" font-weight="600">L27 #1683</text>
+<text x="726.4" y="253.0" transform="rotate(-42 726.4 253.0)" text-anchor="end" class="svg-tick" fill="#b43c12" font-weight="600">L27 #4914</text>
+<text x="771.2" y="253.0" transform="rotate(-42 771.2 253.0)" text-anchor="end" class="svg-tick" fill="#1d4ed8" font-weight="600">L27 #6214</text>
+<text x="816.0" y="253.0" transform="rotate(-42 816.0 253.0)" text-anchor="end" class="svg-tick" fill="#b43c12" font-weight="600">L27 #7926</text>
+<text x="14" y="141.5" transform="rotate(-90 14 141.5)" text-anchor="middle" class="svg-axis">Vocab Logit Cosine Similarity</text>
+</svg>
+    <div class="fig-caption"><strong>Figure 1. Cross-lens agreement across layer depth (L2 → L27).</strong> Logit Lens agrees poorly with R-Lens in early layers (0.13–0.28) before converging at L26–L27 (0.99–1.00). In early layers L2–L6, <strong>J++ and R-Lens agree closely (0.83–0.97)</strong>, cleanly decoding <span class="mono">L3 #574</span> as math/teacher/solutions where plain J-Lens and Logit Lens miss it. Two J++ caveats appear: a sign flip at <span class="mono">L18 #4890</span> (−0.32, where LL/J/R all agree at 0.77–0.94) and heavy attenuation at L26 (gain 0.26×, where LL/J/R agree at 0.99). <strong>R-Lens is the most consistent single lens across all depths.</strong></div>
+  </div>
+
+  <h3>Down-projection norms &amp; transport gains</h3>
+  <div class="grid-3">
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--r0)">1.3% – 10.5%</div>
+      <div class="stat-desc">Norm percentile of all four <strong>L27 survivors</strong>—in the bottom 10% of L27’s 8,960 neurons.</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--shared)">1.2% / 1.5%</div>
+      <div class="stat-desc">Norm percentiles of shared <span class="mono">L19 #5606</span> and <span class="mono">L11 #8235</span>. Rules out high-norm outlier bias.</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--r1)">18.9% / 8.6%</div>
+      <div class="stat-desc">Median norm percentile for Rank-0-only vs. Rank-1-only (Shared median: 50.9%).</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Group</th><th>Neuron</th><th class="num">‖v‖₂</th><th class="num">Layer med.</th>
+          <th class="num">Norm %ile</th><th class="num">J-Lens gain</th><th class="num">J++ gain</th><th class="num">R-Lens gain</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><span class='badge b-shared'>Shared</span></td><td class='mono'><strong>L11 #8235</strong></td><td class='mono num'>0.779</td><td class='mono num muted'>1.023</td><td class='mono num' style='font-weight:700;color:#b43c12;'>1.5%</td><td class='mono num'>1.48×</td><td class='mono num'>1.19×</td><td class='mono num'>1.44×</td></tr><tr><td><span class='badge b-shared'>Shared</span></td><td class='mono'><strong>L16 #5569</strong></td><td class='mono num'>1.020</td><td class='mono num muted'>1.008</td><td class='mono num' style=''>55.7%</td><td class='mono num'>3.17×</td><td class='mono num'>1.35×</td><td class='mono num'>1.86×</td></tr><tr><td><span class='badge b-shared'>Shared</span></td><td class='mono'><strong>L17 #6230</strong></td><td class='mono num'>1.105</td><td class='mono num muted'>1.042</td><td class='mono num' style=''>78.1%</td><td class='mono num'>0.80×</td><td class='mono num'>0.82×</td><td class='mono num'>0.98×</td></tr><tr><td><span class='badge b-shared'>Shared</span></td><td class='mono'><strong>L17 #7054</strong></td><td class='mono num'>1.044</td><td class='mono num muted'>1.042</td><td class='mono num' style=''>50.9%</td><td class='mono num'>0.91×</td><td class='mono num'>0.82×</td><td class='mono num'>0.94×</td></tr><tr><td><span class='badge b-shared'>Shared</span></td><td class='mono'><strong>L19 #5606</strong></td><td class='mono num'>0.808</td><td class='mono num muted'>1.071</td><td class='mono num' style='font-weight:700;color:#b43c12;'>1.2%</td><td class='mono num'>2.70×</td><td class='mono num'>1.71×</td><td class='mono num'>1.92×</td></tr><tr><td><span class='badge b-r0'>Rank 0</span></td><td class='mono'><strong>L3 #574</strong></td><td class='mono num'>0.970</td><td class='mono num muted'>1.026</td><td class='mono num' style=''>35.1%</td><td class='mono num'>0.81×</td><td class='mono num'>0.87×</td><td class='mono num'>1.39×</td></tr><tr><td><span class='badge b-r0'>Rank 0</span></td><td class='mono'><strong>L4 #1398</strong></td><td class='mono num'>0.937</td><td class='mono num muted'>1.005</td><td class='mono num' style=''>18.9%</td><td class='mono num'>0.60×</td><td class='mono num'>0.65×</td><td class='mono num'>0.90×</td></tr><tr><td><span class='badge b-r0'>Rank 0</span></td><td class='mono'><strong>L6 #1362</strong></td><td class='mono num'>0.862</td><td class='mono num muted'>1.068</td><td class='mono num' style='font-weight:700;color:#b43c12;'>1.9%</td><td class='mono num'>0.46×</td><td class='mono num'>0.98×</td><td class='mono num'>0.60×</td></tr><tr><td><span class='badge b-r0'>Rank 0</span></td><td class='mono'><strong>L12 #6760</strong></td><td class='mono num'>1.147</td><td class='mono num muted'>1.032</td><td class='mono num' style=''>87.8%</td><td class='mono num'>2.29×</td><td class='mono num'>2.51×</td><td class='mono num'>1.93×</td></tr><tr><td><span class='badge b-r0'>Rank 0</span></td><td class='mono'><strong>L18 #4890</strong></td><td class='mono num'>0.980</td><td class='mono num muted'>1.048</td><td class='mono num' style=''>27.1%</td><td class='mono num'>1.71×</td><td class='mono num'>0.49×</td><td class='mono num'>1.49×</td></tr><tr><td><span class='badge b-r0'>Rank 0</span></td><td class='mono'><strong>L27 #4914</strong></td><td class='mono num'>0.598</td><td class='mono num muted'>1.050</td><td class='mono num' style='font-weight:700;color:#b43c12;'>3.0%</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td></tr><tr><td><span class='badge b-r0'>Rank 0</span></td><td class='mono'><strong>L27 #7926</strong></td><td class='mono num'>0.712</td><td class='mono num muted'>1.050</td><td class='mono num' style='font-weight:700;color:#b43c12;'>10.5%</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td></tr><tr><td><span class='badge b-r1'>Rank 1</span></td><td class='mono'><strong>L2 #4005</strong></td><td class='mono num'>0.597</td><td class='mono num muted'>1.059</td><td class='mono num' style='font-weight:700;color:#b43c12;'>0.6%</td><td class='mono num'>0.67×</td><td class='mono num'>1.01×</td><td class='mono num'>0.86×</td></tr><tr><td><span class='badge b-r1'>Rank 1</span></td><td class='mono'><strong>L6 #5466</strong></td><td class='mono num'>1.107</td><td class='mono num muted'>1.068</td><td class='mono num' style=''>78.9%</td><td class='mono num'>2.30×</td><td class='mono num'>1.97×</td><td class='mono num'>1.62×</td></tr><tr><td><span class='badge b-r1'>Rank 1</span></td><td class='mono'><strong>L14 #3925</strong></td><td class='mono num'>1.261</td><td class='mono num muted'>1.013</td><td class='mono num' style=''>94.3%</td><td class='mono num'>2.41×</td><td class='mono num'>2.54×</td><td class='mono num'>2.34×</td></tr><tr><td><span class='badge b-r1'>Rank 1</span></td><td class='mono'><strong>L26 #8751</strong></td><td class='mono num'>1.039</td><td class='mono num muted'>1.173</td><td class='mono num' style='font-weight:700;color:#b43c12;'>10.3%</td><td class='mono num'>1.09×</td><td class='mono num'>0.26× (atten.)</td><td class='mono num'>1.04×</td></tr><tr><td><span class='badge b-r1'>Rank 1</span></td><td class='mono'><strong>L27 #1683</strong></td><td class='mono num'>0.550</td><td class='mono num muted'>1.050</td><td class='mono num' style='font-weight:700;color:#b43c12;'>1.3%</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td></tr><tr><td><span class='badge b-r1'>Rank 1</span></td><td class='mono'><strong>L27 #6214</strong></td><td class='mono num'>0.666</td><td class='mono num muted'>1.050</td><td class='mono num' style='font-weight:700;color:#b43c12;'>6.8%</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td><td class='mono num'>1.00×</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- INTERACTIVE LENS SWITCHER FOR SECTIONS 3-5 -->
+  <div class="tab-bar" id="global-lens-bar">
+    <span class="tab-label">Token readout lens (Sections 3–5):</span>
+    <button class="tab-btn active" data-lens="rlens">R-Lens (recommended)</button>
+    <button class="tab-btn" data-lens="jpp">J++</button>
+    <button class="tab-btn" data-lens="jlens">J-Lens</button>
+    <button class="tab-btn" data-lens="logit_lens">Logit Lens</button>
+    <button class="tab-btn" data-lens="all">All 4 Lenses</button>
+  </div>
+
+  <!-- SECTION 3 -->
+  <h2>3 · Shared Neurons (5) <span class="badge b-shared">In both Rank 0 &amp; Rank 1 · L11–L19</span></h2>
+  <p>
+    Every shared survivor lies in the middle-late control band (L11–L19). Red chips show top promoted tokens (<span class="mono">+v</span>); blue chips show top suppressed / negative-activation tokens (<span class="mono">−v</span>). Hover any token chip for its exact vocab z-score.
+  </p>
+  <div class="table-wrap" id="tbl-shared"></div>
+
+  <div class="callout">
+    <strong>Orthogonal L17 pair (<span class="mono">#6230</span> vs. <span class="mono">#7054</span>):</strong> Both arms kept both L17 neurons even though Rank 1 forced them to share a single input read direction <span class="mono">a</span>. Yet their output vectors are completely orthogonal (<span class="mono">raw cos = +0.009</span>, <span class="mono">R-Lens cos = +0.042</span>): <span class="mono">#7054</span> writes LaTeX/heading delimiters (<span class="mono">\[</span>, <span class="mono">##\n\n</span>, <span class="mono">;\n\n</span>) while <span class="mono">#6230</span> writes equality/assertion cues (<span class="mono">=</span>, <span class="mono">≠</span>, <span class="mono">≥</span>, <span class="mono">(True</span>)—two independent outputs triggered by one shared context.
+  </div>
+
+  <!-- SECTION 4 -->
+  <h2>4 · Rank 0 Only Neurons (7) <span class="badge b-r0">Unconstrained Δ_j only</span></h2>
+  <p>
+    Includes three early-layer neurons (L3, L4, L6), two mid-layer formatting neurons (L12, L18), and two L27 number/digit neurons. Notice how <span class="mono">L3 #574</span> decodes cleanly to math/school word problems under <span class="mono">R-Lens</span> and <span class="mono">J++</span> (switch to Logit Lens or J-Lens above to see it disappear into noise).
+  </p>
+  <div class="table-wrap" id="tbl-r0-only"></div>
+
+  <!-- SECTION 5 -->
+  <h2>5 · Rank 1 Only Neurons (6) <span class="badge b-r1">Layer-shared read direction only</span></h2>
+  <p>
+    Mirrors Rank 0’s layer coverage with zero index overlap: early formatting (<span class="mono">L2 #4005</span>, <span class="mono">L6 #5466</span>), mid-layer CoT/markdown suppression (<span class="mono">L14 #3925</span>), GSM8K phrasing (<span class="mono">L26 #8751</span>: <span class="mono">Left</span>, <span class="mono">Done</span>), and a pure 0–9 digit neuron (<span class="mono">L27 #6214</span>).
+  </p>
+  <div class="table-wrap" id="tbl-r1-only"></div>
+
+  <!-- SECTION 6 -->
+  <h2>6 · Rank 0 (12) vs. Rank 1 (11): Geometry &amp; Substitutability</h2>
+  <p>
+    To test whether the non-overlapping neurons represent genuinely different solutions or redundant substitutes, we measure output-space effective rank (mirroring Section 6 of the training report), subspace principal angles, and pairwise 18×18 cosine similarities across all neurons.
+  </p>
+
+  <div class="grid-3">
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--r0)">8.05 – 9.69</div>
+      <div class="stat-desc">Rank 0 output participation ratio (of 12) in J-Lens / R-Lens—more compressed than its <strong>11.6 / 12</strong> input PR.</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--shared)">+0.66</div>
+      <div class="stat-desc">Strongest pair overall: cross-layer substitute <span class="mono">L12 #6760</span> (R0) ↔ <span class="mono">L6 #5466</span> (R1) in R-Lens (+0.67 J-Lens, +0.40 raw).</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--r1)">0.78, 0.58</div>
+      <div class="stat-desc">Top-2 principal-angle cosines between <strong>rank-only</strong> subspaces (excluding the 5 shared neurons) in R-Lens space.</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Lens space</th><th>Rank 0 output PR (/12)</th><th>Rank 1 output PR (/11)</th>
+          <th class="num">All R0↔R1 mean cos(θ)</th><th class="num">Rank-only mean cos(θ)</th><th>Rank-only top-3 cos(θ)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Logit Lens</strong></td><td class='mono'>11.86 (11/12 for 90%)</td><td class='mono'>10.90 (10/11 for 90%)</td><td class='mono num'>0.530</td><td class='mono num'>0.140</td><td class='mono'>[0.41, 0.17, 0.08]</td></tr><tr><td><strong>J-Lens</strong></td><td class='mono'>8.05 (9/12 for 90%)</td><td class='mono'>7.44 (8/11 for 90%)</td><td class='mono num'>0.604</td><td class='mono num'>0.322</td><td class='mono'>[0.80, 0.55, 0.20]</td></tr><tr><td><strong>J++</strong></td><td class='mono'>10.00 (10/12 for 90%)</td><td class='mono'>9.47 (10/11 for 90%)</td><td class='mono num'>0.597</td><td class='mono num'>0.277</td><td class='mono'>[0.73, 0.43, 0.21]</td></tr><tr><td><strong>R-Lens</strong></td><td class='mono'>9.69 (10/12 for 90%)</td><td class='mono'>9.44 (9/11 for 90%)</td><td class='mono num'>0.610</td><td class='mono num'>0.314</td><td class='mono'>[0.78, 0.58, 0.29]</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="fig-card">
+    <div class="tab-bar" id="cos-tab-bar" style="margin-top:0">
+      <span class="tab-label">Similarity space:</span>
+      <button class="tab-btn active" data-cos="rlens">R-Lens Logit Space (cross-layer)</button>
+      <button class="tab-btn" data-cos="jpp">J++ Logit Space</button>
+      <button class="tab-btn" data-cos="jlens">J-Lens Logit Space</button>
+      <button class="tab-btn" data-cos="raw">Raw down_proj (same-layer)</button>
+    </div>
+    <div class="hm-wrap" id="cos-heatmap-host"></div>
+    <div class="hm-colorbar"><span>−1.0</span><div class="hm-grad"></div><span>+1.0</span></div>
+    <div class="fig-caption"><strong>Figure 2. 18×18 pairwise cosine similarity matrix.</strong> Ordered <span style="color:var(--shared);font-weight:600">Shared (0–4)</span> | <span style="color:var(--r0);font-weight:600">Rank 0 only (5–11)</span> | <span style="color:var(--r1);font-weight:600">Rank 1 only (12–17)</span>. Off-diagonal values with <span class="mono">|cos| ≥ 0.25</span> are annotated. Hover any cell to compare raw, J-Lens, J++, and R-Lens cosines simultaneously.</div>
+  </div>
+
+  <h3>Key same-layer &amp; cross-layer neuron pairs</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Pair</th><th>Relationship</th><th class="num">Raw</th><th class="num">J-Lens</th>
+          <th class="num">J++</th><th class="num">R-Lens</th><th>Interpretation</th>
+        </tr>
+      </thead>
+      <tbody><tr><td class='mono'><strong>L12 #6760</strong> ↔ <strong>L6 #5466</strong></td><td>Cross-layer substitute (R0 ↔ R1)</td><td class='mono num'>+0.40</td><td class='mono num'>+0.67</td><td class='mono num'>+0.45</td><td class='mono num num-pos'><strong>+0.66</strong></td><td class='muted-sm'>Both separate &#x27;\n\n&#x27; (+14.8σ/+14.9σ) &amp; &#x27;####&#x27; from &#x27;\n&#x27;.</td></tr><tr><td class='mono'><strong>L11 #8235</strong> ↔ <strong>L3 #574</strong></td><td>Anti-aligned (Shared ↔ R0)</td><td class='mono num'>+0.03</td><td class='mono num'>-0.47</td><td class='mono num'>-0.30</td><td class='mono num num-neg'><strong>-0.54</strong></td><td class='muted-sm'>L3 #574 boosts &#x27;？\n\n&#x27; &amp; &#x27;\[&#x27; (+3.1σ); L11 #8235 suppresses both.</td></tr><tr><td class='mono'><strong>L3 #574</strong> ↔ <strong>L27 #1683</strong></td><td>Cross-arm (R0 ↔ R1)</td><td class='mono num'>+0.03</td><td class='mono num'>+0.17</td><td class='mono num'>+0.38</td><td class='mono num num-pos'><strong>+0.40</strong></td><td class='muted-sm'>Moderate alignment in R-Lens (+0.40) and J++ (+0.38).</td></tr><tr><td class='mono'><strong>L6 #1362</strong> ↔ <strong>L14 #3925</strong></td><td>Cross-layer substitute (R0 ↔ R1)</td><td class='mono num'>+0.03</td><td class='mono num'>+0.07</td><td class='mono num'>+0.25</td><td class='mono num num-pos'><strong>+0.39</strong></td><td class='muted-sm'>Both strongly suppress &#x27;\n\n&#x27;, &#x27;\n&#x27;, &#x27;boxed&#x27;, &#x27;Therefore&#x27;, and &#x27;&lt;|endoftext|&gt;&#x27;.</td></tr><tr><td class='mono'><strong>L19 #5606</strong> ↔ <strong>L14 #3925</strong></td><td>Anti-aligned (Shared ↔ R1)</td><td class='mono num'>-0.00</td><td class='mono num'>-0.42</td><td class='mono num'>-0.22</td><td class='mono num num-neg'><strong>-0.38</strong></td><td class='muted-sm'>L19 #5606 promotes &#x27;**&#x27;/&#x27;###&#x27;/&#x27;boxed&#x27; (+8.2σ/+4.1σ/+2.9σ); L14 #3925 suppresses all three.</td></tr><tr><td class='mono'><strong>L17 #6230</strong> ↔ <strong>L17 #7054</strong></td><td>Shared L17 pair (same layer)</td><td class='mono num'>+0.01</td><td class='mono num'>+0.20</td><td class='mono num'>-0.01</td><td class='mono num '><strong>+0.04</strong></td><td class='muted-sm'>Completely orthogonal (cos +0.04) despite Rank 1 forcing a shared input read direction.</td></tr><tr><td class='mono'><strong>L6 #1362</strong> ↔ <strong>L6 #5466</strong></td><td>Cross-arm L6 (same layer)</td><td class='mono num'>-0.01</td><td class='mono num'>+0.02</td><td class='mono num'>+0.02</td><td class='mono num '><strong>-0.03</strong></td><td class='muted-sm'>Orthogonal in L6 (−0.03): R0 suppresses CoT/newlines; R1 splits &#x27;\n\n&#x27; vs &#x27;\n&#x27;.</td></tr><tr><td class='mono'><strong>L27 #7926</strong> ↔ <strong>L27 #6214</strong></td><td>Cross-arm L27 digits (same layer)</td><td class='mono num'>-0.03</td><td class='mono num'>-0.09</td><td class='mono num'>-0.09</td><td class='mono num '><strong>-0.09</strong></td><td class='muted-sm'>Low full-vocab cos (−0.09) because 10 digits are 0.006% of vocab, yet BOTH target digits 0–9 (+3.1σ vs −11.8σ).</td></tr><tr><td class='mono'><strong>L27 #7926</strong> ↔ <strong>L27 #1683</strong></td><td>Cross-arm L27 (same layer)</td><td class='mono num'>-0.07</td><td class='mono num'>-0.24</td><td class='mono num'>-0.24</td><td class='mono num '><strong>-0.24</strong></td><td class='muted-sm'>Mild negative full-vocab overlap (−0.24).</td></tr></tbody>
+    </table>
+  </div>
+
+  <h3>Full-arm layer-by-layer view (Rank 0’s 12 vs. Rank 1’s 11)</h3>
+  <div class="grid-2">
+    <div class="table-wrap" style="margin:0">
+      <table>
+        <thead><tr><th colspan="3" style="color:var(--r0)">Rank 0 — Full Set (12 neurons · 94.4% CE gain)</th></tr></thead>
+        <tbody><tr><td class='mono nowrap'><strong>L3 #574</strong><br><span class='badge b-r0'>R0 only</span></td><td class='muted-sm'><strong>Math / school word-problem domain</strong></td><td><div class='tok-row'><span class='tok tok-pos'>数学</span> <span class='tok tok-pos'>？\n\n</span> <span class='tok tok-pos'>老师</span> <span class='tok tok-pos'>花朵</span> <span class='tok tok-pos'>教师</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'> prior</span> <span class='tok tok-neg'> aboard</span> <span class='tok tok-neg'> U</span> <span class='tok tok-neg'> reportedly</span> <span class='tok tok-neg'> tele</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L4 #1398</strong><br><span class='badge b-r0'>R0 only</span></td><td class='muted-sm'><strong>Structured workflow / enterprise jargon</strong></td><td><div class='tok-row'><span class='tok tok-pos'> SharePoint</span> <span class='tok tok-pos'>客户需求</span> <span class='tok tok-pos'> Workflow</span> <span class='tok tok-pos'> workflow</span> <span class='tok tok-pos'>Workflow</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'> kak</span> <span class='tok tok-neg'> essay</span> <span class='tok tok-neg'> bourgeois</span> <span class='tok tok-neg'>argent</span> <span class='tok tok-neg'> capitalist</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L6 #1362</strong><br><span class='badge b-r0'>R0 only</span></td><td class='muted-sm'><strong>CoT / boxed / newline suppressor</strong></td><td><div class='tok-row'><span class='tok tok-pos'>-BEGIN</span> <span class='tok tok-pos'>不合格</span> <span class='tok tok-pos'>-placement</span> <span class='tok tok-pos'>-shopping</span> <span class='tok tok-pos'> shipments</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>...\n\n</span> <span class='tok tok-neg'> ...\n\n</span> <span class='tok tok-neg'>...\n</span> <span class='tok tok-neg'>...\n\n\n</span> <span class='tok tok-neg'> ...\n</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L11 #8235</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Plain-text arithmetic vs. LaTeX / breaks</strong></td><td><div class='tok-row'><span class='tok tok-pos'> (</span> <span class='tok tok-pos'>\xa0</span> <span class='tok tok-pos'>\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0</span> <span class='tok tok-pos'> --</span> <span class='tok tok-pos'> “</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>？\n\n</span> <span class='tok tok-neg'>？\n</span> <span class='tok tok-neg'>确保</span> <span class='tok tok-neg'>](\n</span> <span class='tok tok-neg'>展现出</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L12 #6760</strong><br><span class='badge b-r0'>R0 only</span></td><td class='muted-sm'><strong>Paragraph break &amp; &#x27;####&#x27; vs. &#x27;\n&#x27; / EOS</strong></td><td><div class='tok-row'><span class='tok tok-pos'>\xa0</span> <span class='tok tok-pos'>\xa0\xa0</span> <span class='tok tok-pos'>\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0</span> <span class='tok tok-pos'>\xa0\xa0\xa0\xa0</span> <span class='tok tok-pos'>\xa0\xa0\xa0</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>\\/</span> <span class='tok tok-neg'>&lt;\\/</span> <span class='tok tok-neg'>:\\/\\/</span> <span class='tok tok-neg'>\n \n</span> <span class='tok tok-neg'>\r\n\t\r\n</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L16 #5569</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Markdown/LaTeX vs. EOS &amp; newlines</strong></td><td><div class='tok-row'><span class='tok tok-pos'>):\n\n</span> <span class='tok tok-pos'> [*</span> <span class='tok tok-pos'>:&quot;);\n\n</span> <span class='tok tok-pos'>:\n\n</span> <span class='tok tok-pos'>:\r\n\r\n</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>&lt;|endoftext|&gt;</span> <span class='tok tok-neg'>”\n</span> <span class='tok tok-neg'> \u200b\u200b</span> <span class='tok tok-neg'>\n\n\n\n\n</span> <span class='tok tok-neg'> doesnt</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L17 #6230</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Assertion / equation evaluation</strong></td><td><div class='tok-row'><span class='tok tok-pos'>的真实性</span> <span class='tok tok-pos'>我能</span> <span class='tok tok-pos'> ≠</span> <span class='tok tok-pos'>我也</span> <span class='tok tok-pos'>确实</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>由於</span> <span class='tok tok-neg'>rowsers</span> <span class='tok tok-neg'>紊乱</span> <span class='tok tok-neg'>jähr</span> <span class='tok tok-neg'> contraceptive</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L17 #7054</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>LaTeX &amp; heading-newline delimiters</strong></td><td><div class='tok-row'><span class='tok tok-pos'> ;\n\n</span> <span class='tok tok-pos'> :\n\n</span> <span class='tok tok-pos'> ;\r\n\r\n</span> <span class='tok tok-pos'>__;\n</span> <span class='tok tok-pos'> .\n\n</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>…”</span> <span class='tok tok-neg'>…)</span> <span class='tok tok-neg'>…I</span> <span class='tok tok-neg'>…it</span> <span class='tok tok-neg'>…and</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L18 #4890</strong><br><span class='badge b-r0'>R0 only</span></td><td class='muted-sm'><strong>Sentence-ending newline specialist</strong></td><td><div class='tok-row'><span class='tok tok-pos'>.\n</span> <span class='tok tok-pos'>。\n</span> <span class='tok tok-pos'>?\n</span> <span class='tok tok-pos'>!\n</span> <span class='tok tok-pos'>;\n</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>...]</span> <span class='tok tok-neg'>...)</span> <span class='tok tok-neg'> ...)</span> <span class='tok tok-neg'> ».</span> <span class='tok tok-neg'>».</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L19 #5606</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Master markup / delimiter switch</strong></td><td><div class='tok-row'><span class='tok tok-pos'> __</span> <span class='tok tok-pos'> ____</span> <span class='tok tok-pos'> ______</span> <span class='tok tok-pos'> ___</span> <span class='tok tok-pos'>____</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>襜</span> <span class='tok tok-neg'>’d</span> <span class='tok tok-neg'>,</span> <span class='tok tok-neg'>’m</span> <span class='tok tok-neg'>’ll</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L27 #4914</strong><br><span class='badge b-r0'>R0 only</span></td><td class='muted-sm'><strong>Spelled-out English number words</strong></td><td><div class='tok-row'><span class='tok tok-pos'>\xa0\xa0</span> <span class='tok tok-pos'>낡</span> <span class='tok tok-pos'>\xa0\xa0\xa0</span> <span class='tok tok-pos'>\xa0\xa0\xa0\xa0</span> <span class='tok tok-pos'> związku</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>&#x27; &#x27;</span> <span class='tok tok-neg'> nineteen</span> <span class='tok tok-neg'> eighty</span> <span class='tok tok-neg'> twenty</span> <span class='tok tok-neg'> seventy</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L27 #7926</strong><br><span class='badge b-r0'>R0 only</span></td><td class='muted-sm'><strong>ASCII digits &amp; chat EOS (&lt;|im_end|&gt;)</strong></td><td><div class='tok-row'><span class='tok tok-pos'>3</span> <span class='tok tok-pos'>4</span> <span class='tok tok-pos'>2</span> <span class='tok tok-pos'>son</span> <span class='tok tok-pos'>9</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>:&lt;?</span> <span class='tok tok-neg'>众所周</span> <span class='tok tok-neg'>,&quot;);\n</span> <span class='tok tok-neg'>[vi</span> <span class='tok tok-neg'>,Yes</span></div></td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin:0">
+      <table>
+        <thead><tr><th colspan="3" style="color:var(--r1)">Rank 1 — Full Set (11 neurons · 91.1% CE gain)</th></tr></thead>
+        <tbody><tr><td class='mono nowrap'><strong>L2 #4005</strong><br><span class='badge b-r1'>R1 only</span></td><td class='muted-sm'><strong>Plain paragraphs, no markdown/LaTeX</strong></td><td><div class='tok-row'><span class='tok tok-pos'> ).\n\n</span> <span class='tok tok-pos'>).&quot;</span> <span class='tok tok-pos'>.)\n\n</span> <span class='tok tok-pos'>.).\n\n</span> <span class='tok tok-pos'> );</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>=https</span> <span class='tok tok-neg'>：\n</span> <span class='tok tok-neg'>https</span> <span class='tok tok-neg'>\\\r\n</span> <span class='tok tok-neg'>”\n</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L6 #5466</strong><br><span class='badge b-r1'>R1 only</span></td><td class='muted-sm'><strong>Paragraph break &amp; &#x27;####&#x27; vs. &#x27;\n&#x27;</strong></td><td><div class='tok-row'><span class='tok tok-pos'>--\n\n</span> <span class='tok tok-pos'>\n\n</span> <span class='tok tok-pos'>—\n\n</span> <span class='tok tok-pos'>,\n\n</span> <span class='tok tok-pos'>：\n\n</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>.”\n</span> <span class='tok tok-neg'>.\n</span> <span class='tok tok-neg'> .\n</span> <span class='tok tok-neg'>)\n</span> <span class='tok tok-neg'>..\n</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L11 #8235</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Plain-text arithmetic vs. LaTeX / breaks</strong></td><td><div class='tok-row'><span class='tok tok-pos'> (</span> <span class='tok tok-pos'>\xa0</span> <span class='tok tok-pos'>\xa0\xa0\xa0\xa0\xa0\xa0\xa0\xa0</span> <span class='tok tok-pos'> --</span> <span class='tok tok-pos'> “</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>？\n\n</span> <span class='tok tok-neg'>？\n</span> <span class='tok tok-neg'>确保</span> <span class='tok tok-neg'>](\n</span> <span class='tok tok-neg'>展现出</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L14 #3925</strong><br><span class='badge b-r1'>R1 only</span></td><td class='muted-sm'><strong>Markdown / boxed / newline / EOS suppressor</strong></td><td><div class='tok-row'><span class='tok tok-pos'>\xa0</span> <span class='tok tok-pos'>:&quot;);\r\n</span> <span class='tok tok-pos'>:&quot;);\n</span> <span class='tok tok-pos'> favourites</span> <span class='tok tok-pos'>\xa0\xa0\xa0\xa0\xa0\xa0\xa0</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'> \n\n</span> <span class='tok tok-neg'> ...\n\n</span> <span class='tok tok-neg'>...\n\n</span> <span class='tok tok-neg'> …\n\n</span> <span class='tok tok-neg'>...&quot;\n\n</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L16 #5569</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Markdown/LaTeX vs. EOS &amp; newlines</strong></td><td><div class='tok-row'><span class='tok tok-pos'>):\n\n</span> <span class='tok tok-pos'> [*</span> <span class='tok tok-pos'>:&quot;);\n\n</span> <span class='tok tok-pos'>:\n\n</span> <span class='tok tok-pos'>:\r\n\r\n</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>&lt;|endoftext|&gt;</span> <span class='tok tok-neg'>”\n</span> <span class='tok tok-neg'> \u200b\u200b</span> <span class='tok tok-neg'>\n\n\n\n\n</span> <span class='tok tok-neg'> doesnt</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L17 #6230</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Assertion / equation evaluation</strong></td><td><div class='tok-row'><span class='tok tok-pos'>的真实性</span> <span class='tok tok-pos'>我能</span> <span class='tok tok-pos'> ≠</span> <span class='tok tok-pos'>我也</span> <span class='tok tok-pos'>确实</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>由於</span> <span class='tok tok-neg'>rowsers</span> <span class='tok tok-neg'>紊乱</span> <span class='tok tok-neg'>jähr</span> <span class='tok tok-neg'> contraceptive</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L17 #7054</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>LaTeX &amp; heading-newline delimiters</strong></td><td><div class='tok-row'><span class='tok tok-pos'> ;\n\n</span> <span class='tok tok-pos'> :\n\n</span> <span class='tok tok-pos'> ;\r\n\r\n</span> <span class='tok tok-pos'>__;\n</span> <span class='tok tok-pos'> .\n\n</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>…”</span> <span class='tok tok-neg'>…)</span> <span class='tok tok-neg'>…I</span> <span class='tok tok-neg'>…it</span> <span class='tok tok-neg'>…and</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L19 #5606</strong><br><span class='badge b-shared'>Shared</span></td><td class='muted-sm'><strong>Master markup / delimiter switch</strong></td><td><div class='tok-row'><span class='tok tok-pos'> __</span> <span class='tok tok-pos'> ____</span> <span class='tok tok-pos'> ______</span> <span class='tok tok-pos'> ___</span> <span class='tok tok-pos'>____</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>襜</span> <span class='tok tok-neg'>’d</span> <span class='tok tok-neg'>,</span> <span class='tok tok-neg'>’m</span> <span class='tok tok-neg'>’ll</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L26 #8751</strong><br><span class='badge b-r1'>R1 only</span></td><td class='muted-sm'><strong>Word-problem / completion cues</strong></td><td><div class='tok-row'><span class='tok tok-pos'> Left</span> <span class='tok tok-pos'> left</span> <span class='tok tok-pos'>left</span> <span class='tok tok-pos'>Left</span> <span class='tok tok-pos'>Shown</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'> hur</span> <span class='tok tok-neg'> h</span> <span class='tok tok-neg'>物</span> <span class='tok tok-neg'>ega</span> <span class='tok tok-neg'>色</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L27 #1683</strong><br><span class='badge b-r1'>R1 only</span></td><td class='muted-sm'><strong>Short lowercase token fragments</strong></td><td><div class='tok-row'><span class='tok tok-pos'> yg</span> <span class='tok tok-pos'> hb</span> <span class='tok tok-pos'> hf</span> <span class='tok tok-pos'> stm</span> <span class='tok tok-pos'> nf</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>用微信扫</span> <span class='tok tok-neg'>крат</span> <span class='tok tok-neg'> cher</span> <span class='tok tok-neg'> arch</span> <span class='tok tok-neg'> wid</span></div></td></tr>
+<tr><td class='mono nowrap'><strong>L27 #6214</strong><br><span class='badge b-r1'>R1 only</span></td><td class='muted-sm'><strong>Pure ASCII digits 0–9 specialist</strong></td><td><div class='tok-row'><span class='tok tok-pos'> uda</span> <span class='tok tok-pos'> Gund</span> <span class='tok tok-pos'>imum</span> <span class='tok tok-pos'> kald</span> <span class='tok tok-pos'>取得以及</span></div><div class='tok-row' style='margin-top:4px'><span class='tok tok-neg'>1</span> <span class='tok tok-neg'>2</span> <span class='tok tok-neg'>4</span> <span class='tok tok-neg'>9</span> <span class='tok tok-neg'>3</span></div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SECTION 7 -->
+  <h2>7 · Targeted GSM8K &amp; Style Token Probe</h2>
+  <p>
+    Because top-10 lists out of 151,936 tokens can miss strong formatting signals ranked #15–#100, we directly extract each neuron’s exact vocab z-score on 18 hand-picked tokens grouped into <strong>GSM8K gold format</strong> (<span class="mono">####</span>, <span class="mono">&lt;&lt;</span>, <span class="mono">&gt;&gt;</span>, digits <span class="mono">0–9</span>, <span class="mono">=</span>, <span class="mono">$</span>, <span class="mono">\n</span>, <span class="mono">\n\n</span>), <strong>Qwen2.5-Instruct CoT/Markdown/LaTeX</strong> (<span class="mono">**</span>, <span class="mono">###</span>, <span class="mono">\[</span>, <span class="mono">boxed</span>, <span class="mono">Step</span>, <span class="mono">Therefore</span>, <span class="mono">So</span>, <span class="mono">Final/Ans</span>), and <strong>EOS stop tokens</strong> (<span class="mono">&lt;|im_end|&gt;</span>, <span class="mono">&lt;|endoftext|&gt;</span>). Single-token columns have zero aggregation; multi-variant columns (e.g., <span class="mono">digits 0–9</span> or <span class="mono">["####", " ####"]</span>) average the exact z-scores of their surface variants.
+  </p>
+
+  <div class="fig-card">
+    <div class="tab-bar" id="probe-tab-bar" style="margin-top:0">
+      <span class="tab-label">Probe lens:</span>
+      <button class="tab-btn active" data-probe="rlens">R-Lens (default)</button>
+      <button class="tab-btn" data-probe="jpp">J++</button>
+      <button class="tab-btn" data-probe="jlens">J-Lens</button>
+      <button class="tab-btn" data-probe="logit_lens">Logit Lens</button>
+    </div>
+    <div class="hm-wrap" id="probe-heatmap-host"></div>
+    <div class="hm-colorbar"><span>−4.5σ (suppress)</span><div class="hm-grad"></div><span>+4.5σ (promote)</span></div>
+    <div class="fig-caption"><strong>Figure 3. Targeted GSM8K gold-format vs. Qwen CoT/Markdown/LaTeX vs. EOS probe.</strong> Solid horizontal lines separate Shared / Rank-0-only / Rank-1-only; dashed vertical lines separate GSM8K gold format, Qwen CoT/markup, and EOS tokens. Cells with <span class="mono">|z| ≥ 1.5σ</span> are annotated. Hover any cell for exact z-scores across all 4 lenses.</div>
+  </div>
+
+  <h3>Functional role taxonomy across all 18 survivors</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:27%">Functional role</th><th style="width:25%">Neurons</th><th>Key R-Lens / J++ evidence</th></tr></thead>
+      <tbody><tr><td><strong>Master markup &amp; delimiter switch</strong></td><td class='badge-wrap'><span class='badge b-shared mono'>L19 #5606</span></td><td class='muted-sm'>** (+8.2σ), \[ (+6.0σ), #### (+5.7σ), ### (+4.1σ), &lt;&lt; (+2.9σ), boxed (+2.9σ)</td></tr>
+<tr><td><strong>Plain-text GSM8K arithmetic vs. LaTeX</strong></td><td class='badge-wrap'><span class='badge b-shared mono'>L11 #8235</span></td><td class='muted-sm'>= (+3.8σ), &lt;&lt; (+2.9σ), So (+2.6σ), digits (+2.3σ) vs. \[ (−1.9σ), EOS (−2.3σ)</td></tr>
+<tr><td><strong>Markdown/LaTeX vs. EOS stopping</strong></td><td class='badge-wrap'><span class='badge b-shared mono'>L16 #5569</span> <span class='badge b-shared mono'>L17 #7054</span></td><td class='muted-sm'>L16: ** (+3.0σ), \[ (+2.5σ) vs. &lt;|endoftext|&gt; (−7.8σ). L17: \[ (+4.4σ), $ (+2.3σ)</td></tr>
+<tr><td><strong>Paragraph breaks (&#x27;\n\n&#x27;) &amp; &#x27;####&#x27; vs. &#x27;\n&#x27;</strong></td><td class='badge-wrap'><span class='badge b-r0 mono'>L12 #6760</span> <span class='badge b-r1 mono'>L6 #5466</span></td><td class='muted-sm'>Cross-layer substitutes (cos +0.66): both +14.8σ/+14.9σ on \n\n, +3–4σ on ####, −3 to −8σ on \n</td></tr>
+<tr><td><strong>Single-newline &amp; plain-paragraph controls</strong></td><td class='badge-wrap'><span class='badge b-r0 mono'>L18 #4890</span> <span class='badge b-r1 mono'>L2 #4005</span></td><td class='muted-sm'>L18: \n (+15.2σ), \n\n (+8.6σ). L2: \n\n (+3.2σ) while suppressing **, ###, \[, boxed (−2.1σ to −2.4σ)</td></tr>
+<tr><td><strong>CoT / boxed / newline / EOS suppressors</strong></td><td class='badge-wrap'><span class='badge b-r0 mono'>L6 #1362</span> <span class='badge b-r1 mono'>L14 #3925</span></td><td class='muted-sm'>Cross-layer pair (cos +0.39): both strongly negative on \n\n, \n, boxed, Therefore, &lt;|endoftext|&gt;</td></tr>
+<tr><td><strong>Final-layer digit &amp; number knobs</strong></td><td class='badge-wrap'><span class='badge b-r0 mono'>L27 #7926</span> <span class='badge b-r0 mono'>L27 #4914</span> <span class='badge b-r1 mono'>L27 #6214</span></td><td class='muted-sm'>L27 #6214: all 10 digits (−11.8σ). L27 #7926: digits (+3.1σ) &amp; &lt;|im_end|&gt; (−2.6σ). L27 #4914: &#x27;twenty&#x27;..&#x27;ninety&#x27;</td></tr>
+<tr><td><strong>Domain / math-problem / assertion cues</strong></td><td class='badge-wrap'><span class='badge b-r0 mono'>L3 #574</span> <span class='badge b-shared mono'>L17 #6230</span> <span class='badge b-r1 mono'>L26 #8751</span></td><td class='muted-sm'>L3: &#x27;Maths&#x27;/&#x27;数学&#x27;/&#x27;老师&#x27; (J++/R). L17: &#x27;=&#x27; (+2.4σ), &#x27;≠&#x27;, &#x27;≥&#x27;, &#x27;(True&#x27;. L26: &#x27;Left&#x27;, &#x27;Done&#x27;, &#x27;&lt;&lt;&#x27; (+2.5σ)</td></tr>
+<tr><td><strong>Unclear / weak formatting alignment</strong></td><td class='badge-wrap'><span class='badge b-r0 mono'>L4 #1398</span> <span class='badge b-r1 mono'>L27 #1683</span></td><td class='muted-sm'>L4: workflow/tech jargon. L27 #1683: short lowercase fragments (no strong formatting/digit z-score)</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- SECTION 8 -->
+  <h2>8 · Scope Caveats &amp; Not Done Yet</h2>
+  <p>
+    While the 3σ–15σ alignment with formatting, newlines, LaTeX, EOS, and digits strongly supports the style-compression explanation for the 90%+ CE recovery and −14 pt accuracy drop, static <span class="mono">down_proj</span> decoding alone cannot prove “zero reasoning”: several neurons (<span class="mono">L3 #574</span>, <span class="mono">L17 #6230</span>, <span class="mono">L4 #1398</span>) point to domain/assertion cues, a single 1,536-dim vector can be polysemantic, and the rewired <span class="mono">gate_proj</span>/<span class="mono">up_proj</span> inputs still control <em>when</em> each output fires.
+  </p>
+
+  <div class="todo-card">
+    <h4>1. Activation shifts &amp; active pole sign (<span class="mono">Δa_j</span> on <span class="mono">val128</span>, GPU / <span class="mono">sl-0</span>)</h4>
+    <p>Measure <span class="mono">mean(Δa_j)</span>, positive/negative fraction, and top firing contexts for both arms. Critical for neurons like <span class="mono">L19 #5606</span>, which carries both unwanted markdown (<span class="mono">**</span> +8.2σ, <span class="mono">\[</span> +6.0σ) and wanted <span class="mono">####</span> (+5.7σ) on <span class="mono">+v</span>—it may flip from negative during CoT to positive at answer termination.</p>
+  </div>
+  <div class="todo-card">
+    <h4>2. Leave-one-out causal ablations (GPU / <span class="mono">sl-0</span>)</h4>
+    <p>Turn off one survivor at a time and measure <span class="mono">ΔVal-CE</span>, <span class="mono">Δlength</span>, and <span class="mono">Δaccuracy</span>. Tests directly whether ablating 2–3 formatting/EOS switches (<span class="mono">L16 #5569</span>, <span class="mono">L19 #5606</span>, <span class="mono">L12 #6760</span>) recovers untuned accuracy (~80%).</p>
+  </div>
+  <div class="todo-card">
+    <h4>3. In-distribution GSM8K finite-difference JVP (~1 min on A100)</h4>
+    <p>Compute <span class="mono">(logits(h_L + εv) − logits(h_L − εv)) / 2ε</span> directly on <span class="mono">val128</span> completions to verify that Wikitext-fitted lenses match downstream Jacobian transport on GSM8K prompts.</p>
+  </div>
+  <div class="todo-card">
+    <h4>4. L17–L19 SAE monosemanticity check (<span class="mono">HuggingAnalist/sae-qwen2.5-1.5B-res</span>)</h4>
+    <p>Project shared <span class="mono">L17 #6230</span>, <span class="mono">L17 #7054</span>, <span class="mono">L19 #5606</span>, and <span class="mono">L18 #4890</span> onto the public residual-stream SAEs covering L17–L19 to check whether each surviving neuron aligns with a single sparse feature or a superposition.</p>
+  </div>
+
+  <!-- SECTION 9 -->
+  <h2>9 · Provenance</h2>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td style="width:24%"><strong>Base model</strong></td><td class="mono">Qwen/Qwen2.5-1.5B-Instruct (28 layers, d_model = 1536, d_mlp = 8960, tied W_U)</td></tr>
+        <tr><td><strong>Pre-fitted lenses</strong></td><td class="mono">neuronpedia/jacobian-lens :: qwen2.5-1.5b-it/{jlens,jpp,rlens}/Salesforce-wikitext/ (source: bubskee/dolos-qwen25-workspace-lenses@4fdc5766)</td></tr>
+        <tr><td><strong>Companion training run</strong></td><td class="mono">sparse-gold-sft-r0-1 (plan 7efb84879b260e66) &amp; sparse-gold-sft-r1-1 (plan 714f68e4ae2ff512)</td></tr>
+        <tr><td><strong>Notebook &amp; cache</strong></td><td class="mono">notebooks/sparse-rewiring-down-proj-jlens.ipynb · notebooks/cache/down_proj_decoded.pt (25.05 MB)</td></tr>
+        <tr><td><strong>Report outputs</strong></td><td class="mono">docs/sparse-rewiring-down-proj-report.html · notebooks/sparse-rewiring-down-proj-report.html</td></tr>
+        <tr><td><strong>Generator script</strong></td><td class="mono">notebooks/build_down_proj_report.py (reproducible directly from the 25 MB cache)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+const DATA = {"neurons": [{"i": 0, "label": "L11 #8235", "layer": 11, "idx": 8235, "group": "shared", "in_r0": true, "in_r1": true, "v_norm": 0.779, "layer_med": 1.023, "norm_pct": 1.5, "gains": {"jlens": 1.48, "jpp": 1.19, "rlens": 1.44}, "ag": {"i": 0, "label": "L11 #8235", "layer": 11, "group": "shared", "ll_j": 0.164, "ll_r": 0.434, "j_jpp": 0.69, "j_r": 0.843, "jpp_r": 0.885, "jacc20_jr": 0.11, "jacc20_jppr": 0.29}, "closest_other": null, "role_short": "Plain-text arithmetic vs. LaTeX / breaks", "role_detail": "Promotes '=', '<<', digits, 'So', and inline spacing vs. sentence-ending newlines, '\\[', and '<|endoftext|>'.", "tokens": {"logit_lens": {"pos": [["随便", 4.8], ["下面就", 4.7], ["屁股", 4.7], ["便可", 4.5], [" wont", 4.4], ["iks", 4.4], ["ILITIES", 4.3], ["orent", 4.3]], "neg": [[" erf", -5.0], ["国道", -4.6], ["[mid", -4.6], ["道士", -4.5], ["Fizz", -4.4], ["🌍", -4.3], ["门前", -4.3], ["traction", -4.2]]}, "jlens": {"pos": [["......", 6.2], [".....", 5.6], [" (", 5.6], ["...", 5.5], ["....", 5.5], [" ....", 5.3], [" ...", 5.2], ["--", 5.1]], "neg": [["）\\n\\n", -5.4], ["）\\n", -5.4], ["】\\n\\n", -5.4], ["）\\r\\n", -5.4], ["\"\"\"\\r\\n\\r\\n", -5.3], ["\"\"\"\\r\\n", -5.1], ["\")\\r\\n\\r\\n", -5.0], ["\"]\\r\\n", -5.0]]}, "jpp": {"pos": [[" ,", 6.5], [" --", 6.3], [" @", 6.1], [" .", 6.0], [" ,,", 5.9], [" ;", 5.9], [" \\xa0", 5.7], [" !", 5.7]], "neg": [["?\")\\n", -5.0], [":\")\\n", -4.9], ["?\",", -4.8], [":\");\\r\\n", -4.7], [".\")\\r\\n", -4.7], ["?\");\\n", -4.5], [":\");\\n", -4.5], ["确保", -4.5]]}, "rlens": {"pos": [[" (", 6.7], ["\\xa0", 6.6], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 6.0], [" --", 5.9], [" “", 5.8], ["\\xa0\\xa0\\xa0\\xa0", 5.8], [" presently", 5.7], ["\\xa0\\xa0\\xa0", 5.7]], "neg": [["？\\n\\n", -5.3], ["？\\n", -4.9], ["确保", -4.8], ["](\\n", -4.5], ["展现出", -4.5], ["\\n   \\n", -4.4], ["可能", -4.3], ["可能会", -4.3]]}}}, {"i": 1, "label": "L16 #5569", "layer": 16, "idx": 5569, "group": "shared", "in_r0": true, "in_r1": true, "v_norm": 1.02, "layer_med": 1.008, "norm_pct": 55.7, "gains": {"jlens": 3.17, "jpp": 1.35, "rlens": 1.86}, "ag": {"i": 1, "label": "L16 #5569", "layer": 16, "group": "shared", "ll_j": 0.187, "ll_r": 0.488, "j_jpp": 0.533, "j_r": 0.841, "jpp_r": 0.731, "jacc20_jr": 0.29, "jacc20_jppr": 0.03}, "closest_other": null, "role_short": "Markdown/LaTeX vs. EOS & newlines", "role_detail": "Separates markdown/colon openers ('**', ':\\n\\n', '\\[') on +v from '<|endoftext|>' (−7.8σ) and line breaks on −v.", "tokens": {"logit_lens": {"pos": [[" Spi", 4.5], ["盅", 4.4], ["gil", 4.2], ["放下", 4.1], ["/mp", 4.1], [" drummer", 4.1], [" Blackjack", 4.1], [" Bruins", 4.0]], "neg": [["原标题", -7.3], ["<|endoftext|>", -6.8], [" ()\\n", -6.1], ["()\"\\n", -6.0], ["''\\n", -5.8], [" ''\\n", -5.5], ["”\\n", -5.5], ["返回搜狐", -5.3]]}, "jlens": {"pos": [[" (\\\\<", 4.7], [" [*", 4.7], [" [`", 4.6], ["):\\r\\n\\r\\n", 4.4], ["[*", 4.4], ["--[", 4.4], [":**", 4.3], [" (`", 4.3]], "neg": [["”\\n", -7.0], ["”\\n\\n", -5.7], ["）\\n", -5.6], ["？\\n", -5.6], [" ohio", -5.5], ["\\xa0\\n", -5.4], ["\\n", -5.4], ["\"\\n", -5.3]]}, "jpp": {"pos": [["\\xa0\\n", 7.4], ["\\xa0", 6.8], ["%\\r\\n", 5.6], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 5.3], ["\\r\\n", 5.1], [":]\\n", 5.0], [" \\xa0 \\xa0 \\xa0 \\xa0", 4.9], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 4.7]], "neg": [[" nothing", -5.5], [" nobody", -4.9], [" whats", -4.5], ["htags", -4.5], [" place", -4.4], [" yeah", -4.4], [" what", -4.4], [" anybody", -4.4]]}, "rlens": {"pos": [["):\\n\\n", 5.6], [" [*", 5.6], [":\");\\n\\n", 5.4], [":\\n\\n", 5.4], [":\\r\\n\\r\\n", 5.3], ["):\\r\\n\\r\\n", 5.3], [":\");\\n", 5.2], [" (\\\\<", 5.1]], "neg": [["<|endoftext|>", -7.8], ["”\\n", -6.0], [" \\u200b\\u200b", -5.7], ["\\n\\n\\n\\n\\n", -5.5], [" doesnt", -5.4], ["）\\n", -5.4], ["\\n\\n\\n", -5.3], [" didnt", -5.3]]}}}, {"i": 2, "label": "L17 #6230", "layer": 17, "idx": 6230, "group": "shared", "in_r0": true, "in_r1": true, "v_norm": 1.105, "layer_med": 1.042, "norm_pct": 78.1, "gains": {"jlens": 0.8, "jpp": 0.82, "rlens": 0.98}, "ag": {"i": 2, "label": "L17 #6230", "layer": 17, "group": "shared", "ll_j": 0.38, "ll_r": 0.66, "j_jpp": 0.619, "j_r": 0.852, "jpp_r": 0.779, "jacc20_jr": 0.21, "jacc20_jppr": 0.08}, "closest_other": null, "role_short": "Assertion / equation evaluation", "role_detail": "Promotes equality/inequality & certainty ('=', '>>', '≠', '≥', '确实', '(True') vs. malformed/disorder tokens.", "tokens": {"logit_lens": {"pos": [["=\"__", 4.6], ["ʕ", 4.6], [" Feel", 4.3], ["裘", 4.2], ["IED", 4.1], [" ITS", 4.1], ["outu", 4.0], ["伋", 4.0]], "neg": [["serter", -4.4], ["是我国", -4.4], ["otas", -4.3], ["due", -4.3], ["бит", -4.3], ["是中国", -4.2], ["二十五", -4.2], ["介质", -4.2]]}, "jlens": {"pos": [[">\\\\", 5.9], [" ≠", 5.4], ["确实", 5.4], [" *__", 5.2], [" :\\\\", 5.2], [" ≥", 5.1], ["≥", 5.0], ["确", 5.0]], "neg": [[" malformed", -4.6], [" cuckold", -4.5], ["颓", -4.4], ["[\\n", -4.4], [" stagn", -4.4], ["紊乱", -4.3], [" destabil", -4.2], ["\\n", -4.2]]}, "jpp": {"pos": [["里程", 4.7], [" honoring", 4.3], [" titled", 4.3], [" Visible", 4.2], ["真实", 4.2], ["的真实性", 4.1], ["Actual", 4.1], ["绶", 4.1]], "neg": [["?\\n\\n\\n", -5.5], ["第三次", -5.0], ["…\\n\\n\\n", -4.9], ["?\\n\\n\\n\\n", -4.9], ["?\\n\\n\\n\\n\\n\\n", -4.6], [" contraceptive", -4.5], ["!\\n\\n\\n", -4.5], ["/\\n\\n\\n", -4.5]]}, "rlens": {"pos": [["的真实性", 5.3], ["我能", 5.3], [" ≠", 5.1], ["我也", 5.0], ["确实", 4.9], ["我不", 4.9], [" ≥", 4.8], ["我真的", 4.7]], "neg": [["由於", -4.4], ["rowsers", -4.3], ["紊乱", -4.2], ["jähr", -4.0], [" contraceptive", -4.0], ["蒿", -3.9], ["\\')}}\"><\/", -3.9], ["最常见的", -3.9]]}}}, {"i": 3, "label": "L17 #7054", "layer": 17, "idx": 7054, "group": "shared", "in_r0": true, "in_r1": true, "v_norm": 1.044, "layer_med": 1.042, "norm_pct": 50.9, "gains": {"jlens": 0.91, "jpp": 0.82, "rlens": 0.94}, "ag": {"i": 3, "label": "L17 #7054", "layer": 17, "group": "shared", "ll_j": 0.358, "ll_r": 0.66, "j_jpp": 0.501, "j_r": 0.817, "jpp_r": 0.732, "jacc20_jr": 0.43, "jacc20_jppr": 0.0}, "closest_other": null, "role_short": "LaTeX & heading-newline delimiters", "role_detail": "Promotes LaTeX/markdown delimiters ('\\[' +4.4σ, '$', '**', '##\\n\\n', ';\\n\\n') vs. ellipsis continuation ('…') and '\\n'.", "tokens": {"logit_lens": {"pos": [["irse", 4.6], ["möglich", 4.5], [" resort", 4.4], ["/{{", 4.4], ["大的", 4.3], [":;\\n", 4.2], [" unterstüt", 4.2], ["erra", 4.2]], "neg": [["otted", -5.1], ["ataka", -4.7], ["特别声明", -4.4], ["dan", -4.3], ["estroy", -4.2], [" Set", -4.2], ["urst", -4.1], ["SETTING", -4.1]]}, "jlens": {"pos": [[" \\\\<", 8.4], [" :\\n\\n", 8.3], [" ;\\n\\n", 8.1], ["__;\\n", 7.8], ["::\\n\\n", 7.7], ["\\\\<", 7.7], [" *\\\\", 7.6], ["\\\\.", 7.5]], "neg": [["…”", -11.7], ["…)", -10.7], ["…\\n", -9.9], [" […", -9.8], ["…\"", -9.6], ["…”\\n\\n", -9.5], [" […]", -9.4], ["…I", -9.3]]}, "jpp": {"pos": [["/,", 5.1], ["ключа", 4.7], ["__;", 4.6], ["!,", 4.5], ["(\"/\")", 4.5], [" @(", 4.4], [" ready", 4.4], [" prêt", 4.3]], "neg": [["序", -4.4], ["女友", -4.2], ["-cols", -4.1], ["男友", -4.1], ["itti", -4.0], ["ctrine", -4.0], ["SEQ", -4.0], ["特别声明", -4.0]]}, "rlens": {"pos": [[" ;\\n\\n", 6.8], [" :\\n\\n", 6.7], [" ;\\r\\n\\r\\n", 6.2], ["__;\\n", 5.8], [" .\\n\\n", 5.7], ["##\\n\\n", 5.6], [" ;\\n", 5.6], ["   \\n\\n", 5.5]], "neg": [["…”", -6.9], ["…)", -6.9], ["…I", -6.5], ["…it", -6.4], ["…and", -6.2], ["…the", -6.0], ["…\\n", -5.9], ["…)\\n\\n", -5.8]]}}}, {"i": 4, "label": "L19 #5606", "layer": 19, "idx": 5606, "group": "shared", "in_r0": true, "in_r1": true, "v_norm": 0.808, "layer_med": 1.071, "norm_pct": 1.2, "gains": {"jlens": 2.7, "jpp": 1.71, "rlens": 1.92}, "ag": {"i": 4, "label": "L19 #5606", "layer": 19, "group": "shared", "ll_j": 0.52, "ll_r": 0.725, "j_jpp": 0.893, "j_r": 0.925, "jpp_r": 0.982, "jacc20_jr": 0.74, "jacc20_jppr": 1.0}, "closest_other": null, "role_short": "Master markup / delimiter switch", "role_detail": "Unanimous underscore/blank top-10, plus +2.9σ to +8.2σ on EVERY markup token ('**', '\\[', '####', '###', '<<', '>>', 'boxed') vs. plain prose & EOS.", "tokens": {"logit_lens": {"pos": [["____", 11.9], [" ______", 11.7], [" ____", 11.7], [" ___", 11.4], [" __", 11.3], [" _____", 11.1], [" __________________", 10.3], ["________", 10.2]], "neg": [[",", -5.2], ["<|endoftext|>", -4.6], [" ‘", -4.6], ["\\n", -4.6], [".", -4.5], ["’m", -4.5], [";", -4.4], ["’d", -4.3]]}, "jlens": {"pos": [[" __", 14.3], [" ____", 14.2], [" ___", 14.1], [" ______", 13.9], ["____", 13.8], [" _____", 13.6], [" __________________", 12.9], ["____________", 12.7]], "neg": [["襜", -4.0], [" wzglę", -3.4], ["EditingStyle", -3.4], ["телей", -3.3], ["пущ", -3.1], ["станавли", -3.1], ["mPid", -3.1], ["rigesimal", -3.0]]}, "jpp": {"pos": [[" __", 15.8], [" ____", 15.4], [" ______", 15.4], [" ___", 15.2], ["____", 15.0], [" _____", 15.0], [" __________________", 14.0], ["____________", 13.6]], "neg": [["’d", -4.9], [",", -4.5], ["’ll", -4.4], ["襜", -4.4], [");\\n", -4.3], ["’m", -4.1], ["’ve", -4.1], ["“He", -4.0]]}, "rlens": {"pos": [[" __", 16.0], [" ____", 16.0], [" ______", 15.8], [" ___", 15.7], ["____", 15.5], [" _____", 15.2], [" __________________", 14.1], ["________", 13.6]], "neg": [["襜", -4.4], ["’d", -4.3], [",", -4.2], ["’m", -4.0], ["’ll", -3.8], ["“He", -3.8], [");", -3.8], ["’ve", -3.7]]}}}, {"i": 5, "label": "L3 #574", "layer": 3, "idx": 574, "group": "r0_only", "in_r0": true, "in_r1": false, "v_norm": 0.97, "layer_med": 1.026, "norm_pct": 35.1, "gains": {"jlens": 0.81, "jpp": 0.87, "rlens": 1.39}, "ag": {"i": 5, "label": "L3 #574", "layer": 3, "group": "r0_only", "ll_j": 0.006, "ll_r": 0.13, "j_jpp": 0.491, "j_r": 0.565, "jpp_r": 0.969, "jacc20_jr": 0.0, "jacc20_jppr": 0.38}, "closest_other": {"label": "L11 #8235", "group": "shared", "cos_r": -0.54, "cos_raw": 0.03}, "role_short": "Math / school word-problem domain", "role_detail": "Both J++ and R-Lens (cos 0.97) decode +v to '数学', 'Maths', '老师' (teacher), 'rozwiązania' (solutions), and '\\[' (+3.1σ).", "tokens": {"logit_lens": {"pos": [["蚕", 4.9], [" Directions", 4.3], [" bàn", 4.3], [" CONTRIBUT", 4.0], [" brings", 4.0], ["upal", 3.9], ["Filed", 3.9], [" flor", 3.9]], "neg": [["nonnull", -4.8], ["erah", -4.6], ["endcode", -4.5], ["🥰", -4.4], ["託", -4.3], ["*e", -4.2], [" Wa", -4.2], ["_ENSURE", -4.2]]}, "jlens": {"pos": [["\",[", 8.0], [".\"[", 7.9], [").[", 7.6], ["\"):\\r\\n", 7.0], ["\").\\n\\n", 7.0], ["\".\\n\\n", 7.0], ["\"—", 6.9], ["\":\\r\\n", 6.8]], "neg": [[" '\\n", -8.5], [" »", -7.3], [" |\\n", -7.2], [" \\n", -7.2], ["'\\n", -7.1], [" *\\n", -7.0], [" -\\n", -6.9], [" !\\n", -6.7]]}, "jpp": {"pos": [["数学", 6.2], [" Maths", 5.0], ["花朵", 4.4], [" maths", 4.4], ["老师", 4.2], [" rozwiązania", 4.1], ["呢", 4.1], ["情境", 4.1]], "neg": [[" aboard", -4.6], [" tele", -4.3], [" prior", -4.2], [" Reich", -4.2], [" Tele", -4.1], [" early", -4.1], [" ship", -4.0], [" reportedly", -4.0]]}, "rlens": {"pos": [["数学", 6.1], ["？\\n\\n", 4.8], ["老师", 4.3], ["花朵", 4.1], ["教师", 4.1], [" Maths", 4.1], ["呢", 4.1], ["\"?\\n\\n", 4.1]], "neg": [[" prior", -4.4], [" aboard", -4.3], [" U", -4.1], [" reportedly", -4.1], [" tele", -4.0], [" Hell", -4.0], [" later", -4.0], [" —", -4.0]]}}}, {"i": 6, "label": "L4 #1398", "layer": 4, "idx": 1398, "group": "r0_only", "in_r0": true, "in_r1": false, "v_norm": 0.937, "layer_med": 1.005, "norm_pct": 18.9, "gains": {"jlens": 0.6, "jpp": 0.65, "rlens": 0.9}, "ag": {"i": 6, "label": "L4 #1398", "layer": 4, "group": "r0_only", "ll_j": 0.131, "ll_r": 0.277, "j_jpp": 0.525, "j_r": 0.652, "jpp_r": 0.871, "jacc20_jr": 0.03, "jacc20_jppr": 0.21}, "closest_other": {"label": "L2 #4005", "group": "r1_only", "cos_r": -0.17, "cos_raw": -0.02}, "role_short": "Structured workflow / enterprise jargon", "role_detail": "Promotes workflow/tech tokens ('SharePoint', 'Workflow', 'PowerShell') with mild positive load on '####'/'>>'; no strong formatting hit.", "tokens": {"logit_lens": {"pos": [["unders", 5.0], [" SharePoint", 4.6], [" PowerPoint", 4.3], [" groom", 4.2], ["龙湖", 4.1], ["金山", 4.1], [" Pra", 4.1], ["azure", 4.1]], "neg": [["ofile", -4.6], ["rades", -4.3], ["钍", -4.2], ["icy", -4.1], ["FML", -4.1], [" gesture", -4.1], ["ifr", -4.1], ["gesture", -4.0]]}, "jlens": {"pos": [["…”", 14.3], ["…”\\n\\n", 13.8], ["”—", 12.5], ["?”\\n\\n", 11.8], ["?”", 11.5], [" …\\n\\n", 11.1], ["…\\n\\n", 10.9], ["…\"\\n\\n", 10.9]], "neg": [["「", -5.9], ["。「", -5.7], [" '\\\\\\\\", -5.5], [" :\\\\", -5.1], [" ``", -5.0], ["、「", -5.0], [" apologise", -5.0], ["。\\\\", -4.9]]}, "jpp": {"pos": [[" SharePoint", 6.7], [".microsoft", 5.9], [" PowerShell", 5.9], ["Microsoft", 5.7], ["服务器", 5.7], [" Microsoft", 5.6], [" Workflow", 5.4], [" VMware", 5.2]], "neg": [[" motorcycle", -5.0], ["摩托车", -4.9], [" bicycle", -4.7], [" rehabilitation", -4.7], [" honda", -4.6], [" Costa", -4.5], ["秕", -4.5], [" coconut", -4.5]]}, "rlens": {"pos": [[" SharePoint", 6.5], ["客户需求", 5.9], [" Workflow", 5.7], [" workflow", 5.6], ["Workflow", 5.4], [" workflows", 5.3], ["为客户", 5.2], [" PowerShell", 5.2]], "neg": [[" kak", -4.4], [" essay", -4.4], [" bourgeois", -4.3], ["argent", -4.3], [" capitalist", -4.3], [" criticised", -4.3], [" feminism", -4.2], [" afterwards", -4.1]]}}}, {"i": 7, "label": "L6 #1362", "layer": 6, "idx": 1362, "group": "r0_only", "in_r0": true, "in_r1": false, "v_norm": 0.862, "layer_med": 1.068, "norm_pct": 1.9, "gains": {"jlens": 0.46, "jpp": 0.98, "rlens": 0.6}, "ag": {"i": 7, "label": "L6 #1362", "layer": 6, "group": "r0_only", "ll_j": 0.037, "ll_r": 0.193, "j_jpp": 0.364, "j_r": 0.488, "jpp_r": 0.826, "jacc20_jr": 0.0, "jacc20_jppr": 0.11}, "closest_other": {"label": "L14 #3925", "group": "r1_only", "cos_r": 0.39, "cos_raw": 0.03}, "role_short": "CoT / boxed / newline suppressor", "role_detail": "Strongly negative on '\\n\\n' (−6.6σ), '\\n' (−5.3σ), '<|endoftext|>' (−3.6σ), 'boxed' (−2.8σ), 'Therefore' (−2.6σ), and 'So' (−2.0σ).", "tokens": {"logit_lens": {"pos": [["�认", 4.8], ["marca", 4.5], ["喙", 4.5], ["会让你", 4.5], ["他会", 4.2], ["ptest", 4.2], ["!!\");\\n", 4.2], ["(*)(", 4.1]], "neg": [["\\n", -5.1], ["�", -4.3], ["坐", -4.3], ["\\r\\n", -4.3], ["贱", -4.2], ["溢", -4.2], ["jer", -4.1], ["挨", -4.1]]}, "jlens": {"pos": [[",”", 9.5], [")”", 9.4], ["?”", 9.2], [".”", 8.9], ["!”", 7.9], ["？”", 7.8], [".\",\\r\\n", 7.8], ["”—", 7.8]], "neg": [["...\\n", -10.8], ["...\\n\\n", -9.2], [",...\\n", -8.7], ["....\\n", -8.6], [" ...\\n", -8.4], ["\\xa0\\n", -8.2], ["......\\n\\n", -8.0], ["...\\n\\n\\n", -8.0]]}, "jpp": {"pos": [[" shipments", 4.7], ["馕", 4.1], [" bú", 4.0], ["departure", 4.0], ["进口", 4.0], ["郊", 4.0], ["饮酒", 3.9], [" pallet", 3.9]], "neg": [[":\\n\\n", -5.4], [":\\n", -5.0], [":\\n\\n\\n", -4.8], ["'''\\n\\n", -4.6], ["':\\n\\n", -4.5], [" Wiki", -4.5], ["是我的", -4.5], ["'''\\n", -4.5]]}, "rlens": {"pos": [["-BEGIN", 4.5], ["不合格", 4.2], ["-placement", 4.1], ["-shopping", 4.0], [" shipments", 3.9], ["-import", 3.8], ["-INF", 3.8], ["-describedby", 3.7]], "neg": [["...\\n\\n", -10.4], [" ...\\n\\n", -10.2], ["...\\n", -9.8], ["...\\n\\n\\n", -9.7], [" ...\\n", -9.6], ["...\\n\\n\\n\\n", -8.3], [" …\\n\\n", -8.0], ["....\\n\\n", -7.9]]}}}, {"i": 8, "label": "L12 #6760", "layer": 12, "idx": 6760, "group": "r0_only", "in_r0": true, "in_r1": false, "v_norm": 1.147, "layer_med": 1.032, "norm_pct": 87.8, "gains": {"jlens": 2.29, "jpp": 2.51, "rlens": 1.93}, "ag": {"i": 8, "label": "L12 #6760", "layer": 12, "group": "r0_only", "ll_j": 0.337, "ll_r": 0.44, "j_jpp": 0.366, "j_r": 0.938, "jpp_r": 0.515, "jacc20_jr": 0.67, "jacc20_jppr": 0.0}, "closest_other": {"label": "L6 #5466", "group": "r1_only", "cos_r": 0.66, "cos_raw": 0.4}, "role_short": "Paragraph break & '####' vs. '\\n' / EOS", "role_detail": "Cross-layer substitute for R1's L6 #5466 (R-Lens cos +0.66): '\\n\\n' (+14.8σ), '####' (+3.0σ) vs. '\\n' (−3.1σ), '<|endoftext|>' (−5.4σ).", "tokens": {"logit_lens": {"pos": [[" Por", 4.5], ["culate", 4.4], ["cdc", 4.3], [" }),\\n\\n", 4.3], [" getCode", 4.3], [",...\\n\\n", 4.3], ["unded", 4.2], [" Burr", 4.2]], "neg": [["manship", -5.3], [" Ada", -5.0], [" fwd", -4.7], [".lastname", -4.6], ["agr", -4.5], ["threads", -4.3], ["central", -4.3], ["声明", -4.3]]}, "jlens": {"pos": [["\\xa0", 32.7], ["\\xa0\\xa0", 25.4], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 23.0], ["\\xa0\\xa0\\xa0\\xa0", 22.9], ["\\xa0\\xa0\\xa0", 22.7], [" \\xa0", 22.4], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 21.8], [" \\xa0 \\xa0 \\xa0 \\xa0", 21.5]], "neg": [["\\n \\n", -11.9], ["<\\\\/", -11.3], ["\\\\/", -10.9], [".\\n", -10.1], [":\\\\/\\\\/", -9.8], ["!\\n", -9.5], ["?\\n", -9.4], ["。\\n", -9.3]]}, "jpp": {"pos": [["穆", 5.1], [" Libyan", 5.0], ["狄", 4.6], ["铀", 4.6], ["ISIS", 4.5], ["mdb", 4.4], ["阿富汗", 4.4], ["镍", 4.4]], "neg": [["\\xa0", -6.7], ["\\xa0\\n", -6.1], ["\\xa0\\xa0", -6.1], ["\\xa0\\xa0\\xa0", -5.7], [" \\xa0", -5.4], ["\\xa0\\xa0\\xa0\\xa0", -5.4], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", -5.1], ["manship", -5.1]]}, "rlens": {"pos": [["\\xa0", 28.3], ["\\xa0\\xa0", 22.0], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 20.4], ["\\xa0\\xa0\\xa0\\xa0", 20.0], ["\\xa0\\xa0\\xa0", 19.6], [" \\xa0", 19.3], [" \\xa0 \\xa0 \\xa0 \\xa0", 18.8], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 18.7]], "neg": [["\\\\/", -10.2], ["<\\\\/", -9.8], [":\\\\/\\\\/", -8.7], ["\\n \\n", -8.3], ["\\r\\n\\t\\r\\n", -6.9], [".\\n", -6.5], [" \\\\/", -6.5], ["\\\\/\\\\/", -6.4]]}}}, {"i": 9, "label": "L18 #4890", "layer": 18, "idx": 4890, "group": "r0_only", "in_r0": true, "in_r1": false, "v_norm": 0.98, "layer_med": 1.048, "norm_pct": 27.1, "gains": {"jlens": 1.71, "jpp": 0.49, "rlens": 1.49}, "ag": {"i": 9, "label": "L18 #4890", "layer": 18, "group": "r0_only", "ll_j": 0.624, "ll_r": 0.768, "j_jpp": -0.377, "j_r": 0.942, "jpp_r": -0.315, "jacc20_jr": 0.82, "jacc20_jppr": 0.0}, "closest_other": {"label": "L6 #5466", "group": "r1_only", "cos_r": -0.16, "cos_raw": -0.02}, "role_short": "Sentence-ending newline specialist", "role_detail": "Extreme newline spike: '\\n' (+15.2σ), '\\n\\n' (+8.6σ), '.\\n', '?\\n', '!\\n' vs. ellipsis continuation ('...)', '...]').", "tokens": {"logit_lens": {"pos": [[".\\n", 14.8], ["().\\n", 13.7], ["。\\n", 13.2], ["/.\\n", 13.2], [" .\\n", 13.0], ["？\\n", 12.9], ["?\\n", 12.9], ["!\\n", 12.7]], "neg": [[" ...)", -6.6], ["...)", -6.3], ["...]", -6.1], ["…)", -5.6], [" […]", -5.4], [").", -5.1], ["...", -4.9], ["})();", -4.9]]}, "jlens": {"pos": [[".\\n", 19.9], [";\\n", 18.5], ["。\\n", 18.5], ["?\\n", 18.1], [" .\\n", 17.9], ["!\\n", 17.7], ["；\\n", 17.5], [",\\n", 17.4]], "neg": [["».", -8.5], [".\\\\\"", -8.4], [")\".", -8.2], ["”.", -8.1], ["”).", -8.0], ["...]", -7.9], [" ».", -7.9], ["\"].", -7.8]]}, "jpp": {"pos": [[" \\\\\\r\\n", 8.0], [" \\r\\n", 7.7], ["  \\r\\n", 7.5], ["   \\r\\n", 7.5], ["**\\r\\n", 7.2], [" |\\r\\n", 7.2], [".\\\\\"", 7.2], ["\\\\\\r\\n", 7.0]], "neg": [[".\\n", -13.6], [").\\n", -12.8], ["().\\n", -12.4], ["。\\n", -12.3], ["!\\n", -12.0], ["?\\n", -11.6], [":\\n", -11.5], [";\\n", -11.5]]}, "rlens": {"pos": [[".\\n", 20.6], ["。\\n", 18.9], ["?\\n", 18.5], ["!\\n", 18.3], [";\\n", 18.0], [" .\\n", 17.3], ["？\\n", 17.2], [",\\n", 17.0]], "neg": [["...]", -8.3], ["...)", -8.0], [" ...)", -7.4], [" ».", -7.2], ["».", -7.1], [".\\\\\"", -6.8], [")\".", -6.7], ["}.", -6.6]]}}}, {"i": 10, "label": "L27 #4914", "layer": 27, "idx": 4914, "group": "r0_only", "in_r0": true, "in_r1": false, "v_norm": 0.598, "layer_med": 1.05, "norm_pct": 3.0, "gains": {"jlens": 1.0, "jpp": 1.0, "rlens": 1.0}, "ag": {"i": 10, "label": "L27 #4914", "layer": 27, "group": "r0_only", "ll_j": 1.0, "ll_r": 1.0, "j_jpp": 1.0, "j_r": 1.0, "jpp_r": 1.0, "jacc20_jr": 1.0, "jacc20_jppr": 1.0}, "closest_other": {"label": "L19 #5606", "group": "shared", "cos_r": 0.15, "cos_raw": 0.06}, "role_short": "Spelled-out English number words", "role_detail": "Directly before lm_head: −v promotes English number words ('nineteen', 'eighty', 'twenty'..'ninety') and digits (−2.1σ) vs. NBSP / '**'.", "tokens": {"logit_lens": {"pos": [["\\xa0\\xa0", 6.7], ["낡", 6.6], ["\\xa0\\xa0\\xa0", 6.3], ["\\xa0\\xa0\\xa0\\xa0", 5.8], [" związku", 5.8], ["\\u3000\\u3000", 5.8], [" \\n\\t\\n", 5.7], ["▬", 5.5]], "neg": [["' '", -25.8], [" nineteen", -9.2], [" eighty", -9.2], [" twenty", -8.8], [" seventy", -8.8], [" forty", -8.8], [" sixty", -8.6], [" thirty", -8.4]]}, "jlens": {"pos": [["\\xa0\\xa0", 6.7], ["낡", 6.6], ["\\xa0\\xa0\\xa0", 6.3], ["\\xa0\\xa0\\xa0\\xa0", 5.8], [" związku", 5.8], ["\\u3000\\u3000", 5.8], [" \\n\\t\\n", 5.7], ["▬", 5.5]], "neg": [["' '", -25.8], [" nineteen", -9.2], [" eighty", -9.2], [" twenty", -8.8], [" seventy", -8.8], [" forty", -8.8], [" sixty", -8.6], [" thirty", -8.4]]}, "jpp": {"pos": [["\\xa0\\xa0", 6.7], ["낡", 6.6], ["\\xa0\\xa0\\xa0", 6.3], ["\\xa0\\xa0\\xa0\\xa0", 5.8], [" związku", 5.8], ["\\u3000\\u3000", 5.8], [" \\n\\t\\n", 5.7], ["▬", 5.5]], "neg": [["' '", -25.8], [" nineteen", -9.2], [" eighty", -9.2], [" twenty", -8.8], [" seventy", -8.8], [" forty", -8.8], [" sixty", -8.6], [" thirty", -8.4]]}, "rlens": {"pos": [["\\xa0\\xa0", 6.7], ["낡", 6.6], ["\\xa0\\xa0\\xa0", 6.3], ["\\xa0\\xa0\\xa0\\xa0", 5.8], [" związku", 5.8], ["\\u3000\\u3000", 5.8], [" \\n\\t\\n", 5.7], ["▬", 5.5]], "neg": [["' '", -25.8], [" nineteen", -9.2], [" eighty", -9.2], [" twenty", -8.8], [" seventy", -8.8], [" forty", -8.8], [" sixty", -8.6], [" thirty", -8.4]]}}}, {"i": 11, "label": "L27 #7926", "layer": 27, "idx": 7926, "group": "r0_only", "in_r0": true, "in_r1": false, "v_norm": 0.712, "layer_med": 1.05, "norm_pct": 10.5, "gains": {"jlens": 1.0, "jpp": 1.0, "rlens": 1.0}, "ag": {"i": 11, "label": "L27 #7926", "layer": 27, "group": "r0_only", "ll_j": 1.0, "ll_r": 1.0, "j_jpp": 1.0, "j_r": 1.0, "jpp_r": 1.0, "jacc20_jr": 1.0, "jacc20_jppr": 1.0}, "closest_other": {"label": "L27 #1683", "group": "r1_only", "cos_r": -0.24, "cos_raw": -0.07}, "role_short": "ASCII digits & chat EOS (<|im_end|>)", "role_detail": "Promotes ASCII digits ('3','4','2','9','1'; +3.1σ) and '<|endoftext|>' (+2.7σ); only strong hit on Qwen's chat stop '<|im_end|>' (−2.6σ).", "tokens": {"logit_lens": {"pos": [["3", 3.3], ["4", 3.3], ["2", 3.3], ["son", 3.3], ["9", 3.2], ["1", 3.2], ["List", 3.1], ["توقف", 3.1]], "neg": [[":<?", -5.0], ["众所周", -4.9], [",\");\\n", -4.8], ["[vi", -4.8], [",Yes", -4.7], [" >\",", -4.7], ["】,【", -4.7], [",…\\n\\n", -4.6]]}, "jlens": {"pos": [["3", 3.3], ["4", 3.3], ["2", 3.3], ["son", 3.3], ["9", 3.2], ["1", 3.2], ["List", 3.1], ["توقف", 3.1]], "neg": [[":<?", -5.0], ["众所周", -4.9], [",\");\\n", -4.8], ["[vi", -4.8], [",Yes", -4.7], [" >\",", -4.7], ["】,【", -4.7], [",…\\n\\n", -4.6]]}, "jpp": {"pos": [["3", 3.3], ["4", 3.3], ["2", 3.3], ["son", 3.3], ["9", 3.2], ["1", 3.2], ["List", 3.1], ["توقف", 3.1]], "neg": [[":<?", -5.0], ["众所周", -4.9], [",\");\\n", -4.8], ["[vi", -4.8], [",Yes", -4.7], [" >\",", -4.7], ["】,【", -4.7], [",…\\n\\n", -4.6]]}, "rlens": {"pos": [["3", 3.3], ["4", 3.3], ["2", 3.3], ["son", 3.3], ["9", 3.2], ["1", 3.2], ["List", 3.1], ["توقف", 3.1]], "neg": [[":<?", -5.0], ["众所周", -4.9], [",\");\\n", -4.8], ["[vi", -4.8], [",Yes", -4.7], [" >\",", -4.7], ["】,【", -4.7], [",…\\n\\n", -4.6]]}}}, {"i": 12, "label": "L2 #4005", "layer": 2, "idx": 4005, "group": "r1_only", "in_r0": false, "in_r1": true, "v_norm": 0.597, "layer_med": 1.059, "norm_pct": 0.6, "gains": {"jlens": 0.67, "jpp": 1.01, "rlens": 0.86}, "ag": {"i": 12, "label": "L2 #4005", "layer": 2, "group": "r1_only", "ll_j": 0.042, "ll_r": 0.184, "j_jpp": 0.172, "j_r": 0.277, "jpp_r": 0.939, "jacc20_jr": 0.03, "jacc20_jppr": 0.14}, "closest_other": {"label": "L3 #574", "group": "r0_only", "cos_r": -0.34, "cos_raw": 0.03}, "role_short": "Plain paragraphs, no markdown/LaTeX", "role_detail": "Early layer switch: promotes '\\n\\n' (+3.2σ) & closing equation parens while suppressing all 4 markdown/LaTeX markers ('**','###','\\[','boxed' −2.1σ to −2.4σ).", "tokens": {"logit_lens": {"pos": [["سمي", 4.6], ["kul", 4.4], ["ndon", 4.3], ["—are", 4.3], ["。「", 4.2], ["ớ", 4.2], ["EEP", 4.1], ["ipel", 4.1]], "neg": [["Ix", -4.6], ["dat", -4.6], ["hear", -4.4], ["heid", -4.4], ["bilt", -4.4], [" dat", -4.2], ["ocaust", -4.2], ["her", -4.2]]}, "jlens": {"pos": [["–", 10.8], [".–", 9.9], [" –", 9.4], [".", 8.0], ["–and", 8.0], [")—", 7.9], ["●", 7.9], ["•", 7.9]], "neg": [[" ``(", -8.7], [" ``", -8.5], [".''\\n\\n", -8.0], ["？\\n\\n", -7.9], ["``,", -7.9], ["（", -7.4], ["！\\n\\n", -7.4], ["）\\n\\n", -7.3]]}, "jpp": {"pos": [["--)", 4.5], [" ).\\n\\n", 4.5], [" herself", 4.4], [" themselves", 4.4], [" himself", 4.3], [").\\n\\n", 4.2], ["也不可能", 4.1], [".)\\n\\n", 4.0]], "neg": [[" �", -6.7], ["=https", -6.2], [" https", -6.2], ["https", -6.1], [" �", -5.8], [" COVID", -5.4], [" �", -5.4], ["\"https", -5.3]]}, "rlens": {"pos": [[" ).\\n\\n", 6.2], [").\"", 5.8], [".)\\n\\n", 5.4], [".).\\n\\n", 5.2], [" );", 5.2], [").\\n\\n", 5.1], [" ).", 5.0], [" )\\n\\n", 5.0]], "neg": [["=https", -6.0], ["：\\n", -5.7], ["https", -5.6], ["\\\\\\r\\n", -5.5], ["”\\n", -5.4], [" \\\\\\r\\n", -5.1], [" �", -5.1], [" https", -5.1]]}}}, {"i": 13, "label": "L6 #5466", "layer": 6, "idx": 5466, "group": "r1_only", "in_r0": false, "in_r1": true, "v_norm": 1.107, "layer_med": 1.068, "norm_pct": 78.9, "gains": {"jlens": 2.3, "jpp": 1.97, "rlens": 1.62}, "ag": {"i": 13, "label": "L6 #5466", "layer": 6, "group": "r1_only", "ll_j": 0.323, "ll_r": 0.41, "j_jpp": 0.498, "j_r": 0.947, "jpp_r": 0.619, "jacc20_jr": 0.9, "jacc20_jppr": 0.0}, "closest_other": {"label": "L12 #6760", "group": "r0_only", "cos_r": 0.66, "cos_raw": 0.4}, "role_short": "Paragraph break & '####' vs. '\\n'", "role_detail": "Cross-layer substitute for R0's L12 #6760 (R-Lens cos +0.66): '\\n\\n' (+14.9σ), '####' (+4.1σ), '\\[' (+4.3σ) vs. '\\n' (−8.0σ).", "tokens": {"logit_lens": {"pos": [[" Mü", 4.8], ["dom", 4.5], ["DOM", 4.5], ["URITY", 4.3], ["AIN", 4.3], ["AINS", 4.3], ["NavController", 4.3], ["ube", 4.3]], "neg": [["threads", -5.2], ["髹", -5.2], ["сь", -5.1], ["aland", -5.0], ["(:,:,", -4.8], ["quist", -4.7], ["ше", -4.5], [" Alam", -4.5]]}, "jlens": {"pos": [["\\n\\n", 13.3], ["--\\n\\n", 13.3], ["—\\n\\n", 13.2], [",\\n\\n", 13.2], ["-\\n\\n", 12.8], ["  \\n\\n", 12.8], [" \\n\\n", 12.7], ["!\\n\\n", 12.5]], "neg": [[".”\\n", -13.1], [".\\n", -12.9], ["…\\n", -12.7], ["”\\n", -12.6], ["?\\n", -12.3], [" ..\\n", -12.2], ["..\\n", -12.1], [")\\n", -12.0]]}, "jpp": {"pos": [["(Database", 5.1], ["AndHashCode", 4.8], [".djangoproject", 4.8], ["留守", 4.7], [" Dul", 4.7], ["叽", 4.6], ["McC", 4.5], [" muff", 4.4]], "neg": [[" Boca", -5.1], [" LG", -4.9], ["ty", -4.8], [" Aviv", -4.8], ["tls", -4.8], ["izr", -4.8], [" samsung", -4.7], ["ld", -4.7]]}, "rlens": {"pos": [["--\\n\\n", 15.0], ["\\n\\n", 14.9], ["—\\n\\n", 14.9], [",\\n\\n", 14.8], ["：\\n\\n", 14.6], ["-\\n\\n", 14.4], ["？\\n\\n", 14.0], ["，\\n\\n", 13.8]], "neg": [[".”\\n", -10.4], [".\\n", -10.3], [" .\\n", -9.6], [")\\n", -9.6], ["..\\n", -9.6], ["”\\n", -9.6], [".'\\n", -9.6], [".)\\n", -9.6]]}}}, {"i": 14, "label": "L14 #3925", "layer": 14, "idx": 3925, "group": "r1_only", "in_r0": false, "in_r1": true, "v_norm": 1.261, "layer_med": 1.013, "norm_pct": 94.3, "gains": {"jlens": 2.41, "jpp": 2.54, "rlens": 2.34}, "ag": {"i": 14, "label": "L14 #3925", "layer": 14, "group": "r1_only", "ll_j": 0.171, "ll_r": 0.339, "j_jpp": 0.615, "j_r": 0.844, "jpp_r": 0.808, "jacc20_jr": 0.18, "jacc20_jppr": 0.05}, "closest_other": {"label": "L6 #1362", "group": "r0_only", "cos_r": 0.39, "cos_raw": 0.03}, "role_short": "Markdown / boxed / newline / EOS suppressor", "role_detail": "Cross-layer match to R0's L6 #1362 (cos +0.39): strongly negative on '\\n\\n' (−7.3σ), '<|endoftext|>' (−6.0σ), '**' (−4.8σ), '\\n' (−4.8σ), '###' (−3.0σ), 'boxed' (−2.7σ).", "tokens": {"logit_lens": {"pos": [["[value", 5.0], ["mage", 4.6], ["[dim", 4.6], ["/hash", 4.5], ["trimmed", 4.4], ["HITE", 4.3], ["sdale", 4.3], [" mails", 4.3]], "neg": [["结", -4.8], [" st", -4.4], ["情况", -4.2], [" &", -4.2], ["特", -4.2], ["获", -4.1], [" fmt", -4.1], ["盎", -4.1]]}, "jlens": {"pos": [["\\xa0", 8.3], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 5.6], ["\\xa0\\xa0", 5.6], ["\\xa0\\xa0\\xa0\\xa0", 5.4], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 5.3], ["\\xa0\\xa0\\xa0", 5.0], [":\\\\", 4.3], ["):\\\\", 4.1]], "neg": [[" \\n\\n", -15.8], [" \\n", -14.5], ["\\n \\n", -13.6], [" \\n \\n", -13.4], [" …\\n\\n", -13.0], ["...\\n\\n", -13.0], ["...\\n", -13.0], [" \\n  \\n", -12.9]]}, "jpp": {"pos": [[" favourites", 4.6], [" favourite", 4.2], ["内地", 3.8], [" daß", 3.8], ["áz", 3.8], [" btnCancel", 3.7], ["家长", 3.7], [" borderTop", 3.7]], "neg": [["...\",\\n", -8.4], ["...\"\\n\\n", -8.2], [" \\\\\\n", -7.9], ["...\"\\n", -7.9], ["...", -7.7], ["...\"", -7.6], [" ...\"\\n\\n", -7.6], [" ...", -7.5]]}, "rlens": {"pos": [["\\xa0", 5.5], [":\");\\r\\n", 4.7], [":\");\\n", 4.6], [" favourites", 4.4], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 4.4], ["\\xa0\\xa0\\xa0\\xa0", 4.2], ["\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0\\xa0", 4.2], [" favourite", 4.1]], "neg": [[" \\n\\n", -12.5], [" ...\\n\\n", -12.1], ["...\\n\\n", -11.7], [" …\\n\\n", -10.7], ["...\"\\n\\n", -10.4], ["...\\n\\n\\n\\n\\n\\n", -10.4], [" \\n", -10.3], ["...\\n\\n\\n", -10.2]]}}}, {"i": 15, "label": "L26 #8751", "layer": 26, "idx": 8751, "group": "r1_only", "in_r0": false, "in_r1": true, "v_norm": 1.039, "layer_med": 1.173, "norm_pct": 10.3, "gains": {"jlens": 1.09, "jpp": 0.26, "rlens": 1.04}, "ag": {"i": 15, "label": "L26 #8751", "layer": 26, "group": "r1_only", "ll_j": 0.969, "ll_r": 0.989, "j_jpp": 0.77, "j_r": 0.992, "jpp_r": 0.774, "jacc20_jr": 0.6, "jacc20_jppr": 0.0}, "closest_other": {"label": "L27 #7926", "group": "r0_only", "cos_r": 0.13, "cos_raw": -0.05}, "role_short": "Word-problem / completion cues", "role_detail": "Promotes 'Left', 'left', 'Done', 'Shown', '<<' (+2.5σ) — classic GSM8K phrasing ('How many are left?').", "tokens": {"logit_lens": {"pos": [[" Left", 5.4], [" left", 5.3], ["left", 5.2], ["Left", 5.2], ["Shown", 5.0], ["_left", 4.8], [" Done", 4.7], ["\\tdone", 4.6]], "neg": [[" hur", -6.5], [" h", -5.3], ["物", -4.9], ["ega", -4.8], ["色", -4.5], [" ste", -4.4], ["(Type", -4.4], ["wię", -4.4]]}, "jlens": {"pos": [[" Left", 5.1], [" left", 5.1], ["left", 4.8], [" Done", 4.8], [" form", 4.7], ["Left", 4.7], ["Shown", 4.6], ["\\tdone", 4.4]], "neg": [[" hur", -6.0], ["物", -5.2], [" h", -4.9], ["色", -4.8], ["ega", -4.7], ["正", -4.4], ["(Type", -4.2], ["=h", -4.2]]}, "jpp": {"pos": [["ensor", 4.5], ["izacion", 4.4], ["zo", 4.4], [" Jad", 4.2], ["omatic", 4.2], ["alten", 4.2], ["cin", 4.1], ["ensors", 4.1]], "neg": [[" hur", -6.6], ["yi", -5.2], ["ntag", -4.6], ["=Value", -4.6], ["ITIONAL", -4.6], ["outu", -4.5], ["物", -4.4], ["geries", -4.2]]}, "rlens": {"pos": [[" Left", 5.3], [" left", 5.3], ["left", 5.1], ["Left", 5.0], ["Shown", 4.8], [" Done", 4.7], [" form", 4.7], ["_left", 4.6]], "neg": [[" hur", -6.3], [" h", -5.2], ["物", -5.0], ["ega", -4.8], ["色", -4.5], ["(Type", -4.4], ["=h", -4.3], ["wię", -4.3]]}}}, {"i": 16, "label": "L27 #1683", "layer": 27, "idx": 1683, "group": "r1_only", "in_r0": false, "in_r1": true, "v_norm": 0.55, "layer_med": 1.05, "norm_pct": 1.3, "gains": {"jlens": 1.0, "jpp": 1.0, "rlens": 1.0}, "ag": {"i": 16, "label": "L27 #1683", "layer": 27, "group": "r1_only", "ll_j": 1.0, "ll_r": 1.0, "j_jpp": 1.0, "j_r": 1.0, "jpp_r": 1.0, "jacc20_jr": 1.0, "jacc20_jppr": 1.0}, "closest_other": {"label": "L3 #574", "group": "r0_only", "cos_r": 0.4, "cos_raw": 0.03}, "role_short": "Short lowercase token fragments", "role_detail": "Promotes 2–3 char lowercase abbreviations ('yg','hb','hf','stm'); no strong formatting or digit probe hit (moderate R-Lens cos +0.40 with L3 #574).", "tokens": {"logit_lens": {"pos": [[" yg", 4.5], [" hb", 4.5], [" hf", 4.4], [" stm", 4.4], [" nf", 4.4], [" stk", 4.4], [" gd", 4.3], [" Sexo", 4.3]], "neg": [["用微信扫", -3.5], ["крат", -3.3], [" cher", -3.2], [" arch", -3.2], [" wid", -3.2], ["auważ", -3.2], ["lığa", -3.1], [" kn", -3.1]]}, "jlens": {"pos": [[" yg", 4.5], [" hb", 4.5], [" hf", 4.4], [" stm", 4.4], [" nf", 4.4], [" stk", 4.4], [" gd", 4.3], [" Sexo", 4.3]], "neg": [["用微信扫", -3.5], ["крат", -3.3], [" cher", -3.2], [" arch", -3.2], [" wid", -3.2], ["auważ", -3.2], ["lığa", -3.1], [" kn", -3.1]]}, "jpp": {"pos": [[" yg", 4.5], [" hb", 4.5], [" hf", 4.4], [" stm", 4.4], [" nf", 4.4], [" stk", 4.4], [" gd", 4.3], [" Sexo", 4.3]], "neg": [["用微信扫", -3.5], ["крат", -3.3], [" cher", -3.2], [" arch", -3.2], [" wid", -3.2], ["auważ", -3.2], ["lığa", -3.1], [" kn", -3.1]]}, "rlens": {"pos": [[" yg", 4.5], [" hb", 4.5], [" hf", 4.4], [" stm", 4.4], [" nf", 4.4], [" stk", 4.4], [" gd", 4.3], [" Sexo", 4.3]], "neg": [["用微信扫", -3.5], ["крат", -3.3], [" cher", -3.2], [" arch", -3.2], [" wid", -3.2], ["auważ", -3.2], ["lığa", -3.1], [" kn", -3.1]]}}}, {"i": 17, "label": "L27 #6214", "layer": 27, "idx": 6214, "group": "r1_only", "in_r0": false, "in_r1": true, "v_norm": 0.666, "layer_med": 1.05, "norm_pct": 6.8, "gains": {"jlens": 1.0, "jpp": 1.0, "rlens": 1.0}, "ag": {"i": 17, "label": "L27 #6214", "layer": 27, "group": "r1_only", "ll_j": 1.0, "ll_r": 1.0, "j_jpp": 1.0, "j_r": 1.0, "jpp_r": 1.0, "jacc20_jr": 1.0, "jacc20_jppr": 1.0}, "closest_other": {"label": "L11 #8235", "group": "shared", "cos_r": -0.1, "cos_raw": -0.03}, "role_short": "Pure ASCII digits 0–9 specialist", "role_detail": "Directly before lm_head: every single top-10 token on −v is a digit '0'–'9' (−11.8σ across all 10 digits) plus '$' (−2.5σ).", "tokens": {"logit_lens": {"pos": [[" uda", 5.3], [" Gund", 4.5], ["imum", 4.5], [" kald", 4.3], ["取得以及", 4.2], [" ocas", 4.1], ["agedList", 4.1], ["}->", 4.1]], "neg": [["1", -12.3], ["2", -12.2], ["4", -11.9], ["9", -11.7], ["3", -11.7], ["6", -11.7], ["5", -11.6], ["8", -11.6]]}, "jlens": {"pos": [[" uda", 5.3], [" Gund", 4.5], ["imum", 4.5], [" kald", 4.3], ["取得以及", 4.2], [" ocas", 4.1], ["agedList", 4.1], ["}->", 4.1]], "neg": [["1", -12.3], ["2", -12.2], ["4", -11.9], ["9", -11.7], ["3", -11.7], ["6", -11.7], ["5", -11.6], ["8", -11.6]]}, "jpp": {"pos": [[" uda", 5.3], [" Gund", 4.5], ["imum", 4.5], [" kald", 4.3], ["取得以及", 4.2], [" ocas", 4.1], ["agedList", 4.1], ["}->", 4.1]], "neg": [["1", -12.3], ["2", -12.2], ["4", -11.9], ["9", -11.7], ["3", -11.7], ["6", -11.7], ["5", -11.6], ["8", -11.6]]}, "rlens": {"pos": [[" uda", 5.3], [" Gund", 4.5], ["imum", 4.5], [" kald", 4.3], ["取得以及", 4.2], [" ocas", 4.1], ["agedList", 4.1], ["}->", 4.1]], "neg": [["1", -12.3], ["2", -12.2], ["4", -11.9], ["9", -11.7], ["3", -11.7], ["6", -11.7], ["5", -11.6], ["8", -11.6]]}}}], "labels": ["L11 #8235", "L16 #5569", "L17 #6230", "L17 #7054", "L19 #5606", "L3 #574", "L4 #1398", "L6 #1362", "L12 #6760", "L18 #4890", "L27 #4914", "L27 #7926", "L2 #4005", "L6 #5466", "L14 #3925", "L26 #8751", "L27 #1683", "L27 #6214"], "groups": ["shared", "shared", "shared", "shared", "shared", "r0_only", "r0_only", "r0_only", "r0_only", "r0_only", "r0_only", "r0_only", "r1_only", "r1_only", "r1_only", "r1_only", "r1_only", "r1_only"], "idx_shared": [0, 1, 2, 3, 4], "idx_r0_only": [5, 6, 7, 8, 9, 10, 11], "idx_r1_only": [12, 13, 14, 15, 16, 17], "idx_r0_all": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "idx_r1_all": [0, 1, 2, 3, 4, 12, 13, 14, 15, 16, 17], "lens_names": ["rlens", "jpp", "jlens", "logit_lens"], "lens_labels": {"rlens": "R-Lens", "jpp": "J++", "jlens": "J-Lens", "logit_lens": "Logit Lens"}, "cos_mats": {"rlens": [[1.0, -0.03700000047683716, -0.010999999940395355, 0.017000000923871994, -0.003000000026077032, -0.5389999747276306, -0.0560000017285347, -0.11900000274181366, -0.17499999701976776, -0.06700000166893005, -0.11299999803304672, 0.1420000046491623, 0.1809999942779541, -0.09200000017881393, -0.0689999982714653, 0.11400000005960464, -0.24400000274181366, -0.09799999743700027], [-0.03700000047683716, 1.0, -0.020999999716877937, 0.010999999940395355, -0.010999999940395355, -0.03500000014901161, 0.10700000077486038, 0.2029999941587448, 0.03700000047683716, -0.01899999938905239, 0.027000000700354576, -0.1420000046491623, 0.06199999898672104, 0.14100000262260437, 0.1509999930858612, -0.06700000166893005, -0.06300000101327896, 0.012000000104308128], [-0.010999999940395355, -0.020999999716877937, 1.0, 0.041999999433755875, 0.13600000739097595, 0.0820000022649765, 0.09099999815225601, -0.13099999725818634, -0.02199999988079071, 0.01600000075995922, 0.07400000095367432, -0.02199999988079071, -0.0860000029206276, -0.010999999940395355, -0.07400000095367432, 0.020999999716877937, 0.12600000202655792, 0.017000000923871994], [0.017000000923871994, 0.010999999940395355, 0.041999999433755875, 1.0, 0.20999999344348907, 0.0430000014603138, -0.03700000047683716, -0.03700000047683716, 0.057999998331069946, 0.04399999976158142, 0.03999999910593033, 0.026000000536441803, -0.017000000923871994, 0.11999999731779099, -0.035999998450279236, 0.03200000151991844, -0.07000000029802322, -0.04699999839067459], [-0.003000000026077032, -0.010999999940395355, 0.13600000739097595, 0.20999999344348907, 1.0, 0.12800000607967377, 0.08799999952316284, -0.25600001215934753, 0.03700000047683716, 0.1120000034570694, 0.1459999978542328, -0.16099999845027924, -0.04899999871850014, 0.10899999737739563, -0.38199999928474426, 0.004999999888241291, 0.15399999916553497, -0.014999999664723873], [-0.5389999747276306, -0.03500000014901161, 0.0820000022649765, 0.0430000014603138, 0.12800000607967377, 1.0, -0.004999999888241291, 0.1120000034570694, 0.19900000095367432, -0.014000000432133675, 0.1340000033378601, -0.12999999523162842, -0.33799999952316284, 0.0949999988079071, 0.2240000069141388, -0.07199999690055847, 0.4000000059604645, 0.06800000369548798], [-0.0560000017285347, 0.10700000077486038, 0.09099999815225601, -0.03700000047683716, 0.08799999952316284, -0.004999999888241291, 1.0, 0.07199999690055847, 0.03099999949336052, -0.023000000044703484, 0.041999999433755875, -0.010999999940395355, -0.17100000381469727, -0.007000000216066837, -0.019999999552965164, -0.023000000044703484, 0.0560000017285347, 0.027000000700354576], [-0.11900000274181366, 0.2029999941587448, -0.13099999725818634, -0.03700000047683716, -0.25600001215934753, 0.1120000034570694, 0.07199999690055847, 1.0, -0.039000000804662704, -0.08399999886751175, 0.0020000000949949026, -0.035999998450279236, -0.00800000037997961, -0.026000000536441803, 0.39399999380111694, -0.03999999910593033, 0.050999999046325684, 0.0729999989271164], [-0.17499999701976776, 0.03700000047683716, -0.02199999988079071, 0.057999998331069946, 0.03700000047683716, 0.19900000095367432, 0.03099999949336052, -0.039000000804662704, 1.0, 0.0010000000474974513, 0.04100000113248825, -0.02800000086426735, 0.03799999877810478, 0.6570000052452087, 0.023000000044703484, -0.0010000000474974513, 0.04100000113248825, 0.02800000086426735], [-0.06700000166893005, -0.01899999938905239, 0.01600000075995922, 0.04399999976158142, 0.1120000034570694, -0.014000000432133675, -0.023000000044703484, -0.08399999886751175, 0.0010000000474974513, 1.0, 0.006000000052154064, -0.1080000028014183, -0.020999999716877937, -0.15600000321865082, -0.04399999976158142, -0.02500000037252903, 0.004000000189989805, -0.019999999552965164], [-0.11299999803304672, 0.027000000700354576, 0.07400000095367432, 0.03999999910593033, 0.1459999978542328, 0.1340000033378601, 0.041999999433755875, 0.0020000000949949026, 0.04100000113248825, 0.006000000052154064, 1.0, -0.09700000286102295, -0.06199999898672104, 0.014000000432133675, 0.017999999225139618, -0.03799999877810478, 0.1379999965429306, 0.07900000363588333], [0.1420000046491623, -0.1420000046491623, -0.02199999988079071, 0.026000000536441803, -0.16099999845027924, -0.12999999523162842, -0.010999999940395355, -0.035999998450279236, -0.02800000086426735, -0.1080000028014183, -0.09700000286102295, 1.0, -0.02199999988079071, -0.061000000685453415, -0.050999999046325684, 0.1289999932050705, -0.24300000071525574, -0.08799999952316284], [0.1809999942779541, 0.06199999898672104, -0.0860000029206276, -0.017000000923871994, -0.04899999871850014, -0.33799999952316284, -0.17100000381469727, -0.00800000037997961, 0.03799999877810478, -0.020999999716877937, -0.06199999898672104, -0.02199999988079071, 1.0, 0.17100000381469727, -0.04500000178813934, 0.014999999664723873, -0.25699999928474426, -0.06499999761581421], [-0.09200000017881393, 0.14100000262260437, -0.010999999940395355, 0.11999999731779099, 0.10899999737739563, 0.0949999988079071, -0.007000000216066837, -0.026000000536441803, 0.6570000052452087, -0.15600000321865082, 0.014000000432133675, -0.061000000685453415, 0.17100000381469727, 1.0, -0.10199999809265137, -0.007000000216066837, -0.04399999976158142, -0.003000000026077032], [-0.0689999982714653, 0.1509999930858612, -0.07400000095367432, -0.035999998450279236, -0.38199999928474426, 0.2240000069141388, -0.019999999552965164, 0.39399999380111694, 0.023000000044703484, -0.04399999976158142, 0.017999999225139618, -0.050999999046325684, -0.04500000178813934, -0.10199999809265137, 1.0, -0.05900000035762787, 0.164000004529953, 0.061000000685453415], [0.11400000005960464, -0.06700000166893005, 0.020999999716877937, 0.03200000151991844, 0.004999999888241291, -0.07199999690055847, -0.023000000044703484, -0.03999999910593033, -0.0010000000474974513, -0.02500000037252903, -0.03799999877810478, 0.1289999932050705, 0.014999999664723873, -0.007000000216066837, -0.05900000035762787, 1.0, -0.09600000083446503, -0.014000000432133675], [-0.24400000274181366, -0.06300000101327896, 0.12600000202655792, -0.07000000029802322, 0.15399999916553497, 0.4000000059604645, 0.0560000017285347, 0.050999999046325684, 0.04100000113248825, 0.004000000189989805, 0.1379999965429306, -0.24300000071525574, -0.25699999928474426, -0.04399999976158142, 0.164000004529953, -0.09600000083446503, 1.0, 0.12600000202655792], [-0.09799999743700027, 0.012000000104308128, 0.017000000923871994, -0.04699999839067459, -0.014999999664723873, 0.06800000369548798, 0.027000000700354576, 0.0729999989271164, 0.02800000086426735, -0.019999999552965164, 0.07900000363588333, -0.08799999952316284, -0.06499999761581421, -0.003000000026077032, 0.061000000685453415, -0.014000000432133675, 0.12600000202655792, 1.0]], "jpp": [[1.0, -0.2639999985694885, 0.03999999910593033, 0.050999999046325684, 0.13600000739097595, -0.3019999861717224, -0.08500000089406967, 0.026000000536441803, -0.20100000500679016, -0.12099999934434891, -0.08500000089406967, 0.15399999916553497, 0.08900000154972076, -0.07000000029802322, -0.04600000008940697, 0.11599999666213989, -0.09700000286102295, -0.0989999994635582], [-0.2639999985694885, 1.0, 0.08900000154972076, 0.007000000216066837, -0.006000000052154064, 0.035999998450279236, 0.17800000309944153, 0.03400000184774399, 0.07199999690055847, 0.02800000086426735, 0.057999998331069946, -0.11500000208616257, -0.03200000151991844, 0.12600000202655792, 0.05299999937415123, -0.06800000369548798, 0.08699999749660492, 0.08100000023841858], [0.03999999910593033, 0.08900000154972076, 1.0, -0.009999999776482582, -0.04100000113248825, -0.04800000041723251, 0.07100000232458115, -0.0729999989271164, -0.013000000268220901, 0.004000000189989805, 0.03999999910593033, 0.032999999821186066, -0.04600000008940697, 0.004000000189989805, 0.014999999664723873, -0.017000000923871994, 0.04500000178813934, 0.003000000026077032], [0.050999999046325684, 0.007000000216066837, -0.009999999776482582, 1.0, 0.07400000095367432, -0.0010000000474974513, 0.004000000189989805, -0.020999999716877937, -0.03200000151991844, -0.03400000184774399, -0.00800000037997961, 0.023000000044703484, -0.052000001072883606, 0.0560000017285347, -0.014000000432133675, 0.014999999664723873, -0.020999999716877937, -0.024000000208616257], [0.13600000739097595, -0.006000000052154064, -0.04100000113248825, 0.07400000095367432, 1.0, 0.1289999932050705, 0.0430000014603138, -0.10300000011920929, -0.026000000536441803, 0.017999999225139618, 0.16300000250339508, -0.1509999930858612, -0.10599999874830246, 0.027000000700354576, -0.2240000069141388, 0.01899999938905239, 0.15700000524520874, 0.008999999612569809], [-0.3019999861717224, 0.035999998450279236, -0.04800000041723251, -0.0010000000474974513, 0.1289999932050705, 1.0, -0.020999999716877937, 0.06599999964237213, 0.17900000512599945, 0.06300000101327896, 0.11100000143051147, -0.10700000077486038, -0.27799999713897705, 0.02800000086426735, 0.21899999678134918, -0.04800000041723251, 0.38100001215934753, 0.06400000303983688], [-0.08500000089406967, 0.17800000309944153, 0.07100000232458115, 0.004000000189989805, 0.0430000014603138, -0.020999999716877937, 1.0, -0.03400000184774399, -0.027000000700354576, 0.013000000268220901, 0.035999998450279236, 0.032999999821186066, -0.24300000071525574, -0.061000000685453415, -0.05400000140070915, -0.05999999865889549, 0.07500000298023224, 0.020999999716877937], [0.026000000536441803, 0.03400000184774399, -0.0729999989271164, -0.020999999716877937, -0.10300000011920929, 0.06599999964237213, -0.03400000184774399, 1.0, -0.017999999225139618, 0.12300000339746475, 0.01899999938905239, 0.0729999989271164, 0.04100000113248825, 0.024000000208616257, 0.25, 0.003000000026077032, 0.04899999871850014, 0.04600000008940697], [-0.20100000500679016, 0.07199999690055847, -0.013000000268220901, -0.03200000151991844, -0.026000000536441803, 0.17900000512599945, -0.027000000700354576, -0.017999999225139618, 1.0, 0.023000000044703484, 0.009999999776482582, -0.01899999938905239, -0.024000000208616257, 0.44600000977516174, 0.10700000077486038, -0.017000000923871994, 0.07500000298023224, 0.03700000047683716], [-0.12099999934434891, 0.02800000086426735, 0.004000000189989805, -0.03400000184774399, 0.017999999225139618, 0.06300000101327896, 0.013000000268220901, 0.12300000339746475, 0.023000000044703484, 1.0, 0.05000000074505806, -0.07999999821186066, -0.02800000086426735, 0.0430000014603138, 0.0689999982714653, -0.06700000166893005, 0.15000000596046448, 0.057999998331069946], [-0.08500000089406967, 0.057999998331069946, 0.03999999910593033, -0.00800000037997961, 0.16300000250339508, 0.11100000143051147, 0.035999998450279236, 0.01899999938905239, 0.009999999776482582, 0.05000000074505806, 1.0, -0.09700000286102295, -0.04699999839067459, 0.0020000000949949026, 0.014000000432133675, -0.027000000700354576, 0.1379999965429306, 0.07900000363588333], [0.15399999916553497, -0.11500000208616257, 0.032999999821186066, 0.023000000044703484, -0.1509999930858612, -0.10700000077486038, 0.032999999821186066, 0.0729999989271164, -0.01899999938905239, -0.07999999821186066, -0.09700000286102295, 1.0, -0.05299999937415123, -0.03700000047683716, 0.020999999716877937, 0.11100000143051147, -0.24300000071525574, -0.08799999952316284], [0.08900000154972076, -0.03200000151991844, -0.04600000008940697, -0.052000001072883606, -0.10599999874830246, -0.27799999713897705, -0.24300000071525574, 0.04100000113248825, -0.024000000208616257, -0.02800000086426735, -0.04699999839067459, -0.05299999937415123, 1.0, 0.08100000023841858, 0.01600000075995922, -0.020999999716877937, -0.23600000143051147, -0.05999999865889549], [-0.07000000029802322, 0.12600000202655792, 0.004000000189989805, 0.0560000017285347, 0.027000000700354576, 0.02800000086426735, -0.061000000685453415, 0.024000000208616257, 0.44600000977516174, 0.0430000014603138, 0.0020000000949949026, -0.03700000047683716, 0.08100000023841858, 1.0, -0.032999999821186066, 0.03700000047683716, -0.09300000220537186, 0.017000000923871994], [-0.04600000008940697, 0.05299999937415123, 0.014999999664723873, -0.014000000432133675, -0.2240000069141388, 0.21899999678134918, -0.05400000140070915, 0.25, 0.10700000077486038, 0.0689999982714653, 0.014000000432133675, 0.020999999716877937, 0.01600000075995922, -0.032999999821186066, 1.0, -0.050999999046325684, 0.2540000081062317, 0.041999999433755875], [0.11599999666213989, -0.06800000369548798, -0.017000000923871994, 0.014999999664723873, 0.01899999938905239, -0.04800000041723251, -0.05999999865889549, 0.003000000026077032, -0.017000000923871994, -0.06700000166893005, -0.027000000700354576, 0.11100000143051147, -0.020999999716877937, 0.03700000047683716, -0.050999999046325684, 1.0, -0.10700000077486038, -0.01600000075995922], [-0.09700000286102295, 0.08699999749660492, 0.04500000178813934, -0.020999999716877937, 0.15700000524520874, 0.38100001215934753, 0.07500000298023224, 0.04899999871850014, 0.07500000298023224, 0.15000000596046448, 0.1379999965429306, -0.24300000071525574, -0.23600000143051147, -0.09300000220537186, 0.2540000081062317, -0.10700000077486038, 1.0, 0.12600000202655792], [-0.0989999994635582, 0.08100000023841858, 0.003000000026077032, -0.024000000208616257, 0.008999999612569809, 0.06400000303983688, 0.020999999716877937, 0.04600000008940697, 0.03700000047683716, 0.057999998331069946, 0.07900000363588333, -0.08799999952316284, -0.05999999865889549, 0.017000000923871994, 0.041999999433755875, -0.01600000075995922, 0.12600000202655792, 1.0]], "jlens": [[1.0, -0.20399999618530273, -0.08500000089406967, -0.09300000220537186, -0.05999999865889549, -0.47099998593330383, -0.014999999664723873, 0.20600000023841858, -0.054999999701976776, -0.054999999701976776, -0.15800000727176666, 0.12200000137090683, 0.40799999237060547, 0.029999999329447746, -0.03200000151991844, 0.17800000309944153, -0.23199999332427979, -0.09000000357627869], [-0.20399999618530273, 1.0, -0.003000000026077032, 0.04899999871850014, -0.0020000000949949026, 0.5, 0.17499999701976776, -0.04399999976158142, 0.03200000151991844, -0.08699999749660492, 0.08799999952316284, -0.21400000154972076, -0.27399998903274536, 0.14800000190734863, 0.33899998664855957, -0.13600000739097595, -0.03799999877810478, 0.026000000536441803], [-0.08500000089406967, -0.003000000026077032, 1.0, 0.19599999487400055, 0.32199999690055847, 0.09200000017881393, 0.10300000011920929, -0.08299999684095383, 0.019999999552965164, -0.06700000166893005, 0.14800000190734863, -0.1379999965429306, 0.0020000000949949026, 0.00800000037997961, -0.13699999451637268, -0.00800000037997961, 0.3070000112056732, 0.026000000536441803], [-0.09300000220537186, 0.04899999871850014, 0.19599999487400055, 1.0, 0.4699999988079071, 0.05400000140070915, -0.06599999964237213, -0.14900000393390656, 0.00800000037997961, 0.13500000536441803, 0.09000000357627869, -0.023000000044703484, -0.18700000643730164, 0.08799999952316284, -0.07000000029802322, 0.02800000086426735, 0.07800000160932541, -0.023000000044703484], [-0.05999999865889549, -0.0020000000949949026, 0.32199999690055847, 0.4699999988079071, 1.0, 0.041999999433755875, 0.12999999523162842, -0.18700000643730164, -0.061000000685453415, 0.08399999886751175, 0.16500000655651093, -0.25699999928474426, -0.01600000075995922, -0.013000000268220901, -0.4230000078678131, 0.010999999940395355, 0.30000001192092896, -0.014000000432133675], [-0.47099998593330383, 0.5, 0.09200000017881393, 0.05400000140070915, 0.041999999433755875, 1.0, 0.19599999487400055, 0.07800000160932541, 0.18700000643730164, -0.1080000028014183, 0.09700000286102295, -0.2529999911785126, -0.29899999499320984, 0.1720000058412552, 0.2619999945163727, -0.14399999380111694, 0.16699999570846558, 0.05400000140070915], [-0.014999999664723873, 0.17499999701976776, 0.10300000011920929, -0.06599999964237213, 0.12999999523162842, 0.19599999487400055, 1.0, 0.03400000184774399, 0.07400000095367432, -0.014000000432133675, 0.10100000351667404, -0.10599999874830246, 0.1679999977350235, 0.07699999958276749, -0.18299999833106995, -0.0430000014603138, -0.019999999552965164, -0.009999999776482582], [0.20600000023841858, -0.04399999976158142, -0.08299999684095383, -0.14900000393390656, -0.18700000643730164, 0.07800000160932541, 0.03400000184774399, 1.0, -0.07100000232458115, -0.12300000339746475, -0.14100000262260437, 0.004999999888241291, 0.06400000303983688, 0.014999999664723873, 0.0689999982714653, 0.052000001072883606, -0.13500000536441803, -0.01899999938905239], [-0.054999999701976776, 0.03200000151991844, 0.019999999552965164, 0.00800000037997961, -0.061000000685453415, 0.18700000643730164, 0.07400000095367432, -0.07100000232458115, 1.0, -0.10000000149011612, 0.017000000923871994, 0.0020000000949949026, -0.1940000057220459, 0.6740000247955322, 0.09200000017881393, 0.010999999940395355, -0.03099999949336052, 0.02800000086426735], [-0.054999999701976776, -0.08699999749660492, -0.06700000166893005, 0.13500000536441803, 0.08399999886751175, -0.1080000028014183, -0.014000000432133675, -0.12300000339746475, -0.10000000149011612, 1.0, -0.007000000216066837, -0.019999999552965164, 0.0010000000474974513, -0.3019999861717224, -0.16300000250339508, 0.006000000052154064, -0.11400000005960464, -0.029999999329447746], [-0.15800000727176666, 0.08799999952316284, 0.14800000190734863, 0.09000000357627869, 0.16500000655651093, 0.09700000286102295, 0.10100000351667404, -0.14100000262260437, 0.017000000923871994, -0.007000000216066837, 1.0, -0.09700000286102295, -0.03500000014901161, -0.024000000208616257, -0.017000000923871994, -0.04699999839067459, 0.1379999965429306, 0.07900000363588333], [0.12200000137090683, -0.21400000154972076, -0.1379999965429306, -0.023000000044703484, -0.25699999928474426, -0.2529999911785126, -0.10599999874830246, 0.004999999888241291, 0.0020000000949949026, -0.019999999552965164, -0.09700000286102295, 1.0, 0.08699999749660492, 0.07400000095367432, 0.023000000044703484, 0.12700000405311584, -0.24300000071525574, -0.08799999952316284], [0.40799999237060547, -0.27399998903274536, 0.0020000000949949026, -0.18700000643730164, -0.01600000075995922, -0.29899999499320984, 0.1679999977350235, 0.06400000303983688, -0.1940000057220459, 0.0010000000474974513, -0.03500000014901161, 0.08699999749660492, 1.0, -0.17399999499320984, -0.2070000022649765, 0.06599999964237213, 0.007000000216066837, -0.02199999988079071], [0.029999999329447746, 0.14800000190734863, 0.00800000037997961, 0.08799999952316284, -0.013000000268220901, 0.1720000058412552, 0.07699999958276749, 0.014999999664723873, 0.6740000247955322, -0.3019999861717224, -0.024000000208616257, 0.07400000095367432, -0.17399999499320984, 1.0, 0.003000000026077032, 0.009999999776482582, -0.08399999886751175, -0.020999999716877937], [-0.03200000151991844, 0.33899998664855957, -0.13699999451637268, -0.07000000029802322, -0.4230000078678131, 0.2619999945163727, -0.18299999833106995, 0.0689999982714653, 0.09200000017881393, -0.16300000250339508, -0.017000000923871994, 0.023000000044703484, -0.2070000022649765, 0.003000000026077032, 1.0, -0.09600000083446503, -0.013000000268220901, 0.03700000047683716], [0.17800000309944153, -0.13600000739097595, -0.00800000037997961, 0.02800000086426735, 0.010999999940395355, -0.14399999380111694, -0.0430000014603138, 0.052000001072883606, 0.010999999940395355, 0.006000000052154064, -0.04699999839067459, 0.12700000405311584, 0.06599999964237213, 0.009999999776482582, -0.09600000083446503, 1.0, -0.12800000607967377, -0.026000000536441803], [-0.23199999332427979, -0.03799999877810478, 0.3070000112056732, 0.07800000160932541, 0.30000001192092896, 0.16699999570846558, -0.019999999552965164, -0.13500000536441803, -0.03099999949336052, -0.11400000005960464, 0.1379999965429306, -0.24300000071525574, 0.007000000216066837, -0.08399999886751175, -0.013000000268220901, -0.12800000607967377, 1.0, 0.12600000202655792], [-0.09000000357627869, 0.026000000536441803, 0.026000000536441803, -0.023000000044703484, -0.014000000432133675, 0.05400000140070915, -0.009999999776482582, -0.01899999938905239, 0.02800000086426735, -0.029999999329447746, 0.07900000363588333, -0.08799999952316284, -0.02199999988079071, -0.020999999716877937, 0.03700000047683716, -0.026000000536441803, 0.12600000202655792, 1.0]], "raw": [[1.0, -0.07699999958276749, 0.032999999821186066, 0.00800000037997961, -0.03500000014901161, 0.026000000536441803, 0.039000000804662704, -0.009999999776482582, -0.01600000075995922, -0.035999998450279236, 0.0, -0.0729999989271164, -0.010999999940395355, -0.041999999433755875, 0.10199999809265137, 0.02800000086426735, 0.07699999958276749, -0.032999999821186066], [-0.07699999958276749, 1.0, 0.014999999664723873, 0.026000000536441803, -0.0020000000949949026, 0.004000000189989805, -0.003000000026077032, -0.028999999165534973, -0.004999999888241291, -0.08399999886751175, 0.0010000000474974513, -0.035999998450279236, -0.01899999938905239, 0.007000000216066837, 0.026000000536441803, 0.014000000432133675, -0.023000000044703484, 0.03400000184774399], [0.032999999821186066, 0.014999999664723873, 1.0, 0.008999999612569809, 0.02500000037252903, -0.027000000700354576, -0.008999999612569809, -0.024000000208616257, 0.014000000432133675, -0.010999999940395355, -0.006000000052154064, -0.04399999976158142, -0.028999999165534973, 0.004999999888241291, 0.05299999937415123, -0.017999999225139618, 0.007000000216066837, 0.027000000700354576], [0.00800000037997961, 0.026000000536441803, 0.008999999612569809, 1.0, 0.023000000044703484, 0.007000000216066837, 0.03200000151991844, 0.006000000052154064, 0.01600000075995922, 0.01600000075995922, 0.013000000268220901, -0.012000000104308128, -0.006000000052154064, 0.010999999940395355, -0.0010000000474974513, -0.012000000104308128, 0.03799999877810478, -0.004000000189989805], [-0.03500000014901161, -0.0020000000949949026, 0.02500000037252903, 0.023000000044703484, 1.0, 0.023000000044703484, 0.00800000037997961, 0.007000000216066837, -0.006000000052154064, 0.05400000140070915, 0.06300000101327896, 0.020999999716877937, -0.007000000216066837, -0.014999999664723873, -0.003000000026077032, 0.0010000000474974513, 0.003000000026077032, 0.019999999552965164], [0.026000000536441803, 0.004000000189989805, -0.027000000700354576, 0.007000000216066837, 0.023000000044703484, 1.0, 0.04399999976158142, 0.008999999612569809, 0.06700000166893005, -0.0010000000474974513, -0.004999999888241291, 0.0729999989271164, 0.02500000037252903, 0.014000000432133675, 0.003000000026077032, -0.006000000052154064, 0.028999999165534973, -0.014999999664723873], [0.039000000804662704, -0.003000000026077032, -0.008999999612569809, 0.03200000151991844, 0.00800000037997961, 0.04399999976158142, 1.0, 0.026000000536441803, -0.008999999612569809, 0.03400000184774399, 0.04800000041723251, 0.017999999225139618, -0.017999999225139618, -0.010999999940395355, 0.04600000008940697, -0.03200000151991844, -0.006000000052154064, 0.003000000026077032], [-0.009999999776482582, -0.028999999165534973, -0.024000000208616257, 0.006000000052154064, 0.007000000216066837, 0.008999999612569809, 0.026000000536441803, 1.0, 0.008999999612569809, 0.0020000000949949026, 0.006000000052154064, -0.007000000216066837, 0.04100000113248825, -0.012000000104308128, 0.02800000086426735, 0.014999999664723873, -0.004000000189989805, 0.0560000017285347], [-0.01600000075995922, -0.004999999888241291, 0.014000000432133675, 0.01600000075995922, -0.006000000052154064, 0.06700000166893005, -0.008999999612569809, 0.008999999612569809, 1.0, -0.0010000000474974513, -0.010999999940395355, 0.00800000037997961, -0.004000000189989805, 0.39899998903274536, 0.027000000700354576, 0.004999999888241291, -0.03400000184774399, 0.010999999940395355], [-0.035999998450279236, -0.08399999886751175, -0.010999999940395355, 0.01600000075995922, 0.05400000140070915, -0.0010000000474974513, 0.03400000184774399, 0.0020000000949949026, -0.0010000000474974513, 1.0, -0.026000000536441803, -0.027000000700354576, 0.0430000014603138, -0.017999999225139618, -0.004000000189989805, -0.014000000432133675, -0.010999999940395355, 0.0020000000949949026], [0.0, 0.0010000000474974513, -0.006000000052154064, 0.013000000268220901, 0.06300000101327896, -0.004999999888241291, 0.04800000041723251, 0.006000000052154064, -0.010999999940395355, -0.026000000536441803, 1.0, 0.10300000011920929, -0.029999999329447746, -0.009999999776482582, -0.003000000026077032, -0.02800000086426735, 0.07400000095367432, 0.12300000339746475], [-0.0729999989271164, -0.035999998450279236, -0.04399999976158142, -0.012000000104308128, 0.020999999716877937, 0.0729999989271164, 0.017999999225139618, -0.007000000216066837, 0.00800000037997961, -0.027000000700354576, 0.10300000011920929, 1.0, 0.019999999552965164, 0.04800000041723251, -0.03999999910593033, -0.04600000008940697, -0.07199999690055847, -0.03400000184774399], [-0.010999999940395355, -0.01899999938905239, -0.028999999165534973, -0.006000000052154064, -0.007000000216066837, 0.02500000037252903, -0.017999999225139618, 0.04100000113248825, -0.004000000189989805, 0.0430000014603138, -0.029999999329447746, 0.019999999552965164, 1.0, 0.006000000052154064, 0.039000000804662704, -0.007000000216066837, 0.023000000044703484, -0.00800000037997961], [-0.041999999433755875, 0.007000000216066837, 0.004999999888241291, 0.010999999940395355, -0.014999999664723873, 0.014000000432133675, -0.010999999940395355, -0.012000000104308128, 0.39899998903274536, -0.017999999225139618, -0.009999999776482582, 0.04800000041723251, 0.006000000052154064, 1.0, -0.028999999165534973, -0.019999999552965164, -0.03400000184774399, 0.014000000432133675], [0.10199999809265137, 0.026000000536441803, 0.05299999937415123, -0.0010000000474974513, -0.003000000026077032, 0.003000000026077032, 0.04600000008940697, 0.02800000086426735, 0.027000000700354576, -0.004000000189989805, -0.003000000026077032, -0.03999999910593033, 0.039000000804662704, -0.028999999165534973, 1.0, 0.004000000189989805, 0.017000000923871994, -0.029999999329447746], [0.02800000086426735, 0.014000000432133675, -0.017999999225139618, -0.012000000104308128, 0.0010000000474974513, -0.006000000052154064, -0.03200000151991844, 0.014999999664723873, 0.004999999888241291, -0.014000000432133675, -0.02800000086426735, -0.04600000008940697, -0.007000000216066837, -0.019999999552965164, 0.004000000189989805, 1.0, -0.039000000804662704, 0.03099999949336052], [0.07699999958276749, -0.023000000044703484, 0.007000000216066837, 0.03799999877810478, 0.003000000026077032, 0.028999999165534973, -0.006000000052154064, -0.004000000189989805, -0.03400000184774399, -0.010999999940395355, 0.07400000095367432, -0.07199999690055847, 0.023000000044703484, -0.03400000184774399, 0.017000000923871994, -0.039000000804662704, 1.0, 0.0010000000474974513], [-0.032999999821186066, 0.03400000184774399, 0.027000000700354576, -0.004000000189989805, 0.019999999552965164, -0.014999999664723873, 0.003000000026077032, 0.0560000017285347, 0.010999999940395355, 0.0020000000949949026, 0.12300000339746475, -0.03400000184774399, -0.00800000037997961, 0.014000000432133675, -0.029999999329447746, 0.03099999949336052, 0.0010000000474974513, 1.0]]}, "probe_cols": [{"name": "####", "cat": "gsm8k"}, {"name": "<<", "cat": "gsm8k"}, {"name": ">>", "cat": "gsm8k"}, {"name": "digits 0–9", "cat": "gsm8k"}, {"name": "=", "cat": "gsm8k"}, {"name": "$", "cat": "gsm8k"}, {"name": "\\n", "cat": "gsm8k"}, {"name": "\\n\\n", "cat": "gsm8k"}, {"name": "** (bold)", "cat": "style"}, {"name": "### (hdr)", "cat": "style"}, {"name": "\\[ (LaTeX)", "cat": "style"}, {"name": "boxed", "cat": "style"}, {"name": "Step", "cat": "style"}, {"name": "Therefore", "cat": "style"}, {"name": "So", "cat": "style"}, {"name": "Final/Ans", "cat": "style"}, {"name": "<|im_end|>", "cat": "eos"}, {"name": "<|endoftext|>", "cat": "eos"}], "probe_mats": {"logit_lens": [[-0.6700000166893005, 2.3299999237060547, 0.38999998569488525, 1.3300000429153442, 1.6399999856948853, -0.4699999988079071, 2.5899999141693115, 2.2200000286102295, -0.9399999976158142, -0.5699999928474426, -1.7400000095367432, -1.75, -1.809999942779541, 0.800000011920929, 1.6699999570846558, -0.5400000214576721, 0.38999998569488525, -0.05000000074505806], [0.6100000143051147, -0.5600000023841858, 1.3799999952316284, 0.18000000715255737, 1.25, 0.5799999833106995, -2.3399999141693115, -2.5799999237060547, 0.27000001072883606, 0.4399999976158142, 1.149999976158142, 1.1299999952316284, 2.0299999713897705, -0.5600000023841858, 0.4399999976158142, -0.1899999976158142, 0.41999998688697815, -6.849999904632568], [-0.3199999928474426, -0.3400000035762787, -0.3100000023841858, -0.10999999940395355, 1.9900000095367432, 0.9399999976158142, 0.7200000286102295, -0.5199999809265137, 0.8100000023841858, -0.550000011920929, -0.14000000059604645, 1.1100000143051147, 0.4099999964237213, 0.1599999964237213, 0.5299999713897705, -0.3199999928474426, 0.2800000011920929, 1.659999966621399], [-1.4900000095367432, -1.2400000095367432, -1.4600000381469727, 0.44999998807907104, -0.8100000023841858, -0.03999999910593033, 0.5899999737739563, -0.09000000357627869, -0.6800000071525574, -1.0499999523162842, -0.07000000029802322, -1.4199999570846558, -1.399999976158142, 0.49000000953674316, -0.44999998807907104, -0.15000000596046448, 0.05000000074505806, -0.9700000286102295], [4.019999980926514, 0.9800000190734863, 0.6000000238418579, -2.75, -1.9900000095367432, -0.33000001311302185, -4.590000152587891, -3.559999942779541, 5.670000076293945, 2.75, 3.0199999809265137, 4.800000190734863, -0.5199999809265137, -1.5499999523162842, -2.490000009536743, 0.17000000178813934, -0.6000000238418579, -4.650000095367432], [0.6299999952316284, 1.8200000524520874, 1.8300000429153442, 1.440000057220459, 0.8500000238418579, -0.7900000214576721, -0.20000000298023224, 2.069999933242798, 0.5, 0.6200000047683716, -1.149999976158142, -0.1899999976158142, 1.1200000047683716, -0.3400000035762787, 1.0099999904632568, 0.5799999833106995, -0.3400000035762787, 1.149999976158142], [0.07000000029802322, 1.8300000429153442, 2.6600000858306885, 1.7699999809265137, 1.25, -1.2899999618530273, 1.5099999904632568, 2.0799999237060547, 0.10000000149011612, 0.5899999737739563, -0.8199999928474426, 0.6800000071525574, 1.3300000429153442, 0.8600000143051147, 1.100000023841858, -0.07999999821186066, -0.029999999329447746, 0.8999999761581421], [-0.20999999344348907, 1.3200000524520874, -0.4300000071525574, -1.8899999856948853, -3.1500000953674316, -2.5399999618530273, -5.139999866485596, -4.0, -1.2999999523162842, 0.05999999865889549, -1.3600000143051147, -0.6100000143051147, -1.2599999904632568, -0.8799999952316284, 0.18000000715255737, -1.4600000381469727, -0.15000000596046448, -3.390000104904175], [1.9600000381469727, -1.690000057220459, -2.2100000381469727, 0.07000000029802322, -1.2000000476837158, -0.11999999731779099, -0.46000000834465027, 3.799999952316284, -0.7799999713897705, 1.7300000190734863, 0.2800000011920929, -0.2800000011920929, 0.14000000059604645, -1.559999942779541, 0.05000000074505806, -0.7200000286102295, -0.1599999964237213, -1.9700000286102295], [1.0299999713897705, 0.4099999964237213, -0.1899999976158142, -0.2199999988079071, 0.44999998807907104, 0.09000000357627869, 8.779999732971191, 4.150000095367432, -0.44999998807907104, 0.5299999713897705, 1.0800000429153442, -1.340000033378601, 1.0099999904632568, 0.009999999776482582, -0.33000001311302185, -0.4399999976158142, -0.699999988079071, -3.0299999713897705], [-0.029999999329447746, 0.7799999713897705, 0.5099999904632568, -2.0899999141693115, -0.4099999964237213, -1.159999966621399, 0.9100000262260437, 0.47999998927116394, 2.119999885559082, 0.23000000417232513, 0.5, -0.11999999731779099, -0.07000000029802322, 0.36000001430511475, 0.36000001430511475, -0.38999998569488525, -0.03999999910593033, 0.46000000834465027], [-0.7400000095367432, -0.47999998927116394, -0.15000000596046448, 3.109999895095825, 1.5199999809265137, 1.1699999570846558, 1.7999999523162842, 1.5299999713897705, 1.4199999570846558, 0.47999998927116394, -1.6699999570846558, -0.3400000035762787, 1.600000023841858, 0.550000011920929, 1.840000033378601, 1.2799999713897705, -2.5799999237060547, 2.690000057220459], [-0.3100000023841858, 0.8700000047683716, 0.8700000047683716, -0.7699999809265137, 0.3199999928474426, 1.1299999952316284, -0.6700000166893005, 0.6399999856948853, 0.10999999940395355, -0.47999998927116394, -0.019999999552965164, -0.5699999928474426, -0.9700000286102295, -0.10999999940395355, 1.2599999904632568, -0.6200000047683716, -0.07999999821186066, -1.75], [2.2699999809265137, 0.07999999821186066, -1.2799999713897705, -0.44999998807907104, -0.5600000023841858, -0.7599999904632568, -2.009999990463257, 0.46000000834465027, -0.949999988079071, 3.109999895095825, 0.17000000178813934, 0.9800000190734863, 1.7999999523162842, -0.25999999046325684, -0.8999999761581421, -1.25, -0.23999999463558197, -0.09000000357627869], [-0.38999998569488525, 0.029999999329447746, -1.909999966621399, -1.1799999475479126, -1.25, -0.28999999165534973, -2.7899999618530273, -2.75, -1.149999976158142, -1.7300000190734863, -0.6700000166893005, 1.5299999713897705, -2.2799999713897705, 0.18000000715255737, -0.15000000596046448, 0.17000000178813934, 0.0, -2.2100000381469727], [1.2100000381469727, 2.2200000286102295, -0.6700000166893005, 0.44999998807907104, -0.6600000262260437, -0.6299999952316284, -0.44999998807907104, -0.1899999976158142, -0.3199999928474426, 0.8999999761581421, 0.6399999856948853, 0.38999998569488525, -0.03999999910593033, 0.07999999821186066, -0.6200000047683716, -0.5699999928474426, -0.3499999940395355, -0.5], [0.28999999165534973, 0.7799999713897705, 0.05999999865889549, -1.409999966621399, -0.3100000023841858, -1.4600000381469727, -1.4700000286102295, -1.3700000047683716, -1.0199999809265137, -0.49000000953674316, -0.5799999833106995, -0.550000011920929, -0.9200000166893005, -0.800000011920929, -0.9100000262260437, -0.6200000047683716, 0.6100000143051147, -1.159999966621399], [0.17000000178813934, -0.550000011920929, -0.5600000023841858, -11.760000228881836, -0.4699999988079071, -2.450000047683716, -0.3199999928474426, -0.5799999833106995, -0.12999999523162842, -0.9599999785423279, -0.47999998927116394, 0.8799999952316284, -1.5399999618530273, 0.3499999940395355, -0.6700000166893005, -0.8999999761581421, 0.17000000178813934, -1.0399999618530273]], "jlens": [[-0.20000000298023224, 1.2699999809265137, 0.7400000095367432, 1.850000023841858, 3.3499999046325684, 0.9599999785423279, -0.5199999809265137, -1.590000033378601, 0.20999999344348907, 0.05000000074505806, -0.7400000095367432, 0.550000011920929, -0.28999999165534973, 0.4000000059604645, 1.8600000143051147, 0.15000000596046448, -1.3899999856948853, -2.369999885559082], [-0.5, -0.33000001311302185, -0.3400000035762787, -1.4299999475479126, -0.38999998569488525, -0.44999998807907104, -5.369999885559082, -5.079999923706055, 2.119999885559082, -0.800000011920929, 1.5099999904632568, -0.009999999776482582, -0.5299999713897705, -2.059999942779541, -2.549999952316284, -0.7699999809265137, 1.159999966621399, -4.78000020980835], [1.7000000476837158, 0.6499999761581421, 2.6700000762939453, -0.2800000011920929, 2.4200000762939453, 0.9100000262260437, -4.159999847412109, -1.149999976158142, 0.6700000166893005, 1.2599999904632568, 1.940000057220459, 0.699999988079071, -0.07999999821186066, 0.5799999833106995, 0.800000011920929, -0.03999999910593033, -0.15000000596046448, -0.3499999940395355], [2.2200000286102295, 2.0399999618530273, 1.1799999475479126, 0.07999999821186066, 3.109999895095825, 3.0399999618530273, -3.759999990463257, -0.5699999928474426, 4.519999980926514, 3.859999895095825, 6.619999885559082, 0.1899999976158142, -0.14000000059604645, -0.7300000190734863, -1.5, 0.07999999821186066, -0.03999999910593033, -4.110000133514404], [5.71999979019165, 3.7899999618530273, 3.430000066757202, 0.4300000071525574, 2.690000057220459, 2.7899999618530273, -0.5799999833106995, 0.9900000095367432, 8.300000190734863, 4.570000171661377, 6.210000038146973, 1.8300000429153442, 0.009999999776482582, 0.14000000059604645, -0.05999999865889549, 0.5799999833106995, -0.1899999976158142, -2.1700000762939453], [2.1500000953674316, -2.359999895095825, -2.890000104904175, -1.340000033378601, -1.7200000286102295, -1.399999976158142, -5.730000019073486, -0.4699999988079071, -1.7200000286102295, 0.7799999713897705, 5.340000152587891, -0.6399999856948853, -0.2800000011920929, -1.0800000429153442, -2.309999942779541, -0.7400000095367432, 0.9900000095367432, -5.139999866485596], [3.859999895095825, -0.41999998688697815, 0.9800000190734863, 1.909999966621399, 0.1899999976158142, 2.0199999809265137, 3.25, 4.46999979019165, 1.8700000047683716, 1.7100000381469727, 2.609999895095825, 0.4099999964237213, 0.6700000166893005, -0.8999999761581421, 0.7799999713897705, 0.5799999833106995, 0.05000000074505806, 1.6699999570846558], [-1.0800000429153442, -1.5, 0.05999999865889549, -1.2000000476837158, 0.5400000214576721, -1.0199999809265137, -3.640000104904175, -2.4100000858306885, 0.4000000059604645, -1.7999999523162842, -3.859999895095825, -1.7400000095367432, -0.3100000023841858, 0.019999999552965164, -0.3799999952316284, -0.8299999833106995, -0.2800000011920929, -2.369999885559082], [2.7200000286102295, -1.4700000286102295, -1.0800000429153442, -0.47999998927116394, -0.6600000262260437, -1.3200000524520874, -5.510000228881836, 13.890000343322754, -1.1299999952316284, 0.8700000047683716, 1.7100000381469727, -1.059999942779541, -0.46000000834465027, -0.36000001430511475, -0.5899999737739563, 0.05000000074505806, -0.18000000715255737, -5.199999809265137], [0.05999999865889549, -0.6899999976158142, -2.240000009536743, -0.4099999964237213, -0.5099999904632568, -0.44999998807907104, 15.949999809265137, 8.819999694824219, -1.649999976158142, -0.4399999976158142, -0.05000000074505806, 0.17000000178813934, -0.05999999865889549, -0.4699999988079071, -0.33000001311302185, -0.7400000095367432, -0.3700000047683716, 1.8600000143051147], [-0.029999999329447746, 0.7799999713897705, 0.5099999904632568, -2.0899999141693115, -0.4099999964237213, -1.159999966621399, 0.9100000262260437, 0.47999998927116394, 2.119999885559082, 0.23000000417232513, 0.5, -0.11999999731779099, -0.07000000029802322, 0.36000001430511475, 0.36000001430511475, -0.38999998569488525, -0.03999999910593033, 0.46000000834465027], [-0.7400000095367432, -0.47999998927116394, -0.15000000596046448, 3.109999895095825, 1.5199999809265137, 1.1699999570846558, 1.7999999523162842, 1.5299999713897705, 1.4199999570846558, 0.47999998927116394, -1.6699999570846558, -0.3400000035762787, 1.600000023841858, 0.550000011920929, 1.840000033378601, 1.2799999713897705, -2.5799999237060547, 2.690000057220459], [-0.75, 1.7599999904632568, 1.909999966621399, 3.700000047683716, 2.5999999046325684, -0.12999999523162842, 3.430000066757202, -0.25999999046325684, -4.679999828338623, -1.1299999952316284, -3.4800000190734863, -0.3100000023841858, 0.9599999785423279, 1.2300000190734863, 1.9199999570846558, 0.7699999809265137, -0.5400000214576721, 2.7300000190734863], [3.2300000190734863, -0.8600000143051147, -1.0499999523162842, -0.25999999046325684, 0.33000001311302185, 0.17000000178813934, -11.3100004196167, 13.289999961853027, 3.640000104904175, 3.7100000381469727, 4.550000190734863, 0.5400000214576721, 1.0399999618530273, 0.3100000023841858, 0.1599999964237213, 0.07000000029802322, -0.10999999940395355, -0.47999998927116394], [-3.0799999237060547, -0.36000001430511475, -1.0800000429153442, -0.4099999964237213, -1.559999942779541, -1.600000023841858, -9.9399995803833, -11.0, -4.690000057220459, -3.950000047683716, -1.840000033378601, -2.9200000762939453, -1.350000023841858, -2.2200000286102295, -2.009999990463257, -1.0299999713897705, 0.75, -7.659999847412109], [1.6200000047683716, 2.7699999809265137, -0.10000000149011612, 1.100000023841858, -0.28999999165534973, 0.07999999821186066, 0.30000001192092896, 0.4099999964237213, 0.5299999713897705, 1.5, 1.1200000047683716, 0.41999998688697815, -0.23000000417232513, 0.07000000029802322, -0.6399999856948853, -0.41999998688697815, -0.5199999809265137, -0.44999998807907104], [0.28999999165534973, 0.7799999713897705, 0.05999999865889549, -1.409999966621399, -0.3100000023841858, -1.4600000381469727, -1.4700000286102295, -1.3700000047683716, -1.0199999809265137, -0.49000000953674316, -0.5799999833106995, -0.550000011920929, -0.9200000166893005, -0.800000011920929, -0.9100000262260437, -0.6200000047683716, 0.6100000143051147, -1.159999966621399], [0.17000000178813934, -0.550000011920929, -0.5600000023841858, -11.760000228881836, -0.4699999988079071, -2.450000047683716, -0.3199999928474426, -0.5799999833106995, -0.12999999523162842, -0.9599999785423279, -0.47999998927116394, 0.8799999952316284, -1.5399999618530273, 0.3499999940395355, -0.6700000166893005, -0.8999999761581421, 0.17000000178813934, -1.0399999618530273]], "jpp": [[0.5400000214576721, 3.4100000858306885, 1.7200000286102295, 2.0799999237060547, 3.9200000762939453, 1.4600000381469727, 2.109999895095825, 1.7200000286102295, 0.49000000953674316, 0.4099999964237213, -0.8700000047683716, -0.15000000596046448, -0.8299999833106995, 1.7400000095367432, 2.4700000286102295, 0.5199999809265137, -0.5799999833106995, -1.1399999856948853], [-0.8899999856948853, 0.27000001072883606, 0.6399999856948853, -1.2100000381469727, 0.07999999821186066, 0.3799999952316284, 4.010000228881836, 1.0499999523162842, 0.23000000417232513, -1.159999966621399, 2.390000104904175, 0.27000001072883606, 1.090000033378601, -1.0399999618530273, -0.44999998807907104, 0.6600000262260437, 0.7200000286102295, -2.140000104904175], [-0.23000000417232513, -0.6800000071525574, 0.9100000262260437, 0.27000001072883606, 1.1200000047683716, 1.4500000476837158, 0.33000001311302185, -1.1799999475479126, 0.10000000149011612, 0.3700000047683716, 1.600000023841858, -0.12999999523162842, 1.399999976158142, -0.09000000357627869, 1.4500000476837158, -0.10999999940395355, 0.3400000035762787, -0.7300000190734863], [-1.100000023841858, -0.7799999713897705, -0.029999999329447746, 0.8500000238418579, 0.33000001311302185, 1.2100000381469727, -2.1700000762939453, -2.869999885559082, 0.4300000071525574, 0.009999999776482582, 1.0499999523162842, -1.2000000476837158, -0.23000000417232513, 0.7099999785423279, -0.3700000047683716, 0.7400000095367432, -0.07999999821186066, -2.130000114440918], [5.420000076293945, 3.0, 2.9800000190734863, -1.7200000286102295, 1.9600000381469727, 2.140000104904175, -2.759999990463257, 0.05999999865889549, 7.619999885559082, 4.0, 5.159999847412109, 3.059999942779541, -0.009999999776482582, -0.009999999776482582, -0.7400000095367432, 0.6000000238418579, -0.46000000834465027, -2.559999942779541], [0.7099999785423279, -1.899999976158142, -1.309999942779541, -0.6100000143051147, 0.23000000417232513, -0.03999999910593033, -1.840000033378601, -0.8399999737739563, -0.47999998927116394, 0.6499999761581421, 1.649999976158142, 1.4500000476837158, 0.3400000035762787, 0.8700000047683716, -1.3200000524520874, -0.46000000834465027, 0.20000000298023224, 0.6299999952316284], [1.059999942779541, 1.5499999523162842, 0.5799999833106995, 0.8999999761581421, -0.2199999988079071, 0.27000001072883606, 0.03999999910593033, -0.2800000011920929, 0.6100000143051147, 1.2000000476837158, 1.4700000286102295, 0.2800000011920929, 1.0099999904632568, -0.6100000143051147, 0.8600000143051147, 0.36000001430511475, -0.3499999940395355, 0.9200000166893005], [0.4099999964237213, -0.6700000166893005, -1.1399999856948853, -0.7900000214576721, -1.9900000095367432, -1.3700000047683716, -3.5199999809265137, -3.9100000858306885, -1.3300000429153442, -0.9399999976158142, -0.2199999988079071, -2.2300000190734863, 0.5299999713897705, -1.7799999713897705, -1.0499999523162842, -1.0700000524520874, 0.7900000214576721, -0.14000000059604645], [1.3700000047683716, -1.6200000047683716, -1.7400000095367432, -0.4000000059604645, -1.4600000381469727, -0.05000000074505806, -1.5299999713897705, -2.7300000190734863, 0.20999999344348907, 0.8999999761581421, -1.2599999904632568, -0.9700000286102295, -0.7300000190734863, -1.8300000429153442, -1.309999942779541, -0.5799999833106995, -0.3499999940395355, -1.600000023841858], [-0.07000000029802322, -0.33000001311302185, 0.8600000143051147, -0.8500000238418579, -0.5799999833106995, 0.8700000047683716, -8.930000305175781, -6.440000057220459, 2.7899999618530273, -0.6700000166893005, -1.0199999809265137, -1.6200000047683716, 0.9100000262260437, 1.2200000286102295, -0.27000001072883606, 0.1599999964237213, 0.7699999809265137, 4.03000020980835], [-0.029999999329447746, 0.7799999713897705, 0.5099999904632568, -2.0899999141693115, -0.4099999964237213, -1.159999966621399, 0.9100000262260437, 0.47999998927116394, 2.119999885559082, 0.23000000417232513, 0.5, -0.11999999731779099, -0.07000000029802322, 0.36000001430511475, 0.36000001430511475, -0.38999998569488525, -0.03999999910593033, 0.46000000834465027], [-0.7400000095367432, -0.47999998927116394, -0.15000000596046448, 3.109999895095825, 1.5199999809265137, 1.1699999570846558, 1.7999999523162842, 1.5299999713897705, 1.4199999570846558, 0.47999998927116394, -1.6699999570846558, -0.3400000035762787, 1.600000023841858, 0.550000011920929, 1.840000033378601, 1.2799999713897705, -2.5799999237060547, 2.690000057220459], [-1.3899999856948853, -0.15000000596046448, -1.4500000476837158, -0.3799999952316284, 0.550000011920929, -0.46000000834465027, -2.0899999141693115, 0.8899999856948853, -2.359999895095825, -1.840000033378601, -1.0399999618530273, -2.3499999046325684, 0.4300000071525574, 1.3200000524520874, 0.25999999046325684, 0.699999988079071, -0.09000000357627869, 0.05999999865889549], [2.6700000762939453, -0.47999998927116394, -1.149999976158142, -0.3799999952316284, -0.8299999833106995, -0.6499999761581421, -1.350000023841858, -0.3799999952316284, 0.8700000047683716, 2.440000057220459, 0.36000001430511475, 0.699999988079071, 1.0499999523162842, -0.009999999776482582, -0.800000011920929, -0.5600000023841858, -0.20999999344348907, -0.5299999713897705], [-0.8600000143051147, -0.6200000047683716, -2.0299999713897705, -0.12999999523162842, -1.590000033378601, 0.5099999904632568, -5.590000152587891, -5.139999866485596, -3.369999885559082, -1.9600000381469727, -1.9500000476837158, -3.0799999237060547, -1.4500000476837158, -0.9399999976158142, 0.029999999329447746, 0.2199999988079071, 0.8199999928474426, -4.860000133514404], [0.5699999928474426, 1.9600000381469727, -0.38999998569488525, 1.3600000143051147, 0.3499999940395355, 0.029999999329447746, 0.8899999856948853, 0.8299999833106995, 0.7400000095367432, 1.3300000429153442, 0.8999999761581421, -0.8199999928474426, -0.9800000190734863, 0.05000000074505806, 0.25, -0.5099999904632568, -0.11999999731779099, 0.49000000953674316], [0.28999999165534973, 0.7799999713897705, 0.05999999865889549, -1.409999966621399, -0.3100000023841858, -1.4600000381469727, -1.4700000286102295, -1.3700000047683716, -1.0199999809265137, -0.49000000953674316, -0.5799999833106995, -0.550000011920929, -0.9200000166893005, -0.800000011920929, -0.9100000262260437, -0.6200000047683716, 0.6100000143051147, -1.159999966621399], [0.17000000178813934, -0.550000011920929, -0.5600000023841858, -11.760000228881836, -0.4699999988079071, -2.450000047683716, -0.3199999928474426, -0.5799999833106995, -0.12999999523162842, -0.9599999785423279, -0.47999998927116394, 0.8799999952316284, -1.5399999618530273, 0.3499999940395355, -0.6700000166893005, -0.8999999761581421, 0.17000000178813934, -1.0399999618530273]], "rlens": [[0.0, 2.940000057220459, 1.659999966621399, 2.2799999713897705, 3.8299999237060547, 0.6600000262260437, 1.440000057220459, -0.12999999523162842, -0.1899999976158142, -0.12999999523162842, -1.9199999570846558, -0.38999998569488525, -0.6399999856948853, 1.0700000524520874, 2.559999942779541, 0.5699999928474426, -0.75, -2.2699999809265137], [-1.1399999856948853, -0.7099999785423279, -0.6499999761581421, -1.0199999809265137, 0.8600000143051147, 0.0, -3.4000000953674316, -4.360000133514404, 3.0199999809265137, -1.0800000429153442, 2.5, -0.18000000715255737, 0.3199999928474426, -1.7699999809265137, -1.4600000381469727, -0.7699999809265137, 0.9900000095367432, -7.75], [1.059999942779541, -0.30000001192092896, 1.9299999475479126, -0.12999999523162842, 2.369999885559082, 1.090000033378601, -1.8200000524520874, -1.4600000381469727, 0.8100000023841858, 0.6600000262260437, 1.6299999952316284, 0.9800000190734863, 0.8999999761581421, 0.10999999940395355, 0.6600000262260437, 0.2199999988079071, -0.14000000059604645, 0.6000000238418579], [0.44999998807907104, -0.07999999821186066, -0.5, 0.4000000059604645, 1.649999976158142, 2.309999942779541, -2.3299999237060547, 0.7400000095367432, 2.190000057220459, 1.6699999570846558, 4.389999866485596, -0.5699999928474426, -0.07999999821186066, -0.029999999329447746, -1.1399999856948853, 0.18000000715255737, 0.1599999964237213, -2.049999952316284], [5.699999809265137, 2.940000057220459, 2.880000114440918, -0.5799999833106995, 1.809999942779541, 2.440000057220459, -2.180000066757202, 0.14000000059604645, 8.229999542236328, 4.099999904632568, 5.989999771118164, 2.930000066757202, 0.20000000298023224, -0.10999999940395355, -0.5600000023841858, 0.5600000023841858, -0.5, -2.4800000190734863], [1.0700000524520874, -2.1600000858306885, -1.6299999952316284, -1.059999942779541, -0.4300000071525574, -0.07999999821186066, -2.950000047683716, -0.10000000149011612, -0.4000000059604645, 0.6299999952316284, 3.140000104904175, 1.100000023841858, -0.11999999731779099, 0.8399999737739563, -1.3799999952316284, -0.5600000023841858, 0.41999998688697815, -0.2199999988079071], [1.6399999856948853, 1.3799999952316284, 1.6399999856948853, 0.38999998569488525, 0.8899999856948853, 0.1899999976158142, 0.7400000095367432, 0.75, 1.4299999475479126, 0.800000011920929, 1.4600000381469727, 0.5799999833106995, 0.8600000143051147, -0.5299999713897705, 0.7400000095367432, 0.23999999463558197, -0.1899999976158142, -0.03999999910593033], [-0.8999999761581421, -0.8899999856948853, -1.0199999809265137, -1.659999966621399, -1.8799999952316284, -2.130000114440918, -5.289999961853027, -6.570000171661377, -1.0399999618530273, -1.7000000476837158, -1.1299999952316284, -2.7899999618530273, -0.18000000715255737, -2.609999895095825, -2.0399999618530273, -1.3200000524520874, 0.6100000143051147, -3.640000104904175], [2.9700000286102295, -1.8600000143051147, -1.399999976158142, -0.699999988079071, -1.090000033378601, -1.3799999952316284, -3.0999999046325684, 14.8100004196167, -1.6100000143051147, 1.1100000143051147, 1.590000033378601, -0.6000000238418579, -0.5899999737739563, -0.8999999761581421, -0.6899999976158142, -0.12999999523162842, -0.17000000178813934, -5.420000076293945], [0.05999999865889549, -0.25999999046325684, -2.0299999713897705, -0.05999999865889549, -0.49000000953674316, -0.15000000596046448, 15.199999809265137, 8.619999885559082, -1.5700000524520874, -0.11999999731779099, -0.44999998807907104, -0.46000000834465027, 0.1599999964237213, -0.27000001072883606, -0.49000000953674316, -0.7599999904632568, -0.3499999940395355, 0.75], [-0.029999999329447746, 0.7799999713897705, 0.5099999904632568, -2.0899999141693115, -0.4099999964237213, -1.159999966621399, 0.9100000262260437, 0.47999998927116394, 2.119999885559082, 0.23000000417232513, 0.5, -0.11999999731779099, -0.07000000029802322, 0.36000001430511475, 0.36000001430511475, -0.38999998569488525, -0.03999999910593033, 0.46000000834465027], [-0.7400000095367432, -0.47999998927116394, -0.15000000596046448, 3.109999895095825, 1.5199999809265137, 1.1699999570846558, 1.7999999523162842, 1.5299999713897705, 1.4199999570846558, 0.47999998927116394, -1.6699999570846558, -0.3400000035762787, 1.600000023841858, 0.550000011920929, 1.840000033378601, 1.2799999713897705, -2.5799999237060547, 2.690000057220459], [-1.5299999713897705, -0.23000000417232513, -1.3300000429153442, -0.23000000417232513, 1.2699999809265137, -0.8600000143051147, -0.30000001192092896, 3.2200000286102295, -2.25, -2.240000009536743, -2.109999895095825, -2.3499999046325684, 0.6800000071525574, 1.6399999856948853, 0.5299999713897705, 0.800000011920929, -0.2800000011920929, 0.8700000047683716], [4.050000190734863, -0.9300000071525574, -1.3200000524520874, -0.8299999833106995, -0.3100000023841858, -0.4699999988079071, -7.989999771118164, 14.90999984741211, 2.880000114440918, 3.9600000381469727, 4.269999980926514, 0.6299999952316284, 0.9800000190734863, 0.18000000715255737, -0.5199999809265137, -0.23000000417232513, 0.12999999523162842, -1.350000023841858], [-1.9800000190734863, -0.20000000298023224, -1.409999966621399, -0.1899999976158142, -1.8799999952316284, -1.350000023841858, -4.760000228881836, -7.349999904632568, -4.789999961853027, -2.990000009536743, -1.659999966621399, -2.6600000858306885, -1.850000023841858, -1.9199999570846558, -1.2799999713897705, -0.7200000286102295, 0.8199999928474426, -5.989999771118164], [1.409999966621399, 2.5199999809265137, -0.33000001311302185, 0.8199999928474426, -0.4300000071525574, -0.20000000298023224, 0.10000000149011612, 0.25999999046325684, 0.12999999523162842, 1.1799999475479126, 0.8999999761581421, 0.3700000047683716, -0.14000000059604645, 0.07000000029802322, -0.75, -0.5400000214576721, -0.3799999952316284, -0.49000000953674316], [0.28999999165534973, 0.7799999713897705, 0.05999999865889549, -1.409999966621399, -0.3100000023841858, -1.4600000381469727, -1.4700000286102295, -1.3700000047683716, -1.0199999809265137, -0.49000000953674316, -0.5799999833106995, -0.550000011920929, -0.9200000166893005, -0.800000011920929, -0.9100000262260437, -0.6200000047683716, 0.6100000143051147, -1.159999966621399], [0.17000000178813934, -0.550000011920929, -0.5600000023841858, -11.760000228881836, -0.4699999988079071, -2.450000047683716, -0.3199999928474426, -0.5799999833106995, -0.12999999523162842, -0.9599999785423279, -0.47999998927116394, 0.8799999952316284, -1.5399999618530273, 0.3499999940395355, -0.6700000166893005, -0.8999999761581421, 0.17000000178813934, -1.0399999618530273]]}};
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function tokenChips(list, poleClass) {
+  return list.map(([t, z]) => {
+    const sign = z >= 0 ? "+" : "";
+    return `<span class="tok ${poleClass}" title="z = ${sign}${z.toFixed(1)}σ">${esc(t)}</span>`;
+  }).join("");
+}
+
+function renderGroupTable(hostId, indices, lensMode, showOther) {
+  const host = document.getElementById(hostId);
+  const otherHdr = showOther ? `<th style="width:14%">Closest other arm<br><span class="muted" style="font-weight:400">(R-Lens cos)</span></th>` : "";
+  let html = `<table><thead><tr>
+    <th style="width:13%">Neuron</th>
+    <th style="width:56%">Decoded tokens (${lensMode === "all" ? "All 4 lenses" : DATA.lens_labels[lensMode]}) — <span class="pole-pos">+v promoted</span> / <span class="pole-neg">−v suppressed</span></th>
+    <th style="width:17%">Functional reading</th>
+    ${otherHdr}
+  </tr></thead><tbody>`;
+
+  for (const i of indices) {
+    const n = DATA.neurons[i];
+    const agStr = `J↔R ${n.ag.j_r.toFixed(2)} · J++↔R ${n.ag.jpp_r.toFixed(2)}`;
+    let tokHtml = "";
+    if (lensMode === "all") {
+      tokHtml = DATA.lens_names.map(ln => {
+        const tk = n.tokens[ln];
+        return `<div class="lens-sub">
+          <div class="lens-tag">${DATA.lens_labels[ln]}</div>
+          <div>
+            <div class="tok-row"><span class="pole-lbl pole-pos">+v</span>${tokenChips(tk.pos.slice(0, 6), "tok-pos")}</div>
+            <div class="tok-row" style="margin-top:3px"><span class="pole-lbl pole-neg">−v</span>${tokenChips(tk.neg.slice(0, 6), "tok-neg")}</div>
+          </div>
+        </div>`;
+      }).join("");
+    } else {
+      const tk = n.tokens[lensMode];
+      tokHtml = `
+        <div class="tok-row"><span class="pole-lbl pole-pos">+v</span>${tokenChips(tk.pos, "tok-pos")}</div>
+        <div class="tok-row" style="margin-top:5px"><span class="pole-lbl pole-neg">−v</span>${tokenChips(tk.neg, "tok-neg")}</div>
+      `;
+    }
+
+    let otherTd = "";
+    if (showOther) {
+      if (n.closest_other) {
+        const c = n.closest_other;
+        const cc = c.cos_r >= 0.35 ? "num-pos" : (c.cos_r <= -0.35 ? "num-neg" : "");
+        otherTd = `<td class="mono" style="font-size:12px">
+          <strong>${esc(c.label)}</strong><br>
+          <span class="${cc}">R: ${c.cos_r >= 0 ? "+" : ""}${c.cos_r.toFixed(2)}</span><br>
+          <span class="muted" style="font-size:11px">raw: ${c.cos_raw >= 0 ? "+" : ""}${c.cos_raw.toFixed(2)}</span>
+        </td>`;
+      } else {
+        otherTd = `<td class="muted">—</td>`;
+      }
+    }
+
+    html += `<tr>
+      <td class="mono nowrap">
+        <strong>${esc(n.label)}</strong><br>
+        <span class="muted" style="font-size:11px">norm ${n.norm_pct.toFixed(1)}%ile</span><br>
+        <span class="muted" style="font-size:10.5px">${agStr}</span>
+      </td>
+      <td>${tokHtml}</td>
+      <td class="muted-sm"><strong>${esc(n.role_short)}</strong><br><span style="font-size:12px;color:#6b7280">${esc(n.role_detail)}</span></td>
+      ${otherTd}
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+  host.innerHTML = html;
+}
+
+function rdbuColor(val, vmax) {
+  const t = Math.max(-1, Math.min(1, val / vmax));
+  let r, g, b;
+  if (t >= 0) {
+    // White (#f9fafb) -> Rust/Red (#991b1b)
+    r = Math.round(249 + (153 - 249) * t);
+    g = Math.round(250 + (27  - 250) * t);
+    b = Math.round(251 + (27  - 251) * t);
+  } else {
+    const u = -t;
+    // White (#f9fafb) -> Cobalt/Navy (#1e3a8a)
+    r = Math.round(249 + (30  - 249) * u);
+    g = Math.round(250 + (58  - 250) * u);
+    b = Math.round(251 + (138 - 251) * u);
+  }
+  return `rgb(${r},${g},${b})`;
+}
+
+function grpColor(g) {
+  return g === "shared" ? "#15803d" : (g === "r0_only" ? "#b43c12" : "#1d4ed8");
+}
+
+// Tooltip helper
+const tooltip = document.getElementById("tooltip");
+function bindTooltips(container) {
+  container.querySelectorAll("[data-tip]").forEach(el => {
+    el.addEventListener("mouseenter", e => {
+      tooltip.innerHTML = el.getAttribute("data-tip");
+      tooltip.style.display = "block";
+    });
+    el.addEventListener("mousemove", e => {
+      const x = Math.min(window.innerWidth - 355, e.clientX + 14);
+      const y = Math.min(window.innerHeight - 130, e.clientY + 14);
+      tooltip.style.left = x + "px";
+      tooltip.style.top = y + "px";
+    });
+    el.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+  });
+}
+
+function renderCosHeatmap(space) {
+  const host = document.getElementById("cos-heatmap-host");
+  const M = DATA.cos_mats[space];
+  let html = `<table class="hm-grid"><thead><tr><th></th>`;
+  for (let c = 0; c < DATA.labels.length; c++) {
+    const divC = (c === 4 || c === 11) ? " hm-div-c" : "";
+    html += `<th class="col-rot${divC}"><div style="color:${grpColor(DATA.groups[c])}">${esc(DATA.labels[c])}</div></th>`;
+  }
+  html += `</tr></thead><tbody>`;
+  for (let r = 0; r < DATA.labels.length; r++) {
+    const divR = (r === 4 || r === 11) ? " class='hm-div-r'" : "";
+    html += `<tr${divR}><th style="text-align:right;padding-right:7px;color:${grpColor(DATA.groups[r])}">${esc(DATA.labels[r])}</th>`;
+    for (let c = 0; c < DATA.labels.length; c++) {
+      const v = M[r][c];
+      const bg = rdbuColor(v, 1.0);
+      const fg = Math.abs(v) > 0.55 ? "#ffffff" : "#111827";
+      const txt = (r !== c && Math.abs(v) >= 0.25) ? v.toFixed(2) : "";
+      const divC = (c === 4 || c === 11) ? " hm-div-c" : "";
+      const tip = esc(
+        `${DATA.labels[r]} ↔ ${DATA.labels[c]}\n` +
+        `R-Lens: ${DATA.cos_mats.rlens[r][c] >= 0 ? "+" : ""}${DATA.cos_mats.rlens[r][c].toFixed(3)}  |  ` +
+        `J++: ${DATA.cos_mats.jpp[r][c] >= 0 ? "+" : ""}${DATA.cos_mats.jpp[r][c].toFixed(3)}\n` +
+        `J-Lens: ${DATA.cos_mats.jlens[r][c] >= 0 ? "+" : ""}${DATA.cos_mats.jlens[r][c].toFixed(3)}  |  ` +
+        `Raw: ${DATA.cos_mats.raw[r][c] >= 0 ? "+" : ""}${DATA.cos_mats.raw[r][c].toFixed(3)}`
+      ).replace(/\n/g, "<br>");
+      html += `<td class="hm-cell${divC}" style="background:${bg};color:${fg}" data-tip="${tip}">${txt}</td>`;
+    }
+    html += `</tr>`;
+  }
+  html += `</tbody></table>`;
+  host.innerHTML = html;
+  bindTooltips(host);
+}
+
+function renderProbeHeatmap(lens) {
+  const host = document.getElementById("probe-heatmap-host");
+  const M = DATA.probe_mats[lens];
+  const cols = DATA.probe_cols;
+  let html = `<table class="hm-grid"><thead><tr><th></th>`;
+  for (let c = 0; c < cols.length; c++) {
+    const dash = (c === 7 || c === 15) ? " hm-dash-c" : "";
+    html += `<th class="col-rot${dash}"><div>${esc(cols[c].name)}</div></th>`;
+  }
+  html += `</tr></thead><tbody>`;
+  for (let r = 0; r < DATA.labels.length; r++) {
+    const divR = (r === 4 || r === 11) ? " class='hm-div-r'" : "";
+    const gLbl = DATA.groups[r] === "shared" ? "shared" : (DATA.groups[r] === "r0_only" ? "R0" : "R1");
+    html += `<tr${divR}><th style="text-align:right;padding-right:7px;color:${grpColor(DATA.groups[r])}">${esc(DATA.labels[r])} <span style="opacity:.65">[${gLbl}]</span></th>`;
+    for (let c = 0; c < cols.length; c++) {
+      const v = M[r][c];
+      const bg = rdbuColor(v, 4.5);
+      const fg = Math.abs(v) > 2.5 ? "#ffffff" : "#111827";
+      const fw = Math.abs(v) >= 2.5 ? "700" : "400";
+      const txt = Math.abs(v) >= 1.5 ? (v >= 0 ? "+" : "") + v.toFixed(1) : "";
+      const dash = (c === 7 || c === 15) ? " hm-dash-c" : "";
+      const tip = esc(
+        `${DATA.labels[r]}  ×  ${cols[c].name}\n` +
+        `R-Lens: ${DATA.probe_mats.rlens[r][c] >= 0 ? "+" : ""}${DATA.probe_mats.rlens[r][c].toFixed(2)}σ  |  ` +
+        `J++: ${DATA.probe_mats.jpp[r][c] >= 0 ? "+" : ""}${DATA.probe_mats.jpp[r][c].toFixed(2)}σ\n` +
+        `J-Lens: ${DATA.probe_mats.jlens[r][c] >= 0 ? "+" : ""}${DATA.probe_mats.jlens[r][c].toFixed(2)}σ  |  ` +
+        `Logit: ${DATA.probe_mats.logit_lens[r][c] >= 0 ? "+" : ""}${DATA.probe_mats.logit_lens[r][c].toFixed(2)}σ`
+      ).replace(/\n/g, "<br>");
+      html += `<td class="hm-cell${dash}" style="background:${bg};color:${fg};font-weight:${fw};width:38px" data-tip="${tip}">${txt}</td>`;
+    }
+    html += `</tr>`;
+  }
+  html += `</tbody></table>`;
+  host.innerHTML = html;
+  bindTooltips(host);
+}
+
+function renderAllNeuronTables(lensMode) {
+  renderGroupTable("tbl-shared",  DATA.idx_shared,  lensMode, false);
+  renderGroupTable("tbl-r0-only", DATA.idx_r0_only, lensMode, true);
+  renderGroupTable("tbl-r1-only", DATA.idx_r1_only, lensMode, true);
+}
+
+// Wire up tabs
+document.querySelectorAll("#global-lens-bar .tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#global-lens-bar .tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderAllNeuronTables(btn.dataset.lens);
+  });
+});
+document.querySelectorAll("#cos-tab-bar .tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#cos-tab-bar .tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderCosHeatmap(btn.dataset.cos);
+  });
+});
+document.querySelectorAll("#probe-tab-bar .tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#probe-tab-bar .tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderProbeHeatmap(btn.dataset.probe);
+  });
+});
+
+// Initial render
+renderAllNeuronTables("rlens");
+renderCosHeatmap("rlens");
+renderProbeHeatmap("rlens");
+</script>
+</body>
+</html>

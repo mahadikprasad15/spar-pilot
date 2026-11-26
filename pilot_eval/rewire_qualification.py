@@ -205,7 +205,12 @@ class Qualification:
     # --- helpers --------------------------------------------------------------------------------
 
     def _rewired(self, plan):
-        return self.backend.load_rewired_model(rank=int(plan['rank']), seed=int(self.record['seeds']['read_init_base']),
+        plan_seeds = plan.get('settings', {}).get('seeds', {})
+        arm_seed = int(
+            plan_seeds['read_init_base'] if 'read_init_base' in plan_seeds
+            else self.record['seeds']['read_init_base']
+        )
+        return self.backend.load_rewired_model(rank=int(plan['rank']), seed=arm_seed,
                                                mask_init=float(self.record['hard_concrete']['log_alpha_init']))
 
     def _release(self):
@@ -250,7 +255,12 @@ class Qualification:
                  {'params': masks, 'lr': float(opt['masks']['lr'])}],
                 betas=tuple(float(b) for b in opt['reads']['betas']), eps=float(opt['reads']['eps']),
                 weight_decay=0.0, foreach=False)
-            cache = hc.SharedMaskCache(seed=int(self.record['seeds']['mask_noise']),
+            plan_seeds = plan.get('settings', {}).get('seeds', {})
+            arm_mask_seed = int(
+                plan_seeds['mask_noise'] if 'mask_noise' in plan_seeds
+                else self.record['seeds']['mask_noise']
+            )
+            cache = hc.SharedMaskCache(seed=arm_mask_seed,
                                        group_size=int(self.record['data']['examples_per_mask']), device=device)
             rm.set_gate(model, cache.gate)
             shapes = {m.layer: tuple(m.rewire_log_alpha.shape) for m in mods}
