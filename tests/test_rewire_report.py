@@ -62,6 +62,8 @@ class TestRewireReport(unittest.TestCase):
         report = rr.build(self.run_root)
         final = str(self.record['training']['steps'])
         self.assertEqual(report['mode'], 'production')
+        self.assertEqual(report['qualification']['decision'], 'accept')
+        self.assertEqual(report['qualification']['checks_passed'], report['qualification']['checks'])
         self.assertEqual(sorted(report['references']), ['gold-sft', 'untuned'])
         for arm, spec in self.record['arms'].items():
             a = report['arms'][arm]
@@ -113,6 +115,7 @@ class TestRewireReport(unittest.TestCase):
         shutil.copytree(self.run_root, root)
         loader = lambda: AutoModelForCausalLM.from_pretrained(self.w['model_dir'], torch_dtype=torch.float32,
                                                               attn_implementation='eager')
+        rr.build(root)
         written = ras.run(root, device='cpu', model_loader=loader)
         self.assertEqual(sorted(written), sorted(self.record['arms']))
         for arm, out in written.items():
@@ -125,8 +128,10 @@ class TestRewireReport(unittest.TestCase):
             self.assertEqual(ref['count'], 2 * (32 - 0) - len(export['survivors']))   # tiny: every non-survivor
             self.assertGreater(body['tokens'], 0)
             self.assertGreaterEqual(ref['mean_abs'], abs(body['per_neuron_mean_shift']['non_survivor_reference']['mean']))
-        report = rr.build(root)   # the report lists the analysis units it finds
-        self.assertTrue(report['analyses'])
+        report = rr.build(root)   # a rebuild with new analysis units supersedes the earlier report
+        self.assertEqual(sorted(k for k in report['analyses']['present'] if k.startswith('activation_shift')),
+                         sorted(f'activation_shift:{a}' for a in self.record['arms']))
+        self.assertTrue(list((root / rc.REWIRE_SUBTREE).glob('report.superseded-*')))
 
     def test_tampered_eval_unit_is_refused(self):
         arm = next(iter(self.record['arms']))

@@ -131,7 +131,8 @@ def arm_summary(root: Path, record: Mapping[str, Any], arm: str) -> dict[str, An
 def _analyses(root: Path, record: Mapping[str, Any]) -> dict[str, Any]:
     base = paths(root)['analysis']
     out, missing = {}, []
-    names = dict(ANALYSES, **{f'standalone:{a}': f'standalone-{a}/standalone_analysis.json' for a in record['arms']})
+    names = dict(ANALYSES, **{f'standalone:{a}': f'standalone-{a}/standalone_analysis.json' for a in record['arms']},
+                 **{f'activation_shift:{a}': f'activation-shift-{a}/activation_shift.json' for a in record['arms']})
     for name, rel in sorted(names.items()):
         path = base / rel
         try:
@@ -156,6 +157,7 @@ def build(root: str | Path) -> dict[str, Any]:
     record = launch_record(root)
     refs = _j(_sealed(p['rw'] / 'references' / 'summary') / 'references.json')
     qual = _j(_sealed(p['rw'] / 'qualification' / 'summary') / 'qualification.json')
+    signoff = _j(_sealed(root / cc.SIGNOFF_DIR) / 'signoff.json')
     references = {}
     for name, ref in refs.items():
         unit = p['rw'] / 'references' / f"{name}-step-{ref['step']}" / 'greedy-val'
@@ -167,14 +169,22 @@ def build(root: str | Path) -> dict[str, Any]:
                   code_commit=record['code_commit'], final_step=int(record['training']['steps']),
                   freeze_after_step=int(record['training']['freeze_after_step']),
                   l0_lambda=float(record['objective']['l0_lambda']), hardware=record['hardware'],
-                  qualification=dict(decision=(qual.get('signoff') or {}).get('decision', qual.get('decision')),
+                  qualification=dict(decision=signoff.get('decision'), by=signoff.get('by'),
+                                     checks_passed=sum(bool(v) for v in qual['checks'].values()),
+                                     checks=len(qual['checks']),
                                      estimates={a: (d or {}).get('estimates') for a, d in
-                                                (qual.get('details') or {}).items()}),
+                                                (qual.get('details') or {}).items() if isinstance(d, dict)}),
                   references=references, arms=arms, analyses=_analyses(root, record),
                   labels=dict(cohort150='exploratory, evaluation only (D12), final step only',
                               validation='GSM8K train, held out from training (ticket 04)',
                               accuracy='greedy, deterministic gates, gsm8k-flexible-v3'))
-    au.seal_run(p['report'], {'report.json': report})
+    try:
+        au.seal_run(p['report'], {'report.json': report})
+    except ValueError:   # a derived page: a rebuild (new analyses, a fix) supersedes it, the old one is kept aside
+        import os
+        import time
+        os.replace(p['report'], p['report'].with_name(f"report.superseded-{time.time_ns()}"))
+        au.seal_run(p['report'], {'report.json': report})
     loaded = _j(_sealed(p['report']) / 'report.json')
     if loaded != json.loads(json.dumps(report, default=au._json_default)):
         raise ReportError('report.json did not round-trip through the serializer')
@@ -196,7 +206,8 @@ def markdown(r: Mapping[str, Any]) -> str:
     out = [f"# Sparse rewiring on GSM8K: {r['label']} ({r['mode']})", '',
            f"Run `{r['run_id']}`, code `{r['code_commit'][:12]}`, launch record `{r['launch_record_sha256'][:16]}`. "
            f"{r['final_step']} steps, masks frozen after step {r['freeze_after_step']}, λ {r['l0_lambda']}, "
-           f"{r['hardware']['count']}× {r['hardware']['gpu']}. Qualification: {r['qualification']['decision']}.", '',
+           f"{r['hardware']['count']}× {r['hardware']['gpu']}. Qualification: {r['qualification']['decision']} "
+           f"({r['qualification']['checks_passed']}/{r['qualification']['checks']} checks).", '',
            'Exploratory pilot, single seed. Accuracy is greedy with deterministic gates; cohort150 is evaluation '
            'only and scored once, at the final step (D12).', '', '## Final results', '']
     rows = [[name, ref['step'], '—', ref['val_ce'], f"{ref['greedy_val']['correct']}/{ref['greedy_val']['questions']}",
