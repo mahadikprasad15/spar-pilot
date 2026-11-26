@@ -42,23 +42,46 @@ LENS_LABELS = {
 }
 
 
+def _orthonormal_row_basis(X: torch.Tensor) -> torch.Tensor:
+    """Rank-revealing orthonormal basis for the row-space of ``X [n, d]`` via SVD.
+
+    Unlike thin QR, drops zero/near-zero singular directions caused by duplicate or linearly
+    dependent rows so principal angles reflect the true subspace dimensions.
+    """
+    Xf = X.detach().float()
+    if Xf.shape[0] == 0:
+        return torch.zeros((Xf.shape[1], 0), dtype=torch.float32)
+    U, s, _ = torch.linalg.svd(Xf.T, full_matrices=False)
+    if s.numel() == 0 or float(s[0].item()) == 0.0:
+        return torch.zeros((Xf.shape[1], 0), dtype=torch.float32)
+    tol = max(Xf.shape) * torch.finfo(torch.float32).eps * float(s[0].item())
+    rank = int((s > tol).sum().item())
+    return U[:, :rank]
+
+
 def compute_principal_angles(A: torch.Tensor, B: torch.Tensor) -> dict[str, Any]:
     """Compute exact subspace principal angles between row-spaces of ``A [n_a, d]`` and ``B [n_b, d]``.
 
-    Handles small survivor sets (including ``n_a = 1, 2, 3``) cleanly via thin QR + SVD.
+    Uses a rank-revealing SVD basis so duplicate or linearly dependent rows never inject spurious
+    zero-angle directions. Handles small survivor sets (including ``n_a = 1, 2, 3``) cleanly.
     """
     Af = A.detach().float()
     Bf = B.detach().float()
     if Af.ndim != 2 or Bf.ndim != 2 or Af.shape[1] != Bf.shape[1]:
         raise ValueError(f'incompatible subspace shapes: {tuple(Af.shape)} vs {tuple(Bf.shape)}')
-    if Af.shape[0] == 0 or Bf.shape[0] == 0:
-        return {'cosines': [], 'angles_deg': [], 'mean_cos': 0.0, 'max_cos': 0.0, 'min_angle_deg': 90.0}
-    Qa, _ = torch.linalg.qr(Af.T, mode='reduced')
-    Qb, _ = torch.linalg.qr(Bf.T, mode='reduced')
+    Qa = _orthonormal_row_basis(Af)
+    Qb = _orthonormal_row_basis(Bf)
+    if Qa.shape[1] == 0 or Qb.shape[1] == 0:
+        return {
+            'rank_a': int(Qa.shape[1]), 'rank_b': int(Qb.shape[1]),
+            'cosines': [], 'angles_deg': [], 'mean_cos': 0.0, 'max_cos': 0.0, 'min_angle_deg': 90.0,
+        }
     svals = torch.linalg.svdvals(Qa.T @ Qb).clamp(0.0, 1.0)
     cosines = [float(x) for x in svals.tolist()]
     angles = [float(math.degrees(math.acos(max(-1.0, min(1.0, c))))) for c in cosines]
     return {
+        'rank_a': int(Qa.shape[1]),
+        'rank_b': int(Qb.shape[1]),
         'cosines': [round(c, 4) for c in cosines],
         'angles_deg': [round(a, 2) for a in angles],
         'mean_cos': round(float(np.mean(cosines)), 4),
@@ -130,6 +153,12 @@ def build_comparative_report(
 
     if gold_cache_path is not None and Path(gold_cache_path).is_file():
         gold_data = torch.load(str(gold_cache_path), map_location='cpu', weights_only=False)
+        for rev_key in ('model_id', 'model_revision', 'lens_repo', 'lens_revision'):
+            kv, gv = k2_data.get(rev_key), gold_data.get(rev_key)
+            if kv is not None and gv is not None and kv != gv:
+                raise ValueError(
+                    f'cannot compare caches with different {rev_key}: k2={kv!r} vs gold={gv!r}'
+                )
         gold_surv = list(gold_data['survivors'])
         gold_labels = [s.get('label', f"L{s['layer']} #{s['idx']}") for s in gold_surv]
         k2_set = {(int(s['layer']), int(s['idx'])) for s in k2_surv}

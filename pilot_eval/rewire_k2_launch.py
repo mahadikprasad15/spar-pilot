@@ -1,28 +1,28 @@
 """Sparse rewiring on Sampling SFT (k = 2) Pod launcher (rehearsal + Run A matched + conditional Run B scaled).
 
-Mirrors ``pilot_eval.rewire_launch`` and reuses ``c_attribution_chain.Chain``, ``rewire_chain.build_rewire_chain``,
-and Ticket 15's ``rewire_qualification.Qualification`` with strict production enforcement:
-
-- **Input integrity (P1 #1):** Requires a verified sealed ``l4-training-data-v1`` export (reconciling
-  ``training.jsonl``, ``batches.json``, ``coverage.json``, and Gold's ``order.json``), verifies the
-  pinned dense ``k = 2`` checkpoint-64 adapter weights & config SHA-256 (binding both into arm plans),
-  and enforces the sealed ``val128-k2-targets.json`` schema, hashes, recipe, coverage accounting,
-  prompt masking (``-100``), completion label identity, and single final EOS.
-- **Executable code identity (P1 #2):** Refuses ``seal``/``precheck``/``run`` when any executable K2
-  or shared rewiring source is uncommitted or modified, and binds ``executable_sha256`` into every
-  launch record and arm plan.
-- **Conditional two-lambda routing (P1 #3):**
-  - Production Run A (``lambda_regime == 'matched'``) schedules **seed 42 only** by default.
-  - ``check-run-b`` verifies a completed, fully sealed arm at its final step (``training-complete.json``,
-    ``arm_evidence/complete.json``, ``rckpt.verify_arm``) before counting survivors and emitting a
-    hash-bound gate receipt.
-  - Running Run A ``seed 43`` requires a verified Run A ``seed 42`` gate with ``>= 4`` survivors.
-  - Sealing and running Run B (``lambda_regime == 'scaled'``) requires a verified Run A ``seed 42``
-    gate with ``< 4`` survivors, a sealed Stage 1 ``references/summary/k2_headroom.json`` bound to the
-    exact same experiment inputs, and ``l0_lambda == lambda_scaled``.
-- **Full reference bar (P2 #5):** In production, evaluates both ``untuned`` (step 0) and dense
-  ``sampling-sft-k2`` (step 64) on ``val128-k2`` CE, ``val128`` greedy accuracy + mean response length,
-  and ``cohort150`` greedy accuracy + mean response length in an isolated IEEE FP32 child process.
+Enforces every P1 & P2 contract from ``.scratch/sparse-rewiring-sampling-k2/{design.md,spec.md}``:
+- **Input & provenance integrity:** Requires a verified sealed ``l4-training-data-v1`` export
+  (reconciling ``training.jsonl``, ``batches.json``, ``coverage.json``, and Gold's ``order.json``),
+  verifies pinned dense ``k = 2`` checkpoint-64 adapter weights & config SHA-256 (binding both into
+  every arm plan), and validates sealed ``val128-k2-targets.json`` provenance (matching pinned base
+  model, tokenizer, and validation input hashes), full effective recipe (including ``max_blocks``,
+  ``stop_token_ids``, ``accept_rule``, ``top_k == 0``, ``retry_data_seeds == [0, 1001, 1002, 1003]``),
+  exact coverage accounting, prompt masking, completion label equality, and single final EOS.
+- **Full executable tree binding:** Refuses ``seal``/``precheck``/``run`` when any Python file under
+  ``pilot_eval/`` or ``scripts/`` is uncommitted or modified, and binds the full tree digest into
+  every launch record and arm plan.
+- **Registered conditional two-lambda routing:**
+  - Production Run A schedules **seed 42 only** by default.
+  - Production Run A ``seed 43`` requires a verified completed Run A ``seed 42`` arm matching the
+    **exact registered matched seed-42 plan** with ``>= 4`` survivors.
+  - Production Run B (``scaled``) requires a verified completed Run A ``seed 42`` arm matching the
+    **registered matched seed-42 plan** (``l0_lambda == 6.0e-4``, exact hyperparameters & step schedule,
+    matching executable/code provenance & inputs) with ``< 4`` survivors AND the **specific Stage 1
+    headroom seal** bound by the gate receipt (comparing ``headroom_complete_sha256`` and
+    ``headroom_file_sha256``, compatible with authentic volume restores).
+- **Full reference bar:** Evaluates ``untuned`` (step 0) and dense ``sampling-sft-k2`` (step 64) on
+  ``val128-k2`` CE, ``val128`` greedy accuracy + ``tokens_mean``, and (in production) ``cohort150``
+  greedy accuracy + ``tokens_mean`` in an isolated IEEE FP32 child process.
 """
 from __future__ import annotations
 
@@ -60,6 +60,7 @@ SHARED_INPUT_KEYS = (
     'k2_lora_adapter_weights_sha256',
     'k2_lora_adapter_config_sha256',
 )
+EXPECTED_MAX_BLOCKS = 32
 
 
 def chain_record(record: Mapping[str, Any], *, only_arm: str | None = None) -> dict[str, Any]:
@@ -103,7 +104,32 @@ def _check_shared_inputs_match(
         )
 
 
-# --- Strict input loaders (P1 #1) --------------------------------------------------------------------
+def _expected_bundle_tokenizer_hashes(bundle: Mapping[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for entry in bundle.get('files', []):
+        role = str(entry.get('role', ''))
+        if role.startswith('tokenizer:'):
+            out[role.split(':', 1)[1]] = str(entry['sha256'])
+    return out
+
+
+def _expected_stop_ids_from_bundle(bundle: Mapping[str, Any], root: Path, eos_token_id: int) -> list[int]:
+    """Derive exact expected stop token IDs from the bundled tokenizer."""
+    from transformers import AutoTokenizer
+
+    tok_entry = next((e for e in bundle.get('files', []) if str(e.get('role', '')).startswith('tokenizer:')), None)
+    stops = [int(eos_token_id)]
+    if tok_entry is not None:
+        tok_dir = (root / tok_entry['path']).parent
+        tok = AutoTokenizer.from_pretrained(str(tok_dir), local_files_only=True)
+        for stop_str in ('<|im_end|>', '<|endoftext|>'):
+            tid = tok.convert_tokens_to_ids(stop_str)
+            if isinstance(tid, int) and tid >= 0 and tid not in stops:
+                stops.append(tid)
+    return stops
+
+
+# --- Strict input & provenance loaders (P1 #1 & P1 #4) -----------------------------------------------
 
 def load_val128_k2_targets(
     path: str | Path,
@@ -111,9 +137,14 @@ def load_val128_k2_targets(
     val_questions: Mapping[str, Mapping[str, Any]],
     expected_ids: Sequence[str],
     eos_token_id: int,
+    expected_stop_ids: Sequence[int] | None = None,
+    expected_max_blocks: int = EXPECTED_MAX_BLOCKS,
+    expected_model_file_sha256: Mapping[str, str] | None = None,
+    expected_tokenizer_file_sha256: Mapping[str, str] | None = None,
+    expected_val_items_sha256: str | None = None,
     require_qualified_recipe: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Load and strictly verify sealed ``val128-k2-targets.json`` against Gold's frozen validation prompts."""
+    """Load and strictly verify sealed ``val128-k2-targets.json`` provenance, recipe, coverage, and rows."""
     target_path = Path(path)
     if not target_path.is_file():
         raise LaunchRefused(f'val128-k2 targets file does not exist: {target_path}')
@@ -152,15 +183,17 @@ def load_val128_k2_targets(
     if set(covered_ids) | set(uncovered_ids) != expected_set:
         raise LaunchRefused(f'{target_path}: covered_ids U uncovered_ids does not equal frozen val128 cohort')
 
-    # Recipe verification (P1 #4)
+    # Full effective recipe verification
     recipe = raw.get('recipe')
     if not isinstance(recipe, dict):
         raise LaunchRefused(f'{target_path}: missing recipe metadata')
     if require_qualified_recipe:
+        exp_stops = list(expected_stop_ids) if expected_stop_ids is not None else [int(eos_token_id)]
         expected_recipe_checks = {
             'k': 2,
             'jump_tokens': 64,
             'cap_tokens': 1024,
+            'max_blocks': int(expected_max_blocks),
             'max_model_retries': 3,
             'total_attempts_max': 4,
             'data_seed': 0,
@@ -170,7 +203,9 @@ def load_val128_k2_targets(
             'top_k': 0,
             'repetition_penalty': 1.1,
             'scorer': 'flexible-v3',
+            'accept_rule': 'strict-mean-response-logprob-improvement',
             'eos_token_id': int(eos_token_id),
+            'stop_token_ids': exp_stops,
         }
         for key, expected_val in expected_recipe_checks.items():
             actual_val = recipe.get(key)
@@ -178,6 +213,27 @@ def load_val128_k2_targets(
                 raise LaunchRefused(
                     f'{target_path}: recipe.{key} is {actual_val!r}, expected qualified {expected_val!r}'
                 )
+
+    # Provenance verification (pinned proposer model, tokenizer, validation file, engine, executable digest)
+    prov = raw.get('provenance')
+    if not isinstance(prov, dict):
+        raise LaunchRefused(f'{target_path}: missing provenance metadata (proposer model/tokenizer/val hashes)')
+    for req_key in ('model_file_sha256', 'tokenizer_file_sha256', 'val_items_sha256', 'engine', 'executable_sha256'):
+        if not prov.get(req_key):
+            raise LaunchRefused(f'{target_path}: provenance missing {req_key!r}')
+    if expected_model_file_sha256 is not None and prov['model_file_sha256'] != dict(expected_model_file_sha256):
+        raise LaunchRefused(
+            f'{target_path}: provenance.model_file_sha256 differs from pinned base model in bundle'
+        )
+    if expected_tokenizer_file_sha256 is not None and prov['tokenizer_file_sha256'] != dict(expected_tokenizer_file_sha256):
+        raise LaunchRefused(
+            f'{target_path}: provenance.tokenizer_file_sha256 differs from pinned tokenizer files in bundle'
+        )
+    if expected_val_items_sha256 is not None and prov['val_items_sha256'] != expected_val_items_sha256:
+        raise LaunchRefused(
+            f'{target_path}: provenance.val_items_sha256 {prov["val_items_sha256"]!r} differs from bundled '
+            f'validation:items {expected_val_items_sha256!r}'
+        )
 
     seen_ids: list[str] = []
     eos = int(eos_token_id)
@@ -195,7 +251,7 @@ def load_val128_k2_targets(
     if seen_ids != covered_ids:
         raise LaunchRefused(f'{target_path}: item IDs/order do not match covered_ids')
 
-    meta = {k: v for k, v in raw.items() if k != 'items'}
+    meta = {k: v for k, v in raw.items() if k not in ('items', 'attempts')}
     return items, meta
 
 
@@ -253,6 +309,8 @@ def load_k2_inputs(record: Mapping[str, Any]) -> dict[str, Any]:
         for i in gold_val_items
     }
     val_question_ids = [i['id'] for i in gold_val_items]
+    val_items_bundle_path = rb.path_of(bundle, root, 'validation:items')
+    expected_stop_ids = _expected_stop_ids_from_bundle(bundle, root, eos)
 
     # Sealed val128-k2 targets define the CE evaluation items
     val_k2_path = _resolve_under(root, inputs['val128_k2_targets'])
@@ -261,6 +319,11 @@ def load_k2_inputs(record: Mapping[str, Any]) -> dict[str, Any]:
         val_questions=val_questions,
         expected_ids=val_question_ids,
         eos_token_id=eos,
+        expected_stop_ids=expected_stop_ids,
+        expected_max_blocks=EXPECTED_MAX_BLOCKS,
+        expected_model_file_sha256=bundle['base_model']['file_sha256'],
+        expected_tokenizer_file_sha256=_expected_bundle_tokenizer_hashes(bundle),
+        expected_val_items_sha256=file_hash(val_items_bundle_path),
         require_qualified_recipe=True,
     )
 
@@ -317,6 +380,8 @@ def load_k2_inputs(record: Mapping[str, Any]) -> dict[str, Any]:
         adapter_dir=adapter_dir,
         adapter_hashes=adapter_hashes,
         shared_inputs_sha=shared_inputs_sha,
+        k2_data_path=k2_data_path,
+        order_path=order_path,
         cohort150_items=cohort150,
     )
 
@@ -533,12 +598,78 @@ def evaluate_k2_references_in_child(
     )
 
 
-# --- K2-D1 verified gate & sealed headroom calibration (P1 #3) ---------------------------------------
+# --- K2-D1 verified gate, plan-identity check & sealed headroom calibration (P1 #3) ------------------
+
+def _assert_registered_matched_s42_plan(
+    actual_plan: Mapping[str, Any],
+    expected_matched_plan: Mapping[str, Any],
+    *,
+    require_exact_plan_sha: bool = False,
+) -> None:
+    """Verify a completed Run A seed-42 arm matches the exact registered matched seed-42 plan."""
+    if require_exact_plan_sha:
+        if actual_plan['plan_sha256'] != expected_matched_plan['plan_sha256']:
+            raise LaunchRefused(
+                f'completed Run A seed-42 plan_sha256 {actual_plan["plan_sha256"]} differs from registered '
+                f'expected plan {expected_matched_plan["plan_sha256"]}'
+            )
+        return
+
+    # For Run B routing, compare every scientific & provenance field against the registered matched plan
+    for field in ('schema', 'rank', 'read_lr', 'seed', 'executable_sha256', 'optimizer',
+                  'read_init_seeds', 'checkpoints', 'steps'):
+        if actual_plan.get(field) != expected_matched_plan.get(field):
+            raise LaunchRefused(
+                f'completed Run A seed-42 plan field {field!r} differs from registered matched seed-42 plan'
+            )
+    act_s = actual_plan.get('settings') or {}
+    exp_s = expected_matched_plan.get('settings') or {}
+    for key in ('model', 'data', 'training', 'objective', 'hard_concrete', 'runtime', 'seeds'):
+        if act_s.get(key) != exp_s.get(key):
+            raise LaunchRefused(
+                f'completed Run A seed-42 plan settings.{key} differs from registered matched seed-42 plan '
+                f'(got {act_s.get(key)!r}, expected {exp_s.get(key)!r})'
+            )
+    _check_shared_inputs_match(
+        actual_plan.get('inputs') or {},
+        expected_matched_plan.get('inputs') or {},
+        left_label='completed Run A seed-42 plan',
+        right_label='registered matched seed-42 plan',
+    )
+
+
+def _derive_expected_matched_s42_plan(record: Mapping[str, Any], data: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive the canonical registered matched seed-42 plan from ``record`` and verified ``data``."""
+    s42 = _arm_by_seed(record, 42)
+    if s42 is None:
+        raise LaunchRefused('launch record missing seed-42 arm')
+    if record['objective']['lambda_regime'] == 'matched':
+        return data['arm_plans'][s42]
+    # Build canonical matched counterpart for Run B verification (same inputs/code/hyperparams, matched lambda=6e-4)
+    matched_rec = json.loads(json.dumps(dict(record)))
+    matched_rec['objective']['lambda_regime'] = 'matched'
+    matched_rec['objective']['l0_lambda'] = k2p.GOLD_MATCHED_LAMBDA
+    extra_sha = {
+        'val128_k2_targets_sha256': data['shared_inputs_sha']['val128_k2_targets_sha256'],
+        'k2_lora_adapter_weights_sha256': data['shared_inputs_sha']['k2_lora_adapter_weights_sha256'],
+        'k2_lora_adapter_config_sha256': data['shared_inputs_sha']['k2_lora_adapter_config_sha256'],
+    }
+    return k2p.plan_from_files(
+        matched_rec,
+        s42,
+        data['k2_data_path'],
+        data['order_path'],
+        expected_export_seal_sha256=(k2p.K2_EXPORT_COMPLETE_SHA256 if record['mode'] == 'production' else None),
+        extra_inputs_sha256=extra_sha,
+    )
+
 
 def verify_headroom_summary(
     headroom_dir: str | Path,
     *,
     expected_inputs_sha256: Mapping[str, Any] | None = None,
+    expected_complete_sha256: str | None = None,
+    expected_file_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Verify sealed ``references/summary`` and recompute ``lambda_scaled`` from ``k2_headroom.json``."""
     summary_dir = Path(headroom_dir)
@@ -553,6 +684,19 @@ def verify_headroom_summary(
     headroom_path = summary_dir / 'k2_headroom.json'
     if not headroom_path.is_file():
         raise LaunchRefused(f'missing k2_headroom.json in {summary_dir}')
+
+    complete_sha = file_hash(summary_dir / 'complete.json')
+    file_sha = file_hash(headroom_path)
+    if expected_complete_sha256 is not None and complete_sha != expected_complete_sha256:
+        raise LaunchRefused(
+            f'{summary_dir}: headroom complete.json SHA-256 {complete_sha} differs from receipt-bound '
+            f'{expected_complete_sha256} (different Stage 1 calibration substituted)'
+        )
+    if expected_file_sha256 is not None and file_sha != expected_file_sha256:
+        raise LaunchRefused(
+            f'{headroom_path}: SHA-256 {file_sha} differs from receipt-bound {expected_file_sha256}'
+        )
+
     headroom = json.loads(headroom_path.read_text(encoding='utf-8'))
     ce_u = headroom.get('ce_untuned_k2')
     ce_l = headroom.get('ce_lora_k2')
@@ -579,8 +723,8 @@ def verify_headroom_summary(
         )
     return {
         'summary_dir': str(summary_dir),
-        'headroom_complete_sha256': file_hash(summary_dir / 'complete.json'),
-        'headroom_file_sha256': file_hash(headroom_path),
+        'headroom_complete_sha256': complete_sha,
+        'headroom_file_sha256': file_sha,
         'headroom': headroom,
         'lambda_scaled': float(recomputed['lambda_scaled']),
     }
@@ -590,8 +734,11 @@ def check_run_b_trigger(
     arm_dir: str | Path,
     *,
     expected_plan: Mapping[str, Any] | None = None,
+    require_exact_plan_sha: bool = True,
     expected_final_step: int | None = None,
     expected_inputs_sha256: Mapping[str, Any] | None = None,
+    expected_code_commit: str | None = None,
+    expected_executable_sha256: str | None = None,
     threshold: int = k2p.RUN_B_SURVIVOR_THRESHOLD,
     headroom_dir: str | Path | None = None,
     write_receipt: str | Path | None = None,
@@ -606,7 +753,7 @@ def check_run_b_trigger(
     if not root.is_dir():
         raise LaunchRefused(f'arm directory does not exist: {root}')
 
-    # 1. Verify arm_evidence seal (if present) and materialize training-complete.json + plan.json
+    # 1. Verify arm_evidence seal and materialize training-complete.json + plan.json (supports volume restores!)
     ev_dir = root / rc.ARM_EVIDENCE_DIR
     if not (ev_dir / 'complete.json').is_file():
         raise LaunchRefused(f'{root}: missing sealed {rc.ARM_EVIDENCE_DIR}/complete.json (arm is not complete)')
@@ -624,14 +771,24 @@ def check_run_b_trigger(
     plan = json.loads(plan_path.read_text(encoding='utf-8'))
     if plan.get('schema') != k2p.PLAN_SCHEMA or plan.get('plan_sha256') != k2p.sp.plan_sha256(plan):
         raise LaunchRefused(f'{plan_path}: plan_sha256 verification failed')
-    if expected_plan is not None and plan['plan_sha256'] != expected_plan['plan_sha256']:
+    if expected_code_commit is not None and arm_seal.get('code_commit') != expected_code_commit:
         raise LaunchRefused(
-            f'{root}: arm plan {plan["plan_sha256"]} differs from expected plan {expected_plan["plan_sha256"]}'
+            f'{root}: arm code_commit {arm_seal.get("code_commit")!r} != expected {expected_code_commit!r}'
         )
+    if expected_executable_sha256 is not None and plan.get('executable_sha256') != expected_executable_sha256:
+        raise LaunchRefused(
+            f'{root}: arm executable_sha256 {plan.get("executable_sha256")!r} != expected {expected_executable_sha256!r}'
+        )
+    if expected_plan is not None:
+        _assert_registered_matched_s42_plan(plan, expected_plan, require_exact_plan_sha=require_exact_plan_sha)
     if int(plan.get('seed', -1)) != 42:
         raise LaunchRefused(f'{root}: K2-D1 gate requires completed seed-42 arm, got seed={plan.get("seed")}')
-    if plan.get('settings', {}).get('objective', {}).get('lambda_regime') != 'matched':
-        raise LaunchRefused(f'{root}: K2-D1 gate requires matched-lambda Run A arm')
+    obj = plan.get('settings', {}).get('objective', {})
+    if obj.get('lambda_regime') != 'matched' or not k2p.sp._same(obj.get('l0_lambda'), k2p.GOLD_MATCHED_LAMBDA):
+        raise LaunchRefused(
+            f'{root}: K2-D1 gate requires matched-lambda Run A arm at {k2p.GOLD_MATCHED_LAMBDA}, '
+            f'got regime={obj.get("lambda_regime")!r}, l0_lambda={obj.get("l0_lambda")!r}'
+        )
 
     # 2. Verify every checkpoint in the arm against training-complete.json and plan
     try:
@@ -659,7 +816,7 @@ def check_run_b_trigger(
             right_label='expected experiment inputs',
         )
 
-    # 3. Verify headroom summary if supplied and reconcile experiment inputs
+    # 3. Verify headroom summary if supplied and bind its exact cryptographic seal digests
     headroom_info = None
     lambda_scaled = None
     if headroom_dir is not None:
@@ -697,6 +854,8 @@ def check_run_b_trigger(
         'arm': plan['arm'],
         'run_id': plan['run_id'],
         'seed': int(plan['seed']),
+        'code_commit': arm_seal['code_commit'],
+        'executable_sha256': plan.get('executable_sha256'),
         'arm_dir': str(root.resolve()),
         'arm_plan_sha256': plan['plan_sha256'],
         'training_complete_sha256': file_hash(arm_seal_path),
@@ -713,6 +872,7 @@ def check_run_b_trigger(
         ),
         'headroom_summary': headroom_info['summary_dir'] if headroom_info else None,
         'headroom_complete_sha256': headroom_info['headroom_complete_sha256'] if headroom_info else None,
+        'headroom_file_sha256': headroom_info['headroom_file_sha256'] if headroom_info else None,
         'lambda_scaled': lambda_scaled,
         'per_layer_counts': per_layer_counts,
         'survivors': survivors,
@@ -728,13 +888,20 @@ def check_run_b_trigger(
 def verify_gate_receipt(
     receipt_path: str | Path,
     *,
+    expected_plan: Mapping[str, Any],
+    require_exact_plan_sha: bool,
     expected_final_step: int,
     expected_inputs_sha256: Mapping[str, Any],
+    expected_code_commit: str | None = None,
+    expected_executable_sha256: str | None = None,
     threshold: int = k2p.RUN_B_SURVIVOR_THRESHOLD,
+    arm_dir_override: str | Path | None = None,
     headroom_dir: str | Path | None = None,
+    require_bound_headroom: bool = False,
     require_trigger_run_b: bool | None = None,
 ) -> dict[str, Any]:
-    """Verify a gate receipt JSON AND re-verify its underlying completed Run A seed-42 arm on disk."""
+    """Verify a gate receipt JSON, re-verify its completed Run A seed-42 arm against the registered plan,
+    and enforce exact Stage 1 headroom seal binding (supporting authentic volume restores)."""
     rpath = Path(receipt_path)
     if not rpath.is_file():
         raise LaunchRefused(f'gate receipt does not exist: {rpath}')
@@ -745,17 +912,39 @@ def verify_gate_receipt(
     if saved.get('receipt_sha256') != expected_hash:
         raise LaunchRefused(f'{rpath}: gate receipt_sha256 mismatch (tampered receipt)')
 
+    target_arm_dir = Path(arm_dir_override) if arm_dir_override is not None else Path(saved['arm_dir'])
+    target_headroom_dir = headroom_dir if headroom_dir is not None else saved.get('headroom_summary')
+
+    if require_bound_headroom:
+        if not saved.get('headroom_complete_sha256') or not saved.get('headroom_file_sha256'):
+            raise LaunchRefused(
+                f'{rpath}: gate receipt is missing bound Stage 1 headroom seal digests; regenerate with --headroom-dir'
+            )
+        if target_headroom_dir is None:
+            raise LaunchRefused(f'{rpath}: missing headroom summary directory')
+
     recomputed = check_run_b_trigger(
-        saved['arm_dir'],
+        target_arm_dir,
+        expected_plan=expected_plan,
+        require_exact_plan_sha=require_exact_plan_sha,
         expected_final_step=expected_final_step,
         expected_inputs_sha256=expected_inputs_sha256,
+        expected_code_commit=expected_code_commit,
+        expected_executable_sha256=expected_executable_sha256,
         threshold=threshold,
-        headroom_dir=headroom_dir or saved.get('headroom_summary'),
+        headroom_dir=target_headroom_dir,
     )
     for key in ('arm_plan_sha256', 'training_complete_sha256', 'final_state_sha256',
                 'survivor_count', 'trigger_run_b', 'inputs_sha256'):
         if recomputed[key] != saved.get(key):
             raise LaunchRefused(f'{rpath}: live arm {key} differs from gate receipt')
+    if target_headroom_dir is not None and saved.get('headroom_complete_sha256'):
+        if (recomputed['headroom_complete_sha256'] != saved['headroom_complete_sha256']
+                or recomputed['headroom_file_sha256'] != saved['headroom_file_sha256']):
+            raise LaunchRefused(
+                f'{rpath}: supplied headroom summary seal {recomputed["headroom_complete_sha256"]} differs from '
+                f'the specific Stage 1 headroom seal bound by the gate receipt ({saved["headroom_complete_sha256"]})'
+            )
     if require_trigger_run_b is not None and bool(recomputed['trigger_run_b']) is not bool(require_trigger_run_b):
         if require_trigger_run_b:
             raise LaunchRefused(
@@ -772,9 +961,11 @@ def verify_gate_receipt(
 def _authorize_run_b(
     record: Mapping[str, Any],
     *,
-    shared_inputs_sha: Mapping[str, Any],
+    data: Mapping[str, Any],
+    arm_dir_override: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Verify Run B (scaled) gate receipt, sealed headroom calibration, matching inputs, and exact lambda."""
+    """Verify Run B (scaled) gate receipt against the registered matched seed-42 plan, its exact bound
+    Stage 1 headroom seal, matching inputs/code provenance, and exact lambda_scaled."""
     routing = record['routing']
     gate_path = routing.get('gate_receipt')
     headroom_path = routing.get('headroom_summary')
@@ -783,14 +974,26 @@ def _authorize_run_b(
     if not headroom_path or headroom_path == 'none':
         raise LaunchRefused('Run B requires routing.headroom_summary from sealed Stage 1 references')
 
-    headroom_info = verify_headroom_summary(headroom_path, expected_inputs_sha256=shared_inputs_sha)
+    expected_matched_s42 = _derive_expected_matched_s42_plan(record, data)
     gate = verify_gate_receipt(
         gate_path,
+        expected_plan=expected_matched_s42,
+        require_exact_plan_sha=False,
         expected_final_step=int(record['training']['steps']),
-        expected_inputs_sha256=shared_inputs_sha,
+        expected_inputs_sha256=data['shared_inputs_sha'],
+        expected_code_commit=record['code_commit'],
+        expected_executable_sha256=record['executable_sha256'],
         threshold=int(record['objective']['run_b_trigger_below']),
+        arm_dir_override=arm_dir_override,
         headroom_dir=headroom_path,
+        require_bound_headroom=True,
         require_trigger_run_b=True,
+    )
+    headroom_info = verify_headroom_summary(
+        headroom_path,
+        expected_inputs_sha256=data['shared_inputs_sha'],
+        expected_complete_sha256=gate['headroom_complete_sha256'],
+        expected_file_sha256=gate['headroom_file_sha256'],
     )
     lam = float(record['objective']['l0_lambda'])
     expected_lam = float(headroom_info['lambda_scaled'])
@@ -811,7 +1014,7 @@ def _arm_by_seed(record: Mapping[str, Any], seed: int) -> str | None:
 def resolve_arm_order(
     record: Mapping[str, Any],
     *,
-    shared_inputs_sha: Mapping[str, Any],
+    data: Mapping[str, Any],
     only_arm: str | None = None,
     gate_receipt: str | Path | None = None,
     matched_s42_dir: str | Path | None = None,
@@ -830,25 +1033,37 @@ def resolve_arm_order(
 
     if regime == 'matched':
         s42 = _arm_by_seed(record, 42)
-        if s42 is None:
-            raise LaunchRefused('production Run A requires a seed-42 arm')
-        # Default Run A schedules seed 42 ONLY (never seed 43 before the survivor gate!)
+        s43 = _arm_by_seed(record, 43)
+        if s42 is None or s43 is None:
+            raise LaunchRefused('production Run A requires both seed-42 and seed-43 arms')
         if only_arm is None or only_arm == s42:
             return [s42]
-        # Any non-seed-42 arm (seed 43) requires verified completed Run A seed 42 with >= threshold survivors
+        if only_arm != s43:
+            raise LaunchRefused(f'unexpected production Run A arm {only_arm!r}; expected {s42!r} or {s43!r}')
+
+        expected_s42_plan = data['arm_plans'][s42]
         if gate_receipt is not None:
             verify_gate_receipt(
                 gate_receipt,
+                expected_plan=expected_s42_plan,
+                require_exact_plan_sha=True,
                 expected_final_step=final_step,
-                expected_inputs_sha256=shared_inputs_sha,
+                expected_inputs_sha256=data['shared_inputs_sha'],
+                expected_code_commit=record['code_commit'],
+                expected_executable_sha256=record['executable_sha256'],
                 threshold=threshold,
+                arm_dir_override=matched_s42_dir,
                 require_trigger_run_b=False,
             )
         elif matched_s42_dir is not None:
             gate = check_run_b_trigger(
                 matched_s42_dir,
+                expected_plan=expected_s42_plan,
+                require_exact_plan_sha=True,
                 expected_final_step=final_step,
-                expected_inputs_sha256=shared_inputs_sha,
+                expected_inputs_sha256=data['shared_inputs_sha'],
+                expected_code_commit=record['code_commit'],
+                expected_executable_sha256=record['executable_sha256'],
                 threshold=threshold,
             )
             if gate['trigger_run_b']:
@@ -861,10 +1076,10 @@ def resolve_arm_order(
                 f'Running matched Run A {only_arm} requires --gate-receipt or --matched-s42-dir '
                 f'proving verified completed Run A seed 42 had >= {threshold} survivors'
             )
-        return [only_arm]
+        return [s43]
 
     if regime == 'scaled':
-        _authorize_run_b(record, shared_inputs_sha=shared_inputs_sha)
+        _authorize_run_b(record, data=data, arm_dir_override=matched_s42_dir)
         return [only_arm] if only_arm is not None else arms
 
     raise LaunchRefused(f'unsupported lambda_regime {regime!r}')
@@ -899,7 +1114,7 @@ def build(
     data = load_k2_inputs(record)
     arm_order = resolve_arm_order(
         record,
-        shared_inputs_sha=data['shared_inputs_sha'],
+        data=data,
         only_arm=only_arm,
         gate_receipt=gate_receipt,
         matched_s42_dir=matched_s42_dir,
@@ -979,6 +1194,7 @@ def seal_k2_draft(
     l0_lambda: float | None = None,
     gate_receipt: str | None = None,
     headroom_summary: str | None = None,
+    matched_s42_dir: str | None = None,
     code_identity: Mapping[str, Any] | None = None,
 ) -> Path:
     """Seal a K2 launch-record YAML draft, enforcing clean executable code and Run B gate/calibration."""
@@ -1030,7 +1246,7 @@ def seal_k2_draft(
         )
         try:
             data = load_k2_inputs(record)
-            _authorize_run_b(record, shared_inputs_sha=data['shared_inputs_sha'])
+            _authorize_run_b(record, data=data, arm_dir_override=matched_s42_dir)
         except Exception:
             sealed_path.unlink(missing_ok=True)
             raise
@@ -1052,6 +1268,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                       help='verified Run A seed-42 gate receipt JSON (required for scaled Run B)')
     seal.add_argument('--headroom-summary', default=None,
                       help='sealed Stage 1 references/summary directory (required for scaled Run B)')
+    seal.add_argument('--matched-s42-dir', default=None,
+                      help='optional restored Run A seed-42 arm dir if moved from receipt path')
 
     for name in ('run', 'precheck', 'watchdog-copy', 'paths'):
         p = sub.add_parser(name)
@@ -1064,7 +1282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             p.add_argument('--gate-receipt', default=None,
                            help='verified Run A seed-42 gate receipt (required for production Run A seed 43)')
             p.add_argument('--matched-s42-dir', default=None,
-                           help='completed Run A seed-42 arm dir (alternative to --gate-receipt for Run A seed 43)')
+                           help='completed (or volume-restored) Run A seed-42 arm dir')
             p.add_argument('--stop-pod', action='store_true',
                            help='stop the Pod after a complete verified backup (default: leave it running)')
 
@@ -1089,6 +1307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             l0_lambda=args.l0_lambda,
             gate_receipt=args.gate_receipt,
             headroom_summary=args.headroom_summary,
+            matched_s42_dir=args.matched_s42_dir,
         )
         print(out)
         return 0

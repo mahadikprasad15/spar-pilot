@@ -10,20 +10,20 @@ Reuses the exact qualified Sampling SFT ``k = 2`` recipe:
   ``pilot_eval.sampling_sft_training_data.supervised_row`` (original stored integer token IDs,
   prompt masked ``-100``, completion labels equal to completion IDs, exactly one final EOS).
 
-The output ``val128-k2-targets.json`` binds ``ids_sha256`` to Gold's frozen
-``artifacts/validation/sparse-rewiring-ticket04-v1/validation.items.json`` so held-out ``val128-k2``
-CE is computed strictly on the exact same 128 questions used in Gold SFT sparse rewiring.
-
-Usage (on A100 Pod, HF FP32 IEEE engine):
-    python scripts/generate_val128_k2_targets.py \\
-        --val-items artifacts/validation/sparse-rewiring-ticket04-v1/validation.items.json \\
-        --model-dir $WORK/model \\
-        --out $WORK/val128-k2-targets.json
+Provenance & durability:
+- Verifies pinned base model files, tokenizer files, and frozen ``validation.items.json`` before
+  generation and binds their SHA-256 digests, precision readback, engine identity, and executable
+  source digest into ``provenance`` inside ``val128-k2-targets.json``.
+- Uses ``sampling_sft_sampler.sample``'s durable ``on_block`` and ``resume`` hooks to checkpoint
+  progress after every block under a manifest hash, resuming cleanly after interruption with
+  bit-for-bit identical final targets and evidence (decoded text, full attempts log, and per-ID
+  uncovered terminal dispositions).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -33,6 +33,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from pilot_eval import c_attribution_bundle as cb
 from pilot_eval import catalog as cat
 from pilot_eval import protocol as proto
 from pilot_eval import rewire_bundle as rb
@@ -40,9 +41,12 @@ from pilot_eval import sampling_sft_generation as sgen
 from pilot_eval import sampling_sft_sampler as sampler
 from pilot_eval import sampling_sft_training_data as td
 from pilot_eval import scoring
+from pilot_eval import sparse_rewiring_k2_plan as k2p
+from pilot_eval.training import file_hash
 from pilot_eval.workflow import _hash
 
 VAL128_K2_SCHEMA = 'sparse-rewiring-k2/val128-targets-v1'
+PROGRESS_SCHEMA = 'sparse-rewiring-k2/val128-progress-v1'
 QUALIFIED_RETRY_INDICES = (0, 1, 2, 3)
 QUALIFIED_RETRY_DATA_SEEDS = [sgen.retry_seed(i) for i in QUALIFIED_RETRY_INDICES]
 
@@ -63,6 +67,100 @@ DEFAULT_RECIPE: dict[str, Any] = {
     'scorer': 'flexible-v3',
     'accept_rule': 'strict-mean-response-logprob-improvement',
 }
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    os.replace(tmp, path)
+
+
+def _json_safe_rng(obj: Any) -> Any:
+    if isinstance(obj, tuple):
+        return [_json_safe_rng(v) for v in obj]
+    if isinstance(obj, list):
+        return [_json_safe_rng(v) for v in obj]
+    return obj
+
+
+def collect_provenance(
+    *,
+    model_dir: str | Path,
+    tokenizer_dir: str | Path,
+    val_items_path: str | Path,
+    bundle_path: str | Path | None = None,
+    pinned_base_model: Mapping[str, Any] | None = None,
+    engine_name: str = 'hf-fp32-ieee',
+    precision_readback: Mapping[str, Any] | None = None,
+    executable_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Verify pinned model, tokenizer, and frozen validation inputs and return bound provenance dict."""
+    mdir = Path(model_dir)
+    tdir = Path(tokenizer_dir)
+    vpath = Path(val_items_path)
+    if not mdir.is_dir():
+        raise ValueError(f'model_dir does not exist: {mdir}')
+    if not tdir.is_dir():
+        raise ValueError(f'tokenizer_dir does not exist: {tdir}')
+    if not vpath.is_file():
+        raise ValueError(f'val_items_path does not exist: {vpath}')
+
+    val_file_sha = file_hash(vpath)
+    bundle_sha = None
+
+    if bundle_path is not None:
+        bpath = Path(bundle_path)
+        bundle = json.loads(bpath.read_text(encoding='utf-8'))
+        bundle_sha = _hash(bundle)
+        cb.check_base_model(mdir, bundle, pinned=pinned_base_model)
+        model_hashes = dict(bundle['base_model']['file_sha256'])
+        # Verify every tokenizer file in bundle against tokenizer_dir
+        tok_hashes: dict[str, str] = {}
+        for entry in bundle.get('files', []):
+            role = str(entry.get('role', ''))
+            if role.startswith('tokenizer:'):
+                fname = role.split(':', 1)[1]
+                fp = tdir / fname
+                if not fp.is_file():
+                    raise ValueError(f'tokenizer_dir {tdir} missing bundled tokenizer file {fname}')
+                actual = file_hash(fp)
+                if actual != entry['sha256']:
+                    raise ValueError(f'tokenizer file {fp} SHA-256 {actual} != bundle {entry["sha256"]}')
+                tok_hashes[fname] = actual
+        # Verify val_items_path matches bundled validation:items SHA-256
+        val_entry = next((e for e in bundle.get('files', []) if e.get('role') == 'validation:items'), None)
+        if val_entry is None:
+            raise ValueError('bundle missing validation:items entry')
+        if val_file_sha != val_entry['sha256']:
+            raise ValueError(f'val_items {vpath} SHA-256 {val_file_sha} != bundle {val_entry["sha256"]}')
+    else:
+        pinned = dict(pinned_base_model) if pinned_base_model is not None else cb.pinned_identities(mdir)
+        model_hashes = {}
+        for fname, expected_sha in sorted(pinned['file_sha256'].items()):
+            fp = mdir / fname
+            if not fp.is_file():
+                raise ValueError(f'model_dir {mdir} missing pinned file {fname}')
+            actual = file_hash(fp)
+            if actual != expected_sha:
+                raise ValueError(f'model file {fp} SHA-256 {actual} != pinned {expected_sha}')
+            model_hashes[fname] = actual
+        tok_hashes = {}
+        for fname in cb.TOKENIZER_FILES:
+            fp = tdir / fname
+            if not fp.is_file():
+                raise ValueError(f'tokenizer_dir {tdir} missing required tokenizer file {fname}')
+            tok_hashes[fname] = file_hash(fp)
+
+    return {
+        'model_file_sha256': model_hashes,
+        'tokenizer_file_sha256': tok_hashes,
+        'val_items_sha256': val_file_sha,
+        'bundle_sha256': bundle_sha,
+        'engine': str(engine_name),
+        'precision_readback': dict(precision_readback) if precision_readback is not None else None,
+        'executable_sha256': executable_sha256 if executable_sha256 is not None else k2p.executable_code_sha256(),
+    }
 
 
 class HFK2Engine:
@@ -215,14 +313,12 @@ def generate_val128_k2_targets(
     max_retries: int = 3,
     data_seed: int = 0,
     block_limit: int = 32,
+    provenance: Mapping[str, Any] | None = None,
+    progress_path: str | Path | None = None,
+    stop_after_blocks: int | None = None,
 ) -> dict[str, Any]:
-    """Run Sampling SFT ``k = 2`` refinement using the established retry policy (1 initial + up to 3 retries).
-
-    Uses ``pilot_eval.sampling_sft_generation.retry_seed`` (seeds ``0, 1001, 1002, 1003`` when
-    ``data_seed == 0`` and ``max_retries == 3``). Retains only attempts that finish cleanly with a
-    single final ``eos_token_id`` and whose decoded response scores ``correct == True`` under
-    ``scoring.score_gsm8k_flexible_v3``.
-    """
+    """Run Sampling SFT ``k = 2`` refinement using the established retry policy (1 initial + up to 3 retries),
+    persisting durable per-block checkpoints when ``progress_path`` is set and preserving full evidence."""
     if not val_items:
         raise ValueError('val_items must be non-empty')
     if int(data_seed) != 0:
@@ -234,18 +330,83 @@ def generate_val128_k2_targets(
     if int(eos_token_id) not in stops:
         stops = [int(eos_token_id), *stops]
 
-    retry_indices = list(range(int(max_retries) + 1))   # 0 (initial) + 1..max_retries -> 4 total attempts
+    retry_indices = list(range(int(max_retries) + 1))
     retry_data_seeds = [sgen.retry_seed(i) for i in retry_indices]
+    ordered_ids = [str(item['id']) for item in val_items]
+    ids_digest = cat.ids_digest(ordered_ids)
+
+    recipe = dict(
+        DEFAULT_RECIPE,
+        k=int(k),
+        max_blocks=int(block_limit),
+        max_model_retries=int(max_retries),
+        total_attempts_max=len(retry_indices),
+        data_seed=int(data_seed),
+        retry_indices=retry_indices,
+        retry_data_seeds=retry_data_seeds,
+        eos_token_id=int(eos_token_id),
+        stop_token_ids=list(stops),
+    )
+    prov_dict = dict(provenance) if provenance is not None else None
+    manifest_sha = _hash({'ids_sha256': ids_digest, 'recipe': recipe, 'provenance': prov_dict})
 
     problems = _build_sampler_problems(val_items)
     by_pid = {p['problem_id']: p for p in problems}
     selected_by_id: dict[str, dict[str, Any]] = {}
     attempts_log: list[dict[str, Any]] = []
+    last_attempt_by_id: dict[str, dict[str, Any]] = {}
+    completed_retries: set[int] = set()
+    active_resume_retry: int | None = None
+    active_resume_state: dict[str, Any] | None = None
 
-    remaining = list(problems)
+    prog_p = Path(progress_path) if progress_path is not None else None
+    if prog_p is not None and prog_p.is_file():
+        saved_prog = json.loads(prog_p.read_text(encoding='utf-8'))
+        if saved_prog.get('schema') != PROGRESS_SCHEMA or saved_prog.get('manifest_sha256') != manifest_sha:
+            raise ValueError(f'{prog_p}: progress manifest mismatch; refuse resuming under changed inputs/recipe')
+        selected_by_id = dict(saved_prog.get('selected_by_id') or {})
+        attempts_log = list(saved_prog.get('attempts_log') or [])
+        last_attempt_by_id = dict(saved_prog.get('last_attempt_by_id') or {})
+        completed_retries = set(int(x) for x in (saved_prog.get('completed_retries') or []))
+        active_resume_retry = saved_prog.get('active_retry')
+        active_resume_state = saved_prog.get('active_resume')
+
+    def _save_progress(*, active_retry: int | None, active_resume: dict[str, Any] | None) -> None:
+        if prog_p is None:
+            return
+        _atomic_write_json(prog_p, {
+            'schema': PROGRESS_SCHEMA,
+            'manifest_sha256': manifest_sha,
+            'ids_sha256': ids_digest,
+            'completed_retries': sorted(completed_retries),
+            'selected_by_id': selected_by_id,
+            'attempts_log': attempts_log,
+            'last_attempt_by_id': last_attempt_by_id,
+            'active_retry': active_retry,
+            'active_resume': active_resume,
+        })
+
     for retry_idx, attempt_seed in zip(retry_indices, retry_data_seeds):
+        if retry_idx in completed_retries:
+            continue
+        remaining = [p for p in problems if p['source_id'] not in selected_by_id]
         if not remaining:
-            break
+            completed_retries.add(retry_idx)
+            _save_progress(active_retry=None, active_resume=None)
+            continue
+
+        resume_arg = active_resume_state if active_resume_retry == retry_idx else None
+
+        def _on_block(block_idx: int, states: dict[int, Any], rng_states: dict[int, Any], r_idx=retry_idx) -> None:
+            _save_progress(
+                active_retry=r_idx,
+                active_resume={
+                    'next_block': int(block_idx) + 1,
+                    'states': {str(pid): st for pid, st in states.items()},
+                    'rng': {str(pid): _json_safe_rng(st) for pid, st in rng_states.items()},
+                },
+            )
+
         result = sampler.sample(
             remaining,
             k=int(k),
@@ -253,9 +414,21 @@ def generate_val128_k2_targets(
             tokenizer=tokenizer,
             stops=stops,
             data_seed=attempt_seed,
+            on_block=_on_block if prog_p is not None else None,
             block_limit=int(block_limit),
+            resume=resume_arg,
+            stop_after_blocks=stop_after_blocks,
         )
-        next_remaining: list[dict[str, Any]] = []
+        if result['state'] == 'paused':
+            return {
+                'schema': PROGRESS_SCHEMA,
+                'state': 'paused',
+                'manifest_sha256': manifest_sha,
+                'progress_path': str(prog_p) if prog_p is not None else None,
+            }
+        if result['state'] == 'engine-error':
+            raise RuntimeError(f'sampling_sft_sampler stopped with engine-error on retry {retry_idx}')
+
         for trace in result['traces']:
             pid = int(trace['problem_id'])
             prob = by_pid[pid]
@@ -271,7 +444,7 @@ def generate_val128_k2_targets(
             verdict = scoring.score_gsm8k_flexible_v3(text, prob['gold'], capped=(end_state != 'finished'))
             accepted = bool(single_eos and verdict['correct'])
             attempt_id = f"{prob['source_id']}:k{k}:r{retry_idx}"
-            attempts_log.append({
+            attempt_record = {
                 'attempt_id': attempt_id,
                 'id': prob['source_id'],
                 'problem_id': pid,
@@ -281,9 +454,12 @@ def generate_val128_k2_targets(
                 'single_eos': single_eos,
                 'mean_logprob': trace['mean_logprob'],
                 'response_tokens': len(resp_ids),
+                'text': text,
                 'verdict': verdict,
                 'accepted': accepted,
-            })
+            }
+            attempts_log.append(attempt_record)
+            last_attempt_by_id[prob['source_id']] = attempt_record
             if accepted:
                 attempt = {
                     'attempt_id': attempt_id,
@@ -292,42 +468,50 @@ def generate_val128_k2_targets(
                 }
                 row = td.supervised_row(prob, attempt, int(eos_token_id))
                 row['gold'] = prob['gold']
+                row['text'] = text
                 row['mean_logprob'] = trace['mean_logprob']
                 row['retry'] = retry_idx
                 row['attempt_seed'] = attempt_seed
                 selected_by_id[prob['source_id']] = row
-            else:
-                next_remaining.append(prob)
-        remaining = next_remaining
 
-    ordered_ids = [str(item['id']) for item in val_items]
+        completed_retries.add(retry_idx)
+        active_resume_retry = None
+        active_resume_state = None
+        _save_progress(active_retry=None, active_resume=None)
+
     covered_items = [selected_by_id[qid] for qid in ordered_ids if qid in selected_by_id]
     covered_ids = [row['id'] for row in covered_items]
     uncovered_ids = [qid for qid in ordered_ids if qid not in selected_by_id]
+    uncovered_dispositions: dict[str, dict[str, Any]] = {}
+    for qid in uncovered_ids:
+        last = last_attempt_by_id.get(qid) or {}
+        uncovered_dispositions[qid] = {
+            'id': qid,
+            'attempts_count': sum(1 for a in attempts_log if a['id'] == qid),
+            'last_end_state': last.get('end_state'),
+            'last_single_eos': last.get('single_eos'),
+            'last_response_tokens': last.get('response_tokens'),
+            'last_mean_logprob': last.get('mean_logprob'),
+            'last_text': last.get('text'),
+            'last_verdict': last.get('verdict'),
+        }
 
-    recipe = dict(
-        DEFAULT_RECIPE,
-        k=int(k),
-        max_blocks=int(block_limit),
-        max_model_retries=int(max_retries),
-        total_attempts_max=len(retry_indices),
-        data_seed=int(data_seed),
-        retry_indices=retry_indices,
-        retry_data_seeds=retry_data_seeds,
-        eos_token_id=int(eos_token_id),
-        stop_token_ids=list(stops),
-    )
     return {
         'schema': VAL128_K2_SCHEMA,
-        'ids_sha256': cat.ids_digest(ordered_ids),
+        'state': 'completed',
+        'ids_sha256': ids_digest,
+        'manifest_sha256': manifest_sha,
         'recipe': recipe,
+        'provenance': prov_dict,
         'total_questions': len(ordered_ids),
         'covered_count': len(covered_items),
         'uncovered_count': len(uncovered_ids),
         'covered_ids': covered_ids,
         'uncovered_ids': uncovered_ids,
+        'uncovered_dispositions': uncovered_dispositions,
         'items_sha256': _hash(covered_items),
         'items': covered_items,
+        'attempts': attempts_log,
         'attempts_summary': {
             'total_attempts': len(attempts_log),
             'accepted': len(covered_items),
@@ -341,7 +525,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument('--val-items', required=True, help='path to frozen validation.items.json')
     parser.add_argument('--model-dir', required=True, help='local pinned Qwen2.5-1.5B-Instruct directory')
     parser.add_argument('--tokenizer-dir', default=None, help='tokenizer directory (default: --model-dir)')
+    parser.add_argument('--bundle', default=None, help='sealed input bundle.json to verify pinned model/tokenizer/val')
     parser.add_argument('--out', required=True, help='output path for sealed val128-k2-targets.json')
+    parser.add_argument('--progress', default=None, help='durable progress checkpoint path (default: <out>.progress.json)')
     parser.add_argument('--device', default='cuda', help='torch device (default: cuda)')
     parser.add_argument('--k', type=int, default=2)
     parser.add_argument('--max-retries', type=int, default=3)
@@ -364,7 +550,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     from pilot_eval import rewire_evaluation as reval
 
     nac.set_ieee_precision()
+    precision = dict(nac.precision_backends(), matmul_precision=nac._legacy_matmul_precision())
     tok_dir = args.tokenizer_dir or args.model_dir
+    provenance = collect_provenance(
+        model_dir=args.model_dir,
+        tokenizer_dir=tok_dir,
+        val_items_path=args.val_items,
+        bundle_path=args.bundle,
+        engine_name='hf-fp32-ieee',
+        precision_readback=precision,
+    )
+
     tokenizer = AutoTokenizer.from_pretrained(tok_dir, local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
         args.model_dir, local_files_only=True, torch_dtype=torch.float32, attn_implementation='eager'
@@ -387,6 +583,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         repetition_penalty=DEFAULT_RECIPE['repetition_penalty'],
         pad_token_id=tok_ids['pad_token_id'],
     )
+    out_path = Path(args.out)
+    prog_path = Path(args.progress) if args.progress else out_path.with_suffix(out_path.suffix + '.progress.json')
     payload = generate_val128_k2_targets(
         val_items,
         engine=engine,
@@ -397,10 +595,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_retries=args.max_retries,
         data_seed=args.data_seed,
         block_limit=args.block_limit,
+        provenance=provenance,
+        progress_path=prog_path,
     )
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    _atomic_write_json(out_path, payload)
+    if prog_path.exists():
+        prog_path.unlink()
     print(json.dumps({
         'out': str(out_path),
         'ids_sha256': payload['ids_sha256'],

@@ -56,6 +56,7 @@ from pilot_eval import sampling_sft_sampler as sampler
 from pilot_eval import sparse_rewiring_k2_plan as k2p
 from pilot_eval.attribution_chain import LaunchRefused
 from pilot_eval.training import file_hash
+import extract_survivor_shifts as ess
 import generate_val128_k2_targets as valgen
 
 FIXTURE_CONFIG = Path(__file__).resolve().parent / 'fixtures' / 'rewire' / 'config.json'
@@ -231,16 +232,9 @@ def _world(root: Path):
         },
     }, indent=2), encoding='utf-8')
 
-    # 4 validation questions + sealed val128-k2-targets.json via Stage 1 generator
+    # 4 validation questions
     val = [_item(100 + i, [15, 16, 30 + i], [3, 4 + ((100 + i) % 10)]) for i in range(4)]
     val[-1] = _item(103, [15, 16, 40, 41, 42], [3, 7, 19], gold='#### 3')
-
-    spy_engine = _SpySamplerEngine(vocab, eos=EOS)
-    val_k2_payload = valgen.generate_val128_k2_targets(
-        val, engine=spy_engine, tokenizer=tok, eos_token_id=EOS, k=2, max_retries=3, data_seed=0, block_limit=4
-    )
-    val_k2_path = root / 'val128-k2-targets.json'
-    val_k2_path.write_text(json.dumps(val_k2_payload, indent=2), encoding='utf-8')
 
     files = {
         rb.ROLES['gold:sft-config']: {'training_items_path': rb.ROLES['gold:training-items']},
@@ -264,10 +258,42 @@ def _world(root: Path):
     bundle = cb.build(art, rb.default_entries(), model_dir=model_dir, pinned=pinned)
     bundle_path = root / 'bundle.json'
     bundle_path.write_text(json.dumps(bundle))
+
+    # Generate sealed val128-k2-targets.json WITH verified provenance & full max_blocks=32 recipe!
+    provenance = valgen.collect_provenance(
+        model_dir=model_dir,
+        tokenizer_dir=mdir,
+        val_items_path=art / rb.ROLES['validation:items'],
+        bundle_path=bundle_path,
+        pinned_base_model=pinned,
+        engine_name='spy-cpu-fixture',
+        precision_readback={'matmul_precision': 'highest'},
+    )
+    spy_engine = _SpySamplerEngine(vocab, eos=EOS)
+    val_k2_payload = valgen.generate_val128_k2_targets(
+        val,
+        engine=spy_engine,
+        tokenizer=tok,
+        eos_token_id=EOS,
+        stop_token_ids=[EOS],
+        k=2,
+        max_retries=3,
+        data_seed=0,
+        block_limit=32,
+        provenance=provenance,
+    )
+    val_k2_path = root / 'val128-k2-targets.json'
+    val_k2_path.write_text(json.dumps(val_k2_payload, indent=2), encoding='utf-8')
+
     k2_adapter_dir = art / k2_adapter_rel
     return dict(
         art=art,
+        mdir=mdir,
         model_dir=model_dir,
+        tok=tok,
+        vocab=vocab,
+        val=val,
+        provenance=provenance,
         bundle=bundle_path,
         val_k2_path=val_k2_path,
         val_k2_payload=val_k2_payload,
@@ -526,6 +552,51 @@ class TestRewireK2Launcher(unittest.TestCase):
         self.assertEqual(kw['top_p'], 1.0)
         self.assertEqual(kw['repetition_penalty'], 1.1)
         self.assertIsNone(kw['min_p'])
+        # Evidence preserved: decoded text, full attempts log, and terminal disposition for uncovered ID
+        self.assertIn('text', row0)
+        self.assertGreaterEqual(len(payload['attempts']), 6)
+        self.assertIn('gsm8k:train:103', payload['uncovered_dispositions'])
+        self.assertEqual(payload['uncovered_dispositions']['gsm8k:train:103']['attempts_count'], 4)
+
+        # P2 Stage 1 interruption & resume produces bit-for-bit identical targets and evidence!
+        prog_path = self.root / 'resume_test.progress.json'
+        paused = valgen.generate_val128_k2_targets(
+            self.w['val'],
+            engine=_SpySamplerEngine(self.w['vocab'], eos=EOS),
+            tokenizer=self.w['tok'],
+            eos_token_id=EOS,
+            stop_token_ids=[EOS],
+            k=2, max_retries=3, data_seed=0, block_limit=32,
+            provenance=self.w['provenance'],
+            progress_path=prog_path,
+            stop_after_blocks=1,
+        )
+        # Note: all mock items finish in 1 block on retry 0; still verify multi-retry resume via progress file
+        self.assertTrue(prog_path.is_file())
+        # Force a mid-run interruption right after retry 0 completes by truncating completed_retries to [0]
+        prog_data = json.loads(prog_path.read_text())
+        if prog_data['completed_retries'] == [0, 1, 2, 3]:
+            # Simulate interruption after retry 0
+            prog_data['completed_retries'] = [0]
+            prog_data['selected_by_id'] = {k: v for k, v in prog_data['selected_by_id'].items() if v['retry'] == 0}
+            prog_data['attempts_log'] = [a for a in prog_data['attempts_log'] if a['retry'] == 0]
+            prog_data['active_retry'] = None
+            prog_data['active_resume'] = None
+            prog_path.write_text(json.dumps(prog_data))
+        resumed = valgen.generate_val128_k2_targets(
+            self.w['val'],
+            engine=_SpySamplerEngine(self.w['vocab'], eos=EOS),
+            tokenizer=self.w['tok'],
+            eos_token_id=EOS,
+            stop_token_ids=[EOS],
+            k=2, max_retries=3, data_seed=0, block_limit=32,
+            provenance=self.w['provenance'],
+            progress_path=prog_path,
+        )
+        self.assertEqual(resumed['items_sha256'], payload['items_sha256'])
+        self.assertEqual(resumed['items'], payload['items'])
+        self.assertEqual(resumed['attempts'], payload['attempts'])
+        self.assertEqual(resumed['uncovered_dispositions'], payload['uncovered_dispositions'])
 
     def test_p1_1_strict_input_refusals_export_adapter_and_malformed_val_targets(self):
         rec = _record(self.root, self.w)
@@ -562,6 +633,21 @@ class TestRewireK2Launcher(unittest.TestCase):
         bad_rec['inputs']['val128_k2_targets'] = str(mal_path)
         with self.assertRaises(LaunchRefused):
             k2l.load_k2_inputs(bad_rec)
+        # 4b. Provenance & full recipe refusals: changed proposer model, max_blocks=1, wrong stop_token_ids!
+        for label, mutator in (
+            ('wrong_model', lambda d: d['provenance']['model_file_sha256'].update({'config.json': '0' * 64})),
+            ('block_limit_1', lambda d: d['recipe'].update({'max_blocks': 1})),
+            ('wrong_stops', lambda d: d['recipe'].update({'stop_token_ids': [EOS, 999]})),
+            ('wrong_accept_rule', lambda d: d['recipe'].update({'accept_rule': 'always-accept'})),
+        ):
+            mut = json.loads(self.w['val_k2_path'].read_text())
+            mutator(mut)
+            mp = self.root / f'bad_val_{label}.json'
+            mp.write_text(json.dumps(mut))
+            bad_rec = json.loads(json.dumps(rec))
+            bad_rec['inputs']['val128_k2_targets'] = str(mp)
+            with self.assertRaises(LaunchRefused, msg=f'should refuse {label}'):
+                k2l.load_k2_inputs(bad_rec)
         # 5. Wrong adapter weights OR wrong adapter config in production -> refused; both hashes bound in plan!
         prod_rec = dict(rec, mode='production')
         cohort = self.w['art'] / rb.ROLES['gold:evaluation-items']
@@ -721,6 +807,85 @@ class TestRewireK2Launcher(unittest.TestCase):
         )
         with self.assertRaises(LaunchRefused):
             self._chain(run_b_wrong_lam, local_name='local_bwrong')
+        # 5. Completed-arm activation shift exporter (P2 #6): real --arm-dir succeeds & rejects step-0!
+        fresh_base = Qwen2ForCausalLM.from_pretrained(self.w['model_dir'], torch_dtype=torch.float32)
+        mods_loaded, prov_loaded = ess._load_verified_final_checkpoint(
+            fresh_base, arm_dir=s42_dir, val_items_path=self.w['val_k2_path']
+        )
+        self.assertTrue(prov_loaded['verified'])
+        self.assertEqual(prov_loaded['final_step'], run_a['training']['steps'])
+        surv_loaded = ess._extract_survivors(mods_loaded)
+        self.assertEqual(len(surv_loaded), 3)
+        shifts_loaded = ess.measure_activation_shifts(
+            fresh_base, mods_loaded, surv_loaded, self.w['val_k2_payload']['items'], self.w['tok']
+        )
+        self.assertEqual(len(shifts_loaded), 3)
+        # Intermediate step-0 checkpoint MUST be rejected!
+        with self.assertRaises(ValueError):
+            ess._load_verified_final_checkpoint(
+                Qwen2ForCausalLM.from_pretrained(self.w['model_dir'], torch_dtype=torch.float32),
+                ckpt_dir=s42_dir / 'checkpoints' / 'checkpoint-0',
+            )
+
+        # 6. Wrong completed plan (l0_lambda=0.003, real seals, same 6 input digests) MUST be refused!
+        wrong_plan_rec = dict(_record(self.root, self.w, **{'label': 'rehearsal-k2-wronglam', 'objective.l0_lambda': 3.0e-3}),
+                              mode='production')
+        summary_wrong = self._chain(wrong_plan_rec, local_name='local_wronglam', stop_pod=False).run()
+        self.assertEqual(summary_wrong['state'], 'complete', summary_wrong.get('failures'))
+        wrong_s42_dir = self.root / 'local_wronglam' / rc.REWIRE_SUBTREE / 'runs' / wrong_plan_rec['arms'][s42_arm]['run_id']
+        _rewrite_final_survivor_count(wrong_s42_dir, 4)
+        with self.assertRaises(LaunchRefused):
+            self._chain(run_a, local_name='local_a43_wrongplan', only_arm=s43_arm, matched_s42_dir=wrong_s42_dir)
+
+        # 7. Substituted headroom seal (same 6 inputs, different sealed lambda) MUST be refused by Run B!
+        alt_headroom_dir = self.root / 'alt_headroom_summary'
+        alt_h = json.loads((ref_summary_dir / 'k2_headroom.json').read_text())
+        alt_h['ce_lora_k2'] = alt_h['ce_untuned_k2'] - 0.08
+        alt_h['lambda_scaled'] = k2p.compute_scaled_lambda(alt_h['ce_untuned_k2'], alt_h['ce_lora_k2'])['lambda_scaled']
+        au.seal_run(alt_headroom_dir, {'k2_headroom.json': alt_h, 'references.json': refs, 'prior_uses.json': []})
+        run_b_sub_h = dict(
+            _record(
+                self.root, self.w,
+                **{
+                    'label': 'rehearsal-k2-bsubh',
+                    'objective.lambda_regime': 'scaled',
+                    'objective.l0_lambda': float(alt_h['lambda_scaled']),
+                    'routing.gate_receipt': str(receipt3_path),
+                    'routing.headroom_summary': str(alt_headroom_dir),
+                },
+            ),
+            mode='production',
+        )
+        with self.assertRaises(LaunchRefused):
+            self._chain(run_b_sub_h, local_name='local_bsubh')
+
+        # 8. Authentic volume restore (arm & headroom moved to a clean restored path) STILL authorizes Run B!
+        restored_arm = self.root / 'restored_vol' / 'arm_s42'
+        restored_headroom = self.root / 'restored_vol' / 'headroom_summary'
+        shutil.copytree(s42_dir, restored_arm)
+        shutil.copytree(ref_summary_dir, restored_headroom)
+        # Remove loose training-complete.json & plan.json in restored_arm to prove arm_evidence restore works!
+        (restored_arm / rckpt.ARM_SEAL).unlink()
+        (restored_arm / 'plan.json').unlink()
+        run_b_restored = dict(
+            _record(
+                self.root, self.w,
+                **{
+                    'label': 'rehearsal-k2-brestored',
+                    'objective.lambda_regime': 'scaled',
+                    'objective.l0_lambda': float(headroom['lambda_scaled']),
+                    'routing.gate_receipt': str(receipt3_path),
+                    'routing.headroom_summary': str(restored_headroom),
+                },
+            ),
+            mode='production',
+        )
+        chain_b_restored = self._chain(
+            run_b_restored, local_name='local_brestored', matched_s42_dir=restored_arm, stop_pod=False
+        )
+        self.assertIn(f'train:{s42_arm}', chain_b_restored.stages)
+        self.assertIn(f'train:{s43_arm}', chain_b_restored.stages)
+
         # Run B with exact sealed lambda_scaled authorized and builds both seeds!
         run_b_ok = dict(
             _record(

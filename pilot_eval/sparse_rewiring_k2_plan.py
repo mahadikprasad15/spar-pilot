@@ -55,7 +55,10 @@ K2_EXPORT_FILES_REQUIRED = (
     'arms/k2/coverage.json',
 )
 
-# Executable sources bound into every K2 launch record (code identity + dirty-tree guard)
+# Directories containing all executable Python code bound into every K2 launch seal (P1 #2)
+EXECUTABLE_ROOTS = ('pilot_eval', 'scripts')
+
+# Kept for introspection/docs; actual hashing & dirty-tree checks cover ALL .py files under EXECUTABLE_ROOTS
 EXECUTABLE_SOURCES = (
     'pilot_eval/sparse_rewiring_k2_plan.py',
     'pilot_eval/rewire_k2_launch.py',
@@ -66,6 +69,9 @@ EXECUTABLE_SOURCES = (
     'pilot_eval/rewire_evaluation.py',
     'pilot_eval/rewire_module.py',
     'pilot_eval/hard_concrete.py',
+    'pilot_eval/sft_backend.py',
+    'pilot_eval/rewire_dynamics.py',
+    'pilot_eval/c_attribution_chain.py',
     'pilot_eval/sparse_rewiring_plan.py',
     'pilot_eval/rewire_bundle.py',
     'scripts/generate_val128_k2_targets.py',
@@ -163,34 +169,56 @@ PRODUCTION = {
     'data.gold_order_steps': 64,
     'training.steps': 1024, 'training.warmup_steps': 20, 'training.freeze_after_step': 960,
     'objective.run_b_trigger_below': RUN_B_SURVIVOR_THRESHOLD,
+    'optimizer.reads.betas': [0.9, 0.99], 'optimizer.reads.eps': 1.0e-8,
+    'optimizer.reads.weight_decay': 0.0, 'optimizer.reads.clip_norm': 1.0,
+    'optimizer.masks.lr': 0.1, 'optimizer.masks.betas': [0.9, 0.99],
+    'optimizer.masks.eps': 1.0e-8, 'optimizer.masks.weight_decay': 0.0,
+    'hard_concrete.beta': 2.0 / 3.0, 'hard_concrete.gamma': -0.1,
+    'hard_concrete.zeta': 1.1, 'hard_concrete.log_alpha_init': 1.0,
+    'seeds.data_order_base': 42, 'seeds.mask_noise_offset': 1000,
     'checkpoints': [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024],
     'cadences.step_metrics_every': 1, 'cadences.validation_ce_every': 16, 'cadences.gate_snapshot_every': 16,
+    'cadences.settle.first': 256, 'cadences.settle.every': 64,
+    'cadences.settle.jaccard_min': 0.99, 'cadences.settle.expected_change_max': 0.02,
+    'evaluation.validation.questions': 128,
     'evaluation.cohort150.steps': [64, 1024], 'evaluation.cohort150.role': 'evaluation-only',
-    'evaluation.cap': 1024, 'evaluation.eos_token_id': 151645,
+    'evaluation.cap': 1024, 'evaluation.eos_token_id': 151645, 'evaluation.batch_size': 16,
 }
 
 
 # --- executable code identity (P1 #2) ----------------------------------------------------------------
 
+def _discover_executable_files(repo_root: Path) -> list[str]:
+    """Return sorted relative paths of every Python source file under ``pilot_eval/`` and ``scripts/``."""
+    found: list[str] = []
+    for sub in EXECUTABLE_ROOTS:
+        d = repo_root / sub
+        if not d.is_dir():
+            continue
+        for p in sorted(d.rglob('*.py')):
+            if '__pycache__' in p.parts:
+                continue
+            found.append(p.relative_to(repo_root).as_posix())
+    if not found:
+        raise LaunchRefused(f'no executable Python sources found under {EXECUTABLE_ROOTS} in {repo_root}')
+    return sorted(set(found))
+
+
 def executable_source_hashes(repo_root: str | Path = REPO) -> dict[str, str]:
-    """Return SHA-256 of every K2 and shared rewiring executable source file."""
+    """Return SHA-256 of EVERY Python source file under ``pilot_eval/`` and ``scripts/``."""
     root = Path(repo_root)
-    hashes: dict[str, str] = {}
-    for rel in EXECUTABLE_SOURCES:
-        path = root / rel
-        if not path.is_file():
-            raise LaunchRefused(f'missing executable source file: {rel}')
-        hashes[rel] = file_hash(path)
-    return hashes
+    files = _discover_executable_files(root)
+    return {rel: file_hash(root / rel) for rel in files}
 
 
 def executable_code_sha256(repo_root: str | Path = REPO) -> str:
-    """Single canonical digest over all K2 + shared executable source files."""
+    """Single canonical digest over all executable Python sources under ``pilot_eval/`` and ``scripts/``."""
     return _hash(executable_source_hashes(repo_root))
 
 
 def verified_code_identity(repo_root: str | Path = REPO, *, require_clean: bool = True) -> dict[str, Any]:
-    """Return committed git HEAD and executable source digest; refuse dirty/untracked sources when required."""
+    """Return committed git HEAD and full executable-tree digest; refuse dirty/untracked sources under
+    ``pilot_eval/`` and ``scripts/`` while permitting unrelated local caches (e.g. ``notebooks/cache/``)."""
     root = Path(repo_root)
     head_proc = subprocess.run(
         ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=root, check=False
@@ -202,9 +230,8 @@ def verified_code_identity(repo_root: str | Path = REPO, *, require_clean: bool 
 
     if require_clean:
         dirty: list[str] = []
-        # Check tracked status (modified, staged, deleted, or untracked) for all executable sources
         st_proc = subprocess.run(
-            ['git', 'status', '--porcelain', '--untracked-files=all', '--', *EXECUTABLE_SOURCES],
+            ['git', 'status', '--porcelain', '--untracked-files=all', '--', *EXECUTABLE_ROOTS],
             capture_output=True, text=True, cwd=root, check=False,
         )
         if st_proc.returncode != 0:
@@ -212,8 +239,8 @@ def verified_code_identity(repo_root: str | Path = REPO, *, require_clean: bool 
         for line in st_proc.stdout.splitlines():
             if line.strip():
                 dirty.append(line.strip())
-        # Also verify every executable source is tracked in HEAD (not only untracked or staged)
-        for rel in EXECUTABLE_SOURCES:
+        # Verify every discovered executable source exists in HEAD with zero uncommitted drift
+        for rel in sources:
             in_head = subprocess.run(
                 ['git', 'cat-file', '-e', f'HEAD:{rel}'], capture_output=True, text=True, cwd=root, check=False
             )
@@ -221,8 +248,8 @@ def verified_code_identity(repo_root: str | Path = REPO, *, require_clean: bool 
                 dirty.append(f'not-in-HEAD:{rel}')
         if dirty:
             raise LaunchRefused(
-                'refusing launch/seal on uncommitted or modified executable sources; commit them cleanly first: '
-                + ', '.join(sorted(set(dirty))[:10])
+                'refusing launch/seal on uncommitted or modified executable sources under pilot_eval/ or scripts/; '
+                'commit them cleanly first: ' + ', '.join(sorted(set(dirty))[:10])
             )
     return {
         'code_commit': commit,
@@ -351,6 +378,10 @@ def _check_arms(record: dict[str, Any]) -> None:
         if arm['seed'] in seen_seeds:
             raise LaunchRefused('each arm needs its own distinct seed')
         seen_seeds.add(arm['seed'])
+    if record['mode'] == 'production' and sorted(seen_seeds) != [42, 43]:
+        raise LaunchRefused(
+            f'production K2-D2 requires exact two-seed set [42, 43], got {sorted(seen_seeds)}'
+        )
 
 
 def _check_shape(record: dict[str, Any]) -> None:

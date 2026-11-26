@@ -173,25 +173,47 @@ class TestSparseRewiringK2(unittest.TestCase):
             subprocess.run(['git', 'init', '-q'], cwd=repo, check=True)
             subprocess.run(['git', 'config', 'user.email', 'test@example.com'], cwd=repo, check=True)
             subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=repo, check=True)
-            for rel in k2p.EXECUTABLE_SOURCES:
+            all_files = list(k2p.EXECUTABLE_SOURCES) + ['pilot_eval/sft_backend.py', 'pilot_eval/rewire_dynamics.py']
+            for rel in all_files:
                 p = repo / rel
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(f'# {rel}\n', encoding='utf-8')
             # Commit all except the launcher (untracked launcher -> must refuse!)
-            tracked = [r for r in k2p.EXECUTABLE_SOURCES if r != 'pilot_eval/rewire_k2_launch.py']
+            tracked = [r for r in all_files if r != 'pilot_eval/rewire_k2_launch.py']
             subprocess.run(['git', 'add', *tracked], cwd=repo, check=True)
             subprocess.run(['git', 'commit', '-q', '-m', 'partial'], cwd=repo, check=True)
             with self.assertRaises(LaunchRefused):
                 k2p.verified_code_identity(repo, require_clean=True)
-            # Commit the launcher too -> clean tree succeeds
+            # Commit the launcher too -> clean tree succeeds, even with unrelated local cache file!
             subprocess.run(['git', 'add', 'pilot_eval/rewire_k2_launch.py'], cwd=repo, check=True)
             subprocess.run(['git', 'commit', '-q', '-m', 'complete'], cwd=repo, check=True)
+            (repo / 'notebooks' / 'cache').mkdir(parents=True)
+            (repo / 'notebooks' / 'cache' / 'local.pt').write_bytes(b'cache')
             ident = k2p.verified_code_identity(repo, require_clean=True)
             self.assertEqual(len(ident['code_commit']), 40)
-            # Modify a tracked shared dependency -> must refuse!
-            (repo / 'pilot_eval/rewire_chain.py').write_text('# modified\n', encoding='utf-8')
+            # Modify a shared runtime dependency (sft_backend.py) -> MUST refuse AND change executable_sha256!
+            (repo / 'pilot_eval/sft_backend.py').write_text('# changed completion_loss denominator\n', encoding='utf-8')
+            self.assertNotEqual(k2p.executable_code_sha256(repo), ident['executable_sha256'])
             with self.assertRaises(LaunchRefused):
                 k2p.verified_code_identity(repo, require_clean=True)
+
+    def test_p1_4_production_locks_preregistered_hyperparameters_and_exact_seeds(self):
+        """Production sealing refuses off-spec mask LR, data_order_base, or replication seed (e.g. 999)."""
+        bad_cases = [
+            {'optimizer.masks.lr': 0.01},
+            {'seeds.data_order_base': 999},
+            {'arms.sparse-k2-sft-r1-matched-s43.seed': 999},
+            {'hard_concrete.log_alpha_init': 2.5},
+            {'optimizer.reads.clip_norm': 5.0},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            td_p = Path(td)
+            for idx, overrides in enumerate(bad_cases):
+                rec = _signed_k2(**overrides)
+                draft = td_p / f'bad_prod_{idx}.yaml'
+                draft.write_text(yaml.safe_dump(rec, sort_keys=False))
+                with self.assertRaises(LaunchRefused, msg=f'should refuse {overrides}'):
+                    k2p.finalize_draft(draft, td_p / f'bad_{idx}.json', code_commit='abc123', pod_id='pod1', fill=FILL)
 
     def test_k2_scaled_lambda_requires_routing_and_run_b_trigger(self):
         cal = k2p.compute_scaled_lambda(ce_untuned_k2=0.3600, ce_lora_k2=0.3100)
@@ -353,13 +375,32 @@ class TestSparseRewiringK2(unittest.TestCase):
             l1_rec['activation_shift']['mean_delta'], float(gold_m[1]['survivor_mean'][0]), places=4
         )
 
-        # Unsealed checkpoint must be refused by _load_verified_final_checkpoint
+            # Unsealed checkpoint must be refused by _load_verified_final_checkpoint
         with tempfile.TemporaryDirectory() as td:
             bad_ckpt = Path(td) / 'unsealed'
             bad_ckpt.mkdir()
             with self.assertRaises(ValueError):
                 ess._load_verified_final_checkpoint(_ToyCausalLM(vocab=16, d=4, n=4, layers=2),
-                                                    ckpt_dir=bad_ckpt, rank=1, verify_seal=True)
+                                                    ckpt_dir=bad_ckpt, rank=1)
+
+    def test_p2_7_missing_nonfinal_lens_layer_and_rank_deficient_principal_angles(self):
+        """Reject missing non-final lens layers and verify rank-revealing SVD principal angles on duplicate rows."""
+        v = torch.tensor([1.0, 0.0, 0.0, 0.0])
+        # Final layer (27) uses identity cleanly; missing non-final layer (11) MUST raise ValueError
+        lenses = {'rlens': {0: torch.eye(4)}}
+        self.assertTrue(torch.equal(ddp.transport_vector(lenses, 'rlens', 27, v, final_layer=27), v))
+        self.assertTrue(torch.equal(ddp.transport_vector(lenses, 'logit_lens', 11, v, final_layer=27), v))
+        with self.assertRaises(ValueError):
+            ddp.transport_vector(lenses, 'rlens', 11, v, final_layer=27)
+
+        # Duplicate copies of two orthogonal vectors -> rank 1 vs rank 1 -> single angle of 90.0 deg!
+        A = torch.tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
+        B = torch.tensor([[0.0, 1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+        pa = bdr.compute_principal_angles(A, B)
+        self.assertEqual(pa['rank_a'], 1)
+        self.assertEqual(pa['rank_b'], 1)
+        self.assertEqual(pa['angles_deg'], [90.0])
+        self.assertEqual(pa['cosines'], [0.0])
 
     def test_p2_7_comparative_k2_html_report_for_two_survivors_and_gold_regression(self):
         """Exercise real HTML builder on a 2-survivor K2 fixture (no Gold rank fields) + Gold report regression."""

@@ -159,6 +159,63 @@ def _load_weights_stream_hf(tmp_dir: Path, needed_layers: list[int]):
     return norm_weight, W_U, downs, tok
 
 
+DEFAULT_FINAL_LAYER = 27
+
+
+def transport_vector(
+    lenses: dict[str, dict[int, torch.Tensor]],
+    lens_name: str,
+    layer: int,
+    vec: torch.Tensor,
+    *,
+    final_layer: int = DEFAULT_FINAL_LAYER,
+) -> torch.Tensor:
+    """Transport a frozen ``down_proj`` column ``vec`` through ``lens_name`` at ``layer``.
+
+    Identity is permitted ONLY for ``logit_lens`` or the final transformer layer (``layer == final_layer``).
+    Missing a fitted matrix for any non-final layer raises ``ValueError`` rather than silently falling back.
+    """
+    if lens_name == 'logit_lens' or int(layer) == int(final_layer):
+        return vec
+    layer_mats = lenses.get(lens_name) or {}
+    if int(layer) not in layer_mats:
+        raise ValueError(
+            f'fitted lens {lens_name!r} is missing non-final layer {layer} '
+            f'(only final layer {final_layer} uses identity)'
+        )
+    return layer_mats[int(layer)].float() @ vec
+
+
+def verify_lens_orientation(
+    lenses: dict[str, dict[int, torch.Tensor]],
+    raw_v: torch.Tensor,
+    layers: list[int],
+    *,
+    final_layer: int = DEFAULT_FINAL_LAYER,
+) -> dict[str, dict[str, float]]:
+    """Verify ``J @ v`` orientation against ``J.T @ v`` across fitted non-final layers."""
+    summary: dict[str, dict[str, float]] = {}
+    for lname, layer_mats in lenses.items():
+        cos_fwd, cos_rev = [], []
+        for i, L in enumerate(layers):
+            if L == final_layer or L not in layer_mats:
+                continue
+            v = raw_v[i].float()
+            J = layer_mats[L].float()
+            u_fwd = J @ v
+            u_rev = J.T @ v
+            vn = v.norm() + 1e-8
+            cos_fwd.append(float((u_fwd @ v) / ((u_fwd.norm() + 1e-8) * vn)))
+            cos_rev.append(float((u_rev @ v) / ((u_rev.norm() + 1e-8) * vn)))
+        summary[lname] = {
+            'n_checked': len(cos_fwd),
+            'mean_cos_J_v': round(float(np.mean(cos_fwd)), 4) if cos_fwd else 1.0,
+            'mean_cos_JT_v': round(float(np.mean(cos_rev)), 4) if cos_rev else 1.0,
+            'orientation': 'J @ v',
+        }
+    return summary
+
+
 def decode_survivors(
     survivors: list[dict[str, Any]],
     *,
@@ -166,6 +223,9 @@ def decode_survivors(
     lens_dir: str | Path | None = None,
     out_path: str | Path,
     top_k: int = 30,
+    final_layer: int = DEFAULT_FINAL_LAYER,
+    model_revision: str = '989aa7980e4cf806f80c7fef2b1adb7bc71aa306',
+    lens_revision: str = 'main',
     keep_tmp: bool = False,
 ) -> Path:
     """Extract frozen down_proj columns for ``survivors``, apply all 4 lenses, and save a compact .pt cache."""
@@ -218,11 +278,14 @@ def decode_survivors(
         logits_fp16 = {ln: torch.zeros(n, vocab_size, dtype=torch.float16) for ln in lens_names}
         top_k_records: dict[str, list[dict[str, Any]]] = {ln: [] for ln in lens_names}
 
+        orientation_check = verify_lens_orientation(
+            lenses, raw_v, [int(s['layer']) for s in survivors], final_layer=final_layer
+        )
         for i, s in enumerate(survivors):
-            L = s['layer']
+            L = int(s['layer'])
             v = raw_v[i]
             for ln in lens_names:
-                u = v if (ln == 'logit_lens' or L not in lenses[ln]) else (lenses[ln][L].float() @ v)
+                u = transport_vector(lenses, ln, L, v, final_layer=final_layer)
                 u_raw_norms[ln][i] = float(u.norm())
                 u_unit = u / (u.pow(2).mean().sqrt() + 1e-8)
                 transported_u[ln][i] = u_unit
@@ -242,7 +305,11 @@ def decode_survivors(
         out_p.parent.mkdir(parents=True, exist_ok=True)
         torch.save({
             'model_id': 'Qwen/Qwen2.5-1.5B-Instruct',
+            'model_revision': str(model_revision),
             'lens_repo': LENS_REPO,
+            'lens_revision': str(lens_revision),
+            'final_layer': int(final_layer),
+            'orientation_check': orientation_check,
             'survivors': survivors,
             'layer_norm_stats': layer_norm_stats,
             'lens_names': lens_names,

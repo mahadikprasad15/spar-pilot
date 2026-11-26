@@ -39,13 +39,29 @@ def _load_verified_final_checkpoint(
     arm_dir: Path | None = None,
     ckpt_dir: Path | None = None,
     rank: int | None = None,
-    verify_seal: bool = True,
+    val_items_path: Path | None = None,
+    allow_unverified_fixture: bool = False,
 ) -> tuple[list[rm.RewireMLP], dict[str, Any]]:
-    """Install ``RewireMLP`` and load a verified final checkpoint into ``model``."""
-    provenance: dict[str, Any] = {}
-    if arm_dir is not None:
-        from pilot_eval import rewire_chain as rc
+    """Install ``RewireMLP`` and load a verified completed-arm final checkpoint into ``model``.
 
+    Always requires a completed, sealed arm (``training-complete.json``, ``plan.json``,
+    ``rewire_checkpoint.verify_arm``) and refuses intermediate checkpoints (such as ``checkpoint-0``
+    or ``checkpoint-64``). ``allow_unverified_fixture=True`` is for toy-model unit tests only.
+    """
+    from pilot_eval import rewire_chain as rc
+    from pilot_eval.training import file_hash
+
+    if arm_dir is None and ckpt_dir is not None and not allow_unverified_fixture:
+        # Derive parent arm directory from <arm_dir>/checkpoints/checkpoint-<step> and enforce full arm completion
+        candidate_arm = ckpt_dir.parent.parent
+        if ckpt_dir.parent.name != 'checkpoints' or not (candidate_arm / rckpt.ARM_SEAL).is_file():
+            raise ValueError(
+                f'{ckpt_dir}: refusing checkpoint without verified completed parent arm '
+                f'(pass --arm-dir pointing to a completed arm with {rckpt.ARM_SEAL})'
+            )
+        arm_dir = candidate_arm
+
+    if arm_dir is not None:
         ev_dir = arm_dir / rc.ARM_EVIDENCE_DIR
         if (ev_dir / 'complete.json').is_file():
             rc.restore_arm_evidence(arm_dir)
@@ -62,10 +78,22 @@ def _load_verified_final_checkpoint(
             code_commit=arm_seal['code_commit'],
         )
         final_step = int(plan['steps'][-1]['step'])
-        ckpt_dir = rckpt.checkpoint_dir(arm_dir, final_step)
+        expected_ckpt_dir = rckpt.checkpoint_dir(arm_dir, final_step)
+        if ckpt_dir is not None and ckpt_dir.resolve() != expected_ckpt_dir.resolve():
+            raise ValueError(
+                f'{ckpt_dir}: refusing non-final checkpoint (completed arm final step is {final_step}: '
+                f'{expected_ckpt_dir})'
+            )
+        ckpt_dir = expected_ckpt_dir
+        if val_items_path is not None and val_items_path.is_file():
+            expected_val_sha = (plan.get('inputs') or {}).get('val128_k2_targets_sha256')
+            if expected_val_sha is not None and file_hash(val_items_path) != expected_val_sha:
+                raise ValueError(
+                    f'{val_items_path}: SHA-256 differs from arm plan val128_k2_targets_sha256 ({expected_val_sha})'
+                )
         rank = int(plan['rank'])
         mods = rm.install(model, rank=rank)
-        seal, _ = rckpt.load_into(
+        seal = rckpt.load_into(
             model,
             ckpt_dir,
             plan,
@@ -75,23 +103,20 @@ def _load_verified_final_checkpoint(
         rm.set_gate(model, None)
         provenance = {
             'verified': True,
-            'arm_dir': str(arm_dir),
-            'checkpoint_dir': str(ckpt_dir),
+            'arm_dir': str(arm_dir.resolve()),
+            'checkpoint_dir': str(ckpt_dir.resolve()),
             'final_step': final_step,
             'plan_sha256': plan['plan_sha256'],
+            'training_complete_sha256': file_hash(arm_seal_path),
             'checkpoint_sha256': seal['files'][rckpt.STATE_FILE],
+            'code_commit': arm_seal['code_commit'],
+            'val_items_sha256': file_hash(val_items_path) if (val_items_path and val_items_path.is_file()) else None,
             'rank': rank,
         }
         return mods, provenance
 
-    if ckpt_dir is None or rank is None:
-        raise ValueError('provide either --arm-dir or both --ckpt-dir and --rank')
-    if verify_seal:
-        seal_path = ckpt_dir / rckpt.SEAL_FILE
-        if not seal_path.is_file():
-            raise ValueError(f'{ckpt_dir}: missing {rckpt.SEAL_FILE}; pass --arm-dir for verified final checkpoint')
-        from pilot_eval import attribution_units as au
-        au.verify_run(ckpt_dir)
+    if not allow_unverified_fixture or ckpt_dir is None or rank is None:
+        raise ValueError('provide --arm-dir pointing to a verified completed arm')
     mods = rm.install(model, rank=int(rank))
     state = load_file(str(ckpt_dir / rckpt.STATE_FILE))
     missing, unexpected = model.load_state_dict(state, strict=False)
@@ -99,12 +124,7 @@ def _load_verified_final_checkpoint(
     if rewire_missing or unexpected:
         raise ValueError(f'checkpoint tensor mismatch: missing={rewire_missing}, unexpected={unexpected}')
     rm.set_gate(model, None)
-    provenance = {
-        'verified': bool(verify_seal),
-        'checkpoint_dir': str(ckpt_dir),
-        'rank': int(rank),
-    }
-    return mods, provenance
+    return mods, {'verified': False, 'checkpoint_dir': str(ckpt_dir), 'rank': int(rank)}
 
 
 def _extract_survivors(mods: list[rm.RewireMLP]) -> list[dict[str, Any]]:
@@ -320,8 +340,13 @@ def main(argv: list[str] | None = None) -> int:
         arm_dir=Path(args.arm_dir) if args.arm_dir else None,
         ckpt_dir=Path(args.ckpt_dir) if args.ckpt_dir else None,
         rank=args.rank,
-        verify_seal=True,
+        val_items_path=Path(args.val_items),
+        allow_unverified_fixture=False,
     )
+    from pilot_eval.training import file_hash
+    cfg_file = Path(args.model_dir) / 'config.json'
+    if cfg_file.is_file():
+        provenance['model_config_sha256'] = file_hash(cfg_file)
     model.to(args.device)
 
     survivors = _extract_survivors(mods)
