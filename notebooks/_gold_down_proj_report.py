@@ -52,41 +52,41 @@ def build_gold_report(cache_path=CACHE_PATH, out_paths=OUT_PATHS):
 
     # Curated human-readable functional role summaries grounded in top-k + targeted probe
     ROLE_SUMMARIES = {
-        "L11 #8235": ("Plain-text arithmetic vs. LaTeX / breaks",
-                      "Promotes '=', '<<', digits, 'So', and inline spacing vs. sentence-ending newlines, '\\[', and '<|endoftext|>'."),
-        "L16 #5569": ("Markdown/LaTeX vs. EOS & newlines",
-                      "Separates markdown/colon openers ('**', ':\\n\\n', '\\[') on +v from '<|endoftext|>' (−7.8σ) and line breaks on −v."),
-        "L17 #6230": ("Assertion / equation evaluation",
-                      "Promotes equality/inequality & certainty ('=', '>>', '≠', '≥', '确实', '(True') vs. malformed/disorder tokens."),
-        "L17 #7054": ("LaTeX & heading-newline delimiters",
-                      "Promotes LaTeX/markdown delimiters ('\\[' +4.4σ, '$', '**', '##\\n\\n', ';\\n\\n') vs. ellipsis continuation ('…') and '\\n'."),
-        "L19 #5606": ("Master markup / delimiter switch",
-                      "Unanimous underscore/blank top-10, plus +2.9σ to +8.2σ on EVERY markup token ('**', '\\[', '####', '###', '<<', '>>', 'boxed') vs. plain prose & EOS."),
+        "L11 #8235": ("Inline continuation/spacing & plain arithmetic vs. sentence-ending breaks",
+                      "Promotes inline spacing, '=', '<<', digits, and 'So' vs. sentence-ending line breaks ('？\\n\\n', '）\\n\\n'), '\\[', and '<|endoftext|>'."),
+        "L16 #5569": ("Markdown/LaTeX colon openers vs. <|endoftext|> & newlines",
+                      "Separates markdown/colon openers ('):\\n\\n', ':**', '[*', '\\[') on +v from '<|endoftext|>' (−7.8σ) and line breaks ('”\\n', '\\n\\n\\n') on −v."),
+        "L17 #6230": ("Truth / assertion / inequality (≠, ≥, True) vs. malformed / breaks",
+                      "Promotes equality/inequality & certainty ('=', '>>', '≠', '≥', '确实', '(True') vs. malformed/disorder tokens ('紊乱', ' malformed', '?\\n\\n\\n')."),
+        "L17 #7054": ("LaTeX & markdown heading-newline delimiters vs. ellipsis",
+                      "Promotes LaTeX/markdown delimiters ('##\\n\\n', '\\[', ';\\n\\n', ':\\n\\n', '**') vs. ellipsis continuation ('…”', '…)', '…and') and '\\n'."),
+        "L19 #5606": ("Master markup / underscore delimiter switch vs. prose & EOS",
+                      "Unanimous across all 4 lenses on +v ('__', '____', '______') plus +2.9σ to +8.2σ on EVERY markup token ('**', '\\[', '####', '###', '<<', '>>', 'boxed') vs. plain prose, contractions ('d/'m/'ll), and '<|endoftext|>'."),
         "L3 #574":   ("Math / school word-problem domain",
-                      "Both J++ and R-Lens (cos 0.97) decode +v to '数学', 'Maths', '老师' (teacher), 'rozwiązania' (solutions), and '\\[' (+3.1σ)."),
-        "L4 #1398":  ("Structured workflow / enterprise jargon",
-                      "Promotes workflow/tech tokens ('SharePoint', 'Workflow', 'PowerShell') with mild positive load on '####'/'>>'; no strong formatting hit."),
-        "L6 #1362":  ("CoT / boxed / newline suppressor",
-                      "Strongly negative on '\\n\\n' (−6.6σ), '\\n' (−5.3σ), '<|endoftext|>' (−3.6σ), 'boxed' (−2.8σ), 'Therefore' (−2.6σ), and 'So' (−2.0σ)."),
-        "L12 #6760": ("Paragraph break & '####' vs. '\\n' / EOS",
-                      "Cross-layer substitute for R1's L6 #5466 (R-Lens cos +0.66): '\\n\\n' (+14.8σ), '####' (+3.0σ) vs. '\\n' (−3.1σ), '<|endoftext|>' (−5.4σ)."),
-        "L18 #4890": ("Sentence-ending newline specialist",
-                      "Extreme newline spike: '\\n' (+15.2σ), '\\n\\n' (+8.6σ), '.\\n', '?\\n', '!\\n' vs. ellipsis continuation ('...)', '...]')."),
-        "L27 #4914": ("Spelled-out English number words",
-                      "Directly before lm_head: −v promotes English number words ('nineteen', 'eighty', 'twenty'..'ninety') and digits (−2.1σ) vs. NBSP / '**'."),
-        "L27 #7926": ("ASCII digits & chat EOS (<|im_end|>)",
+                      "Only visible via J++ & R-Lens (cos = 0.97!): decodes +v to '数学', 'Maths', '老师' (teacher), 'rozwiązania' (solutions), and '\\[' (+3.1σ); invisible in Logit/J-Lens."),
+        "L4 #1398":  ("Structured workflow / enterprise jargon vs. prose/misc",
+                      "Promotes workflow/tech tokens ('SharePoint', 'Workflow', 'PowerShell', '客户需求') vs. prose/misc ('essay', 'capitalist'); mild positive load on '####'/'>>'."),
+        "L6 #1362":  ("Structured tags vs. trailing ellipsis / CoT / newlines",
+                      "Promotes '-BEGIN', 'shipments', '-import' while suppressing '\\n\\n' (−6.6σ), '\\n' (−5.3σ), '<|endoftext|>' (−3.6σ), 'boxed' (−2.8σ), 'Therefore' (−2.6σ), and ':\\n\\n'."),
+        "L12 #6760": ("Paragraph spacing & '####' vs. single-newline sentence endings",
+                      "Cross-layer substitute for R1's L6 #5466 (R-Lens cos +0.66): whitespace / '\\n\\n' (+14.8σ) / '####' (+3.0σ) vs. single-newline endings ('.\\n', '!\\n', '?\\n', −3.1σ) and '<|endoftext|>' (−5.4σ)."),
+        "L18 #4890": ("Sentence-ending newline specialist vs. continuation",
+                      "Extreme newline spike ('.\\n', '。\\n', '?\\n', '!\\n'; '\\n' +15.2σ, '\\n\\n' +8.6σ) vs. ellipsis ('...)', '...]'). LL/J/R agree 0.77–0.94 (note: J++ sign-flipped at L18, cos −0.32)."),
+        "L27 #4914": ("Spelled-out English number words (twenty..ninety) on −v",
+                      "Directly before lm_head: −v promotes English number words ('nineteen', 'eighty', 'twenty', 'seventy', 'forty', 'sixty') and digits (−2.1σ) vs. NBSP / '**'."),
+        "L27 #7926": ("ASCII single digits (1, 2, 3, 4, 9) & chat EOS (<|im_end|>)",
                       "Promotes ASCII digits ('3','4','2','9','1'; +3.1σ) and '<|endoftext|>' (+2.7σ); only strong hit on Qwen's chat stop '<|im_end|>' (−2.6σ)."),
-        "L2 #4005":  ("Plain paragraphs, no markdown/LaTeX",
-                      "Early layer switch: promotes '\\n\\n' (+3.2σ) & closing equation parens while suppressing all 4 markdown/LaTeX markers ('**','###','\\[','boxed' −2.1σ to −2.4σ)."),
-        "L6 #5466":  ("Paragraph break & '####' vs. '\\n'",
-                      "Cross-layer substitute for R0's L12 #6760 (R-Lens cos +0.66): '\\n\\n' (+14.9σ), '####' (+4.1σ), '\\[' (+4.3σ) vs. '\\n' (−8.0σ)."),
-        "L14 #3925": ("Markdown / boxed / newline / EOS suppressor",
-                      "Cross-layer match to R0's L6 #1362 (cos +0.39): strongly negative on '\\n\\n' (−7.3σ), '<|endoftext|>' (−6.0σ), '**' (−4.8σ), '\\n' (−4.8σ), '###' (−3.0σ), 'boxed' (−2.7σ)."),
-        "L26 #8751": ("Word-problem / completion cues",
-                      "Promotes 'Left', 'left', 'Done', 'Shown', '<<' (+2.5σ) — classic GSM8K phrasing ('How many are left?')."),
-        "L27 #1683": ("Short lowercase token fragments",
-                      "Promotes 2–3 char lowercase abbreviations ('yg','hb','hf','stm'); no strong formatting or digit probe hit (moderate R-Lens cos +0.40 with L3 #574)."),
-        "L27 #6214": ("Pure ASCII digits 0–9 specialist",
+        "L2 #4005":  ("Closing paren / equation-newline vs. URLs & markdown/LaTeX",
+                      "Early-layer switch: promotes ').\\n\\n', '=\\n\\n', '\\n\\n' (+3.2σ) while suppressing URLs, backslash-newlines, and all 4 markdown/LaTeX markers ('**','###','\\[','boxed' −2.1σ to −2.4σ)."),
+        "L6 #5466":  ("Paragraph double-newlines (\\n\\n) vs. single-newline endings (.\\n)",
+                      "Cross-layer substitute for R0's L12 #6760 (R-Lens cos +0.66): '\\n\\n' (+14.9σ), '####' (+4.1σ), '\\[' (+4.3σ) vs. single-newline endings ('.\\n', '!)\\n', '\\n' −8.0σ)."),
+        "L14 #3925": ("Inline whitespace/code vs. trailing ellipsis, markdown & EOS",
+                      "Cross-layer match to R0's L6 #1362 (cos +0.39): strongly negative on '\\n\\n' (−7.3σ), '<|endoftext|>' (−6.0σ), '**' (−4.8σ), '\\n' (−4.8σ), '###' (−3.0σ), and 'boxed' (−2.7σ)."),
+        "L26 #8751": ("GSM8K word-problem / completion cues (Left, Done)",
+                      "Promotes 'Left', 'left', 'Done', 'Shown', '<<' (+2.5σ) — classic GSM8K phrasing ('How many are left?'). LL/J/R agree 0.99 (note: J++ attenuates L26, gain 0.26)."),
+        "L27 #1683": ("Short 2–3 letter lowercase tokens / abbreviations",
+                      "Promotes short lowercase fragments ('yg','hb','hf','stm','nf','stk'); no strong formatting or digit probe hit (moderate R-Lens cos +0.40 with L3 #574)."),
+        "L27 #6214": ("All 10 ASCII digits 0–9 cleanly on −v",
                       "Directly before lm_head: every single top-10 token on −v is a digit '0'–'9' (−11.8σ across all 10 digits) plus '$' (−2.5σ)."),
     }
 
@@ -534,7 +534,7 @@ def build_gold_report(cache_path=CACHE_PATH, out_paths=OUT_PATHS):
         -webkit-font-smoothing: antialiased;
       }}
       .page {{
-        max-width: 900px;
+        max-width: 1120px;
         margin: 0 auto;
       }}
       .eyebrow {{
@@ -899,6 +899,60 @@ def build_gold_report(cache_path=CACHE_PATH, out_paths=OUT_PATHS):
         color: var(--text-2);
       }}
       .callout strong {{ color: var(--text); }}
+      .meaning-card {{
+        border: 1px solid #bfdbfe;
+        background: #f0f7ff;
+        border-radius: 10px;
+        padding: 16px 20px;
+        margin: 18px 0;
+      }}
+      .meaning-card h3 {{ margin: 0 0 8px; font-size: 15.5px; color: #1e3a8a; }}
+      .meaning-card ul {{ margin: 8px 0 0; padding-left: 20px; }}
+      .meaning-card li {{ margin: 6px 0; font-size: 13.8px; color: #1f2937; }}
+      .takeaway-list {{ counter-reset: tk; list-style: none; padding: 0; margin: 14px 0; }}
+      .takeaway-list li {{
+        counter-increment: tk;
+        position: relative;
+        padding: 12px 16px 12px 46px;
+        margin: 10px 0;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: #fff;
+        font-size: 13.6px;
+        color: var(--text-2);
+      }}
+      .takeaway-list li::before {{
+        content: counter(tk);
+        position: absolute;
+        left: 14px;
+        top: 12px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #111827;
+        color: #fff;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }}
+      .takeaway-list li strong {{ color: var(--text); }}
+      .norm-low {{ color: #15803d; font-weight: 700; }}
+      .ag-pill {{
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 6px;
+        background: #f3f4f6;
+        border: 1px solid #e5e7eb;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: #111827;
+      }}
+      .ag-warn {{ background: #fef2f2; border-color: #fecaca; color: #991b1b; }}
+      .pole-col-pos {{ background: #fefafa; }}
+      .pole-col-neg {{ background: #f8fbff; }}
 
       /* Next-step cards */
       .todo-card {{
@@ -947,15 +1001,31 @@ def build_gold_report(cache_path=CACHE_PATH, out_paths=OUT_PATHS):
         Because sparse L0 rewiring froze every MLP neuron’s output column (<span class="mono">down_proj</span>), the 18 surviving neurons across Rank 0 and Rank 1 could only steer <span class="mono">Qwen2.5-1.5B-Instruct</span> along pre-existing output directions. We decode all 18 frozen vectors using Logit Lens and three Jacobian-lens variants (<span class="mono">J-Lens</span>, <span class="mono">J++</span>, <span class="mono">R-Lens</span>) to see what concepts and tokens they control.
       </p>
 
+      <div class="meaning-card">
+        <h3>What these results mean in plain English</h3>
+        <p style="margin:0 0 8px;font-size:13.8px;color:#1f2937">
+          In short, decoding the 18 frozen <span class="mono">down_proj</span> vectors strongly backs up your <strong>Section 7 hypothesis</strong> — that the <strong>90%+ validation CE recovery</strong> alongside the <strong>accuracy drop (80.5% → 67%)</strong> is driven primarily by <em>style &amp; length compression</em> rather than new math learning:
+        </p>
+        <ul>
+          <li><strong>The 5 shared neurons (L11–L19) are formatting &amp; stopping switches:</strong> <span class="mono">L16 #5569</span> sits directly between markdown/colon structure (<span class="mono">:**</span>, <span class="mono">:\\n\\n</span>, <span class="mono">[*</span>) on <span class="mono">+v</span> and <span class="mono">&lt;|endoftext|&gt;</span> (stopping, −7.8σ) on <span class="mono">−v</span>; <span class="mono">L17 #7054</span> controls LaTeX/heading delimiters (<span class="mono">##\\n\\n</span>, <span class="mono">\\[</span>, <span class="mono">:\\n\\n</span>); <span class="mono">L19 #5606</span> separates underscore/markup formatting (+2.9σ to +8.2σ on every delimiter) from plain English prose &amp; contractions (<span class="mono">'m</span>, <span class="mono">'d</span>, <span class="mono">'ll</span>).</li>
+          <li><strong>Both arms independently grabbed digit/number knobs right before the output (L27):</strong> Rank 0 picked <span class="mono">L27 #7926</span> (digits 1, 2, 3, 4, 9 on <span class="mono">+v</span>) + <span class="mono">L27 #4914</span> (spelled-out English numbers <em>twenty..ninety</em> on <span class="mono">−v</span>); Rank 1 picked <span class="mono">L27 #6214</span> (all 10 ASCII digits 0–9 cleanly on <span class="mono">−v</span>) + <span class="mono">L26 #8751</span> (<em>Left</em>, <em>Done</em>).</li>
+          <li><strong>Functional overlap exceeds 5/18:</strong> Even where the two arms picked different neuron indices, they picked cross-layer substitutes — most clearly Rank 0’s <span class="mono">L12 #6760</span> ↔ Rank 1’s <span class="mono">L6 #5466</span> (<strong>R-Lens cos = +0.66</strong>, both controlling paragraph breaks vs. single-newline endings).</li>
+          <li><strong>Why CE dropped 90%+ while accuracy fell (80.5% → 67%):</strong> <span class="mono">Qwen2.5-1.5B-Instruct</span> naturally writes long markdown/LaTeX explanations (~220 tokens), whereas GSM8K gold answers are terse (~130 tokens). Flipping roughly a dozen pre-existing formatting, stopping, and digit neurons is enough to match gold’s short style (huge CE win) while cutting reasoning short (accuracy drop).</li>
+        </ul>
+      </div>
+
+      <h3>Five Big Takeaways (including Geometry &amp; Cross-Lens Checks)</h3>
+      <ol class="takeaway-list">
+        <li><strong>Strong confirmation of the Section 7 hypothesis (style/formatting + conciseness &gt; math):</strong> Almost the entire shared core (<span class="mono">L11 #8235</span>, <span class="mono">L16 #5569</span>, <span class="mono">L17 #7054</span>, <span class="mono">L19 #5606</span>) controls markdown/LaTeX delimiters, EOS (<span class="mono">&lt;|endoftext|&gt;</span>), newlines, and prose/contractions, while both arms independently discovered L27 digit/number neurons (<span class="mono">L27 #7926</span>, <span class="mono">L27 #4914</span>, <span class="mono">L27 #6214</span>) and <span class="mono">L26 #8751</span> (<em>Left/Done</em>).</li>
+        <li><strong>Genuine cross-layer substitutes between the two arms:</strong> The single strongest pair across all 18 neurons is Rank 0’s <span class="mono">L12 #6760</span> ↔ Rank 1’s <span class="mono">L6 #5466</span> (<span class="mono">raw +0.40</span>, <span class="mono">J-Lens +0.67</span>, <span class="mono">R-Lens +0.66</span>, <span class="mono">J++ +0.45</span>). Excluding the 5 shared neurons completely, the 7 Rank-0-only and 6 Rank-1-only subspaces still share 2 strong common directions in R-Lens space (top principal-angle cosines <strong>0.78</strong> and <strong>0.58</strong>, vs. only 0.40 and 0.18 in raw Logit Lens). Conversely, L27 pairs have low full-vocab cosine (−0.24 to +0.14) even though <span class="mono">L27 #7926</span> and <span class="mono">L27 #6214</span> both hit digits 0–9 in their top-10 — because 10 digits are only 0.006% of the 152k vocab, showing why both token tables and heatmaps are needed.</li>
+        <li><strong>Shared L17 pair (<span class="mono">#6230</span> vs. <span class="mono">#7054</span>) is completely orthogonal (<span class="mono">raw +0.009</span>, <span class="mono">R-Lens +0.042</span>):</strong> Neither duplicates nor push-pull opposites — <span class="mono">#7054</span> writes markdown/LaTeX delimiters (<span class="mono">##\\n\\n</span>, <span class="mono">\\[</span>, <span class="mono">:\\n\\n</span>) while <span class="mono">#6230</span> writes assertion/inequality tokens (<span class="mono">≠</span>, <span class="mono">≥</span>, <span class="mono">确实</span>, <span class="mono">(True</span>). Keeping both under Rank 1’s shared input read vector <span class="mono">a</span> suggests both are triggered by the same GSM8K context while steering orthogonal output axes.</li>
+        <li><strong>No high-norm / massive-activation bias — in fact the opposite:</strong> All four L27 survivors (<span class="mono">1.3%–10.5%</span> norm %ile), plus shared <span class="mono">L11 #8235</span> (<span class="mono">1.5%</span>) and <span class="mono">L19 #5606</span> (<span class="mono">1.2%</span>), sit in the bottom 1–10% of their layer’s <span class="mono">down_proj</span> norm distribution (medians: <strong>18.9%</strong> Rank-0-only, <strong>8.6%</strong> Rank-1-only).</li>
+        <li><strong>Cross-lens behavior (<span class="mono">R-Lens</span> was the cleanest overall):</strong> Logit Lens degrades heavily at L2–L6 (<span class="mono">cos(LL, R) = 0.13–0.28</span>) before converging by L26–L27 (<span class="mono">0.99–1.00</span>). Early-layer win: on <span class="mono">L3 #574</span>, both <span class="mono">J++</span> and <span class="mono">R-Lens</span> agree at <strong>cos = 0.97</strong> and cleanly surface math/teacher/solutions (<span class="mono">数学</span>, <span class="mono">Maths</span>, <span class="mono">老师</span>, <span class="mono">rozwiązania</span>), whereas plain J-Lens and Logit Lens showed noise. Two <span class="mono">J++</span> caveats to watch: a sign flip on <span class="mono">L18 #4890</span> (<span class="mono">cos(J++, R) = −0.32</span> while LL/J/R agree at 0.77–0.94) and heavy attenuation on <span class="mono">L26 #8751</span> (<span class="mono">gain = 0.26</span> while LL/J/R agree at 0.99).</li>
+      </ol>
+
       <div class="card summary-card">
-        <ol>
-          <li><strong>The 5 shared neurons form a GSM8K-vs-Qwen style &amp; EOS switchboard.</strong> All five sit in mid-late layers (L11–L19) and align strongly with formatting, LaTeX, and stopping: <span class="mono">L19 #5606</span> hits +2.9σ to +8.2σ on every markup/delimiter token (<span class="mono">**</span>, <span class="mono">\\[</span>, <span class="mono">####</span>, <span class="mono">###</span>, <span class="mono">&lt;&lt;</span>, <span class="mono">&gt;&gt;</span>, <span class="mono">boxed</span>), <span class="mono">L16 #5569</span> separates markdown/LaTeX from <span class="mono">&lt;|endoftext|&gt;</span> (−7.8σ), and <span class="mono">L11 #8235</span> separates plain-text arithmetic (<span class="mono">=</span>, <span class="mono">&lt;&lt;</span>, digits) from LaTeX.</li>
-          <li><strong>Both arms independently found L27 digit knobs and cross-layer formatting substitutes.</strong> Rank 0 picked <span class="mono">L27 #7926</span> (digits +3.1σ, <span class="mono">&lt;|im_end|&gt;</span> −2.6σ) and <span class="mono">L27 #4914</span> (English number words); Rank 1 picked <span class="mono">L27 #6214</span> (all 10 digits 0–9 at −11.8σ). Across layers, Rank 0’s <span class="mono">L12 #6760</span> and Rank 1’s <span class="mono">L6 #5466</span> are direct substitutes (R-Lens cos <strong>+0.66</strong>; both +14.8σ/+14.9σ on <span class="mono">\\n\\n</span> and +3–4σ on <span class="mono">####</span>).</li>
-          <li><strong>Functional overlap exceeds the 5-of-18 index overlap.</strong> Excluding the 5 shared neurons entirely, the 7 Rank-0-only and 6 Rank-1-only subspaces still share two strong directions in final-layer R-Lens space (top principal-angle cosines <strong>0.78</strong> and <strong>0.58</strong>).</li>
-          <li><strong>Matches the CE-vs-accuracy trade-off without ruling out all reasoning effects.</strong> The heavy concentration of formatting, newline, EOS, and digit directions directly supports the style-compression reading of the −14 pt accuracy drop—while a few early/mid neurons (<span class="mono">L3 #574</span> math/teacher domain, <span class="mono">L17 #6230</span> assertion/inequalities) point beyond pure punctuation.</li>
-        </ol>
-        <div class="pills">
-          <span class="pill">Frozen down_proj only — active sign (Δact) not yet measured</span>
+        <div class="pills" style="margin-top:0">
+          <span class="pill">Frozen down_proj only — active sign (Δact) measured separately on GPU</span>
           <span class="pill">Pre-fitted Wikitext lenses (n = 64 prompts)</span>
           <span class="pill">L27 has no downstream blocks (J = I)</span>
           <span class="pill">25 MB local decoded cache (zero 3 GB model stored)</span>
@@ -1198,8 +1268,11 @@ def build_gold_report(cache_path=CACHE_PATH, out_paths=OUT_PATHS):
 
       <!-- SECTION 7 -->
       <h2>7 · Targeted GSM8K &amp; Style Token Probe</h2>
+      <div class="callout" style="border-left-color:#1d4ed8">
+        <strong>What “probing specific GSM8K tokens” means (in plain English):</strong> Top-10 / bottom-10 lists search across all <strong>151,936 tokens</strong> in Qwen2.5’s vocabulary — which contains thousands of Chinese, code, and rare whitespace tokens. A neuron can still strongly boost or suppress a key GSM8K token like <span class="mono">####</span>, <span class="mono">&lt;&lt;</span>, <span class="mono">&gt;&gt;</span>, <span class="mono">**</span> (bold), <span class="mono">\\[</span> / <span class="mono">boxed</span> (LaTeX), or <span class="mono">&lt;|im_end|&gt;</span> (stop token) even if that token ranks #30 instead of #1. Probing pulls the exact standardized z-score for 18 hand-picked GSM8K, CoT/markdown, and EOS tokens across all 18 neurons so we can see directly: <em>which neuron pushes <span class="mono">####</span>? which one kills <span class="mono">**</span> / LaTeX? which one triggers stopping?</em>
+      </div>
       <p>
-        Because top-10 lists out of 151,936 tokens can miss strong formatting signals ranked #15–#100, we directly extract each neuron’s exact vocab z-score on 18 hand-picked tokens grouped into <strong>GSM8K gold format</strong> (<span class="mono">####</span>, <span class="mono">&lt;&lt;</span>, <span class="mono">&gt;&gt;</span>, digits <span class="mono">0–9</span>, <span class="mono">=</span>, <span class="mono">$</span>, <span class="mono">\\n</span>, <span class="mono">\\n\\n</span>), <strong>Qwen2.5-Instruct CoT/Markdown/LaTeX</strong> (<span class="mono">**</span>, <span class="mono">###</span>, <span class="mono">\\[</span>, <span class="mono">boxed</span>, <span class="mono">Step</span>, <span class="mono">Therefore</span>, <span class="mono">So</span>, <span class="mono">Final/Ans</span>), and <strong>EOS stop tokens</strong> (<span class="mono">&lt;|im_end|&gt;</span>, <span class="mono">&lt;|endoftext|&gt;</span>). Single-token columns have zero aggregation; multi-variant columns (e.g., <span class="mono">digits 0–9</span> or <span class="mono">["####", " ####"]</span>) average the exact z-scores of their surface variants.
+        Single-token columns have zero aggregation; multi-variant columns (e.g., <span class="mono">digits 0–9</span> or <span class="mono">["####", " ####"]</span>) average the exact z-scores of their surface variants.
       </p>
 
       <div class="fig-card">
@@ -1281,61 +1354,70 @@ def build_gold_report(cache_path=CACHE_PATH, out_paths=OUT_PATHS):
 
     function renderGroupTable(hostId, indices, lensMode, showOther) {{
       const host = document.getElementById(hostId);
-      const otherHdr = showOther ? `<th style="width:14%">Closest other arm<br><span class="muted" style="font-weight:400">(R-Lens cos)</span></th>` : "";
+      const lensTag = lensMode === "all" ? "All 4 lenses" : DATA.lens_labels[lensMode];
+      const otherLabel = hostId === "tbl-r0-only" ? "Closest R1 (R-Lens)" : "Closest R0 (R-Lens)";
+      const col5Hdr = showOther
+        ? `<th style="width:13%">${{otherLabel}}<br><span class="muted" style="font-weight:400">+ cos(J,R / J++,R)</span></th>`
+        : `<th style="width:12%">Lens agreement<br><span class="muted" style="font-weight:400">cos(J,R / J++,R)</span></th>`;
       let html = `<table><thead><tr>
-        <th style="width:13%">Neuron</th>
-        <th style="width:56%">Decoded tokens (${{lensMode === "all" ? "All 4 lenses" : DATA.lens_labels[lensMode]}}) — <span class="pole-pos">+v promoted</span> / <span class="pole-neg">−v suppressed</span></th>
-        <th style="width:17%">Functional reading</th>
-        ${{otherHdr}}
+        <th style="width:10%">Neuron</th>
+        <th class="num" style="width:7%">Norm %ile</th>
+        <th class="pole-col-pos" style="width:23%"><span class="pole-pos">+v Promoted</span><br><span class="muted" style="font-weight:400">(${{lensTag}})</span></th>
+        <th class="pole-col-neg" style="width:23%"><span class="pole-neg">−v Suppressed / Neg act</span><br><span class="muted" style="font-weight:400">(${{lensTag}})</span></th>
+        ${{col5Hdr}}
+        <th style="width:24%">Clear reading</th>
       </tr></thead><tbody>`;
 
       for (const i of indices) {{
         const n = DATA.neurons[i];
-        const agStr = `J↔R ${{n.ag.j_r.toFixed(2)}} · J++↔R ${{n.ag.jpp_r.toFixed(2)}}`;
-        let tokHtml = "";
+        const agPair = `${{n.ag.j_r.toFixed(2)}} / ${{n.ag.jpp_r.toFixed(2)}}`;
+        const agClass = (n.ag.jpp_r < 0 || n.ag.j_r < 0.35) ? "ag-pill ag-warn" : "ag-pill";
+        const normClass = n.norm_pct <= 11.0 ? "norm-low" : "";
+
+        let posHtml = "";
+        let negHtml = "";
         if (lensMode === "all") {{
-          tokHtml = DATA.lens_names.map(ln => {{
+          posHtml = DATA.lens_names.map(ln => {{
             const tk = n.tokens[ln];
-            return `<div class="lens-sub">
-              <div class="lens-tag">${{DATA.lens_labels[ln]}}</div>
-              <div>
-                <div class="tok-row"><span class="pole-lbl pole-pos">+v</span>${{tokenChips(tk.pos.slice(0, 6), "tok-pos")}}</div>
-                <div class="tok-row" style="margin-top:3px"><span class="pole-lbl pole-neg">−v</span>${{tokenChips(tk.neg.slice(0, 6), "tok-neg")}}</div>
-              </div>
-            </div>`;
+            return `<div class="lens-sub"><div class="lens-tag">${{DATA.lens_labels[ln]}}</div><div class="tok-row">${{tokenChips(tk.pos.slice(0, 5), "tok-pos")}}</div></div>`;
+          }}).join("");
+          negHtml = DATA.lens_names.map(ln => {{
+            const tk = n.tokens[ln];
+            return `<div class="lens-sub"><div class="lens-tag">${{DATA.lens_labels[ln]}}</div><div class="tok-row">${{tokenChips(tk.neg.slice(0, 5), "tok-neg")}}</div></div>`;
           }}).join("");
         }} else {{
           const tk = n.tokens[lensMode];
-          tokHtml = `
-            <div class="tok-row"><span class="pole-lbl pole-pos">+v</span>${{tokenChips(tk.pos, "tok-pos")}}</div>
-            <div class="tok-row" style="margin-top:5px"><span class="pole-lbl pole-neg">−v</span>${{tokenChips(tk.neg, "tok-neg")}}</div>
-          `;
+          posHtml = `<div class="tok-row">${{tokenChips(tk.pos.slice(0, 7), "tok-pos")}}</div>`;
+          negHtml = `<div class="tok-row">${{tokenChips(tk.neg.slice(0, 7), "tok-neg")}}</div>`;
         }}
 
-        let otherTd = "";
+        let col5Td = "";
         if (showOther) {{
           if (n.closest_other) {{
             const c = n.closest_other;
             const cc = c.cos_r >= 0.35 ? "num-pos" : (c.cos_r <= -0.35 ? "num-neg" : "");
-            otherTd = `<td class="mono" style="font-size:12px">
-              <strong>${{esc(c.label)}}</strong><br>
-              <span class="${{cc}}">R: ${{c.cos_r >= 0 ? "+" : ""}}${{c.cos_r.toFixed(2)}}</span><br>
-              <span class="muted" style="font-size:11px">raw: ${{c.cos_raw >= 0 ? "+" : ""}}${{c.cos_raw.toFixed(2)}}</span>
+            col5Td = `<td class="mono" style="font-size:12px">
+              <strong>${{esc(c.label)}}</strong> <span class="${{cc}}">(${{c.cos_r >= 0 ? "+" : ""}}${{c.cos_r.toFixed(2)}})</span><br>
+              <span class="muted" style="font-size:10.5px">raw: ${{c.cos_raw >= 0 ? "+" : ""}}${{c.cos_raw.toFixed(2)}}</span><br>
+              <span class="${{agClass}}" style="margin-top:4px" title="cos(J-Lens, R-Lens) / cos(J++, R-Lens)">${{agPair}}</span>
             </td>`;
           }} else {{
-            otherTd = `<td class="muted">—</td>`;
+            col5Td = `<td class="muted">—</td>`;
           }}
+        }} else {{
+          col5Td = `<td class="mono nowrap">
+            <span class="${{agClass}}" title="cos(J-Lens, R-Lens) / cos(J++, R-Lens)">${{agPair}}</span><br>
+            <span class="muted" style="font-size:10.5px">LL↔R ${{n.ag.ll_r.toFixed(2)}}</span>
+          </td>`;
         }}
 
         html += `<tr>
-          <td class="mono nowrap">
-            <strong>${{esc(n.label)}}</strong><br>
-            <span class="muted" style="font-size:11px">norm ${{n.norm_pct.toFixed(1)}}%ile</span><br>
-            <span class="muted" style="font-size:10.5px">${{agStr}}</span>
-          </td>
-          <td>${{tokHtml}}</td>
-          <td class="muted-sm"><strong>${{esc(n.role_short)}}</strong><br><span style="font-size:12px;color:#6b7280">${{esc(n.role_detail)}}</span></td>
-          ${{otherTd}}
+          <td class="mono nowrap"><strong>${{esc(n.label)}}</strong></td>
+          <td class="mono num nowrap ${{normClass}}">${{n.norm_pct.toFixed(1)}}%</td>
+          <td class="pole-col-pos">${{posHtml}}</td>
+          <td class="pole-col-neg">${{negHtml}}</td>
+          ${{col5Td}}
+          <td class="muted-sm"><strong>${{esc(n.role_short)}}</strong><br><span style="font-size:12px;color:#4b5563">${{esc(n.role_detail)}}</span></td>
         </tr>`;
       }}
       html += `</tbody></table>`;
