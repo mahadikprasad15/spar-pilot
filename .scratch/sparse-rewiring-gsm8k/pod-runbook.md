@@ -192,3 +192,25 @@ git add catalog && git commit -m "Catalog: sparse rewiring production arms, resp
 `build` refuses any missing or hash-mismatched unit. It lists the ticket 10–13 analyses it did not find under
 `c-attribution/sparse-rewiring/analysis/` instead of inventing them; rerun `build` after they are sealed there.
 
+
+## 11. Analyses, tickets 10–13 (CPU Pod, from sl-0)
+
+One driver feeds the sealed production outputs to the ticket 11, 12 and 13 modules and seals each result under
+`c-attribution/sparse-rewiring/analysis/`. It needs no GPU and no model. A unit that is already sealed is kept;
+`--redo NAME` moves it aside and computes it again.
+
+```bash
+R=$VOL/c-attribution/sparse-rewiring-production
+$PY -m pilot_eval.rewire_analysis --root $R              # standalone x2 (12), rank comparison (11), figures (13)
+$PY -m pilot_eval.rewire_report build --root $R          # the report now lists them; send report.md back
+```
+
+Optional inputs:
+- `--gold-adapter DIR` (holds `adapter_model.safetensors`) adds the rank-1 shared-direction cosine against
+  gold's `lora_A`. Without it the unit records "not computed".
+- `--attribution-root DIR` (holds `c-attribution/aggregate/<arm>/neurons.npz` and `c-attribution/freeze/<arm>/`)
+  runs ticket 10 against `c_production_entries()` and adds the three-way overlap to the rank comparison. If the
+  rank comparison was sealed without it, add `--redo rank-comparison`.
+
+Checkpoint stability uses the 16-step gate snapshots at checkpoint steps; step 8 has no snapshot and is listed as
+`checkpoints_without_snapshot`.

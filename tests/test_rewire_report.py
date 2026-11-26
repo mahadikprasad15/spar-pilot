@@ -133,6 +133,36 @@ class TestRewireReport(unittest.TestCase):
                          sorted(f'activation_shift:{a}' for a in self.record['arms']))
         self.assertTrue(list((root / rc.REWIRE_SUBTREE).glob('report.superseded-*')))
 
+    def test_analysis_driver_seals_what_the_report_lists(self):
+        from pilot_eval import rewire_analysis as ra
+        root = self.root / 'analyses'
+        shutil.copytree(self.run_root, root)
+        done = ra.run(root)
+        arms = sorted(self.record['arms'])
+        self.assertEqual(sorted(done), sorted([f'standalone:{a}' for a in arms] + ['rank-comparison', 'dynamics',
+                                                                                 'attribution']))
+        self.assertTrue(done['attribution'].startswith('skipped'))
+        base = rr.paths(root)['analysis']
+        for arm in arms:
+            body = json.loads((base / f'standalone-{arm}' / 'standalone_analysis.json').read_text())
+            export = json.loads(next((rr.paths(root)['runs'] / self.record['arms'][arm]['run_id'] / 'masks')
+                                     .glob('step-3/3.json')).read_text())
+            self.assertEqual(body['selection']['survivor_count'], len(export['survivors']))
+            self.assertEqual(sorted(body['behaviour']['flips_val128_final']), ['gold-sft', 'untuned'])
+            self.assertEqual(body['behaviour']['cohort150']['3']['questions'], rb.COHORT150_SIZE)
+        comp = json.loads((base / 'rank-comparison' / 'rank_comparison.json').read_text())
+        self.assertEqual(sorted(comp['paired_accuracy']), ['cohort150_final', 'val128_final'])
+        self.assertEqual(comp['paired_accuracy']['cohort150_final']['questions'], rb.COHORT150_SIZE)
+        self.assertEqual(len(list((base / 'dynamics').glob('*.png'))), 3)
+        again = ra.run(root, only=('rank-comparison',))   # sealed units are kept, never rewritten
+        self.assertTrue(again['rank-comparison'].startswith('kept'))
+        report = rr.build(root)
+        self.assertIn('rank_comparison', report['analyses']['present'])
+        self.assertEqual(len(report['analyses']['present']['dynamics_figures']), 3)
+        self.assertNotIn('dynamics figures', report['analyses']['missing'])
+        ra.run(root, only=('rank-comparison',), redo=('rank-comparison',))
+        self.assertTrue(list(base.glob('rank-comparison.superseded-*')))
+
     def test_tampered_eval_unit_is_refused(self):
         arm = next(iter(self.record['arms']))
         unit = (self.run_root / rc.REWIRE_SUBTREE / 'runs' / self.record['arms'][arm]['run_id'] / 'eval' /
