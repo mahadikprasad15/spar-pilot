@@ -338,6 +338,83 @@ class TestRewireTrainingLoop(unittest.TestCase):
             self.assertEqual(res['base_sha256_before'], base_hash)
             self.assertEqual(res['base_sha256_after'], base_hash)
 
+    def test_p2_1_plan_optimizer_groups_distinct_cadences_and_gc_enforcement(self) -> None:
+        rows = _variable_length_rows()
+        batches = [[r['id'] for r in rows] for _ in range(4)]
+        plan = _tiny_plan(1, 3e-3, batches, warmup=2, freeze=3, checkpoints=[0, 3, 4])
+        # Use canonical optimizer block with distinct read vs mask hyperparameters + distinct cadences + runtime GC rule
+        plan.pop('read_lr')
+        plan['optimizer'] = {
+            'reads': {'lr': 3e-3, 'betas': [0.9, 0.99], 'eps': 1e-8, 'weight_decay': 0.0, 'clip_norm': 1.0},
+            'masks': {'lr': 0.1, 'betas': [0.85, 0.95], 'eps': 1e-7, 'weight_decay': 0.01, 'clip': 'none'},
+        }
+        plan['validation_steps'] = [1, 3]
+        plan['gate_snapshot_steps'] = [2, 4]
+        plan['settings']['hard_concrete'] = {'beta': 0.5, 'gamma': -0.15, 'zeta': 1.15, 'log_alpha_init': 1.0}
+        plan['settings']['runtime'] = {'gradient_checkpointing': 'non-reentrant'}
+        plan['plan_sha256'] = sp.plan_sha256(plan)
+
+        m = _tiny_qwen2(seed=51, rank=1)
+        base_hash = sb.frozen_weight_hash(m, trained=rm.is_rewire_parameter)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            # Refuses gradient_checkpointing=False on non-fixture run when plan requires non-reentrant
+            with self.assertRaises(ValueError) as ctx:
+                rt.train_rewire(
+                    m,
+                    rows,
+                    out / 'bad_gc',
+                    plan=plan,
+                    gradient_checkpointing=False,
+                    model_context_limit=64,
+                    pad_token_id=0,
+                    expected_base_sha256=base_hash,
+                    execution_kind='real-cuda',
+                )
+            self.assertIn('gradient_checkpointing', str(ctx.exception))
+
+            # Spy AdamW param groups and run with gradient_checkpointing=True
+            orig_adamw = torch.optim.AdamW
+            captured_groups: list[list[dict]] = []
+
+            def _spy_adamw(param_groups, *args, **kwargs):
+                captured_groups.append(list(param_groups))
+                return orig_adamw(param_groups, *args, **kwargs)
+
+            val_calls: list[int] = []
+
+            def _val_stub(model_arg: torch.nn.Module, step: int) -> dict:
+                val_calls.append(step)
+                return reval.evaluate_validation_ce(model_arg, rows[:2])
+
+            with mock.patch.object(torch.optim, 'AdamW', side_effect=_spy_adamw):
+                rt.train_rewire(
+                    m,
+                    rows,
+                    out / 'ok',
+                    plan=plan,
+                    gradient_checkpointing=True,
+                    model_context_limit=64,
+                    pad_token_id=0,
+                    expected_base_sha256=base_hash,
+                    execution_kind='real-cuda',
+                    val_ce_fn=_val_stub,
+                )
+            self.assertEqual(len(captured_groups), 1)
+            reads_g, masks_g = captured_groups[0]
+            self.assertEqual(reads_g['betas'], (0.9, 0.99))
+            self.assertEqual(reads_g['eps'], 1e-8)
+            self.assertEqual(reads_g['weight_decay'], 0.0)
+            self.assertEqual(masks_g['betas'], (0.85, 0.95))
+            self.assertEqual(masks_g['eps'], 1e-7)
+            self.assertEqual(masks_g['weight_decay'], 0.01)
+            # Distinct validation_steps vs gate_snapshot_steps honored
+            val_logged = [r['step'] for r in rd.read_jsonl(out / 'ok' / 'logs' / 'validation.jsonl')]
+            self.assertEqual(val_logged, [1, 3])
+            snaps = sorted(int(p.stem) for p in (out / 'ok' / 'masks' / 'trace').glob('*.npz'))
+            self.assertEqual(snaps, [2, 4])
+
 
 if __name__ == '__main__':
     unittest.main()

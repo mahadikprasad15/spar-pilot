@@ -165,13 +165,13 @@ class TestRewireEvaluation(unittest.TestCase):
                     )
                 self.assertEqual(au.verify_run(tmp_path / f'eval_r{rank}_0'), {'config.json', 'responses.jsonl', 'scores.json'})
 
-    def test_cohort150_restricted_to_64_and_final_and_prior_use_sealed(self) -> None:
+    def test_cohort150_restricted_to_final_and_prior_use_sealed(self) -> None:
         model = _tiny_qwen2(seed=33)
         questions = {'q0': {'prompt_ids': [5, 6, 7], 'gold': '42'}}
         decode = lambda ids: '#### 42'
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            for disallowed in (0, 16, 128, 960):
+            for disallowed in (0, 16, 64, 128, 960):
                 with self.assertRaises(ValueError):
                     reval.evaluate_greedy(
                         model,
@@ -190,9 +190,9 @@ class TestRewireEvaluation(unittest.TestCase):
                 model,
                 questions,
                 ['q0'],
-                tmp_path / 'ok_64',
+                tmp_path / 'ok_final',
                 arm='sparse-gold-sft-r1',
-                step=64,
+                step=reval.DEFAULT_FINAL_STEP,
                 cohort=reval.COHORT150_NAME,
                 decode=decode,
                 pad_token_id=0,
@@ -201,10 +201,10 @@ class TestRewireEvaluation(unittest.TestCase):
             )
             self.assertTrue(out['scores']['exploratory'])
             self.assertEqual(out['prior_use']['cohort'], reval.COHORT150_NAME)
-            self.assertEqual(out['prior_use']['step'], 64)
-            (tmp_path / 'ok_64' / 'responses.jsonl').write_text('{"tampered": true}\n')
+            self.assertEqual(out['prior_use']['step'], reval.DEFAULT_FINAL_STEP)
+            (tmp_path / 'ok_final' / 'responses.jsonl').write_text('{"tampered": true}\n')
             with self.assertRaises(ValueError):
-                reval.prior_use_from_sealed_eval(tmp_path / 'ok_64')
+                reval.prior_use_from_sealed_eval(tmp_path / 'ok_final')
 
     def test_unbound_checkpoint_refused_and_child_process_checks_env_and_runtime(self) -> None:
         plan = _tiny_plan(1)

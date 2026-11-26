@@ -139,12 +139,25 @@ def evaluate_validation_ce(
 
 # --- Greedy evaluation (validation or cohort150) ---------------------------------------------------
 
-def check_cohort_step_allowed(cohort: str, step: int, *, final_step: int = DEFAULT_FINAL_STEP) -> None:
-    """Enforce D12: cohort150 may only be evaluated at step 64 and the final step."""
-    if cohort == COHORT150_NAME and int(step) not in {64, int(final_step)}:
-        raise ValueError(
-            f'cohort150 evaluation is restricted to step 64 and final step ({final_step}) per D12; got step {step}'
-        )
+def check_cohort_step_allowed(
+    cohort: str,
+    step: int,
+    *,
+    final_step: int = DEFAULT_FINAL_STEP,
+    mode: str = 'production',
+) -> None:
+    """Enforce D12 & lesson 2026-11-13: cohort150 is forbidden in rehearsal/qualification, and in production it is
+    evaluated once, at the final step only (researcher, 2026-11-25: a step-64 deterministic evaluation of a sparse
+    arm equals the untuned model, since every gate is below the line then)."""
+    if cohort == COHORT150_NAME:
+        if mode != 'production':
+            raise ValueError(
+                f'cohort150 evaluation is forbidden in {mode!r} mode (D12 / lesson 2026-11-13: validation only)'
+            )
+        if int(step) != int(final_step):
+            raise ValueError(
+                f'cohort150 evaluation is restricted to the final step ({final_step}) per D12; got step {step}'
+            )
 
 
 def evaluate_greedy(
@@ -162,6 +175,7 @@ def evaluate_greedy(
     cap: int = cg.CAP,
     batch_size: int = 16,
     final_step: int = DEFAULT_FINAL_STEP,
+    mode: str = 'production',
     strict_eos: bool = False,
     checkpoint_meta: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -169,7 +183,7 @@ def evaluate_greedy(
     and return a verified summary + prior-use record."""
     if strict_eos and int(eos_token_id) != cg.EOS:
         raise ValueError(f'eos_token_id {eos_token_id} differs from pinned protocol EOS {cg.EOS}')
-    check_cohort_step_allowed(cohort, step, final_step=final_step)
+    check_cohort_step_allowed(cohort, step, final_step=final_step, mode=mode)
     ids = list(question_ids)
     plan = cg.batches(ids, int(batch_size))
 
@@ -351,6 +365,11 @@ def run_in_child_process(
         if not readback or problems:
             raise RuntimeError('child process precision check failed: ' + '; '.join(problems or ['empty readback']))
     res = envelope['result']
+    if require_ieee and isinstance(res, Mapping) and res.get('precision_readback') is not None:
+        # Read again after the work: a library call during the run must not have changed the precision.
+        late = _precision_problems(res['precision_readback'])
+        if late:
+            raise RuntimeError('child process precision changed during the run: ' + '; '.join(late))
     if expected_runtime_sha256 is not None:
         child_rt = res.get('runtime_sha256') if isinstance(res, Mapping) else None
         if child_rt != expected_runtime_sha256:
@@ -363,7 +382,7 @@ def run_in_child_process(
 def _gold_reference_child_worker(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Child-process entrypoint: build a ``TransformersBackend`` (sets IEEE), evaluate untuned (step 0)
     and ``gold-sft`` (step 64) on validation CE + greedy validation, and seal outputs."""
-    from pilot_eval import c_attribution_backend as cab
+    from pilot_eval.rewire_chain import RewireBackend
 
     record = payload['record']
     volume_root = payload['volume_root']
@@ -375,10 +394,9 @@ def _gold_reference_child_worker(payload: Mapping[str, Any]) -> dict[str, Any]:
     cap = int(payload['cap'])
     batch_size = int(payload['batch_size'])
 
-    adapted = dict(record)
-    if 'generation' not in adapted and 'evaluation' in adapted:
-        adapted['generation'] = {'eos_token_id': int(adapted['evaluation']['eos_token_id'])}
-    backend = cab.TransformersBackend(adapted, volume_root, device=device)
+    # The same backend class as the parent, so the runtime fingerprints compare like for like and ``load('gold-sft')``
+    # resolves the bundled gold adapter.
+    backend = RewireBackend(record, volume_root, device=device)
     probs = backend.precision_problems()
     if probs:
         raise RuntimeError('; '.join(probs))

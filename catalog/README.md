@@ -25,7 +25,8 @@ python -m pilot_eval.catalog find --arm online-grpo --include-replays
 
 `verify` checks file sha256, total and selected row counts, draws per question, question IDs against
 the cohort, per-row `adapter_sha256` against the arm checkpoint, checkpoint hashes and cohort ID
-digests. Entries at non-local locations are reported `NOT-LOCAL`, never as passing.
+digests. Entries at non-local locations are reported `NOT-LOCAL`, never as passing, unless that location is
+mounted and named with `--root` (for example `--root sl-0=/workspace/neuron-audit` on a Pod).
 `local-artifacts` defaults to `<catalog>/../artifacts`.
 
 ## Response-set entry

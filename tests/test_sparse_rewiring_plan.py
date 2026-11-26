@@ -11,7 +11,6 @@ from pilot_eval import sparse_rewiring_plan as sp
 from pilot_eval.attribution_chain import LaunchRefused
 
 DRAFT = Path(__file__).resolve().parents[1] / '.scratch/sparse-rewiring-gsm8k/launch-record-draft.yaml'
-UNSIGNED = ['D11']   # every other decision signed 2026-11-23
 FILL = {'inputs.artifact_root': '/w/inputs', 'inputs.bundle': '/w/b.json', 'inputs.model_dir': '/w/model',
         'inputs.work_dir': '/w'}
 
@@ -56,12 +55,22 @@ def _gold():
 
 # --- launch record -----------------------------------------------------------------------------------
 
-def test_draft_refused_until_every_proposed_decision_is_signed(tmp_path):
-    problems = sp.draft_problems(DRAFT)
-    assert sorted(p.split(' ')[0] for p in problems) == sorted(f'decisions.{d}' for d in UNSIGNED)
+def test_approved_draft_has_no_open_decisions_and_seals(tmp_path):
+    # Every decision is signed (D1's rank-0 LR on 2026-11-25); only the fill-ins (commit, Pod, paths) remain null.
+    assert sp.draft_problems(DRAFT) == []
+    assert sp.main(['check', str(DRAFT)]) == 0
+    path = sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
+    assert sp.load_launch_record(path, code_commit='c0ffee')['decisions']['D1'].endswith('supersedes the earlier 3e-5)')
+
+
+def test_a_proposed_decision_blocks_sealing(tmp_path):
+    record = _signed()
+    record['decisions']['D11'] = '[proposed] validation set'
+    draft = _write(tmp_path, record)
+    assert [p.split(' ')[0] for p in sp.draft_problems(draft)] == ['decisions.D11']
     with pytest.raises(LaunchRefused, match='unresolved'):
-        sp.finalize_draft(DRAFT, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
-    assert sp.main(['check', str(DRAFT)]) == 1
+        sp.finalize_draft(draft, tmp_path / 'r.json', code_commit='c0ffee', pod_id='pod1', fill=FILL)
+    assert sp.main(['check', str(draft)]) == 1
 
 
 def test_signed_draft_seals_and_loads(tmp_path):
@@ -110,6 +119,22 @@ def test_mistyped_yaml_value_is_refused(tmp_path, line, typo):
     ('hardware.gpu', 'L4', 'hardware'),
     ('evaluation.cohort150.steps', [64, 512, 1024], 'cohort150'),
     ('checkpoints', [0, 8, 16, 32, 64, 128, 256, 512, 960, 1024], 'checkpoints'),
+    # P2.1: optimizer, hard-concrete, and seed production locks (D2-D4, D10)
+    ('optimizer.masks.lr', 0.05, 'optimizer.masks.lr'),
+    ('optimizer.reads.betas', [0.9, 0.999], 'optimizer.reads.betas'),
+    ('optimizer.masks.betas', [0.9, 0.999], 'optimizer.masks.betas'),
+    ('optimizer.reads.eps', 1e-7, 'optimizer.reads.eps'),
+    ('optimizer.masks.eps', 1e-7, 'optimizer.masks.eps'),
+    ('optimizer.reads.weight_decay', 0.01, 'optimizer.reads.weight_decay'),
+    ('optimizer.masks.weight_decay', 0.01, 'optimizer.masks.weight_decay'),
+    ('optimizer.reads.clip_norm', 0.5, 'optimizer.reads.clip_norm'),
+    ('hard_concrete.beta', 0.5, 'hard_concrete.beta'),
+    ('hard_concrete.gamma', -0.2, 'hard_concrete.gamma'),
+    ('hard_concrete.zeta', 1.2, 'hard_concrete.zeta'),
+    ('hard_concrete.log_alpha_init', 0.0, 'hard_concrete.log_alpha_init'),
+    ('seeds.data_order_base', 99, 'seeds.data_order_base'),
+    ('seeds.read_init_base', 99, 'seeds.read_init_base'),
+    ('seeds.mask_noise', 7, 'seeds.mask_noise'),
 ])
 def test_production_holds_the_decided_values(dotted, value, match):
     with pytest.raises(LaunchRefused, match=match):
@@ -208,7 +233,7 @@ def test_plan_schedule_masks_and_cadences():
     assert plan['checkpoints'] == [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024]
     assert plan['validation_steps'] == list(range(16, 1025, 16)) and len(plan['validation_steps']) == 64
     assert plan['settle_steps'][0] == 256 and plan['settle_steps'][-1] == 960
-    assert plan['cohort150_steps'] == [64, 1024]
+    assert plan['cohort150_steps'] == [1024]
     assert plan['read_init_seeds'] == list(range(42, 70))
     assert plan['optimizer']['reads']['lr'] == 3e-3 and plan['optimizer']['masks']['lr'] == 0.1
 
@@ -229,7 +254,7 @@ def test_plan_round_trip_and_refusals(tmp_path):
     assert sp.load_plan(path, record, 'sparse-gold-sft-r1')['plan_sha256'] == plan['plan_sha256']
     with pytest.raises(LaunchRefused, match='another arm'):
         sp.load_plan(path, record, 'sparse-gold-sft-r0')
-    other = sp.validate(_record(**{'seeds.mask_noise': 7}), code_commit='c0ffee')
+    other = sp.validate(_record(mode='rehearsal', label='rehearsal-other', **{'seeds.mask_noise': 7}), code_commit='c0ffee')
     with pytest.raises(LaunchRefused, match='another arm or launch record'):
         sp.load_plan(path, other, 'sparse-gold-sft-r1')
     tampered = json.loads(path.read_text())

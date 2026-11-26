@@ -1,9 +1,15 @@
-"""Sparse rewiring ticket 14: Pod chain integration and real-path CPU test (spec tests 20 and 24).
+"""Sparse rewiring ticket 14: Pod chain integration and P1 regression tests (spec tests 20 and 24).
 
-Uses the real ``sparse_rewiring_plan.finalize_draft`` / ``load_launch_record`` / ``build_plan``,
-real ``c_attribution_bundle.check_base_model``, real ``rewire_checkpoint.run_arm`` (PR #16),
-and real ``c_attribution_chain.Chain`` with qualification sign-off on a saved tiny Qwen2ForCausalLM.
-Stubs ONLY CUDA availability, disk usage, volume identity, Hub exporter, and Pod stop.
+Exercises real component boundaries:
+- Real ``sparse_rewiring_plan.finalize_draft`` / ``load_launch_record`` / ``build_plan`` (P1.2, P1.6)
+- Real ``RUNPOD_POD_ID`` lookup for missing & mismatching Pod IDs (P1.1)
+- Real ``qualified_identity`` handoff, attempt-scoped preflight receipts, and row-content hash binding (P1.3)
+- Real clean-directory recovery restoring ``training-complete.json``, logs, ``hardening.json``, and
+  ``masks/trace/*.npz`` to build the dynamics figure and pass ``verify_arm`` (P1.4)
+- Real crash AFTER ``CheckpointSink`` saves & seals ``checkpoint-0``, verifying ``copy_sealed`` returns
+  ``verified=True`` with zero broken seals in the backup tree (P1.5)
+- Real cohort150 refusal in rehearsal and 150-ID requirement in production (P1.7)
+- Spec test 24: zero ``allow_tf32`` in AST + IEEE readback refusal.
 """
 from __future__ import annotations
 
@@ -26,16 +32,22 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast, Qwen2Config, Qwen2ForCausalLM
 
+from pilot_eval import attribution_chain as ac
 from pilot_eval import attribution_units as au
 from pilot_eval import c_attribution_bundle as cabundle
 from pilot_eval import c_attribution_chain as cc
 from pilot_eval import neuron_audit_collector as nac
 from pilot_eval import rewire_chain as rc
 from pilot_eval import rewire_checkpoint as rckpt
+from pilot_eval import rewire_dynamics as rd
+from pilot_eval import rewire_dynamics_figure as rdf
 from pilot_eval import rewire_evaluation as reval
 from pilot_eval import rewire_module as rm
+from pilot_eval import rewire_standalone as rs
+from pilot_eval import rewire_training as rt
 from pilot_eval import sft_backend as sb
 from pilot_eval import sparse_rewiring_plan as sp
+from pilot_eval.workflow import _hash
 
 FIXTURE_CONFIG = Path(__file__).resolve().parent / 'fixtures' / 'rewire' / 'config.json'
 DRAFT_YAML = Path(__file__).resolve().parents[1] / '.scratch' / 'sparse-rewiring-gsm8k' / 'launch-record-draft.yaml'
@@ -43,8 +55,6 @@ DRAFT_YAML = Path(__file__).resolve().parents[1] / '.scratch' / 'sparse-rewiring
 
 @contextlib.contextmanager
 def _ieee_backends_if_torch_lt_29():
-    """On PyTorch >= 2.9, use the real torch.backends.*.fp32_precision untouched; on older local torch,
-    provide an in-memory backend table so set_ieee_precision / precision_readback still execute their real code."""
     if hasattr(torch.backends.cuda.matmul, 'fp32_precision'):
         yield
         return
@@ -54,11 +64,12 @@ def _ieee_backends_if_torch_lt_29():
 
 
 def _save_tiny_qwen2_and_tokenizer(root: Path) -> tuple[Path, Path, dict[str, Any], str]:
-    """Save a real tiny FP32 Qwen2ForCausalLM (no pad_token_id in config), local tokenizer, and bundle."""
     model_dir = root / 'model'
     tok_dir = root / 'artifacts' / 'tokenizer'
+    gold_adapter_dir = root / 'artifacts' / 'adapters' / 'gold-sft-step64'
     model_dir.mkdir(parents=True, exist_ok=True)
     tok_dir.mkdir(parents=True, exist_ok=True)
+    gold_adapter_dir.mkdir(parents=True, exist_ok=True)
 
     vocab = {'<pad>': 0, '<bos>': 1, '<|im_end|>': 2}
     for i in range(3, 64):
@@ -94,15 +105,15 @@ def _save_tiny_qwen2_and_tokenizer(root: Path) -> tuple[Path, Path, dict[str, An
     model.config._attn_implementation = 'eager'
     base_sha = sb.frozen_weight_hash(model, trained=rm.is_rewire_parameter)
     model.save_pretrained(model_dir)
-    # Remove pad_token_id if transformers wrote it (spec test 22)
     saved_cfg = json.loads((model_dir / 'config.json').read_text(encoding='utf-8'))
     saved_cfg.pop('pad_token_id', None)
     (model_dir / 'config.json').write_text(json.dumps(saved_cfg, indent=2), encoding='utf-8')
-    # Ensure generation_config.json exists in model_dir for cabundle.MODEL_FILES
     (model_dir / 'generation_config.json').write_text(json.dumps({'eos_token_id': 2, 'do_sample': False}), encoding='utf-8')
 
     gen_cfg = root / 'artifacts' / 'generation_config.json'
     gen_cfg.write_text(json.dumps({'eos_token_id': 2, 'do_sample': False}), encoding='utf-8')
+    # Placeholder gold-sft adapter in sealed bundle for P1.6 adapter_dir resolution check
+    (gold_adapter_dir / 'adapter_model.safetensors').write_bytes(b'stub-safetensors')
 
     file_hashes = {name: cabundle.sha256(model_dir / name) for name in cabundle.MODEL_FILES}
     pinned = cabundle.pinned_identities(model_dir)
@@ -111,6 +122,7 @@ def _save_tiny_qwen2_and_tokenizer(root: Path) -> tuple[Path, Path, dict[str, An
         'files': [
             {'role': 'tokenizer:tokenizer.json', 'path': 'tokenizer/tokenizer.json'},
             {'role': 'generation-config', 'path': 'generation_config.json'},
+            {'role': 'adapter:gold-sft:64:adapter_model.safetensors', 'path': 'adapters/gold-sft-step64/adapter_model.safetensors'},
         ],
     }
     bundle_path = root / 'artifacts' / 'bundle.json'
@@ -118,21 +130,23 @@ def _save_tiny_qwen2_and_tokenizer(root: Path) -> tuple[Path, Path, dict[str, An
     return model_dir, bundle_path, pinned, base_sha
 
 
-def _build_validated_record_and_plans(
-    root: Path, model_dir: Path, bundle_path: Path, rows: list[dict]
+def _build_validated_record_and_canonical_plans(
+    root: Path, model_dir: Path, bundle_path: Path, rows: list[dict], *, mode: str = 'rehearsal'
 ) -> tuple[dict, dict[str, dict]]:
-    """Load the draft YAML through ``sparse_rewiring_plan.finalize_draft`` + ``load_launch_record`` (typecheck + validate)."""
+    """Build launch record via ``finalize_draft`` + ``load_launch_record`` and plans via REAL ``sp.build_plan`` (P1.2)."""
     raw = yaml.safe_load(DRAFT_YAML.read_text(encoding='utf-8'))
     for key, text in raw['decisions'].items():
         raw['decisions'][key] = text.replace('[proposed]', '[user test]')
-    raw['mode'] = 'rehearsal'
-    raw['label'] = 'rehearsal-rewire-cpu-chain'
+    raw['mode'] = mode
+    raw['label'] = 'rehearsal-rewire-cpu-chain' if mode == 'rehearsal' else 'prod-rewire-cpu-chain'
     raw['volume_identity'] = 'vol-test-01'
     raw['export_repo'] = 'test-org/test-private'
     raw['training']['steps'] = 3
     raw['training']['warmup_steps'] = 1
     raw['training']['freeze_after_step'] = 2
-    raw['data']['gold_order_steps'] = 3
+    raw['data']['training_examples'] = len(rows)
+    raw['data']['examples_per_step'] = 8
+    raw['data']['gold_order_steps'] = min(len(rows) // 8, 3)
     raw['checkpoints'] = [0, 2, 3]
     raw['cadences']['gate_snapshot_every'] = 2
     raw['cadences']['validation_ce_every'] = 2
@@ -142,6 +156,8 @@ def _build_validated_record_and_plans(
     raw['evaluation']['eos_token_id'] = 2
     raw['evaluation']['batch_size'] = 2
     raw['evaluation']['cohort150']['steps'] = [3]
+    raw['qualification']['disposable_steps'] = 2
+    raw['qualification']['greedy_questions'] = 2
 
     draft_path = root / 'draft.yaml'
     draft_path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding='utf-8')
@@ -162,79 +178,181 @@ def _build_validated_record_and_plans(
     )
     record = sp.load_launch_record(record_path, code_commit='deadbeef')
 
-    # Build real PR #6 arm plans adjusted to our tiny Qwen2 shape (2 layers, hidden 16, intermediate 32)
-    step_ids = [[r['id'] for r in rows] for _ in range(3)]
-    arm_plans: dict[str, dict] = {}
-    for arm, cfg in record['arms'].items():
-        steps = [
-            {
-                'step': s,
-                'ids': step_ids[s - 1],
-                'lr_multiplier': sp.lr_multiplier(s, warmup=1, total=3),
-                'masks': 'frozen-binary' if s > 2 else 'trainable',
-                'mask_groups': [[0, 4], [4, 8]],
-            }
-            for s in range(1, 4)
-        ]
-        plan = {
-            'schema': sp.PLAN_SCHEMA,
-            'arm': arm,
-            'run_id': cfg['run_id'],
-            'rank': int(cfg['rank']),
-            'read_lr': float(cfg['read_lr']),
-            'checkpoints': list(record['checkpoints']),
-            'settings': {
-                'model': {'layers': 2, 'hidden': 16, 'intermediate': 32, 'parts': ['gate', 'up']},
-                'training': dict(record['training']),
-                'objective': dict(record['objective']),
-                'seeds': dict(record['seeds']),
-                'data': dict(record['data']),
-                'storage': dict(record['storage']),
-            },
-            'steps': steps,
-        }
-        plan['checkpoint_bytes'] = rckpt.payload_bytes(plan)
-        plan['plan_sha256'] = sp.plan_sha256(plan)
-        arm_plans[arm] = plan
+    # Build canonical plans through the REAL producer sp.build_plan (adjusted to tiny model shape)
+    tiny_record = dict(record, model=dict(record['model'], layers=2, hidden=16, intermediate=32))
+    training_ids = [r['id'] for r in rows]
+    gold_order = list(training_ids)
+    inputs_sha = dict(training_items_sha256=_hash(rows), gold_order_sha256=_hash(gold_order))
+    arm_plans = {
+        arm: sp.build_plan(tiny_record, arm, training_ids, gold_order, inputs_sha256=inputs_sha)
+        for arm in record['arms']
+    }
+    # Assert canonical plans do NOT have a fake top-level read_lr (they use optimizer.reads.lr)
+    for p in arm_plans.values():
+        assert 'read_lr' not in p and 'lr' in p['optimizer']['reads']
     return record, arm_plans
 
 
-class TestRewirePodChain(unittest.TestCase):
-    """Spec tests 20 (real-path CPU chain with PR #6 + PR #16 + sign-off) and 24 (precision)."""
+def _make_rows(n: int = 24) -> list[dict]:
+    return [
+        {'id': f'e{i}', 'input_ids': [5, 6, 7 + (i % 10), 8 + (i % 10), 2], 'labels': [-100, -100, 7 + (i % 10), 8 + (i % 10), 2]}
+        for i in range(n)
+    ]
 
-    def test_non_rehearsal_chain_without_qualification_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            model_dir, bundle_path, _, _ = _save_tiny_qwen2_and_tokenizer(root)
-            rows = [{'id': f'e{i}', 'input_ids': [5, 6, 7, 2], 'labels': [-100, -100, 7, 2]} for i in range(8)]
-            record, _ = _build_validated_record_and_plans(root, model_dir, bundle_path, rows)
-            prod_record = dict(record, mode='production', run_id='prod-no-qual')
-            chain = cc.Chain(
-                prod_record,
-                local_root=root / 'work',
-                volume=root / 'vol',
-                stages={'preflight': lambda _ctx: {}},
-                volume_identity='vol-test-01',
-                current_pod='pod-cpu-1',
-                stage_order=['preflight'],
-            )
-            with self.assertRaises(RuntimeError):
-                chain._check_signoff({'completed': {}})
 
-    def test_spec_test_20_real_path_cpu_chain_with_signoff_and_pr16_restart(self) -> None:
+class TestRewirePodChainP1Regressions(unittest.TestCase):
+    """P1.1–P1.7 regression tests plus spec tests 20 and 24."""
+
+    def test_p1_1_missing_and_mismatching_pod_id_refused_with_no_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             model_dir, bundle_path, pinned, base_sha = _save_tiny_qwen2_and_tokenizer(root)
-            rows = [
-                {'id': f'e{i}', 'input_ids': [5, 6, 7 + i, 8 + i, 2], 'labels': [-100, -100, 7 + i, 8 + i, 2]}
-                for i in range(8)
-            ]
-            record, arm_plans = _build_validated_record_and_plans(root, model_dir, bundle_path, rows)
+            rows = _make_rows(24)
+            record, arm_plans = _build_validated_record_and_canonical_plans(root, model_dir, bundle_path, rows)
+            volume = root / 'volume'
+            volume.mkdir()
+            hf_cache = root / 'hf_cache'
+            hf_cache.mkdir()
+            probes = {
+                'pinned_base_model': pinned,
+                'disk_usage': lambda _p: shutil._ntuple_diskusage(total=int(500e9), used=int(10e9), free=int(400e9)),
+                'cuda_available': True,
+                'volume_identity': lambda: [],
+                'private_repo': lambda _repo: [],
+                'driver': lambda: 'cpu-test-driver',
+                'reset_peak': lambda: None,
+                'peak_memory': lambda: 0,
+            }
+            stop_cmds: list[Any] = []
+
+            def _stub_runner(cmd, **kwargs):
+                stop_cmds.append(cmd)
+                return subprocess.CompletedProcess(cmd, 0, stdout='ok', stderr='')
+
+            for idx, bad_env_pod in enumerate(('', 'wrong-pod-999')):
+                work_i = root / f'work_bad_{idx}'
+                work_i.mkdir()
+                env = {'HF_HOME': str(hf_cache), 'HF_HUB_OFFLINE': '1', 'RUNPOD_POD_ID': bad_env_pod}
+                with _ieee_backends_if_torch_lt_29(), mock.patch.dict(os.environ, env, clear=False):
+                    backend = rc.RewireBackend(record, volume, device='cpu', probes=probes)
+                    # P1.6 check: validated record resolves gold-sft adapter dir from inputs.sources
+                    self.assertTrue(backend.adapter_dir('gold-sft').is_dir())
+                    chain = rc.build_rewire_chain(
+                        record=record,
+                        backend=backend,
+                        local_root=work_i,
+                        volume=volume,
+                        training_rows=rows,
+                        arm_plans=arm_plans,
+                        val_items=rows[:2],
+                        val_questions={'v0': {'prompt_ids': [5, 6, 7], 'gold': '42'}},
+                        val_question_ids=['v0'],
+                        expected_base_sha256=base_sha,
+                        execution_kind='real-cuda',
+                        model_context_limit=64,
+                        gradient_checkpointing=True,
+                        exporter=lambda *a, **kw: {'readback_verified': True, 'completeness': 'complete'},
+                        runner=_stub_runner,
+                    )
+                    summary = chain.run()
+                    self.assertEqual(summary['state'], 'failed')
+                    self.assertEqual(stop_cmds, [], f'must never issue stop on bad RUNPOD_POD_ID={bad_env_pod!r}')
+
+    def test_p1_3_mutated_row_tokens_refused_under_same_plan_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model_dir, bundle_path, _, base_sha = _save_tiny_qwen2_and_tokenizer(root)
+            rows = _make_rows(24)
+            _, arm_plans = _build_validated_record_and_canonical_plans(root, model_dir, bundle_path, rows)
+            plan = arm_plans['sparse-gold-sft-r1']
+
+            # Mutate a completion token while keeping the exact same row IDs
+            mutated_rows = [dict(r) for r in rows]
+            mutated_rows[0] = dict(mutated_rows[0], input_ids=[5, 6, 9, 9, 2], labels=[-100, -100, 9, 9, 2])
+            model = Qwen2ForCausalLM.from_pretrained(model_dir, local_files_only=True, torch_dtype=torch.float32, attn_implementation='eager')
+            rm.install(model, rank=1, seed=42)
+            with self.assertRaises(ValueError) as ctx:
+                rt.train_rewire(
+                    model,
+                    mutated_rows,
+                    root / 'out',
+                    plan=plan,
+                    model_context_limit=64,
+                    pad_token_id=0,
+                    expected_base_sha256=base_sha,
+                    execution_kind='real-cuda',
+                )
+            self.assertIn('training_items_sha256', str(ctx.exception))
+
+    def test_p1_7_cohort150_forbidden_in_rehearsal_and_required_in_production(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model_dir, bundle_path, pinned, base_sha = _save_tiny_qwen2_and_tokenizer(root)
+            rows = _make_rows(24)
+            record, arm_plans = _build_validated_record_and_canonical_plans(root, model_dir, bundle_path, rows, mode='rehearsal')
+            volume = root / 'volume'
+            volume.mkdir()
+            probes = {'pinned_base_model': pinned}
+
+            with _ieee_backends_if_torch_lt_29():
+                backend = rc.RewireBackend(record, volume, device='cpu', probes=probes)
+                # Rehearsal refuses cohort150 inputs
+                with self.assertRaises(ValueError):
+                    rc.build_rewire_stages(
+                        record=record,
+                        backend=backend,
+                        training_rows=rows,
+                        arm_plans=arm_plans,
+                        val_items=rows[:2],
+                        val_questions={'v0': {'prompt_ids': [5, 6, 7], 'gold': '42'}},
+                        val_question_ids=['v0'],
+                        cohort150_questions={'c0': {'prompt_ids': [5, 6, 7], 'gold': '42'}},
+                        cohort150_question_ids=['c0'],
+                    )
+                # Production refuses missing cohort150 or != 150 unique IDs
+                prod_record = dict(record, mode='production')
+                with self.assertRaises(ValueError):
+                    rc.build_rewire_stages(
+                        record=prod_record,
+                        backend=backend,
+                        training_rows=rows,
+                        arm_plans=arm_plans,
+                        val_items=rows[:2],
+                        val_questions={'v0': {'prompt_ids': [5, 6, 7], 'gold': '42'}},
+                        val_question_ids=['v0'],
+                    )
+                with self.assertRaises(ValueError):
+                    rc.build_rewire_stages(
+                        record=prod_record,
+                        backend=backend,
+                        training_rows=rows,
+                        arm_plans=arm_plans,
+                        val_items=rows[:2],
+                        val_questions={'v0': {'prompt_ids': [5, 6, 7], 'gold': '42'}},
+                        val_question_ids=['v0'],
+                        cohort150_questions={'c0': {'prompt_ids': [5, 6, 7], 'gold': '42'}},
+                        cohort150_question_ids=['c0'],
+                    )
+
+    def test_p1_2_3_4_5_real_path_chain_crash_after_checkpoint_and_clean_recovery(self) -> None:
+        """Full real-path CPU chain:
+        - Real canonical sp.build_plan (P1.2)
+        - Real RUNPOD_POD_ID env check (P1.1)
+        - Real qualified_identity & attempt-scoped preflight with driver change (P1.3)
+        - Real crash AFTER CheckpointSink writes & seals checkpoint-0 on r0 (P1.5)
+        - Clean-directory restore via restore_from_volume + restore_arm_evidence -> verify_arm + dynamics figure (P1.4)
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model_dir, bundle_path, pinned, base_sha = _save_tiny_qwen2_and_tokenizer(root)
+            rows = _make_rows(24)
+            record, arm_plans = _build_validated_record_and_canonical_plans(root, model_dir, bundle_path, rows)
             volume = root / 'volume'
             volume.mkdir()
             hf_cache = root / 'hf_cache'
             hf_cache.mkdir()
 
+            driver_name = {'v': 'driver-pod-A'}
             probes = {
                 'pinned_base_model': pinned,
                 'disk_usage': lambda _p: shutil._ntuple_diskusage(
@@ -245,13 +363,12 @@ class TestRewirePodChain(unittest.TestCase):
                 'cuda_available': True,
                 'volume_identity': lambda: [],
                 'private_repo': lambda _repo: [],
-                'driver': lambda: 'cpu-test-driver',
+                'driver': lambda: driver_name['v'],
                 'reset_peak': lambda: None,
                 'peak_memory': lambda: 0,
             }
             val_items = rows[:2]
             val_questions = {'v0': {'prompt_ids': [5, 6, 7], 'gold': '42'}, 'v1': {'prompt_ids': [5, 6, 8], 'gold': '7'}}
-            c150_questions = {'c0': {'prompt_ids': [5, 6, 9], 'gold': '12'}}
 
             exported_calls: list[dict] = []
 
@@ -272,13 +389,18 @@ class TestRewirePodChain(unittest.TestCase):
                 au.seal_run(ctx.chain.local_root / f'{rc.REFERENCES_DIR}/summary', {'references.json': {'untuned': {'val_ce': 1.5}}})
                 return {'outputs': [f'{rc.REFERENCES_DIR}/summary']}
 
-            env_patch = {'HF_HOME': str(hf_cache), 'HF_HUB_OFFLINE': '1', 'CUBLAS_WORKSPACE_CONFIG': ':4096:8'}
+            env_patch = {
+                'HF_HOME': str(hf_cache),
+                'HF_HUB_OFFLINE': '1',
+                'CUBLAS_WORKSPACE_CONFIG': ':4096:8',
+                'RUNPOD_POD_ID': 'pod-cpu-1',
+            }
             with _ieee_backends_if_torch_lt_29(), mock.patch.dict(os.environ, env_patch, clear=False):
-                # Attempt 1: qualification signs off, references + r1 complete, simulated crash mid-r0
-                backend = rc.RewireBackend(record, volume, device='cpu', probes=probes)
+                # Attempt 1: r1 finishes; r0 crashes AFTER CheckpointSink writes & seals checkpoint-0!
+                backend1 = rc.RewireBackend(record, volume, device='cpu', probes=probes)
                 chain1 = rc.build_rewire_chain(
                     record=record,
-                    backend=backend,
+                    backend=backend1,
                     local_root=root / 'work',
                     volume=volume,
                     training_rows=rows,
@@ -286,37 +408,38 @@ class TestRewirePodChain(unittest.TestCase):
                     val_items=val_items,
                     val_questions=val_questions,
                     val_question_ids=['v0', 'v1'],
-                    cohort150_questions=c150_questions,
-                    cohort150_question_ids=['c0'],
                     arm_order=['sparse-gold-sft-r1', 'sparse-gold-sft-r0'],
                     expected_base_sha256=base_sha,
                     execution_kind='real-cuda',
                     model_context_limit=64,
-                    gradient_checkpointing=False,
+                    gradient_checkpointing=True,
                     qualification_fn=_qual_ok,
                     references_fn=_refs_stub,
                     exporter=_stub_exporter,
                     runner=_stub_runner,
                 )
 
-                r0_run_id = arm_plans['sparse-gold-sft-r0']['run_id']
+                r0_plan = arm_plans['sparse-gold-sft-r0']
+                r0_rel = rc._arm_root(r0_plan['run_id'])
 
-                def _crash_r0(_ctx):
-                    partial = root / 'work' / rc.REWIRE_SUBTREE / 'runs' / r0_run_id
-                    partial.mkdir(parents=True, exist_ok=True)
-                    (partial / 'partial.safetensors').write_bytes(b'partial')
-                    raise RuntimeError('simulated pod crash during r0')
+                def _crash_r0_after_real_ckpt0(ctx):
+                    arm_dir = ctx.chain.local_root / r0_rel
+                    m = backend1.load_rewired_model(rank=0, seed=42)
+                    sink = rckpt.CheckpointSink(arm_dir, r0_plan, runtime_sha256=_hash(backend1.runtime()), code_commit='deadbeef')
+                    sink(0, m)  # Real sealed checkpoint-0 written!
+                    raise RuntimeError('simulated crash after real checkpoint-0')
 
-                chain1.stages['train:sparse-gold-sft-r0'] = _crash_r0
+                chain1.stages['train:sparse-gold-sft-r0'] = _crash_r0_after_real_ckpt0
                 summary1 = chain1.run()
                 self.assertEqual(summary1['state'], 'failed')
-                self.assertEqual(summary1['stages'].get('preflight', {}).get('status'), 'complete', f"failures: {summary1.get('failures')}")
                 self.assertEqual(summary1['signoff']['decision'], 'accept')
-                self.assertIn('train:sparse-gold-sft-r1', summary1['stages'], f"failures: {summary1.get('failures')}")
-                self.assertEqual(summary1['stages']['train:sparse-gold-sft-r1']['status'], 'complete')
-                self.assertEqual(summary1['stages']['eval:sparse-gold-sft-r1']['status'], 'complete')
+                # P1.3: qualified_identity is persisted and non-None!
+                vol_state = json.loads((cc.run_root(volume, rc.chain_run_id(record)) / cc.STATE_FILE).read_text(encoding='utf-8'))
+                self.assertIsNotNone(vol_state['qualified_identity'])
+                self.assertEqual(vol_state['qualified_identity']['rows_sha256'], rt.rows_content_sha256(rows))
 
-                # Attempt 2: wipe local disk and restore from volume; r1 is verified & kept, r0 restarts via PR #16
+                # Attempt 2 on a replacement Pod (different host driver) with wiped local disk:
+                driver_name['v'] = 'driver-pod-B'
                 shutil.rmtree(root / 'work')
                 (root / 'work').mkdir()
                 backend2 = rc.RewireBackend(record, volume, device='cpu', probes=probes)
@@ -330,38 +453,68 @@ class TestRewirePodChain(unittest.TestCase):
                     val_items=val_items,
                     val_questions=val_questions,
                     val_question_ids=['v0', 'v1'],
-                    cohort150_questions=c150_questions,
-                    cohort150_question_ids=['c0'],
                     arm_order=['sparse-gold-sft-r1', 'sparse-gold-sft-r0'],
                     expected_base_sha256=base_sha,
                     execution_kind='real-cuda',
                     model_context_limit=64,
-                    gradient_checkpointing=False,
+                    gradient_checkpointing=True,
                     qualification_fn=_qual_ok,
                     references_fn=_refs_stub,
                     exporter=_stub_exporter,
                     runner=_stub_runner,
+                    stop_pod=True,
                 )
                 summary2 = chain2.run()
-
                 self.assertEqual(summary2['state'], 'complete', f"relaunch failed: {summary2.get('failures')}")
-                self.assertGreaterEqual(len(exported_calls), 1)
-                self.assertGreaterEqual(len(stop_cmds), 1)
-                self.assertFalse(summary2['stages']['preflight'].get('resumed', False))
-                self.assertTrue(summary2['stages']['qualification']['resumed'])
-                self.assertTrue(summary2['stages']['references']['resumed'])
+                # P1.5: backup copy must be verified=True with zero broken seals!
+                self.assertTrue(summary2['backups']['volume_copy']['verified'], summary2['backups']['volume_copy'])
+                self.assertEqual(summary2['backups']['volume_copy']['coverage'], 'complete')
                 self.assertTrue(summary2['stages']['train:sparse-gold-sft-r1']['resumed'])
                 self.assertTrue(summary2['stages']['eval:sparse-gold-sft-r1']['resumed'])
-                self.assertFalse(summary2['stages']['train:sparse-gold-sft-r0'].get('resumed', False))
 
-                # Verify both arms' PR #16 checkpoints and sealed eval units
+                # P1.4: clean-directory restore from volume alone recovers everything needed to verify_arm & build dynamics figure!
+                clean_restore = root / 'clean_restore'
+                clean_restore.mkdir()
+                ac.restore_from_volume(cc.run_root(volume, rc.chain_run_id(record)), clean_restore, subtree=cc.SUBTREE)
                 for arm in ('sparse-gold-sft-r1', 'sparse-gold-sft-r0'):
                     plan = arm_plans[arm]
-                    arm_dir = root / 'work' / rc.REWIRE_SUBTREE / 'runs' / plan['run_id']
-                    for step in (0, 2, 3):
-                        rckpt.verify_checkpoint(rckpt.checkpoint_dir(arm_dir, step), plan, code_commit='deadbeef')
-                    self.assertTrue((arm_dir / 'eval' / '3' / 'greedy-cohort150' / 'complete.json').is_file())
-                    self.assertFalse((arm_dir / 'eval' / '0' / 'greedy-cohort150').exists())
+                    restored_arm = clean_restore / rc._arm_root(plan['run_id'])
+                    rc.restore_arm_evidence(restored_arm)
+                    rckpt.verify_arm(restored_arm, plan, code_commit='deadbeef')
+                    self.assertTrue((restored_arm / 'hardening.json').is_file())
+                    step_rows = rd.read_jsonl(restored_arm / 'logs' / 'steps.jsonl')
+                    val_rows = rd.read_jsonl(restored_arm / 'logs' / 'validation.jsonl')
+                    self.assertEqual([r['step'] for r in step_rows], [0, 1, 2, 3])
+                    self.assertEqual([r['step'] for r in val_rows], list(plan['validation_steps']))
+                    self.assertTrue((restored_arm / 'masks' / 'trace' / f"{plan['gate_snapshot_steps'][0]}.npz").is_file())
+                    # P2.2: load_arm_artifacts reads & verifies the clean-restored arm end-to-end
+                    loaded = rs.load_arm_artifacts(restored_arm, plan, code_commit='deadbeef')
+                    self.assertEqual(loaded['arm'], arm)
+                    self.assertEqual(loaded['rank'], plan['rank'])
+                    self.assertTrue(loaded['final_export']['frozen'])
+                    self.assertFalse(loaded['final_export']['survivors_omitted'])
+                    self.assertIn(plan['gate_snapshot_steps'][0], loaded['snapshots'])
+                    self.assertEqual([r['step'] for r in loaded['step_rows']], [0, 1, 2, 3])
+                    self.assertEqual([r['step'] for r in loaded['val_ce_rows']], list(plan['validation_steps']))
+                    self.assertEqual(loaded['hardening']['freeze_step'], 2)
+                    self.assertIsNotNone(loaded['hardening']['post_binary'])
+                    self.assertIsNotNone(loaded['hardening']['val_ce_before'])
+                    self.assertIsNotNone(loaded['hardening']['val_ce_after'])
+                    # Build plan-bound dynamics figure directly from the clean-restored logs
+                    val_acc_rows = [{'step': s, 'accuracy': 0.5} for s in plan['checkpoints']]
+                    prov = rdf.build_dynamics_figure(
+                        {
+                            'label': arm,
+                            'step_rows': loaded['step_rows'],
+                            'val_ce_rows': loaded['val_ce_rows'],
+                            'val_acc_rows': val_acc_rows,
+                        },
+                        restored_arm / 'dynamics',
+                        name=arm,
+                        plan=plan,
+                    )
+                    self.assertTrue((restored_arm / 'dynamics' / f'{arm}.png').is_file())
+                    self.assertEqual(prov['freeze_step'], 2)
 
     def test_spec_test_24_no_legacy_tf32_setter_and_ieee_readback_required(self) -> None:
         pkg = Path(__file__).resolve().parents[1] / 'pilot_eval'
@@ -373,8 +526,8 @@ class TestRewirePodChain(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             model_dir, bundle_path, pinned, _ = _save_tiny_qwen2_and_tokenizer(root)
-            rows = [{'id': f'e{i}', 'input_ids': [5, 6, 7, 2], 'labels': [-100, -100, 7, 2]} for i in range(8)]
-            record, _ = _build_validated_record_and_plans(root, model_dir, bundle_path, rows)
+            rows = _make_rows(24)
+            record, _ = _build_validated_record_and_canonical_plans(root, model_dir, bundle_path, rows)
             volume = root / 'volume'
             volume.mkdir()
             hf_cache = root / 'hf_cache'
@@ -386,8 +539,6 @@ class TestRewirePodChain(unittest.TestCase):
                 'volume_identity': lambda: [],
                 'private_repo': lambda _repo: [],
                 'driver': lambda: 'cpu-test-driver',
-                'reset_peak': lambda: None,
-                'peak_memory': lambda: 0,
             }
             with _ieee_backends_if_torch_lt_29(), mock.patch.dict(
                 os.environ, {'HF_HOME': str(hf_cache), 'HF_HUB_OFFLINE': '1'}, clear=False

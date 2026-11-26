@@ -63,9 +63,14 @@ SCHEMA = {
     'evaluation': {'validation': {'questions': INT, 'ce_masks': TEXT, 'greedy_at': TEXT},
                    'cohort150': {'steps': [INT], 'role': TEXT},
                    'cap': INT, 'eos_token_id': INT, 'repetition_penalty': NUM, 'scorer': TEXT, 'batch_size': INT},
+    # GPU qualification (ticket 15, ``rewire_qualification``): the fixed tolerances of the automatic sign-off and
+    # the size of the disposable few-step run. Every mode carries them; nothing is chosen at run time.
+    'qualification': {'memory_fraction': NUM, 'disposable_steps': INT, 'greedy_questions': INT,
+                      'cached_vs_forced_rows': INT, 'cached_vs_forced_abs_max': NUM, 'recompute_rel_max': NUM},
     'decisions': {'*': TEXT},
     'inputs': {'artifact_root': TEXT, 'bundle': TEXT, 'model_dir': TEXT, 'work_dir': TEXT,
-               'gold_plan': TEXT, 'gold_order': TEXT},
+               'gold_plan': TEXT, 'gold_order': TEXT,
+               'sources': {'gold-sft': {'adapter_role': TEXT}}},
 }
 USER_FILLED = ('code_commit', 'pod_id', 'inputs.artifact_root', 'inputs.bundle', 'inputs.model_dir',
                'inputs.work_dir')
@@ -78,15 +83,22 @@ REQUIRED_DECISIONS = ('D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10
 PRODUCTION = {
     'hardware': {'gpu': 'A100-80GB', 'count': 1},                                     # D18
     'arms': {'sparse-gold-sft-r1': {'rank': 1, 'read_lr': 3e-3},                      # D1, D13
-             'sparse-gold-sft-r0': {'rank': 0, 'read_lr': 3e-4}},
+             'sparse-gold-sft-r0': {'rank': 0, 'read_lr': 3e-4}},   # D1 (256-step probe, 2026-11-25)
     'data.examples_per_step': 8, 'data.microbatch': 1, 'data.examples_per_mask': 4,  # gold, D14
     'data.training_examples': 512, 'data.gold_order_steps': 64,                       # gold, D7
     'training.steps': 1024, 'training.warmup_steps': 20, 'training.freeze_after_step': 960,   # D5
     'objective.l0_lambda': 6e-4,                                                      # D6
-    'checkpoints': [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024],                # D5
+    'optimizer.reads.betas': [0.9, 0.99], 'optimizer.reads.eps': 1e-8,                # D3
+    'optimizer.reads.weight_decay': 0.0, 'optimizer.reads.clip_norm': 1.0,            # D3, D4
+    'optimizer.masks.lr': 0.1, 'optimizer.masks.betas': [0.9, 0.99],                  # D2, D3
+    'optimizer.masks.eps': 1e-8, 'optimizer.masks.weight_decay': 0.0,                 # D2, D3
+    'hard_concrete.beta': 2.0 / 3.0, 'hard_concrete.gamma': -0.1,                     # Louizos 2018 / D2
+    'hard_concrete.zeta': 1.1, 'hard_concrete.log_alpha_init': 1.0,                   # D2
+    'seeds.data_order_base': 42, 'seeds.read_init_base': 42, 'seeds.mask_noise': 1042,  # D10
+    'checkpoints': [0, 8, 16, 32, 64, 128, 256, 512, 768, 960, 1024],                 # D5
     'cadences.step_metrics_every': 1, 'cadences.validation_ce_every': 16,             # D20
     'cadences.gate_snapshot_every': 16,
-    'evaluation.cohort150.steps': [64, 1024], 'evaluation.cohort150.role': 'evaluation-only',   # D12
+    'evaluation.cohort150.steps': [1024], 'evaluation.cohort150.role': 'evaluation-only',   # D12
     'evaluation.cap': 1024, 'evaluation.eos_token_id': 151645,                        # protocol
 }
 # Fixed in every mode: what the method and the comparability contract are, not how long the run is.
@@ -280,6 +292,16 @@ def _check_shape(record):
     hc = record['hard_concrete']
     if not (hc['gamma'] < 0 < 1 < hc['zeta'] and hc['beta'] > 0):
         raise LaunchRefused('hard concrete needs gamma < 0, zeta > 1, beta > 0')
+    q = record['qualification']
+    if not 0 < q['memory_fraction'] <= 1:
+        raise LaunchRefused('qualification.memory_fraction must be in (0, 1]')
+    if not 0 < q['disposable_steps'] <= min(steps, data['gold_order_steps']):
+        raise LaunchRefused('qualification.disposable_steps must be in 1..gold_order_steps (it replays the first '
+                            "steps of gold's order)")
+    if not 1 <= q['greedy_questions'] <= record['evaluation']['validation']['questions']:
+        raise LaunchRefused('qualification.greedy_questions must be in 1..evaluation.validation.questions')
+    if q['cached_vs_forced_rows'] < 1 or q['cached_vs_forced_abs_max'] <= 0 or q['recompute_rel_max'] < 0:
+        raise LaunchRefused('qualification tolerances out of range')
 
 
 def load_launch_record(path, *, code_commit):
