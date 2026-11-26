@@ -1573,8 +1573,9 @@ def build_gold_report(cache_path=CACHE_PATH, out_paths=OUT_PATHS):
     </html>
     """
 
+    clean_html = HTML_DOC.rstrip() + "\n"
     for p in OUT_PATHS:
         os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
         with open(p, "w", encoding="utf-8") as f:
-            f.write(HTML_DOC)
+            f.write(clean_html)
     return [Path(p) for p in OUT_PATHS]

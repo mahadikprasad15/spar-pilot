@@ -13,8 +13,10 @@ Input --survivors-json format (list of dicts, or dict with key "survivors"):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import time
@@ -27,14 +29,31 @@ import torch
 from safetensors import safe_open
 from tokenizers import Tokenizer
 
+QWEN_MODEL_ID = 'Qwen/Qwen2.5-1.5B-Instruct'
+QWEN_MODEL_REVISION = '989aa7980e4cf806f80c7fef2b1adb7bc71aa306'
 LENS_REPO = 'neuronpedia/jacobian-lens'
 LENS_FILES = {
     'jlens': 'qwen2.5-1.5b-it/jlens/Salesforce-wikitext/Qwen2.5-1.5B-Instruct_jacobian_lens.pt',
     'jpp':   'qwen2.5-1.5b-it/jpp/Salesforce-wikitext/Qwen2.5-1.5B-Instruct_jpp_lens.pt',
     'rlens': 'qwen2.5-1.5b-it/rlens/Salesforce-wikitext/Qwen2.5-1.5B-Instruct_rlens.pt',
 }
-ST_URL = 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/model.safetensors'
+ST_URL = f'https://huggingface.co/{QWEN_MODEL_ID}/resolve/{QWEN_MODEL_REVISION}/model.safetensors'
 DTYPE_MAP = {'BF16': torch.bfloat16, 'F16': torch.float16, 'F32': torch.float32}
+_HEX_SHA_RE = re.compile(r'^[0-9a-f]{40}$')
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open('rb') as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _require_immutable_revision(rev: str, *, name: str) -> str:
+    if not isinstance(rev, str) or not _HEX_SHA_RE.fullmatch(rev):
+        raise ValueError(f'{name} must be an immutable 40-char hex commit SHA, got {rev!r}')
+    return rev
 
 PROBE_GROUPS = [
     ('####',          ['####', ' ####'],           'gsm8k'),
@@ -96,11 +115,12 @@ def compute_probe_zscores(logits_by_lens: dict[str, torch.Tensor], id_to_str: li
     return {'columns': [{'name': r['name'], 'cat': r['cat']} for r in resolved], 'zscores': mats}
 
 
-def _download_hf(repo: str, rel_path: str, dst: Path) -> Path:
+def _download_hf(repo: str, rel_path: str, dst: Path, *, revision: str) -> Path:
+    _require_immutable_revision(revision, name=f'{repo} revision')
     if dst.exists() and dst.stat().st_size > 0:
         return dst
     dst.parent.mkdir(parents=True, exist_ok=True)
-    url = f'https://huggingface.co/{repo}/resolve/main/{rel_path}'
+    url = f'https://huggingface.co/{repo}/resolve/{revision}/{rel_path}'
     req = urllib.request.Request(url, headers={'Accept-Encoding': 'identity', 'User-Agent': 'python-urllib'})
     part = dst.with_suffix(dst.suffix + '.part')
     with urllib.request.urlopen(req, timeout=300) as resp, open(part, 'wb') as out_f:
@@ -129,34 +149,46 @@ def _fetch_range(url: str, start: int, end: int) -> bytes:
 
 def _load_weights_local(model_dir: Path, needed_layers: list[int]):
     st_path = model_dir / 'model.safetensors'
+    tok_path = model_dir / 'tokenizer.json'
     with safe_open(str(st_path), framework='pt', device='cpu') as f:
         norm_weight = f.get_tensor('model.norm.weight').float()
         W_U = f.get_tensor('model.embed_tokens.weight').float()
         downs = {L: f.get_tensor(f'model.layers.{L}.mlp.down_proj.weight').float() for L in needed_layers}
-    tok = Tokenizer.from_file(str(model_dir / 'tokenizer.json'))
-    return norm_weight, W_U, downs, tok
-
-
-def _load_weights_stream_hf(tmp_dir: Path, needed_layers: list[int]):
-    tok_path = _download_hf('Qwen/Qwen2.5-1.5B-Instruct', 'tokenizer.json', tmp_dir / 'tokenizer.json')
     tok = Tokenizer.from_file(str(tok_path))
-    raw = _fetch_range(ST_URL, 0, 65535)
+    hashes = {
+        'model.safetensors': _sha256_file(st_path),
+        'tokenizer.json': _sha256_file(tok_path),
+    }
+    return norm_weight, W_U, downs, tok, hashes
+
+
+def _load_weights_stream_hf(tmp_dir: Path, needed_layers: list[int], *, model_revision: str = QWEN_MODEL_REVISION):
+    _require_immutable_revision(model_revision, name='model_revision')
+    st_url = f'https://huggingface.co/{QWEN_MODEL_ID}/resolve/{model_revision}/model.safetensors'
+    tok_path = _download_hf(QWEN_MODEL_ID, 'tokenizer.json', tmp_dir / 'tokenizer.json', revision=model_revision)
+    tok = Tokenizer.from_file(str(tok_path))
+    raw = _fetch_range(st_url, 0, 65535)
     header_len = struct.unpack('<Q', raw[:8])[0]
     if 8 + header_len > len(raw):
-        raw = _fetch_range(ST_URL, 0, 8 + header_len - 1)
-    header = json.loads(raw[8:8 + header_len].decode('utf-8'))
+        raw = _fetch_range(st_url, 0, 8 + header_len - 1)
+    header_bytes = raw[8:8 + header_len]
+    header = json.loads(header_bytes.decode('utf-8'))
     data_base = 8 + header_len
 
     def grab(name: str) -> torch.Tensor:
         meta = header[name]
         s, e = meta['data_offsets']
-        buf = _fetch_range(ST_URL, data_base + s, data_base + e - 1)
+        buf = _fetch_range(st_url, data_base + s, data_base + e - 1)
         return torch.frombuffer(bytearray(buf), dtype=DTYPE_MAP[meta['dtype']]).reshape(meta['shape']).float()
 
     norm_weight = grab('model.norm.weight')
     W_U = grab('model.embed_tokens.weight')
     downs = {L: grab(f'model.layers.{L}.mlp.down_proj.weight') for L in needed_layers}
-    return norm_weight, W_U, downs, tok
+    hashes = {
+        'model.safetensors:header': hashlib.sha256(header_bytes).hexdigest(),
+        'tokenizer.json': _sha256_file(tok_path),
+    }
+    return norm_weight, W_U, downs, tok, hashes
 
 
 DEFAULT_FINAL_LAYER = 27
@@ -188,30 +220,73 @@ def transport_vector(
 
 def verify_lens_orientation(
     lenses: dict[str, dict[int, torch.Tensor]],
-    raw_v: torch.Tensor,
-    layers: list[int],
     *,
+    norm_weight: torch.Tensor | None = None,
+    W_U: torch.Tensor | None = None,
+    probe_pairs: tuple[torch.Tensor, torch.Tensor] | None = None,
+    probe_layers: list[int] | None = None,
     final_layer: int = DEFAULT_FINAL_LAYER,
-) -> dict[str, dict[str, float]]:
-    """Verify ``J @ v`` orientation against ``J.T @ v`` across fitted non-final layers."""
-    summary: dict[str, dict[str, float]] = {}
+) -> dict[str, dict[str, Any]]:
+    """Asymmetric orientation check comparing ``J @ x`` against ``J.T @ x`` toward a known target.
+
+    Unlike the symmetric inner product ``(J @ v) · v == (J.T @ v) · v``, this tests either:
+    - explicit asymmetric ``probe_pairs = (X [m, d], Y [m, d])`` measuring cosine similarity to target ``Y``, or
+    - the exact RMSNorm+unembedding logit readout ``((u / RMS(u)) * norm_weight) @ W_U[tid]`` on token
+      embeddings ``e_tid = W_U[tid]`` (where ``norm_weight`` and RMS scaling break symmetry).
+
+    Raises ``ValueError`` if any lens scores lower under ``J @ x`` than under ``J.T @ x`` (transposed lens).
+    """
+    summary: dict[str, dict[str, Any]] = {}
     for lname, layer_mats in lenses.items():
-        cos_fwd, cos_rev = [], []
-        for i, L in enumerate(layers):
-            if L == final_layer or L not in layer_mats:
-                continue
-            v = raw_v[i].float()
+        cand_layers = (
+            [int(L) for L in probe_layers if int(L) != int(final_layer) and int(L) in layer_mats]
+            if probe_layers is not None
+            else [int(L) for L in sorted(layer_mats) if int(L) != int(final_layer)]
+        )
+        if not cand_layers:
+            summary[lname] = {'n_checked': 0, 'orientation': 'J @ v', 'verified': True}
+            continue
+        fwd_scores: list[float] = []
+        rev_scores: list[float] = []
+        for L in cand_layers:
             J = layer_mats[L].float()
-            u_fwd = J @ v
-            u_rev = J.T @ v
-            vn = v.norm() + 1e-8
-            cos_fwd.append(float((u_fwd @ v) / ((u_fwd.norm() + 1e-8) * vn)))
-            cos_rev.append(float((u_rev @ v) / ((u_rev.norm() + 1e-8) * vn)))
+            if probe_pairs is not None:
+                X, Y = probe_pairs[0].float(), probe_pairs[1].float()
+                U_fwd = X @ J.T     # row i is J @ X[i]
+                U_rev = X @ J       # row i is J.T @ X[i]
+                Yn = Y / (Y.norm(dim=-1, keepdim=True) + 1e-8)
+                cf = ((U_fwd / (U_fwd.norm(dim=-1, keepdim=True) + 1e-8)) * Yn).sum(dim=-1)
+                cr = ((U_rev / (U_rev.norm(dim=-1, keepdim=True) + 1e-8)) * Yn).sum(dim=-1)
+                fwd_scores.extend(cf.tolist())
+                rev_scores.extend(cr.tolist())
+            else:
+                if norm_weight is None or W_U is None:
+                    raise ValueError('verify_lens_orientation requires either probe_pairs or (norm_weight, W_U)')
+                nw = norm_weight.float()
+                step = max(W_U.shape[0] // 32, 1)
+                tids = list(range(0, W_U.shape[0], step))[:32]
+                E = W_U[tids].float()
+                for row_i in range(E.shape[0]):
+                    e = E[row_i]
+                    u_f = J @ e
+                    u_r = J.T @ e
+                    uf_norm = (u_f / (u_f.pow(2).mean().sqrt() + 1e-8)) * nw
+                    ur_norm = (u_r / (u_r.pow(2).mean().sqrt() + 1e-8)) * nw
+                    fwd_scores.append(float((uf_norm @ e).item()))
+                    rev_scores.append(float((ur_norm @ e).item()))
+        mean_fwd = float(np.mean(fwd_scores))
+        mean_rev = float(np.mean(rev_scores))
+        if mean_fwd <= mean_rev:
+            raise ValueError(
+                f'lens {lname!r} failed asymmetric orientation check (mean J@x={mean_fwd:.4f} <= '
+                f'J.T@x={mean_rev:.4f}); matrix appears transposed'
+            )
         summary[lname] = {
-            'n_checked': len(cos_fwd),
-            'mean_cos_J_v': round(float(np.mean(cos_fwd)), 4) if cos_fwd else 1.0,
-            'mean_cos_JT_v': round(float(np.mean(cos_rev)), 4) if cos_rev else 1.0,
+            'n_checked': len(fwd_scores),
+            'mean_score_J_x': round(mean_fwd, 4),
+            'mean_score_JT_x': round(mean_rev, 4),
             'orientation': 'J @ v',
+            'verified': True,
         }
     return summary
 
@@ -224,30 +299,40 @@ def decode_survivors(
     out_path: str | Path,
     top_k: int = 30,
     final_layer: int = DEFAULT_FINAL_LAYER,
-    model_revision: str = '989aa7980e4cf806f80c7fef2b1adb7bc71aa306',
-    lens_revision: str = 'main',
+    model_revision: str = QWEN_MODEL_REVISION,
+    lens_revision: str | None = None,
     keep_tmp: bool = False,
 ) -> Path:
     """Extract frozen down_proj columns for ``survivors``, apply all 4 lenses, and save a compact .pt cache."""
     t0 = time.time()
     tmp_dir = Path('/tmp/jlens_decode_tmp')
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    needed_layers = sorted({s['layer'] for s in survivors})
+    needed_layers = sorted({int(s['layer']) for s in survivors})
 
     try:
         if model_dir is not None:
-            norm_weight, W_U, downs, tok = _load_weights_local(Path(model_dir), needed_layers)
+            norm_weight, W_U, downs, tok, asset_hashes = _load_weights_local(Path(model_dir), needed_layers)
         else:
-            norm_weight, W_U, downs, tok = _load_weights_stream_hf(tmp_dir, needed_layers)
+            norm_weight, W_U, downs, tok, asset_hashes = _load_weights_stream_hf(
+                tmp_dir, needed_layers, model_revision=model_revision
+            )
 
         lenses: dict[str, dict[int, torch.Tensor]] = {}
         lens_meta: dict[str, Any] = {}
+        lens_hashes: dict[str, str] = {}
         for lname, rel in LENS_FILES.items():
-            local_pt = (Path(lens_dir) / f'{lname}.pt') if lens_dir else _download_hf(LENS_REPO, rel, tmp_dir / f'{lname}.pt')
+            if lens_dir:
+                local_pt = Path(lens_dir) / f'{lname}.pt'
+            else:
+                if not lens_revision:
+                    raise ValueError('streaming lenses from HF requires an explicit immutable 40-char --lens-revision')
+                local_pt = _download_hf(LENS_REPO, rel, tmp_dir / f'{lname}.pt', revision=lens_revision)
+            lens_hashes[lname] = _sha256_file(local_pt)
             obj = torch.load(local_pt, map_location='cpu', weights_only=False)
             lenses[lname] = obj['J']
             lens_meta[lname] = {'source_layers': obj['source_layers'], 'n_prompts': obj['n_prompts'],
                                 'provenance': obj.get('provenance')}
+        asset_hashes['lenses'] = lens_hashes
 
         vocab_size, d_model = W_U.shape
         id_to_str = [tok.decode([i], skip_special_tokens=False) for i in range(vocab_size)]
@@ -262,9 +347,9 @@ def decode_survivors(
                 'max': float(cn.max()),
             }
         for s in survivors:
-            W_down = downs[s['layer']]
+            W_down = downs[int(s['layer'])]
             cn = W_down.norm(dim=0)
-            v = W_down[:, s['idx']].clone()
+            v = W_down[:, int(s['idx'])].clone()
             vn = float(v.norm())
             s['v_norm'] = vn
             s['v_norm_pct'] = float((cn <= vn).float().mean() * 100.0)
@@ -279,7 +364,7 @@ def decode_survivors(
         top_k_records: dict[str, list[dict[str, Any]]] = {ln: [] for ln in lens_names}
 
         orientation_check = verify_lens_orientation(
-            lenses, raw_v, [int(s['layer']) for s in survivors], final_layer=final_layer
+            lenses, norm_weight=norm_weight, W_U=W_U, probe_layers=needed_layers, final_layer=final_layer
         )
         for i, s in enumerate(survivors):
             L = int(s['layer'])
@@ -304,10 +389,11 @@ def decode_survivors(
         out_p = Path(out_path)
         out_p.parent.mkdir(parents=True, exist_ok=True)
         torch.save({
-            'model_id': 'Qwen/Qwen2.5-1.5B-Instruct',
+            'model_id': QWEN_MODEL_ID,
             'model_revision': str(model_revision),
             'lens_repo': LENS_REPO,
-            'lens_revision': str(lens_revision),
+            'lens_revision': str(lens_revision) if lens_revision else 'local-verified-assets',
+            'asset_sha256': asset_hashes,
             'final_layer': int(final_layer),
             'orientation_check': orientation_check,
             'survivors': survivors,
@@ -335,12 +421,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--out', required=True, help='Output .pt decoded cache path')
     parser.add_argument('--model-dir', default=None, help='Local Qwen2.5-1.5B-Instruct dir (omit to stream via HTTP Range)')
     parser.add_argument('--lens-dir', default=None, help='Optional local dir with jlens.pt, jpp.pt, rlens.pt')
+    parser.add_argument('--model-revision', default=QWEN_MODEL_REVISION, help='Immutable 40-char HF commit SHA for base model')
+    parser.add_argument('--lens-revision', default=None, help='Immutable 40-char HF commit SHA for jacobian-lens (required when streaming)')
     parser.add_argument('--top-k', type=int, default=30)
     parser.add_argument('--keep-tmp', action='store_true')
     args = parser.parse_args(argv)
 
     survivors = load_survivor_registry(args.survivors_json)
     decode_survivors(survivors, model_dir=args.model_dir, lens_dir=args.lens_dir, out_path=args.out,
+                     model_revision=args.model_revision, lens_revision=args.lens_revision,
                      top_k=args.top_k, keep_tmp=args.keep_tmp)
     return 0
 

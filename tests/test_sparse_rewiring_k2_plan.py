@@ -427,6 +427,11 @@ class TestSparseRewiringK2(unittest.TestCase):
                 for ln in lenses
             }
             return {
+                'model_id': ddp.QWEN_MODEL_ID,
+                'model_revision': ddp.QWEN_MODEL_REVISION,
+                'lens_repo': ddp.LENS_REPO,
+                'lens_revision': 'local-verified-assets',
+                'asset_sha256': {'model.safetensors': 'a' * 64, 'tokenizer.json': 'b' * 64},
                 'survivors': survivors,
                 'lens_names': lenses,
                 'id_to_str': id_to_str,
@@ -483,12 +488,39 @@ class TestSparseRewiringK2(unittest.TestCase):
             self.assertEqual(res['payload']['neurons'][0]['activation_shift']['active_pole'], '+v')
             self.assertEqual(res['payload']['neurons'][1]['activation_shift']['active_pole'], '-v')
 
+            # Mismatched or missing revision/asset metadata between compared caches MUST be refused
+            bad_gold = _make_cache(gold_surv, 20)
+            bad_gold.pop('lens_revision')
+            bad_gold_pt = td_p / 'bad_gold.pt'
+            torch.save(bad_gold, bad_gold_pt)
+            with self.assertRaises(ValueError):
+                bdr.build_comparative_report(k2_pt, gold_cache_path=bad_gold_pt, out_paths=[td_p / 'bad.html'])
+
             # Existing Gold report regression (runs real build_gold_report into temp output)
             if GOLD_CACHE.is_file():
                 gold_out = td_p / 'gold_report.html'
                 written = bdr.build_gold_report(cache_path=GOLD_CACHE, out_paths=[gold_out])
                 self.assertEqual(written, [gold_out])
                 self.assertGreater(gold_out.stat().st_size, 100_000)
+
+    def test_p2_7_asymmetric_lens_orientation_and_immutable_revision_guard(self):
+        """Asymmetric orientation check accepts J_true, rejects transposed J_true.T, and refuses mutable main."""
+        # Known asymmetric mapping: e0 -> e1, e2 -> e3 (strictly non-symmetric!)
+        J_true = torch.zeros((4, 4))
+        J_true[1, 0] = 1.0
+        J_true[3, 2] = 1.0
+        X = torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]])
+        Y = torch.tensor([[0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
+        ok = ddp.verify_lens_orientation({'rlens': {11: J_true}}, probe_pairs=(X, Y), final_layer=27)
+        self.assertTrue(ok['rlens']['verified'])
+        self.assertGreater(ok['rlens']['mean_score_J_x'], ok['rlens']['mean_score_JT_x'])
+        # Transposed matrix MUST be rejected!
+        with self.assertRaises(ValueError):
+            ddp.verify_lens_orientation({'rlens': {11: J_true.T}}, probe_pairs=(X, Y), final_layer=27)
+        # Mutable 'main' revision MUST be refused for HF downloads!
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                ddp._download_hf(ddp.LENS_REPO, 'a.pt', Path(td) / 'a.pt', revision='main')
 
     def test_p2_8_rewire_analysis_rebuilds_standalone_when_gold_adapter_or_shift_arrives(self):
         """Regression for P2 #8: documented --gold-adapter & activation-shift sequence must rebuild standalone."""

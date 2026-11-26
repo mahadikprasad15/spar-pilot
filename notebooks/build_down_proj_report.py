@@ -153,12 +153,19 @@ def build_comparative_report(
 
     if gold_cache_path is not None and Path(gold_cache_path).is_file():
         gold_data = torch.load(str(gold_cache_path), map_location='cpu', weights_only=False)
-        for rev_key in ('model_id', 'model_revision', 'lens_repo', 'lens_revision'):
-            kv, gv = k2_data.get(rev_key), gold_data.get(rev_key)
-            if kv is not None and gv is not None and kv != gv:
+        for req_key in ('model_id', 'model_revision', 'lens_repo', 'lens_revision'):
+            kv, gv = k2_data.get(req_key), gold_data.get(req_key)
+            if not kv or not gv:
                 raise ValueError(
-                    f'cannot compare caches with different {rev_key}: k2={kv!r} vs gold={gv!r}'
+                    f'cannot compare caches when either cache lacks {req_key!r}: k2={kv!r}, gold={gv!r}'
                 )
+            if kv != gv:
+                raise ValueError(
+                    f'cannot compare caches with different {req_key}: k2={kv!r} vs gold={gv!r}'
+                )
+        ka, ga = k2_data.get('asset_sha256'), gold_data.get('asset_sha256')
+        if (ka is not None or ga is not None) and ka != ga:
+            raise ValueError('cannot compare caches with different verified model/tokenizer/lens asset_sha256')
         gold_surv = list(gold_data['survivors'])
         gold_labels = [s.get('label', f"L{s['layer']} #{s['idx']}") for s in gold_surv]
         k2_set = {(int(s['layer']), int(s['idx'])) for s in k2_surv}

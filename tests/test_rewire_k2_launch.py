@@ -259,7 +259,8 @@ def _world(root: Path):
     bundle_path = root / 'bundle.json'
     bundle_path.write_text(json.dumps(bundle))
 
-    # Generate sealed val128-k2-targets.json WITH verified provenance & full max_blocks=32 recipe!
+    # Generate sealed val128-k2-targets.json WITH verified provenance, full IEEE precision readback & max_blocks=32!
+    full_ieee_readback = {**{path: 'ieee' for path in nac.PRECISION_BACKENDS}, 'matmul_precision': 'highest'}
     provenance = valgen.collect_provenance(
         model_dir=model_dir,
         tokenizer_dir=mdir,
@@ -267,7 +268,7 @@ def _world(root: Path):
         bundle_path=bundle_path,
         pinned_base_model=pinned,
         engine_name='spy-cpu-fixture',
-        precision_readback={'matmul_precision': 'highest'},
+        precision_readback=full_ieee_readback,
     )
     spy_engine = _SpySamplerEngine(vocab, eos=EOS)
     val_k2_payload = valgen.generate_val128_k2_targets(
@@ -323,6 +324,7 @@ def _record(root: Path, w, *, draft_path: Path = REHEARSAL_YAML, **overrides):
     raw['cadences']['settle'].update(first=2, every=2)
     raw['evaluation'].update(cap=4, eos_token_id=EOS, batch_size=2)
     raw['evaluation']['validation']['questions'] = 4
+    raw['evaluation']['validation']['generator_engine'] = 'spy-cpu-fixture'
     raw['evaluation']['cohort150']['steps'] = [3]
     raw['qualification'].update(disposable_steps=2, greedy_questions=2, cached_vs_forced_rows=2)
     for dotted, value in overrides.items():
@@ -598,6 +600,56 @@ class TestRewireK2Launcher(unittest.TestCase):
         self.assertEqual(resumed['attempts'], payload['attempts'])
         self.assertEqual(resumed['uncovered_dispositions'], payload['uncovered_dispositions'])
 
+    def test_p1_stage1_default_pin_flow_cli_and_no_bundle_and_base_weight_binding(self):
+        """Regression for review-ab186ff: real default pin flow (with/without bundle, CLI main) & base-weight export check."""
+        val_path = self.w['art'] / rb.ROLES['validation:items']
+        with mock.patch.object(cb, 'PINNED_BASE_MODEL', self.w['pinned']):
+            # 1. Default pinned_base_model=None WITH bundle succeeds (no TypeError)
+            p_with = valgen.collect_provenance(
+                model_dir=self.w['model_dir'], tokenizer_dir=self.w['mdir'],
+                val_items_path=val_path, bundle_path=self.w['bundle'],
+                precision_readback={**{p: 'ieee' for p in nac.PRECISION_BACKENDS}, 'matmul_precision': 'highest'},
+            )
+            self.assertEqual(sorted(p_with['model_file_sha256']), sorted(cb.MODEL_FILES))
+            # 2. Default pinned_base_model=None WITHOUT bundle succeeds (no KeyError) and verifies pins
+            p_no = valgen.collect_provenance(
+                model_dir=self.w['model_dir'], tokenizer_dir=self.w['mdir'],
+                val_items_path=val_path, bundle_path=None,
+            )
+            self.assertEqual(p_no['model_file_sha256'], p_with['model_file_sha256'])
+            # 3. Exercise real CLI valgen.main() default pin flow end-to-end!
+            cli_out = self.root / 'cli_val128_k2.json'
+            with mock.patch.object(valgen, 'HFK2Engine', return_value=_SpySamplerEngine(self.w['vocab'], eos=EOS)):
+                rc_code = valgen.main([
+                    '--val-items', str(val_path),
+                    '--model-dir', str(self.w['model_dir']),
+                    '--tokenizer-dir', str(self.w['mdir']),
+                    '--bundle', str(self.w['bundle']),
+                    '--out', str(cli_out),
+                    '--device', 'cpu',
+                    '--skip-id-hash-check',
+                ])
+            self.assertEqual(rc_code, 0)
+            cli_payload = json.loads(cli_out.read_text())
+            self.assertEqual(cli_payload['provenance']['engine'], 'hf-fp32-ieee')
+            self.assertEqual(cli_payload['provenance']['model_file_sha256'], p_with['model_file_sha256'])
+            # 4. P2 #1: extract_survivor_shifts.verify_base_model_and_tokenizer refuses modified weights w/ same config!
+            ok_base = ess.verify_base_model_and_tokenizer(self.w['model_dir'], self.w['mdir'], self.w['bundle'])
+            self.assertEqual(ok_base['model_file_sha256'], p_with['model_file_sha256'])
+            mut_model = self.root / 'mutated_model'
+            shutil.copytree(self.w['model_dir'], mut_model)
+            # Corrupt model.safetensors bytes while leaving config.json untouched
+            st_file = mut_model / 'model.safetensors'
+            st_file.write_bytes(st_file.read_bytes() + b'\x00')
+            with self.assertRaises((cb.BundleError, ValueError)):
+                ess.verify_base_model_and_tokenizer(mut_model, self.w['mdir'], self.w['bundle'])
+            # Without bundle, collect_provenance ALSO refuses mutated model weights (never self-certifies!)
+            with self.assertRaises((cb.BundleError, ValueError)):
+                valgen.collect_provenance(
+                    model_dir=mut_model, tokenizer_dir=self.w['mdir'],
+                    val_items_path=val_path, bundle_path=None,
+                )
+
     def test_p1_1_strict_input_refusals_export_adapter_and_malformed_val_targets(self):
         rec = _record(self.root, self.w)
         # 1. Direct JSONL instead of sealed export dir -> refused
@@ -633,12 +685,16 @@ class TestRewireK2Launcher(unittest.TestCase):
         bad_rec['inputs']['val128_k2_targets'] = str(mal_path)
         with self.assertRaises(LaunchRefused):
             k2l.load_k2_inputs(bad_rec)
-        # 4b. Provenance & full recipe refusals: changed proposer model, max_blocks=1, wrong stop_token_ids!
+        # 4b. Provenance & full recipe refusals: proposer, budget, stops, engine, executable digest, IEEE precision!
         for label, mutator in (
             ('wrong_model', lambda d: d['provenance']['model_file_sha256'].update({'config.json': '0' * 64})),
             ('block_limit_1', lambda d: d['recipe'].update({'max_blocks': 1})),
             ('wrong_stops', lambda d: d['recipe'].update({'stop_token_ids': [EOS, 999]})),
             ('wrong_accept_rule', lambda d: d['recipe'].update({'accept_rule': 'always-accept'})),
+            ('unqualified_engine', lambda d: d['provenance'].update({'engine': 'unqualified-engine'})),
+            ('arbitrary_exec_sha', lambda d: d['provenance'].update({'executable_sha256': '0' * 64})),
+            ('non_ieee_matmul', lambda d: d['provenance']['precision_readback'].update({'matmul_precision': 'medium'})),
+            ('missing_prec_backend', lambda d: d['provenance']['precision_readback'].pop(nac.PRECISION_BACKENDS[0])),
         ):
             mut = json.loads(self.w['val_k2_path'].read_text())
             mutator(mut)
@@ -773,6 +829,7 @@ class TestRewireK2Launcher(unittest.TestCase):
         scaled_draft_raw['cadences']['settle'].update(first=2, every=2)
         scaled_draft_raw['evaluation'].update(cap=4, eos_token_id=EOS, batch_size=2)
         scaled_draft_raw['evaluation']['validation']['questions'] = 4
+        scaled_draft_raw['evaluation']['validation']['generator_engine'] = 'spy-cpu-fixture'
         scaled_draft_raw['evaluation']['cohort150']['steps'] = [3]
         scaled_draft_raw['qualification'].update(disposable_steps=2, greedy_questions=2, cached_vs_forced_rows=2)
         scaled_draft_path = self.root / 'scaled_cli_draft.yaml'

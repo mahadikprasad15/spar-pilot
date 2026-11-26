@@ -28,9 +28,49 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from pilot_eval import c_attribution_bundle as cb
 from pilot_eval import hard_concrete as hc
 from pilot_eval import rewire_checkpoint as rckpt
 from pilot_eval import rewire_module as rm
+from pilot_eval.training import file_hash
+from pilot_eval.workflow import _hash
+
+
+def verify_base_model_and_tokenizer(
+    model_dir: Path,
+    tokenizer_dir: Path,
+    bundle_path: Path,
+    *,
+    pinned_base_model: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Verify every pinned base-model file (weights + config) and bundled tokenizer file before export."""
+    if not bundle_path.is_file():
+        raise ValueError(f'bundle_path does not exist: {bundle_path}')
+    bundle = json.loads(bundle_path.read_text(encoding='utf-8'))
+    if cb._canonical({k: v for k, v in bundle.items() if k != 'sha256'}) != bundle.get('sha256'):
+        raise ValueError(f'bundle {bundle_path} manifest hash differs from its seal')
+    pins = cb.PINNED_BASE_MODEL if pinned_base_model is None else dict(pinned_base_model)
+    cb.check_base_model(model_dir, bundle, pinned=pins)
+    model_hashes = {name: file_hash(model_dir / name) for name in cb.MODEL_FILES}
+    tok_hashes: dict[str, str] = {}
+    for entry in bundle.get('files', []):
+        role = str(entry.get('role', ''))
+        if role.startswith('tokenizer:'):
+            fname = role.split(':', 1)[1]
+            fp = tokenizer_dir / fname
+            if not fp.is_file():
+                raise ValueError(f'tokenizer_dir {tokenizer_dir} missing bundled tokenizer file {fname}')
+            actual = file_hash(fp)
+            if actual != entry['sha256']:
+                raise ValueError(f'tokenizer file {fp} SHA-256 {actual} != bundle {entry["sha256"]}')
+            tok_hashes[fname] = actual
+    if not tok_hashes:
+        raise ValueError(f'bundle {bundle_path} has no tokenizer:* entries')
+    return {
+        'bundle_sha256': _hash(bundle),
+        'model_file_sha256': model_hashes,
+        'tokenizer_file_sha256': tok_hashes,
+    }
 
 
 def _load_verified_final_checkpoint(
@@ -316,6 +356,8 @@ def measure_activation_shifts(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Export sparse-rewiring survivors & paired-forward Δa_j shifts')
     parser.add_argument('--model-dir', required=True, help='local pinned Qwen2.5-1.5B-Instruct directory')
+    parser.add_argument('--tokenizer-dir', default=None, help='tokenizer directory (default: --model-dir)')
+    parser.add_argument('--bundle', required=True, help='sealed input bundle.json verifying base weights & tokenizer')
     parser.add_argument('--arm-dir', default=None, help='verified completed arm directory (recommended)')
     parser.add_argument('--ckpt-dir', default=None, help='sealed checkpoint directory (if --arm-dir omitted)')
     parser.add_argument('--rank', type=int, choices=[0, 1], default=None)
@@ -326,14 +368,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--max-items', type=int, default=None, help='optional cap for smoke tests')
     args = parser.parse_args(argv)
 
+    model_dir = Path(args.model_dir)
+    tok_dir = Path(args.tokenizer_dir) if args.tokenizer_dir else model_dir
+    base_prov = verify_base_model_and_tokenizer(model_dir, tok_dir, Path(args.bundle))
+
     raw_val = json.loads(Path(args.val_items).read_text(encoding='utf-8'))
     val_items = raw_val['items'] if isinstance(raw_val, dict) and 'items' in raw_val else raw_val
     if args.max_items is not None:
         val_items = val_items[:args.max_items]
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(tok_dir), local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_dir, local_files_only=True, torch_dtype=torch.float32, attn_implementation='eager'
+        str(model_dir), local_files_only=True, torch_dtype=torch.float32, attn_implementation='eager'
     )
     mods, provenance = _load_verified_final_checkpoint(
         model,
@@ -343,10 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         val_items_path=Path(args.val_items),
         allow_unverified_fixture=False,
     )
-    from pilot_eval.training import file_hash
-    cfg_file = Path(args.model_dir) / 'config.json'
-    if cfg_file.is_file():
-        provenance['model_config_sha256'] = file_hash(cfg_file)
+    provenance.update(base_prov)
     model.to(args.device)
 
     survivors = _extract_survivors(mods)

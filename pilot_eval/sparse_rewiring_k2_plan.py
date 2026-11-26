@@ -113,7 +113,7 @@ SCHEMA = {
     },
     'storage': {'checkpoint_contents': [TEXT], 'optimizer_state': TEXT, 'interruption': TEXT, 'gate_snapshot_dtype': TEXT},
     'evaluation': {
-        'validation': {'questions': INT, 'targets': TEXT, 'ce_masks': TEXT, 'greedy_at': TEXT},
+        'validation': {'questions': INT, 'targets': TEXT, 'generator_engine': TEXT, 'ce_masks': TEXT, 'greedy_at': TEXT},
         'cohort150': {'steps': [INT], 'role': TEXT},
         'cap': INT, 'eos_token_id': INT, 'repetition_penalty': NUM, 'scorer': TEXT, 'batch_size': INT,
     },
@@ -181,6 +181,7 @@ PRODUCTION = {
     'cadences.settle.first': 256, 'cadences.settle.every': 64,
     'cadences.settle.jaccard_min': 0.99, 'cadences.settle.expected_change_max': 0.02,
     'evaluation.validation.questions': 128,
+    'evaluation.validation.generator_engine': 'hf-fp32-ieee',
     'evaluation.cohort150.steps': [64, 1024], 'evaluation.cohort150.role': 'evaluation-only',
     'evaluation.cap': 1024, 'evaluation.eos_token_id': 151645, 'evaluation.batch_size': 16,
 }

@@ -142,6 +142,9 @@ def load_val128_k2_targets(
     expected_model_file_sha256: Mapping[str, str] | None = None,
     expected_tokenizer_file_sha256: Mapping[str, str] | None = None,
     expected_val_items_sha256: str | None = None,
+    expected_engine: str | None = None,
+    expected_executable_sha256: str | None = None,
+    require_ieee_precision: bool = True,
     require_qualified_recipe: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Load and strictly verify sealed ``val128-k2-targets.json`` provenance, recipe, coverage, and rows."""
@@ -214,11 +217,12 @@ def load_val128_k2_targets(
                     f'{target_path}: recipe.{key} is {actual_val!r}, expected qualified {expected_val!r}'
                 )
 
-    # Provenance verification (pinned proposer model, tokenizer, validation file, engine, executable digest)
+    # Provenance verification (pinned proposer model, tokenizer, validation file, engine, executable, IEEE precision)
     prov = raw.get('provenance')
     if not isinstance(prov, dict):
         raise LaunchRefused(f'{target_path}: missing provenance metadata (proposer model/tokenizer/val hashes)')
-    for req_key in ('model_file_sha256', 'tokenizer_file_sha256', 'val_items_sha256', 'engine', 'executable_sha256'):
+    for req_key in ('model_file_sha256', 'tokenizer_file_sha256', 'val_items_sha256',
+                    'engine', 'executable_sha256', 'precision_readback'):
         if not prov.get(req_key):
             raise LaunchRefused(f'{target_path}: provenance missing {req_key!r}')
     if expected_model_file_sha256 is not None and prov['model_file_sha256'] != dict(expected_model_file_sha256):
@@ -234,6 +238,27 @@ def load_val128_k2_targets(
             f'{target_path}: provenance.val_items_sha256 {prov["val_items_sha256"]!r} differs from bundled '
             f'validation:items {expected_val_items_sha256!r}'
         )
+    if expected_engine is not None and prov['engine'] != expected_engine:
+        raise LaunchRefused(
+            f'{target_path}: provenance.engine {prov["engine"]!r} differs from authorized {expected_engine!r}'
+        )
+    if expected_executable_sha256 is not None and prov['executable_sha256'] != expected_executable_sha256:
+        raise LaunchRefused(
+            f'{target_path}: provenance.executable_sha256 {prov["executable_sha256"]!r} differs from registered '
+            f'{expected_executable_sha256!r}'
+        )
+    if require_ieee_precision:
+        from pilot_eval import neuron_audit_collector as nac
+        readback = prov.get('precision_readback')
+        if not isinstance(readback, dict):
+            raise LaunchRefused(f'{target_path}: provenance.precision_readback must be a dict')
+        required_keys = set(nac.PRECISION_BACKENDS) | {'matmul_precision'}
+        missing_prec = sorted(required_keys - set(readback))
+        if missing_prec:
+            raise LaunchRefused(f'{target_path}: provenance.precision_readback missing backends: {missing_prec}')
+        prec_problems = reval._precision_problems(readback)
+        if prec_problems:
+            raise LaunchRefused(f'{target_path}: non-IEEE precision in Stage 1 provenance: {"; ".join(prec_problems)}')
 
     seen_ids: list[str] = []
     eos = int(eos_token_id)
@@ -324,6 +349,9 @@ def load_k2_inputs(record: Mapping[str, Any]) -> dict[str, Any]:
         expected_model_file_sha256=bundle['base_model']['file_sha256'],
         expected_tokenizer_file_sha256=_expected_bundle_tokenizer_hashes(bundle),
         expected_val_items_sha256=file_hash(val_items_bundle_path),
+        expected_engine=record['evaluation']['validation']['generator_engine'],
+        expected_executable_sha256=record['executable_sha256'],
+        require_ieee_precision=True,
         require_qualified_recipe=True,
     )
 

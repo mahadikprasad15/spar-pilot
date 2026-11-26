@@ -95,7 +95,13 @@ def collect_provenance(
     precision_readback: Mapping[str, Any] | None = None,
     executable_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Verify pinned model, tokenizer, and frozen validation inputs and return bound provenance dict."""
+    """Verify independently pinned model, tokenizer, and frozen validation inputs and return provenance.
+
+    Always uses ``cb.PINNED_BASE_MODEL`` unless an explicit ``pinned_base_model`` test override is
+    supplied (never passes ``None`` into ``cb.check_base_model`` and never lets a snapshot certify
+    itself via ``cb.pinned_identities``). Production CLI requires ``--bundle`` so tokenizer and
+    validation inputs are verified against the sealed bundle.
+    """
     mdir = Path(model_dir)
     tdir = Path(tokenizer_dir)
     vpath = Path(val_items_path)
@@ -106,15 +112,20 @@ def collect_provenance(
     if not vpath.is_file():
         raise ValueError(f'val_items_path does not exist: {vpath}')
 
+    pins = cb.PINNED_BASE_MODEL if pinned_base_model is None else dict(pinned_base_model)
     val_file_sha = file_hash(vpath)
     bundle_sha = None
 
     if bundle_path is not None:
         bpath = Path(bundle_path)
+        if not bpath.is_file():
+            raise ValueError(f'bundle_path does not exist: {bpath}')
         bundle = json.loads(bpath.read_text(encoding='utf-8'))
+        if cb._canonical({k: v for k, v in bundle.items() if k != 'sha256'}) != bundle.get('sha256'):
+            raise ValueError(f'bundle {bpath} manifest hash differs from its seal')
         bundle_sha = _hash(bundle)
-        cb.check_base_model(mdir, bundle, pinned=pinned_base_model)
-        model_hashes = dict(bundle['base_model']['file_sha256'])
+        cb.check_base_model(mdir, bundle, pinned=pins)
+        model_hashes = {name: file_hash(mdir / name) for name in cb.MODEL_FILES}
         # Verify every tokenizer file in bundle against tokenizer_dir
         tok_hashes: dict[str, str] = {}
         for entry in bundle.get('files', []):
@@ -128,23 +139,17 @@ def collect_provenance(
                 if actual != entry['sha256']:
                     raise ValueError(f'tokenizer file {fp} SHA-256 {actual} != bundle {entry["sha256"]}')
                 tok_hashes[fname] = actual
-        # Verify val_items_path matches bundled validation:items SHA-256
+        if not tok_hashes:
+            raise ValueError(f'bundle {bpath} has no tokenizer:* entries')
         val_entry = next((e for e in bundle.get('files', []) if e.get('role') == 'validation:items'), None)
         if val_entry is None:
             raise ValueError('bundle missing validation:items entry')
         if val_file_sha != val_entry['sha256']:
             raise ValueError(f'val_items {vpath} SHA-256 {val_file_sha} != bundle {val_entry["sha256"]}')
     else:
-        pinned = dict(pinned_base_model) if pinned_base_model is not None else cb.pinned_identities(mdir)
-        model_hashes = {}
-        for fname, expected_sha in sorted(pinned['file_sha256'].items()):
-            fp = mdir / fname
-            if not fp.is_file():
-                raise ValueError(f'model_dir {mdir} missing pinned file {fname}')
-            actual = file_hash(fp)
-            if actual != expected_sha:
-                raise ValueError(f'model file {fp} SHA-256 {actual} != pinned {expected_sha}')
-            model_hashes[fname] = actual
+        # Independently verify model_dir against trusted pins (NEVER self-certify with pinned_identities)
+        cb._check_pins(mdir, pins)
+        model_hashes = {name: file_hash(mdir / name) for name in cb.MODEL_FILES}
         tok_hashes = {}
         for fname in cb.TOKENIZER_FILES:
             fp = tdir / fname
@@ -525,7 +530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument('--val-items', required=True, help='path to frozen validation.items.json')
     parser.add_argument('--model-dir', required=True, help='local pinned Qwen2.5-1.5B-Instruct directory')
     parser.add_argument('--tokenizer-dir', default=None, help='tokenizer directory (default: --model-dir)')
-    parser.add_argument('--bundle', default=None, help='sealed input bundle.json to verify pinned model/tokenizer/val')
+    parser.add_argument('--bundle', required=True, help='sealed input bundle.json to verify pinned model/tokenizer/val')
     parser.add_argument('--out', required=True, help='output path for sealed val128-k2-targets.json')
     parser.add_argument('--progress', default=None, help='durable progress checkpoint path (default: <out>.progress.json)')
     parser.add_argument('--device', default='cuda', help='torch device (default: cuda)')
