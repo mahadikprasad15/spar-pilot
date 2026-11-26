@@ -1,0 +1,74 @@
+id: untuned.greedy.test150.c-attribution-production
+kind: evaluation
+arm: untuned
+checkpoint_step: null
+cohort: gsm8k-test-cohort150
+cohort_coverage: subset
+question_field: question_id
+draws_per_question: 1
+policy:
+  mode: greedy
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+scorer:
+  name: gsm8k-flexible-v3
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+c_suitability: greedy-only
+replay_of: null
+generator: base model with the online-grpo adapter disabled (PEFT disable_adapter)
+files:
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0000/responses.jsonl
+  sha256: 4ff381387da1a4c66194ec68f0b55b54a977f8a5345b1b3fd5ca43abe5c131f3
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0001/responses.jsonl
+  sha256: 1361337dca018568297541f61f46721095c5bc9b45e816b8041a0cdb785395f5
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0002/responses.jsonl
+  sha256: ee8530313961d8135b306a26b13e6e079622b5d6c5f9b18ce8a842e2eda04c6d
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0003/responses.jsonl
+  sha256: 4fb059ecbe56b15097d733fbe03a00a1fbebf4fa9295177b60076c3d7921e07e
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0004/responses.jsonl
+  sha256: ce031c0e1b32d8ffe05d7dbef753d2ff27cdb30dc6ea1bc6ebd2139afacc05f3
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0005/responses.jsonl
+  sha256: 1c3a7368acf3dca71e73f463e4300709fbec57e0527d37a92caf5b97e32c5efc
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0006/responses.jsonl
+  sha256: 3972a4fda3883c6c5e2029702dda063e248ef4a07857df9630bd37fe73fad3fa
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0007/responses.jsonl
+  sha256: becb050b745bf7bb80eeafeab166d549bd823a0f9548230ed2eb4e96956e2f2a
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0008/responses.jsonl
+  sha256: 8fae86d0557651aa4c230602e31cb4279fa4aa46c7a4bf8499db4b8bbc431657
+  rows_total: 16
+- location: local
+  path: imports/c-attribution-production/c-attribution/generation/untuned/untuned/batch-0009/responses.jsonl
+  sha256: 28f22597a25220ee02197fbb20875d6c1b28f4d601fbb798086ce688832e40c3
+  rows_total: 6
+evidence:
+  status: verified
+  checked:
+  - sealed run directories (hash-verified)
+  - file sha256
+  - row counts
+  note: run c-production-1 (production); one file per fixed greedy batch, together covering the frozen generation
+    question set
+notes: 'C-attribution production: greedy condition untuned; launch hash 11b428b7aeaf2053. Exploratory; components
+  selected on these questions.'

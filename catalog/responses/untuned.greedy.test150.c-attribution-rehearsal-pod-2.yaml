@@ -1,0 +1,38 @@
+id: untuned.greedy.test150.c-attribution-rehearsal-pod-2
+kind: evaluation
+arm: untuned
+checkpoint_step: null
+cohort: gsm8k-test-cohort150
+cohort_coverage: subset
+question_field: question_id
+draws_per_question: 1
+policy:
+  mode: greedy
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+scorer:
+  name: gsm8k-flexible-v3
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+c_suitability: greedy-only
+replay_of: null
+generator: base model with the online-grpo adapter disabled (PEFT disable_adapter)
+files:
+- location: local
+  path: imports/c-attribution-rehearsal-pod-2/c-attribution/generation/untuned/untuned/batch-0000/responses.jsonl
+  sha256: 5a56db41bfc6c960290f00833fc3f4daa25d0fbdf7d6c97a15cbb1cbbe8ee2bf
+  rows_total: 8
+evidence:
+  status: verified
+  checked:
+  - sealed run directories (hash-verified)
+  - file sha256
+  - row counts
+  note: run c-rehearsal-pod-2 (rehearsal); one file per fixed greedy batch, together covering the frozen generation
+    question set
+notes: 'C-attribution rehearsal-pod-2: greedy condition untuned; launch hash cfbcd183a4861f49. Exploratory; components
+  selected on these questions.'

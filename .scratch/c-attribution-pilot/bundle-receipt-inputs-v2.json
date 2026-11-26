@@ -1,0 +1,16 @@
+{
+  "archive": "neuron-audit/inputs-v2/07e044fb8a393e11659795c3c3ac50a64b64534f46e0a2156e40ecf6c2c2a580/bundle.tar.gz",
+  "archive_bytes": 17835749,
+  "archive_sha256": "2bf1e38c547a011a587d3b79a1ff8cb6f63afbf72826f0c80f5984e80511af4b",
+  "bundle_manifest": "bundles/c-attribution/inputs-v2/bundle-ec3062d2106714c5.json",
+  "bundle_sha256": "ec3062d2106714c59e1038652e7ff5748a21b7b8c441e32205e623b3637ab4e8",
+  "completeness": "complete",
+  "file_count": 19,
+  "repo": "Prasadmahadik/spar-sampling-sft-artifacts",
+  "revision": "9e0091f65ae23a98c3140a33f20dbec53cf48104",
+  "schema_version": 1,
+  "snapshot_path": "exports/joint-neuron-adapter-audit/inputs-v2/snapshot-07e044fb8a393e11.json",
+  "snapshot_sha256": "07e044fb8a393e11659795c3c3ac50a64b64534f46e0a2156e40ecf6c2c2a580",
+  "unpacked_bytes": 57190520,
+  "upload_seconds": 20.194038415909745
+}

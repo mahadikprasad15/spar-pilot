@@ -1,0 +1,87 @@
+# Adapter attribution — PRODUCTION launch record. Values approved by the user 2026-11-16 ("approve as listed"):
+# the values approved for the Pod rehearsal, plus the production items below. Unsealed until `seal` on the Pod.
+#
+# Production: all 6 arms; discovery (200) and held-out (100) sequences-v2 math rows; the ADR 0001 cohort (150) in
+# Stage D. Launched unattended right after a passing rehearsal on the same Pod (scripts/attribution_after_rehearsal.sh);
+# the Pod stops at the end. Accepted for this run by the user (2026-11-16): time limits are checked between stages
+# only; no automatic resume after a crash (ticket 11). Pilot comparison deferred (user 2026-11-16).
+schema: adapter-neuron-attribution/launch-record-v1
+run_id: production-1
+mode: production
+code_commit: null                       # filled by `seal` from the checkout
+expected_arms: [gold-sft, online-grpo, offline-grpo, sampling-sft-k0, sampling-sft-k2, sampling-sft-k5]   # [approved 2026-11-16]
+
+pod_id: null                            # filled from RUNPOD_POD_ID by `seal`
+pod_stop_commands: ['runpodctl stop pod {id}', 'runpodctl pod stop {id}']   # lesson 2026-11-12
+volume_identity: sl-0                   # [user] the joint audit's Global Volume (identity file already on it)
+export_repo: Prasadmahadik/spar-sampling-sft-artifacts
+hourly_cost_usd: 1.49                   # [user] Pod price per hour (cost line in the summary only)
+compute:
+  fp32_peak_flops: 19.5e+12             # A100 dense FP32 (spec sheet), MFU denominator. The exponent needs its
+                                        # sign: PyYAML reads `19.5e12` as text (Pod launch 2 failed on that).
+
+caps_seconds:                           # [approved 2026-11-16] ~2x the rehearsal-scaled estimate
+  total: 21600                          # 6 h
+  preflight: 900
+  qualification: 3600
+  base_traces: 3600                     # 300 untuned generations (discovery + held-out)
+  attribution_and_freeze: 3600          # 6 arms x 200 rows
+  stage_c: 7200                         # 6 arms x 2 metrics x <=19 conditions on 100 rows (rehearsal: 4.5 min)
+  stage_d: 7200                         # 9 runs x 150 items up to 1,024 tokens
+  report: 1800
+watchdog_margin_seconds: 1800           # [approved 2026-11-16]
+marker_stale_seconds: 900               # [approved 2026-11-14]
+timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_join: 300}   # [approved 2026-11-14]
+
+tolerances:
+  finite_difference: {epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20, precision: fp64}
+  # values [approved 2026-11-16]; precision [approved 2026-11-16]; 06a: max 5e-5 (online-grpo), 1e-5 (gold-sft)
+  neuron_sum_identity: 1.0e-4           # [approved 2026-11-16]; enforced per example, held in 06a
+  batch_invariance: 1.0e-4              # [approved 2026-11-16]; first real measurement is this run
+  resolution_floor: 10x measured batch-invariance discrepancy   # [approved 2026-11-16] rule
+minimums: {discovery: 120, heldout: 60}   # [approved 2026-11-16] base-correct rows after mask exclusions
+qualification:
+  calibration_minimum: 10               # [approved 2026-11-14]
+  fd_arms: [gold-sft, online-grpo]      # spec 06b
+  fd_rows: 4                            # [approved 2026-11-14]
+  fd_adapters: 5                        # spec
+  fd_neurons: 3                         # spec
+  head_chunk: 1024                      # [approved 2026-11-14]
+  memory_fraction: 0.80                 # [approved 2026-11-16]; 06a FD check peak 27.4 GB on 40 GB
+token_budget_sweep: [2048, 4096, 8192, 16384, 32768, 65536]   # [approved 2026-11-16]; 06a (40 GB): 4k fits, 8k OOM
+generation_batch_rule: {candidates: [1, 8, 16, 32, 64], items: 20, max_flips: 1, max_stop_changes: 1}
+  # [approved 2026-11-16]; with 20 items 32 and 64 are recorded not-exercised (option A, 2026-11-14)
+
+selection:
+  top_group: 10                         # [approved 2026-11-16]
+  top_singles: 5                        # [approved 2026-11-16]
+  tolerance: 0.20                       # [approved 2026-11-16]
+  seed: 20000                           # [approved 2026-11-16]
+  random_seeds: [20001, 20002, 20003]   # [approved 2026-11-14]
+  read_size: 64                         # [approved 2026-11-16]
+statistics:
+  resamples: 10000                      # [approved 2026-11-16]
+  seed: 1234                            # [approved 2026-11-16]
+  alpha: 0.05                           # [approved 2026-11-16]
+  margin: 0.25                          # [approved 2026-11-16]
+  sparse_lower: 0.70                    # [approved 2026-11-16]
+  dense_upper: 0.30                     # [approved 2026-11-16]
+  gate_singles_min: 4                   # [approved 2026-11-16]
+  null_orders: 1000                     # [approved 2026-11-16]
+  null_seed: 20004                      # [approved 2026-11-14]
+
+stage_d:
+  early_stop_rule: {kind: fraction-of-untuned-same-item, ratio: 0.5}   # [approved 2026-11-14]
+  pilot_results: {}                     # files not found yet
+  pilot_comparison: deferred            # [user 2026-11-16] Stage D responses are sealed for a later comparison
+
+inputs:
+  artifact_root: null                   # filled by `seal` (prep root from inputs.json)
+  inventory_dir: runs/joint-neuron-adapter-audit/inventory/inventory-v2
+  sequences_dir: runs/joint-neuron-adapter-audit/sequences/sequences-v2
+  model_dir: null                       # filled by `seal`
+  tokenizer_dir: null                   # filled by `seal`
+  gsm8k_test_parquet: null              # filled by `seal` from the sequences-v2 manifest
+  adapter_dirs: {gold-sft: null, online-grpo: null, offline-grpo: null, sampling-sft-k0: null, sampling-sft-k2: null, sampling-sft-k5: null}   # filled by `seal`
+  max_new_tokens: 1024                  # pilot protocol
+  work_dir: null                        # filled by `seal --work`

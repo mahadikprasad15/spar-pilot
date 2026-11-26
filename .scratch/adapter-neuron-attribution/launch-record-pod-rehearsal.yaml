@@ -1,0 +1,93 @@
+# Adapter attribution — supervised Pod REHEARSAL launch record. Values approved by the user 2026-11-16; unsealed until `seal` on the Pod.
+#
+# A machinery test on the Pod, not production: 2 arms, visible inputs only (calibration rows stand in for discovery
+# and confirmation; the 20 rehearsal GSM8K items stand in for the ADR 0001 cohort). One launch, no automatic
+# restart (review round 5). It ends with a real Pod stop, which tests the stop path.
+#
+# Sealed on the Pod with:
+#   $PY -m pilot_eval.attribution_chain seal --draft <this file> --out $WORK/launch_record.json \
+#       --inputs $WORK/inputs.json --work $WORK
+# `seal` fills only empty fields: pod_id from RUNPOD_POD_ID, input paths from `neuron_audit_pod prepare`'s
+# inputs.json, the GSM8K test path from the sequences-v2 manifest. It refuses while anything else is empty.
+#
+# Legend: [measured 06a] / [approved <date>] / [spec] / [approved 2026-11-16] / [user]
+schema: adapter-neuron-attribution/launch-record-v1
+run_id: rehearsal-pod-3
+mode: rehearsal
+rehearsal_label: rehearsal-pod-3
+code_commit: null                       # filled by `seal` from the checkout
+expected_arms: [gold-sft, online-grpo]  # spec: Pod rehearsal = 2 arms
+
+pod_id: null                            # filled from RUNPOD_POD_ID by `seal`
+pod_stop_commands: ['runpodctl stop pod {id}', 'runpodctl pod stop {id}']   # lesson 2026-11-12
+volume_identity: sl-0                   # [user] the joint audit's Global Volume (identity file already on it)
+export_repo: Prasadmahadik/spar-sampling-sft-artifacts
+hourly_cost_usd: null                   # [user] Pod price per hour (cost line in the summary only)
+compute:
+  fp32_peak_flops: 19.5e+12             # A100 dense FP32 (spec sheet), MFU denominator. The exponent needs its
+                                        # sign: PyYAML reads `19.5e12` as text (Pod launch 2 failed on that).
+
+caps_seconds:                           # [approved 2026-11-16] from 06a timings (Colab 40 GB), with margin
+  total: 10800                          # 3 h
+  preflight: 900                        # 15 min
+  qualification: 3600                   # 60 min: calibration traces ~5 min, FD 2 arms ~1 min, sweeps, batch rule
+  base_traces: 900                      # rehearsal: no generation (calibration stands in)
+  attribution_and_freeze: 1800          # 2 arms x ~20 rows: minutes
+  stage_c: 2700                         # 2 arms x 2 metrics x <=19 conditions on ~20 rows
+  stage_d: 3600                         # 9 runs x 20 items up to 1,024 tokens
+  report: 1200
+watchdog_margin_seconds: 1800           # [approved 2026-11-16]
+marker_stale_seconds: 900               # [approved 2026-11-14]
+timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_join: 300}   # [approved 2026-11-14]
+
+tolerances:
+  finite_difference: {epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20, precision: fp64}
+  # values [approved 2026-11-16]; precision [approved 2026-11-16]; 06a: max 5e-5 (online-grpo), 1e-5 (gold-sft)
+  neuron_sum_identity: 1.0e-4           # [approved 2026-11-16]; enforced per example, held in 06a
+  batch_invariance: 1.0e-4              # [approved 2026-11-16]; first real measurement is this run
+  resolution_floor: 10x measured batch-invariance discrepancy   # [approved 2026-11-16] rule
+minimums: {discovery: 10, heldout: 10}  # rehearsal: calibration stands in (06a kept 19 of 25 rows)
+qualification:
+  calibration_minimum: 10               # [approved 2026-11-14]
+  fd_arms: [gold-sft, online-grpo]      # spec 06b
+  fd_rows: 4                            # [approved 2026-11-14]
+  fd_adapters: 5                        # spec
+  fd_neurons: 3                         # spec
+  head_chunk: 1024                      # [approved 2026-11-14]
+  memory_fraction: 0.80                 # [approved 2026-11-16]; 06a FD check peak 27.4 GB on 40 GB
+token_budget_sweep: [2048, 4096, 8192, 16384, 32768, 65536]   # [approved 2026-11-16]; 06a (40 GB): 4k fits, 8k OOM
+generation_batch_rule: {candidates: [1, 8, 16, 32, 64], items: 20, max_flips: 1, max_stop_changes: 1}
+  # [approved 2026-11-16]; with 20 items 32 and 64 are recorded not-exercised (option A, 2026-11-14)
+
+selection:
+  top_group: 10                         # [approved 2026-11-16]
+  top_singles: 5                        # [approved 2026-11-16]
+  tolerance: 0.20                       # [approved 2026-11-16]
+  seed: 20000                           # [approved 2026-11-16]
+  random_seeds: [20001, 20002, 20003]   # [approved 2026-11-14]
+  read_size: 64                         # [approved 2026-11-16]
+statistics:
+  resamples: 10000                      # [approved 2026-11-16]
+  seed: 1234                            # [approved 2026-11-16]
+  alpha: 0.05                           # [approved 2026-11-16]
+  margin: 0.25                          # [approved 2026-11-16]
+  sparse_lower: 0.70                    # [approved 2026-11-16]
+  dense_upper: 0.30                     # [approved 2026-11-16]
+  gate_singles_min: 4                   # [approved 2026-11-16]
+  null_orders: 1000                     # [approved 2026-11-16]
+  null_seed: 20004                      # [approved 2026-11-14]
+
+stage_d:
+  early_stop_rule: {kind: fraction-of-untuned-same-item, ratio: 0.5}   # [approved 2026-11-14]
+  pilot_results: {}                     # rehearsal: no pilot comparison (production needs both arms' files)
+
+inputs:
+  artifact_root: null                   # filled by `seal` (prep root from inputs.json)
+  inventory_dir: runs/joint-neuron-adapter-audit/inventory/inventory-v2
+  sequences_dir: runs/joint-neuron-adapter-audit/sequences/sequences-v2
+  model_dir: null                       # filled by `seal`
+  tokenizer_dir: null                   # filled by `seal`
+  gsm8k_test_parquet: null              # filled by `seal` from the sequences-v2 manifest
+  adapter_dirs: {gold-sft: null, online-grpo: null}   # filled by `seal`
+  max_new_tokens: 1024                  # pilot protocol
+  work_dir: null                        # filled by `seal --work`

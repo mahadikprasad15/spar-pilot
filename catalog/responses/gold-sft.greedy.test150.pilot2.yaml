@@ -1,0 +1,32 @@
+kind: evaluation
+cohort: gsm8k-test-cohort150
+question_field: id
+scorer:
+  name: gsm8k (historical; re-scored flexible-v3 in results.json)
+selection:
+  correctness_filtered: false
+  gold_access: false
+  all_groups_retained: true
+  best_of_n: false
+id: gold-sft.greedy.test150.pilot2
+arm: gold-sft
+checkpoint_step: null
+policy:
+  mode: greedy
+  repetition_penalty: 1.0
+  max_new_tokens: 1024
+  eos_token_id: 151645
+draws_per_question: 1
+c_suitability: greedy-only
+files:
+- location: local
+  path: imports/pilot4-behaviour-breakdown-2026-10-22/sft-64/responses.jsonl
+  sha256: e2be48d2799abf0e065820c9bff9cc61f9dd0d66c6cf576d0a3a19281879577f
+  rows_total: 150
+  rows_selected: 150
+evidence:
+  status: inferred
+  checked:
+  - file sha256, row count, cohort IDs
+  note: config.json records adapter_sha256 26fdcb24..., not the inventory checkpoint-64 hash a20a344e...; flexible
+    accuracy 0.647 vs 0.66 in production Stage D. Checkpoint identity unverified.

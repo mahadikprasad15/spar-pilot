@@ -1,0 +1,8 @@
+{
+  "decision": "accept",
+  "filter_report_sha256": "f242971e1a8014a44bc48d07e53db478c914b492e1f769cedad85bb5fe7e78c0",
+  "notes": "Accepted with note: 10/10 sampled math-excluded rows are false exclusions (ordinary UltraChat prompts matching broad words such as average, how many, solve); 7,473 rows (32%) were excluded as math. General 0/20 and near-miss 0/15 flagged, so the groups used are clean. The background pool is narrowed towards replies without those words; treat this as an added style/length confound in the report.",
+  "recorded_unix": 1794431509.72712,
+  "reviewer": "Prasad",
+  "sample_sha256": "66678c3be32d929b13cb54df50075e781a6d7036807034e730017a5c2f3177d2"
+}

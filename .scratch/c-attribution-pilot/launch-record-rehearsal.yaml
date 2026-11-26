@@ -1,0 +1,106 @@
+# C-attribution — attended Pod REHEARSAL launch record (ticket 11). Needs the user's approval before `seal`.
+#
+# A machinery and measurement run, not production: 2 arms x 4 whole questions x 8 draws, checks (a)-(f),
+# aggregation on the subset, a split, a freeze, then greedy on 8 questions x 3 conditions. It measures the floors
+# and throughput that the production record's tolerances are set from (by the user). It ends with a real Pod stop.
+#
+# Sealed on the Pod with:
+#   $PY -m pilot_eval.c_attribution_chain seal --draft <this file> --out $WORK/launch_record.json \
+#       --artifact-root $WORK/inputs --bundle <bundle manifest> --model-dir $HF_HOME/... --work-dir $WORK
+# `seal` fills only empty fields (the code commit, pod_id from RUNPOD_POD_ID, the four input paths) and refuses
+# anything else that is empty, any '[proposed]' value, unknown keys and wrong types (every leaf is typed).
+#
+# Legend: [production-1] carried over unchanged / [user <date>] / [spec]. Every value chosen for this record was
+# approved by the user on 2026-11-20.
+schema: c-attribution/launch-record-v1
+run_id: c-rehearsal-pod-1                # ticket 11
+mode: rehearsal
+label: rehearsal-pod-1
+code_commit: null                        # filled by `seal` from the checkout
+arms: [online-grpo, offline-grpo]
+
+pod_id: null                             # filled from RUNPOD_POD_ID by `seal`
+pod_stop_commands: ['runpodctl stop pod {id}', 'runpodctl pod stop {id}']   # lesson pod-v1: both syntaxes
+volume_identity: sl-0                    # ticket 11: sl-0 attached
+export_repo: Prasadmahadik/spar-sampling-sft-artifacts   # [production-1] private export repo
+hourly_cost_usd: not-tracked             # [user 2026-11-20] cost not tracked (summary cost line only)
+timeouts_seconds: {copy: 2700, export_attempt: 3600, stop_attempt: 120, writer_join: 300}   # [production-1]
+marker_stale_seconds: 900                # [production-1]
+disk: {min_free_gb: 60, container_total_gb: 120}   # ticket 09 preflight
+
+tolerances:
+  finite_difference: {epsilon: 1.0e-2, median_rel_err_max: 0.05, max_rel_err_max: 0.20, precision: fp64}   # [production-1]
+  neuron_sum_identity: 1.0e-4            # [production-1], gross denominator
+  batch_invariance: 1.0e-4               # [production-1], fraction of max |attr|
+  memory_fraction: 0.80                  # [production-1] peak <= 80% of device memory
+  cached_vs_forced: {per_token_abs_max: measure-only, per_row_abs_M_max: measure-only}
+                                         # [user 2026-11-18] set from this rehearsal's measurements
+qualification:
+  rows_per_arm: 16                       # [spec] check (a)
+  fd_rows: 4                             # [production-1]
+  fd_adapters: 5                         # [spec]
+  fd_neurons: 3                          # [spec]
+  head_chunk: 1024                       # [production-1]
+  noop_greedy_tokens: 16                 # [user 2026-11-20] check (f) greedy-token comparison length
+  batch_invariance_budgets: [8192]       # [production-1] qualified token budget
+
+scope:                                   # [user 2026-11-20] cohort150 IDs; recorded as prior uses (ticket 11)
+  # 817 short, all-correct in both arms; 611 longest (offline: the capped and invalid row; online: all-wrong);
+  # 285 invalid rows, mixed in both; 186 long, online mixed with an invalid row, offline all-wrong.
+  attribution_questions:
+    online-grpo: ['gsm8k:test:817', 'gsm8k:test:611', 'gsm8k:test:285', 'gsm8k:test:186']
+    offline-grpo: ['gsm8k:test:817', 'gsm8k:test:611', 'gsm8k:test:285', 'gsm8k:test:186']
+  generation_questions:
+    online-grpo: ['gsm8k:test:817', 'gsm8k:test:611', 'gsm8k:test:285', 'gsm8k:test:186',
+                  'gsm8k:test:13', 'gsm8k:test:1116', 'gsm8k:test:538', 'gsm8k:test:1300']
+    offline-grpo: ['gsm8k:test:817', 'gsm8k:test:611', 'gsm8k:test:285', 'gsm8k:test:186',
+                   'gsm8k:test:13', 'gsm8k:test:1116', 'gsm8k:test:538', 'gsm8k:test:1300']
+  generation_conditions: [intact, top10-adapters, global64-reads, untuned]
+                                         # [user 2026-11-20] one per removal kind, plus untuned (its GPU path,
+                                         # the adapter switched off, is otherwise first run in production)
+
+attribution: {token_budget: 8192, questions_per_unit: 2}   # budget [production-1]; 2 units per arm to test resume
+generation: {batch_size: 16, cap: 1024, eos_token_id: 151645}   # batch [production-1 qualified]; cap, EOS [spec]
+selection:
+  k_adapters: 10                         # [spec]
+  k_reads: 64                            # [spec]
+  k_harmful: 10                          # [spec] reported only
+  tolerance: 0.20                        # [spec] matched-control write tolerance
+  seeds: {top10-adapters: 20261121, global64-reads: 20261122, hot64-reads: 20261123, layer64-reads: 20261124}
+                                         # [user 2026-11-19] one matching seed per group; values [user 2026-11-20]
+statistics: {split_seed: 20261118, bootstrap_seed: 1234, resamples: 10000}   # [user 2026-11-19]
+
+hot_layers:                              # [user 2026-11-19] computed by code with the union rule; re-derived at
+  layers: [11, 15, 16, 24]               # aggregation from the hashed source and refused if it differs
+  source:
+    role: hot-layer-source
+    path: analysis/results-hub-v1/data/writes_modules.json
+    sha256: 35747fda0615032d996e3671833ed656a4eebf7a9b047a5a27656f6002ffd30d
+  context: gsm8k_solution
+  step: 64
+  k: 10
+  module: down
+  arms: [online, offline]
+  combine: union
+
+decisions:                               # the resolved decisions this run follows (spec, 2026-11-18/19)
+  time_caps: none; elapsed time is logged only and the watchdog deadline is disabled
+  tolerances: production-1 unchanged; cached-against-forced set from the rehearsal
+  infeasible_layer64_control: run the target; report the control unavailable
+  positive_shortfall: freeze the smaller group; match its control to the actual size; never pad or drop
+  draw_split: kept beside the question split
+  intact_repeat: one second intact greedy pass per arm (production)
+  hot_layers: union of each arm's top-10 effective-write modules that are down_proj
+  stability: descriptive only; never stops the chain
+  handover: none; production is a separate launch with its own record
+
+inputs:
+  artifact_root: null                    # filled by `seal`: restored bundle root
+  bundle: null                           # filled by `seal`: the sealed bundle manifest (ticket 08)
+  model_dir: null                        # filled by `seal`: pinned base model snapshot (HF_HOME off the volume)
+  work_dir: null                         # filled by `seal`: container-disk work directory
+  sources:
+    online-grpo: {responses_role: 'responses:online-grpo', config_role: 'run-config:online-grpo',
+                  adapter_role: 'adapter:online-grpo:64', catalog_id: 'responses:online-grpo.s64.sampled-x8.test150'}
+    offline-grpo: {responses_role: 'responses:offline-grpo', config_role: 'run-config:offline-grpo',
+                   adapter_role: 'adapter:offline-grpo:64', catalog_id: 'responses:offline-grpo.s64.sampled-x8.test150'}

@@ -1,0 +1,14 @@
+{
+  "archive": "neuron-audit/prep-v2/de66c9fab2c76d7e13014f87611888560c42d37ab806cc55d0ad153af67b8ea9/bundle.tar.gz",
+  "archive_bytes": 30164599,
+  "archive_sha256": "705149f8ca43453a53c8812c7238cf2345903089ac35800f75421ebba12dce96",
+  "completeness": "complete",
+  "file_count": 47,
+  "repo": "Prasadmahadik/spar-sampling-sft-artifacts",
+  "revision": "56a2c90c770ce2be47d4614a4a960a77b1f06ba9",
+  "schema_version": 1,
+  "snapshot_path": "exports/joint-neuron-adapter-audit/prep-v2/snapshot-de66c9fab2c76d7e.json",
+  "snapshot_sha256": "de66c9fab2c76d7e13014f87611888560c42d37ab806cc55d0ad153af67b8ea9",
+  "unpacked_bytes": 43568012,
+  "upload_seconds": 285.8443339999649
+}

@@ -1,0 +1,384 @@
+"""Ticket 11: real model backend for the attribution chain (Colab / Pod; CUDA, local files only).
+
+Reuses the joint audit's ``neuron_audit_qualify.TransformersBackend`` loader (eager attention, explicit dtype,
+local files), ``ChatTokenizer`` (pinned files, saved chat template), ``set_ieee_precision`` and
+``check_live_adapter``. All weights FP32 and frozen; TF32 off; one arm model resident at a time.
+
+Launch-record ``inputs`` block:
+
+    artifact_root, inventory_dir, sequences_dir, model_dir, tokenizer_dir, gsm8k_test_parquet,
+    adapter_dirs: {arm: dir}, max_new_tokens: 1024, work_dir,
+    stage_d.pilot_results: {arm: {path, filters}}   # pilot responses, re-scored with flexible v3
+
+The 20 rehearsal items are ``rehearsal_draw`` (seed 42, outside the ADR 0001 cohort; user 2026-11-14).
+
+The ADR 0001 cohort is ``protocol.select_gsm8k_indices(len(test), 150, 42)``. Edited checkpoints are verified
+by hash and by *bit-identical* logits against the g = 0 gate (a zeroed b adds exactly the 0 the gate adds).
+"""
+import json
+from pathlib import Path
+
+from pilot_eval import attribution_ablation as ab
+from pilot_eval import attribution_traces as at
+from pilot_eval.protocol import gsm8k_messages, select_gsm8k_indices
+
+
+def cohort_indices(total):
+    return select_gsm8k_indices(total, 150, 42)
+
+
+def rehearsal_draw(total, *, count=20, seed=42):
+    """The 20 rehearsal items (user 2026-11-14): a seed-42 draw from the test indices outside ADR 0001, by the
+    cohort's own mechanism: sorted(random.Random(42).sample(non-cohort indices, 20))."""
+    import random
+    cohort = set(cohort_indices(total))
+    return sorted(random.Random(seed).sample([i for i in range(total) if i not in cohort], count))
+
+
+def rehearsal_indices(ids, total, *, count=20):
+    ids = [int(i) for i in ids or []]
+    cohort = set(cohort_indices(total))
+    if len(ids) != count or len(set(ids)) != count or any(not 0 <= i < total for i in ids):
+        raise ValueError(f'rehearsal_generation_ids must list {count} distinct GSM8K test indices')
+    if cohort & set(ids):
+        raise ValueError(f'rehearsal items overlap the ADR 0001 cohort: {sorted(cohort & set(ids))}')
+    return ids
+
+
+def _file_sha(path):
+    import hashlib
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for block in iter(lambda: stream.read(1 << 24), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def bind_sources(inventory, sequences_manifest, *, adapter_dirs, tokenizer_dir, model_dir, test_parquet, step='64'):
+    """Bind the actual inputs to their sealed identities before any work (review round 4, 3).
+
+    Each arm's ``adapter_model.safetensors`` and ``adapter_config.json`` must equal that arm's verified step-64
+    entry in inventory-v2; every pinned base-model file must match its hash; the GSM8K test parquet must equal
+    the one pinned in the sequences-v2 manifest; the tokenizer files (``tokenizer.json`` and
+    ``tokenizer_config.json``, which holds the chat template) must equal the ones sequences-v2 was built with
+    (review round 6, 3). Swapped arm directories or another compatible model or split
+    are refused rather than producing results under the wrong label."""
+    problems, record = [], dict(step=step, arms={})
+    for arm, directory in sorted(adapter_dirs.items()):
+        entry = inventory.get('arms', {}).get(arm, {}).get('checkpoints', {}).get(step)
+        if entry is None:
+            problems.append(f'{arm}: no step-{step} checkpoint in the inventory')
+            continue
+        if entry.get('status') != 'verified':
+            problems.append(f"{arm}: inventory step-{step} checkpoint is {entry.get('status')}, not verified")
+            continue
+        record['arms'][arm] = {}
+        for name in ('adapter_model.safetensors', 'adapter_config.json'):
+            expected = entry.get('files', {}).get(name, {}).get('sha256')
+            path = Path(directory) / name
+            actual = _file_sha(path) if path.is_file() else None
+            if expected is None or actual != expected:
+                problems.append(f'{arm}: {name} differs from the inventory (expected {expected}, got {actual})')
+            record['arms'][arm][name] = actual
+    expected_base = inventory.get('base', {}).get('expected_file_sha256') or {}
+    if not expected_base:
+        problems.append('base model: the inventory pins no file hashes')
+    for name, digest in sorted(expected_base.items()):
+        path = Path(model_dir) / name
+        if not path.is_file() or _file_sha(path) != digest:
+            problems.append(f'base model: {name} differs from its pinned hash')
+    expected_test = sequences_manifest.get('inputs', {}).get('files', {}).get('gsm8k_test')
+    actual_test = _file_sha(test_parquet) if Path(test_parquet).is_file() else None
+    if actual_test is None:
+        problems.append(f'test parquet: missing at {test_parquet} (fetch it at the pinned revision first)')
+    elif expected_test is None or actual_test != expected_test:
+        problems.append('test parquet: differs from the sequences-v2 manifest')
+    pinned_tokenizer = (sequences_manifest.get('inputs', {}).get('tokenizer') or {}).get('files') or {}
+    if not pinned_tokenizer:
+        problems.append('tokenizer: the sequences-v2 manifest pins no tokenizer files')
+    for name, digest in sorted(pinned_tokenizer.items()):
+        path = Path(tokenizer_dir) / name
+        if not path.is_file() or _file_sha(path) != digest:
+            problems.append(f'tokenizer: {name} differs from the sequences-v2 manifest')
+    if problems:
+        raise ValueError('inputs are not the sealed sources: ' + '; '.join(problems))
+    record.update(base_files=sorted(expected_base), test_parquet_sha256=actual_test, tokenizer=dict(pinned_tokenizer))
+    return record
+
+
+def fetch_gsm8k(prep, sequences_dir, *, download=None):
+    """Fetch the GSM8K parquet files the sequences-v2 manifest pins (path, revision, SHA-256) into the restored prep
+    root; the prep snapshot does not contain them (06a r1). A file whose hash differs is refused, never used."""
+    import hashlib
+    import shutil
+    if download is None:
+        from huggingface_hub import hf_hub_download
+
+        def download(dataset, filename, *, revision):
+            return hf_hub_download(dataset, filename, repo_type='dataset', revision=revision)
+    prep = Path(prep)
+    manifest = json.loads((Path(sequences_dir) / 'manifest.json').read_text())
+    gsm = manifest['sources']['gsm8k']
+    out = {}
+    for split in ('train', 'test'):
+        target = prep / gsm[f'{split}_parquet']
+        expected = manifest['inputs']['files'][f'gsm8k_{split}']
+        out[split] = 'present' if target.is_file() else 'ok'
+        if not target.is_file():
+            path = download(gsm['dataset'], f'main/{split}-00000-of-00001.parquet', revision=gsm['revision'])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+        if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            raise ValueError(f'GSM8K {split} parquet differs from the sequences-v2 manifest: {target}')
+    return out
+
+
+class TransformersBackend:
+    def __init__(self, record, volume_root, *, device='cuda'):
+        from pilot_eval.neuron_audit_collector import set_ieee_precision
+        from pilot_eval.neuron_audit_qualify import TransformersBackend as Loader
+        from pilot_eval.neuron_audit_sequences import ChatTokenizer, _inside, _read_parquet
+        self.record, self.volume_root, self.device = record, Path(volume_root), device
+        self.inputs = inputs = record['inputs']
+        self.root = Path(inputs['artifact_root']).resolve()
+        self.path = lambda value: _inside(self.root, value)  # noqa: E731
+        self.adapter_dirs = {arm: self.path(d) for arm, d in inputs['adapter_dirs'].items()}
+        missing = sorted(set(record['expected_arms']) - set(self.adapter_dirs))
+        if missing:
+            raise ValueError(f'no adapter directory for arms {missing}')
+        # The base model snapshot is hash-checked at download and may live in the HF cache outside the root.
+        model_dir = Path(inputs['model_dir']) if Path(inputs['model_dir']).is_absolute() else self.path(inputs['model_dir'])
+        self.model_dir = model_dir
+        self.loader = Loader(model_dir, self.adapter_dirs, self.path(inputs['tokenizer_dir']),
+                             record['expected_arms'][0], device=device)
+        self.bound = bind_sources(
+            json.loads((self.path(inputs['inventory_dir']) / 'inventory.json').read_text()),
+            json.loads((self.path(inputs['sequences_dir']) / 'manifest.json').read_text()),
+            adapter_dirs=self.adapter_dirs, tokenizer_dir=self.path(inputs['tokenizer_dir']), model_dir=model_dir,
+            test_parquet=self.path(inputs['gsm8k_test_parquet']))
+        # The same pins again at load, so the tokenizer object in use is the bound one.
+        self.tokenizer = ChatTokenizer(self.path(inputs['tokenizer_dir']), self.bound['tokenizer'])
+        if self.tokenizer.pad_token_id is None:
+            raise ValueError('the pinned tokenizer has no pad token')
+        self.precision = set_ieee_precision()
+        self.test_rows = _read_parquet(self.path(inputs['gsm8k_test_parquet']))
+        self._rehearsal = rehearsal_indices(rehearsal_draw(len(self.test_rows),
+                                                           count=record['generation_batch_rule']['items']),
+                                            len(self.test_rows), count=record['generation_batch_rule']['items'])
+        self._sequences = None
+        self._current, self._untuned = (None, None), None
+
+    # --- identity and runtime -----------------------------------------------------------------
+
+    def runtime(self):
+        import torch
+        return dict(model=str(self.inputs['model_dir']), torch=torch.__version__, dtype='float32', tf32=False,
+                    autocast=False, attention='eager', precision=self.precision,
+                    device=torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu', sources=self.bound,
+                    tokenizer=self.tokenizer.identity())
+
+    def decoder(self):
+        # The pilot decoder passes only tokenizer.eos_token_id; pad is padding, not a stop.
+        return dict(eos_token_id=self.tokenizer.eos_token_id, pad_token_id=self.tokenizer.pad_token_id)
+
+    def token_text(self, token_id):
+        return self.tokenizer.token_text(token_id)
+
+    def decode(self, ids):
+        return self.tokenizer.tokenizer.decode(list(ids), skip_special_tokens=True)
+
+    def decoding(self):
+        return dict(mode='greedy', max_new_tokens=self.inputs['max_new_tokens'], precision='fp32',
+                    padding='left', eos_token_id=self.tokenizer.eos_token_id, pad_token_id=self.tokenizer.pad_token_id,
+                    repetition_penalty=1.0, path='hf')
+
+    def sources(self):
+        return at.verify_sources(self.path(self.inputs['inventory_dir']), self.path(self.inputs['sequences_dir']),
+                                 self.root)
+
+    def unresolved_arms(self):
+        return sorted(a for a, r in self.sources()['provenance'].items() if r.get('unresolved_modules'))
+
+    def preflight(self):
+        import os
+        import torch
+        from pilot_eval.neuron_audit_export import OnlineHubProcess
+        from pilot_eval.neuron_audit_pod import disk_problems
+        from pilot_eval.neuron_audit_preflight import local_disk
+        from pilot_eval.sampling_sft_hf import private
+        problems = list(disk_problems(local_disk(self.inputs['work_dir'])))
+        if not torch.cuda.is_available():
+            problems.append('CUDA unavailable')
+        if os.environ.get('HF_HUB_OFFLINE') != '1':
+            problems.append('worker is not offline (HF_HUB_OFFLINE=1 required; exports run in a child process)')
+        from pilot_eval.neuron_audit_preflight import volume_identity
+        _, volume_problems = volume_identity(self.volume_root, expected_id=self.record['volume_identity'],
+                                             local_dir=self.inputs['work_dir'])
+        problems += volume_problems  # the joint audit's sentinel and mount checks
+        try:
+            self.sources()
+        except ValueError as exc:
+            problems.append(str(exc))
+        try:
+            private(OnlineHubProcess(timeout=120), self.record['export_repo'])
+        except Exception as exc:  # reported, then the chain stops before production
+            problems.append(f'export check: {type(exc).__name__}: {exc}')
+        return problems
+
+    # --- models ---------------------------------------------------------------------------------
+
+    def _freeze(self, model):
+        for p in model.parameters():
+            p.requires_grad_(False)
+        return model.eval()
+
+    def load(self, arm):
+        from pilot_eval.neuron_audit_collector import check_live_adapter
+        if self._current[0] == arm:
+            return self._current[1]
+        if self._current[1] is not None:
+            self.loader.release(self._current[1])
+            self._current = (None, None)
+        model = self._freeze(self.loader.load(arm, 'float32'))
+        config = json.loads((self.adapter_dirs[arm] / 'adapter_config.json').read_text())
+        live = check_live_adapter(model, self.adapter_dirs[arm], expected_scale=config['lora_alpha'] / config['r'])
+        if live['status'] != 'pass':
+            raise ValueError(f'{arm}: live adapter check failed: {live["reasons"]}')
+        self._current = (arm, model)
+        return model
+
+    def untuned(self):
+        if self._untuned is None:
+            self._untuned = self._freeze(self.loader.fresh_base('float32'))
+        return self._untuned
+
+    def untuned_generator(self, size):
+        return at.HFGenerator(self.untuned(), pad_token_id=self.tokenizer.pad_token_id,
+                              eos_token_id=self.tokenizer.eos_token_id, max_new_tokens=self.inputs['max_new_tokens'],
+                              decode=self.decode)
+
+    def stage_d_generator(self, arm, adapters, size, edit_dir, *, probe_ids):
+        """Generator for one Stage D run; an edited checkpoint is checked against the gate on ``probe_ids``,
+        an allowed prompt supplied by the caller (a rehearsal item in rehearsals, never a blind cohort item)."""
+        import torch
+        from peft import PeftModel
+        if arm is None:
+            return self.untuned_generator(size), None
+        model = self.load(arm)
+        edit = None
+        if adapters:
+            names = [ab.adapter_modules(model)[i][:2] for i in adapters]
+            edit = ab.edit_checkpoint(self.adapter_dirs[arm], edit_dir, names)
+            ab.verify_edit(edit_dir, edit)
+            edited = self._freeze(PeftModel.from_pretrained(self.loader.fresh_base('float32'), edit_dir,
+                                                            is_trainable=False, torch_device=self.device))
+            probe = torch.tensor([list(probe_ids)], device=self.device)
+            with torch.no_grad():
+                with ab.removal(model, adapters):
+                    gated = model(input_ids=probe, use_cache=False).logits
+                direct = edited(input_ids=probe, use_cache=False).logits
+            if not torch.equal(gated, direct):
+                raise ValueError(f'{arm}: edited checkpoint logits differ from the gate (max '
+                                 f'{float((gated - direct).abs().max())})')
+            edit['logits_equal_gate'] = True
+            model = edited
+        return at.HFGenerator(model, pad_token_id=self.tokenizer.pad_token_id, eos_token_id=self.tokenizer.eos_token_id,
+                              max_new_tokens=self.inputs['max_new_tokens'], decode=self.decode), edit
+
+    def fp64_model(self, arm):
+        """A temporary FP64 copy of the loaded arm, frozen, for the finite-difference reference (user decision
+        2026-11-16). The saved FP32 factors cast to FP64 exactly; the caller drops it and calls free_memory()."""
+        import copy
+        import torch
+        model = copy.deepcopy(self.load(arm)).to(torch.float64)
+        for p in model.parameters():
+            p.requires_grad_(False)
+        return model.eval()
+
+    def free_memory(self):
+        """Drop unreferenced tensors and return cached CUDA blocks to the device (between rehearsal steps)."""
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def parameter_count(self):
+        """N in the FLOP model: base-model parameters (the rank-1 adapters are negligible), read from the
+        safetensors headers of the pinned snapshot. It loads no model (review round 6, 7): the stage monitor asks
+        for N before preflight has checked CUDA, disk or the volume."""
+        import math
+        import struct
+        total = 0
+        for path in sorted(Path(self.model_dir).glob('*.safetensors')):
+            with open(path, 'rb') as stream:
+                (size,) = struct.unpack('<Q', stream.read(8))
+                header = json.loads(stream.read(size))
+            total += sum(math.prod(v['shape']) for k, v in header.items() if k != '__metadata__')
+        if not total:
+            raise ValueError(f'no safetensors weights found in {self.model_dir}')
+        return total
+
+    def synchronize(self):
+        self.loader.synchronize()
+
+    def device_memory(self):
+        import torch
+        return torch.cuda.get_device_properties(0).total_memory
+
+    def reset_peak(self):
+        self.loader.reset_peak()
+
+    def peak_memory(self):
+        return self.loader.peak_memory()
+
+    def is_oom(self, exc):
+        return self.loader.is_oom(exc)
+
+    # --- prompts and gold ------------------------------------------------------------------------------
+
+    def _sequence_rows(self):
+        if self._sequences is None:
+            from pilot_eval.neuron_audit_qualify import read_sequences
+            self._sequences = read_sequences(self.path(self.inputs['sequences_dir']))
+        return self._sequences
+
+    def prompt_rows(self, split):
+        return at.prompt_rows(self._sequence_rows(), split)
+
+    def _test_items(self, indices):
+        out = []
+        for index in indices:
+            text = self.tokenizer.render(gsm8k_messages(self.test_rows[index]['question']), add_generation_prompt=True)
+            ids, _ = self.tokenizer.encode(text)
+            out.append(dict(id=f'gsm8k:test:{index}', prompt_ids=ids, source_index=index))
+        return out
+
+    def rehearsal_items(self):
+        return self._test_items(self._rehearsal)
+
+    def cohort_items(self):
+        return self._test_items(cohort_indices(len(self.test_rows)))
+
+    def gold(self, split):
+        if split == 'rehearsal':
+            return {f'gsm8k:test:{i}': self.test_rows[i]['answer'] for i in self._rehearsal}
+        if split == 'cohort':
+            return {f'gsm8k:test:{i}': self.test_rows[i]['answer'] for i in cohort_indices(len(self.test_rows))}
+        return at.load_gold(self.path(self.inputs['sequences_dir']), self.root, self.prompt_rows(split))
+
+
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description='attribution backend utilities')
+    sub = parser.add_subparsers(dest='command', required=True)
+    fetch = sub.add_parser('fetch-gsm8k', help='fetch the pinned GSM8K parquet files into the prep root (online)')
+    fetch.add_argument('--prep', required=True)
+    fetch.add_argument('--sequences_dir', required=True)
+    args = parser.parse_args(argv)
+    print(json.dumps(fetch_gsm8k(args.prep, args.sequences_dir)))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

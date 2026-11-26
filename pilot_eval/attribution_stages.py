@@ -1,0 +1,801 @@
+"""Ticket 11 (with 06b-09): the chain's seven stages, composed from tickets 01-05 and 10.
+
+Every stage takes the chain ``Context`` and keeps its state in sealed run directories or units, so a resumed
+chain rebuilds it from disk. Model access goes through a ``backend`` (real: ``attribution_backend`` loading the
+inventory-v2 arms offline; tests: a tiny random Qwen2), so the same code runs on CPU fixtures and the Pod.
+
+- **preflight**: backend facts (disk, volume identity, offline load, export check); any problem stops.
+- **qualification** (calibration rows and rehearsal items only): calibration traces (ticket 01); every
+  expected arm loads and passes routing; finite differences and batch invariance against the record's fixed
+  tolerances; token-budget sweep (largest candidate with measured peak <= ``memory_fraction`` of the device;
+  an OOM fails only that candidate); generation batch qualification on the record's rehearsal items. Returns
+  checks / review flags / arms for the chain's automatic sign-off.
+- **base_traces**: blind discovery and heldout traces at the qualified generation batch; minimums enforced;
+  only counts are returned.
+- **attribution_and_freeze**: pass 1 + pass 2 per (arm, batch) unit over discovery, then the discovery-only
+  freeze.
+- **stage_c**: <= 19 conditions per arm and metric on confirmation rows, read only after the freeze.
+- **stage_d**: 9 generation runs on the ADR 0001 cohort from edited checkpoints at the qualified batch size.
+- **report**: ``attribution_report.build`` + ``render``, sealed.
+
+**Rehearsal mode** (record ``mode: rehearsal``) reads only visible inputs: the calibration rows stand in for
+discovery *and* confirmation, and the record's 20 rehearsal items stand in for the ADR 0001 cohort. No blind
+trace is generated, the freeze is labelled ``rehearsal`` (refused by production), there is no pilot comparison,
+and the report is titled REHEARSAL. It exercises the machinery; its numbers mean nothing scientifically.
+"""
+import hashlib
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+
+from pilot_eval import attribution_ablation as ab
+from pilot_eval import attribution_gpu as gpu
+from pilot_eval import attribution_instrument as ai
+from pilot_eval import attribution_metrics as am
+from pilot_eval import attribution_report as ar
+from pilot_eval import attribution_traces as at
+from pilot_eval import attribution_units as au
+from pilot_eval.attribution_chain import StopBeforeProduction, run_conditions, run_units
+from pilot_eval.neuron_audit_qualify import pack
+from pilot_eval.scoring import score_gsm8k_flexible_v3
+
+QUAL_DIR = 'attribution/qualification'
+STAGE_D_DIR = 'attribution/stage_d'
+REPORT_DIR = 'attribution/report'
+STAGE_D_RUNS = {'gold-sft': ['full', 'top10-trace', 'match10-trace', 'top10-stop', 'match10-stop'],
+                'online-grpo': ['full', 'top10-trace', 'match10-trace']}
+METRICS = ('trace', 'stop')
+COMPUTE_DIR = 'attribution/compute'
+EDITED_DIR = 'edited'  # reconstructible edited checkpoints, outside the export scope; edit records are sealed
+# (forward passes, activation-only backward passes) per token, for the MFU estimate
+PASSES = dict(preflight=(1, 0), qualification=(1, 2), base_traces=(1, 0), attribution_and_freeze=(2, 2),
+              stage_c=(2, 0), stage_d=(1, 0), report=(1, 0))
+
+
+def _sha(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _read(directory, name):
+    au.verify_run(directory)
+    return json.loads((Path(directory) / name).read_text())
+
+
+def _jsonl(path):
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line]
+
+
+class Stages:
+    def __init__(self, record, local_root, backend, *, code_sha256):
+        self.record, self.backend = record, backend
+        self.root = Path(local_root)
+        self.q = record['qualification']
+        self.arms = list(record['expected_arms'])
+        self.rehearsal = record['mode'] == 'rehearsal'
+        self.units = au.Units(self.root, plan_sha256=_sha(record), code_sha256=code_sha256,
+                              runtime_sha256=_sha(backend.runtime()))
+        self.mon = None
+
+    def mapping(self):
+        return {name: self._monitored(name, getattr(self, name)) for name in
+                ['preflight', 'qualification', 'base_traces', 'attribution_and_freeze', 'stage_c', 'stage_d',
+                 'report']}
+
+    def _monitored(self, name, fn):
+        """Run a stage under a ``StageMonitor``; its record (and first-unit profiler trace) is sealed per attempt."""
+        def run(ctx):
+            stamp = time.time_ns()
+            staging = self.root / 'profiles' / f'{name}-{stamp}.json'  # outside the export scope until sealed
+            forward, backward = PASSES[name]
+            self.mon = gpu.StageMonitor(name, nvml=getattr(self.backend, 'nvml', 'auto'),
+                                        sync=getattr(self.backend, 'synchronize', lambda: None),
+                                        parameters=getattr(self.backend, 'parameter_count', lambda: None)(),
+                                        peak_flops=self.record['compute']['fp32_peak_flops'],
+                                        forward_passes=forward, backward_passes=backward, profile_path=staging)
+            self.mon.start()
+            try:
+                return fn(ctx)
+            finally:
+                record = self.mon.finish()
+                files = {'compute.json': record}
+                if staging.is_file():
+                    files['trace.json'] = staging.read_bytes()
+                    record['profile_trace'] = 'trace.json'
+                directory = self.root / COMPUTE_DIR / f'{name}-{stamp}'
+                au.seal_run(directory, files)
+                ctx.expect(runs=[str(directory.relative_to(self.root))])
+        return run
+
+    def _unit(self, rows, padded_width=None):
+        """Account one batch (unpadded and padded tokens) and profile it if it is the stage's first unit."""
+        lengths = [len(r['input_ids']) if 'input_ids' in r else len(r['prompt_ids']) for r in rows]
+        if self.mon is not None:
+            self.mon.add_batch(lengths=lengths, padded_width=padded_width or max(lengths))
+            return self.mon.unit()
+        from contextlib import nullcontext
+        return nullcontext()
+
+    def _generate(self, generator, items, batches):
+        """Generation one batch at a time so the first batch is profiled and generated tokens are counted."""
+        by_id = {r['id']: r for r in items}
+        out = []
+        for index, batch in enumerate(batches):
+            rows = [by_id[i] for i in batch]
+            with self.mon.unit() if self.mon is not None else _null():
+                part = at.generate(generator, rows, [batch])
+            lengths = [len(r['prompt_ids']) + len(o['generated_ids']) for r, o in zip(rows, part)]
+            if self.mon is not None:
+                self.mon.add_batch(lengths=lengths, padded_width=max(lengths))
+            out += [dict(o, batch=index) for o in part]
+        return out
+
+    # --- helpers ----------------------------------------------------------------------------------
+
+    def _stop(self):
+        return at.seal_stop_ids(self.backend.decoder(), self.backend.token_text)
+
+    def _pad(self):
+        return self.backend.decoder()['pad_token_id']
+
+    def _instrument(self, model):
+        return ai.Instrument(model, stop_ids=self._stop()['stop_ids'], pad_token_id=self._pad(),
+                             identity_rtol=float(self.record['tolerances']['neuron_sum_identity']),
+                             head_chunk=self.q['head_chunk'])
+
+    def _traces(self, split, batch_size, *, minimum):
+        rows = self.backend.prompt_rows(split)
+        batches = [[r['id'] for r in rows[i:i + batch_size]] for i in range(0, len(rows), batch_size)]
+        directory = at.split_dir(self.root, split) / 'generation'
+        if not (directory / 'complete.json').is_file():
+            responses = self._generate(self.backend.untuned_generator(batch_size), rows, batches)
+            config = dict(model=self.backend.runtime().get('model'), adapter=None, decoding=self.backend.decoding(),
+                          prompt_template='protocol.gsm8k_messages + chat template (frozen sequences-v2 prefix)',
+                          prompt_ids=[r['id'] for r in rows], batches=batches, scorer='gsm8k_flexible_v3',
+                          seed='greedy (no sampling)')
+            at.seal_responses(self.root, split, responses, config=config, sources=self.backend.sources(),
+                              stop=self._stop())
+        rows_dir = at.split_dir(self.root, split) / 'rows'
+        if (rows_dir / 'complete.json').is_file():
+            manifest = _read(rows_dir, 'manifest.json')
+            at.check_minimum(split, manifest['counts'], minimum=minimum)
+            return manifest
+        return at.seal_rows(self.root, split, gold=self.backend.gold(split), decode=self.backend.decode,
+                            minimum=minimum)['manifest']
+
+    # --- stages -------------------------------------------------------------------------------------
+
+    def preflight(self, ctx):
+        problems = self.backend.preflight()
+        if problems:
+            raise StopBeforeProduction(f'preflight: {problems}')
+        return dict(runtime=self.backend.runtime())
+
+    def qualification(self, ctx):
+        tol = self.record['tolerances']
+        manifest = self._traces('calibration', 1, minimum=self.q['calibration_minimum'])
+        rows = at.load_rows(self.root, 'calibration')
+        checks, flags, details, arms = {}, [], {}, []
+        for arm in self.arms:
+            model = self.backend.load(arm)
+            inst = self._instrument(model)
+            try:
+                inst.check_routing()
+            except ai.InstrumentFailure as exc:
+                flags.append(f'{arm}: {exc}')
+                continue
+            arms.append(arm)
+            if arm in self.q['fd_arms']:
+                fd = self._fd_check(arm, model, inst, rows, tol)
+                details[f'fd:{arm}'] = fd
+                checks[f'finite_differences:{arm}'] = bool(
+                    fd['median_rel_err'] <= tol['finite_difference']['median_rel_err_max']
+                    and fd['max_rel_err'] <= tol['finite_difference']['max_rel_err_max'])
+                checks[f'fd_memory:{arm}'] = bool(fd['fits'])
+            ctx.boundary()
+        sweep = self._sweep(rows)
+        details['sweep'] = sweep
+        if sweep['selected'] is None:
+            raise StopBeforeProduction('no token budget meets the memory policy')
+        budgets = invariance_budgets(sweep)
+        for arm in arms:
+            bi = batch_invariance(self._instrument(self.backend.load(arm)), rows, budgets)
+            details[f'batch_invariance:{arm}'] = bi
+            checks[f'batch_invariance:{arm}'] = bool(bi['max_fraction'] <= tol['batch_invariance'])
+            ctx.boundary()
+        generation = self._generation_batches()
+        details['generation_batches'] = generation
+        floor = max([d['max_abs'] for k, d in details.items() if k.startswith('batch_invariance:')] or [0.0])
+        result = dict(checks=checks, review_flags=flags, arms=arms, budget=sweep['selected'],
+                      generation_batch=generation['selected'], calibration=manifest['counts'],
+                      resolution_floor=dict(rule=tol['resolution_floor'], measured_batch_invariance=floor))
+        au.seal_run(self.root / QUAL_DIR, {'qualification.json': result, 'details.json': details})
+        ctx.expect(runs=[QUAL_DIR])
+        return result
+
+    def _probe_memory(self, inst, rows):
+        """Pass 1 + pass 2 on ``rows`` with the peak measured; returns (outcome, record). OOM fails this probe only."""
+        width = max(len(r['input_ids']) for r in rows)
+        record = dict(rows=len(rows), width=width, padded_tokens=len(rows) * width)
+        self.backend.reset_peak()
+        try:
+            inst.attribute(rows)
+        except Exception as exc:
+            if not self.backend.is_oom(exc):
+                raise
+            return 'oom', dict(record, outcome='oom')
+        peak = self.backend.peak_memory()
+        fits = peak <= self.q['memory_fraction'] * self.backend.device_memory()
+        return 'ok', dict(record, outcome='ok', peak_bytes=peak, fits=fits)
+
+    def _fd_check(self, arm, model, inst, rows, tol):
+        """Finite differences with the record's precision; FP64 builds a temporary FP64 copy of the arm whose peak
+        memory is measured on this device and must fit the qualification memory fraction."""
+        fd_tol = tol['finite_difference']
+        self.backend.reset_peak()
+        reference = self.backend.fp64_model(arm) if fd_tol['precision'] == 'fp64' else None
+        try:
+            fd = finite_difference_check(model, inst, rows[:self.q['fd_rows']], self._stop()['stop_ids'],
+                                         epsilon=fd_tol['epsilon'], adapters=self.q['fd_adapters'],
+                                         neurons=self.q['fd_neurons'], reference_model=reference)
+        finally:
+            del reference
+            getattr(self.backend, 'free_memory', lambda: None)()
+        peak, device = self.backend.peak_memory(), self.backend.device_memory()
+        return dict(fd, peak_bytes=peak, memory_fraction_of_device=peak / device,
+                    fits=peak <= self.q['memory_fraction'] * device)
+
+    def _sweep(self, rows):
+        """Each candidate budget is exercised by a batch that actually fills it: the longest calibration row
+        replicated (distinct IDs) up to the budget. The records give the rows, width and padded tokens used."""
+        device = self.backend.device_memory()
+        records, selected = [], None
+        inst = self._instrument(self.backend.load(self.arms[0]))
+        longest = max(rows, key=lambda r: (len(r['input_ids']), r['id']))
+        for budget in sorted(self.record['token_budget_sweep']):
+            copies = budget // len(longest['input_ids'])
+            if copies < 1:
+                records.append(dict(budget=budget, outcome='longest-example-exceeds-budget'))
+                continue
+            probe = [dict(longest, id=f"{longest['id']}#probe{k}") for k in range(copies)]
+            outcome, record = self._probe_memory(inst, probe)
+            records.append(dict(record, budget=budget, probe='longest calibration row replicated to fill the budget'))
+            if outcome == 'ok' and record['fits']:
+                selected = budget
+        return dict(candidates=records, selected=selected, device_bytes=device,
+                    memory_fraction=self.q['memory_fraction'])
+
+    def _generation_batches(self):
+        """Batch 1 is the reference. A candidate qualifies only if it was actually exercised (no more rows than
+        there are rehearsal items), did not OOM, and meets the flip / stop-change rule; the first failure ends
+        the sweep. Actual batch size, padded tokens and peak memory are recorded."""
+        rule = self.record['generation_batch_rule']
+        items = self.backend.rehearsal_items()
+        if len(items) != rule['items']:
+            raise StopBeforeProduction(f"expected {rule['items']} rehearsal generation items, got {len(items)}")
+        ordered = sorted(items, key=lambda r: (-len(r['prompt_ids']), r['id']))  # longest prompts first
+        gold = self.backend.gold('rehearsal')
+        reference, records, selected, stopped = None, [], None, False
+        for size in sorted(rule['candidates']):
+            if size > len(ordered):
+                records.append(dict(batch=size, outcome='not-exercised',
+                                    reason=f'needs {size} items; only {len(ordered)} rehearsal items exist'))
+                continue
+            if stopped:
+                records.append(dict(batch=size, outcome='not-tried', reason='a smaller candidate failed'))
+                continue
+            batches = [[r['id'] for r in ordered[i:i + size]] for i in range(0, len(ordered), size)]
+            self.backend.reset_peak()
+            try:
+                out = {o['id']: o for o in at.generate(self.backend.untuned_generator(size), ordered, batches)}
+            except Exception as exc:
+                if not self.backend.is_oom(exc):
+                    raise
+                records.append(dict(batch=size, outcome='oom'))
+                stopped = True
+                continue
+            peak = self.backend.peak_memory()
+            padded = max(len(r['prompt_ids']) for r in ordered[:size]) * size + \
+                size * max(len(out[r['id']]['generated_ids']) for r in ordered[:size])
+            correct = {i: score_gsm8k_flexible_v3(o['text'], gold[i], capped=o['stop_reason'] != 'eos')['correct']
+                       for i, o in out.items()}
+            measured = dict(batch=size, rows_in_first_batch=len(batches[0]), padded_tokens_first_batch=padded,
+                            peak_bytes=peak)
+            if reference is None:
+                reference = (out, correct)
+                records.append(dict(measured, outcome='reference'))
+                selected = size  # the reference itself succeeded, so it is a tested size
+                continue
+            flips = sum(correct[i] != reference[1][i] for i in correct)
+            stops = sum(out[i]['stop_reason'] != reference[0][i]['stop_reason'] for i in out)
+            ok = flips <= rule['max_flips'] and stops <= rule['max_stop_changes']
+            records.append(dict(measured, outcome='qualifies' if ok else 'fails-rule', flips=flips,
+                                stop_changes=stops, qualifies=ok))
+            if not ok:
+                stopped = True
+                continue
+            selected = size
+        if reference is None:  # nothing fits, not even batch size 1 (review round 5, 5)
+            raise StopBeforeProduction(f'generation batch qualification: batch size 1 did not run ({records}); '
+                                       'no generation batch size qualifies')
+        return dict(candidates=records, selected=selected, rule=rule,
+                    note='only exercised sizes can be selected (review round 4, 9)')
+
+    def _worst_case_check(self, budget):
+        """Re-check the selected budget on the real attribution rows before production: the packed batch with the
+        most padded tokens and the one holding the longest rows. OOM or a peak over the limit stops the chain."""
+        rows = at.load_rows(self.root, self._split('discovery'))
+        batches = pack(rows, budget)
+        worst = {'most-padded-tokens': max(batches, key=lambda b: len(b) * max(len(r['input_ids']) for r in b)),
+                 'longest-rows': batches[0]}
+        inst = self._instrument(self.backend.load(self.arms[0]))
+        out = {}
+        for name, batch in worst.items():
+            outcome, record = self._probe_memory(inst, batch)
+            out[name] = record
+            if outcome == 'oom' or not record['fits']:
+                raise StopBeforeProduction(f'selected token budget {budget} fails the worst-case {name} attribution '
+                                           f'batch ({record}); qualification must pick a smaller budget')
+        return out
+
+    def base_traces(self, ctx):
+        qual = _read(self.root / QUAL_DIR, 'qualification.json')
+        out = {}
+        for split in ('discovery', 'heldout'):
+            if self.rehearsal:  # calibration rows (traced in qualification) stand in; nothing blind is generated
+                manifest = _read(at.split_dir(self.root, 'calibration') / 'rows', 'manifest.json')
+                at.check_minimum(split, manifest['counts'], minimum=self.record['minimums'][split])
+                out[split] = dict(manifest['counts'], stands_in='calibration')
+                ctx.boundary()
+                continue
+            manifest = self._traces(split, qual['generation_batch'], minimum=self.record['minimums'][split])
+            ctx.expect(runs=[str(at.split_dir(self.root, split).relative_to(self.root) / d)
+                             for d in ('generation', 'rows')])
+            out[split] = manifest['counts']  # counts only; no confirmation output is inspected
+            ctx.boundary()
+        out['worst_case_memory'] = self._worst_case_check(qual['budget'])
+        return out
+
+    def _split(self, role):
+        """The sequences split playing ``role`` (discovery or heldout); calibration for both in a rehearsal."""
+        return 'calibration' if self.rehearsal else role
+
+    def _cohort(self):
+        """Stage D items and gold: the ADR 0001 cohort, or the 20 rehearsal items in a rehearsal."""
+        if self.rehearsal:
+            return self.backend.rehearsal_items(), self.backend.gold('rehearsal')
+        return self.backend.cohort_items(), self.backend.gold('cohort')
+
+    def _discovery_batches(self):
+        qual = _read(self.root / QUAL_DIR, 'qualification.json')
+        rows = at.load_rows(self.root, self._split('discovery'))
+        return rows, [[r['id'] for r in b] for b in pack(rows, qual['budget'])]
+
+    def attribution_and_freeze(self, ctx):
+        rows, batches = self._discovery_batches()
+        by_id = {r['id']: r for r in rows}
+        input_sha = _sha([r['id'] for r in rows])
+        ctx.expect(units=[au.unit_key('ab', arm, batch=i) for arm in self.arms for i in range(len(batches))])
+        arms = {}
+        for arm in self.arms:
+            inst = self._instrument(self.backend.load(arm))
+
+            def compute(batch, inst=inst):
+                rows_b = [by_id[i] for i in batch]
+                with self._unit(rows_b):
+                    blocks, counts, results = ai.unit_blocks(inst.attribute(rows_b))
+                return dict(blocks=blocks, counts=counts, results=results)
+
+            run_units(self.units, arm, batches, compute, boundary=ctx.boundary, input_sha256=input_sha)
+            arms[arm] = self._discovery_summary(arm, len(batches), inst)
+        selection = self.record['selection']
+        freeze = ab.build_freeze(arms, sources=[dict(split=self._split('discovery'), rows_sha256=input_sha)],
+                                 rehearsal=self.rehearsal,
+                                 analysis=dict(statistics=self.record['statistics'],
+                                               tolerances=self.record['tolerances']),
+                                 tolerance=selection['tolerance'], seed=selection['seed'],
+                                 random_seeds=selection['random_seeds'], top_group=selection['top_group'],
+                                 top_singles=selection['top_singles'], read_size=selection['read_size'])
+        ab.seal_freeze(self.root, freeze)
+        ctx.expect(runs=[ab.FREEZE_DIR])
+        return dict(arms=sorted(arms), batches=len(batches))
+
+    def _discovery_summary(self, arm, n_batches, inst):
+        parts = [self.units.read(au.unit_key('ab', arm, batch=i))[0] for i in range(n_batches)]
+
+        def cat(key):
+            return np.concatenate([p[key] for p in parts]).astype(np.float64)
+
+        tokens = cat(('examples', 0, 'token_count'))[:, 0].sum()
+        b_norms = [float(m.lora_B[inst.adapter].weight.norm()) for _, _, m in inst.modules]
+        scale = float(inst.modules[0][2].scaling[inst.adapter])
+        layers = sorted(inst.down_index)
+        group = {'trace': 'examples', 'stop': 'stop'}
+        return dict(adapters=inst.adapters,
+                    mean_attr={m: np.nanmean(cat((group[m], 0, f'attr_{m}')), 0) for m in METRICS},
+                    write=ab.discovery_write(cat(('examples', 0, 'sum_abs_c')).sum(0),
+                                             np.full(len(inst.adapters), tokens), b_norms, scale),
+                    signed_sum_c=cat(('examples', 0, 'signed_sum_c')).sum(0), token_total=np.full(len(layers), tokens),
+                    neuron={m: {l: np.nanmean(cat((group[m], l, f'neuron_{m}')), 0) for l in layers} for m in METRICS},
+                    term_size={l: cat(('examples', l, 'term_size')).sum(0) for l in layers})
+
+    def stage_c(self, ctx):
+        freeze_dir = self.root / ab.FREEZE_DIR
+        au.verify_run(freeze_dir)  # Stage C never runs before a sealed freeze
+        rows = at.load_rows(self.root, self._split('heldout'), freeze_dir=freeze_dir)
+        ids = [r['id'] for r in rows]
+        order = {i: k for k, i in enumerate(ids)}
+        batches = pack(rows, _read(self.root / QUAL_DIR, 'qualification.json')['budget'])
+        out = {}
+        for arm in self.arms:
+            stage = ab.StageC(self.backend.load(arm), stop_ids=self._stop()['stop_ids'], pad_token_id=self._pad(),
+                              head_chunk=self.q['head_chunk'])
+            for metric in METRICS:
+                conditions = ab.conditions(freeze_dir, arm, metric, rehearsal=self.rehearsal)
+
+                def evaluate(condition, stage=stage):
+                    merged = {k: np.full(len(ids), np.nan) for k in ('delta_trace', 'delta_stop', 'kl')}
+                    for batch in batches:
+                        with self._unit(batch):
+                            part = stage.evaluate(batch, condition)
+                        for key in merged:
+                            merged[key][[order[i] for i in part['example_ids']]] = part[key]
+                    return dict(blocks={('examples', 0, 'delta_trace'): merged['delta_trace'][:, None].astype(np.float32),
+                                        ('examples', 0, 'kl'): merged['kl'][:, None].astype(np.float32),
+                                        ('stop', 0, 'delta_stop'): merged['delta_stop'][:, None].astype(np.float32)},
+                                counts=dict(examples=[1] * len(ids),
+                                            stop=(~np.isnan(merged['delta_stop'])).astype(int).tolist()))
+
+                ctx.expect(units=[au.unit_key('c', arm, condition=c['name']) for c in conditions
+                                  if c['status'] == 'run'])
+                result = run_conditions(self.units, arm, conditions, evaluate, example_ids=ids,
+                                        boundary=ctx.boundary, input_sha256=_sha(ids))
+                out[f'{arm}|{metric}'] = dict(skipped=result['skipped'], conditions=len(conditions))
+        return out
+
+    def _compute_records(self):
+        out = {}
+        for directory in sorted((self.root / COMPUTE_DIR).glob('*')) if (self.root / COMPUTE_DIR).is_dir() else []:
+            if (directory / 'complete.json').is_file():
+                record = _read(directory, 'compute.json')
+                out[record['stage']] = dict(record, sealed_dir=str(directory.relative_to(self.root)))  # latest attempt
+        return out
+
+    def _neuron_means(self, n_batches):
+        group = {'trace': 'examples', 'stop': 'stop'}
+        out = {}
+        for arm in self.arms:
+            parts = [self.units.read(au.unit_key('ab', arm, batch=i))[0] for i in range(n_batches)]
+            out[arm] = {m: {key[1]: np.nanmean(np.concatenate([p[key] for p in parts]).astype(np.float64), 0)
+                            for key in parts[0] if key[0] == group[m] and key[2] == f'neuron_{m}'} for m in METRICS}
+        return out
+
+    def _stage_d_report(self):
+        base = self.root / STAGE_D_DIR
+        runs = {}
+        for config in sorted(base.glob('*/*/config/complete.json')):
+            arm, condition = config.parent.parent.parent.name, config.parent.parent.name
+            responses = stage_d_batches(self.root, arm, condition)
+            if responses is not None:  # only complete runs (every batch sealed) are analysed
+                runs[f'{arm}|{condition}'] = responses
+        if 'untuned|reference' not in runs:
+            return dict(available=False, reason='untuned reference run not sealed')
+        rule = self.record['stage_d']['early_stop_rule']
+        try:
+            reference = ar.early_stop_reference(runs['untuned|reference'], rule=rule)
+        except ValueError as exc:  # e.g. every untuned response capped: reported, never fatal
+            reference = None
+            unavailable = dict(available=False, rule=rule, reason=str(exc))
+        out = dict(early_stop_reference=reference if reference is not None else unavailable,
+                   outcomes={k: ar.stage_d_outcomes(v, early_reference=reference) for k, v in runs.items()},
+                   pilot_comparison={})
+        if self.rehearsal:
+            out['pilot_comparison'] = dict(available=False, reason='rehearsal: no pilot items')
+            return out
+        if self.record['stage_d'].get('pilot_comparison') == 'deferred':
+            out['pilot_comparison'] = dict(available=False, reason='deferred by the user (2026-11-16): every Stage D '
+                                                                   'response is sealed for a later comparison')
+            return out
+        root = Path(self.record['inputs'].get('artifact_root', '.'))
+        _, gold = self._cohort()
+        for arm, spec in sorted(self.record['stage_d'].get('pilot_results', {}).items()):
+            if f'{arm}|full' not in runs:
+                continue
+            try:
+                path = Path(spec['path'])
+                path = path if path.is_absolute() else root / path
+                pilot = ar.load_pilot_rows(path, filters=spec.get('filters', {}))
+                out['pilot_comparison'][arm] = ar.pilot_comparison(runs[f'{arm}|full'], pilot, gold)
+            except (OSError, ValueError, KeyError, TypeError) as exc:  # an analysis gap is reported, never fatal
+                out['pilot_comparison'][arm] = dict(available=False, reason=f'{type(exc).__name__}: {exc}')
+        return out
+
+    def stage_d(self, ctx):
+        """Stage D, one sealed run directory per (arm, condition, batch); a resumed run skips sealed batches whose
+        identity matches and never regenerates them. The condition's config is sealed first and must match."""
+        freeze = _read(self.root / ab.FREEZE_DIR, 'freeze.json')
+        size = _read(self.root / QUAL_DIR, 'qualification.json')['generation_batch']
+        items, gold = self._cohort()
+        by_id = {r['id']: r for r in items}
+        batches = [[r['id'] for r in items[i:i + size]] for i in range(0, len(items), size)]
+        # Edited-checkpoint verification runs on an allowed rehearsal prompt, never a cohort one (review r6, 5).
+        probe = self.backend.rehearsal_items()[0]['prompt_ids']
+        runs = [('untuned', 'reference')] + [(arm, c) for arm, cs in STAGE_D_RUNS.items() if arm in self.arms
+                                              for c in cs]
+        out = {}
+        for arm, condition in runs:
+            directory = self.root / STAGE_D_DIR / arm / condition
+            adapters = None if condition in ('full', 'reference') else stage_d_adapters(freeze, arm, condition)
+            if adapters is False:
+                out[f'{arm}|{condition}'] = 'skipped: matched-control-unavailable'
+                continue
+            config = dict(arm=arm, condition=condition, adapters=adapters, decoding=self.backend.decoding(),
+                          batches=batches, scorer='gsm8k_flexible_v3',
+                          cohort='rehearsal-items' if self.rehearsal else 'adr-0001',
+                          model=self.backend.runtime().get('model'), tokenizer=self.backend.runtime().get('tokenizer'),
+                          prompt_template='protocol.gsm8k_messages(question) + the pinned chat template, '
+                                          'add_generation_prompt=True',
+                          prompt_ids=[r['id'] for r in items], seed='greedy (no sampling)')
+            if (directory / 'config' / 'complete.json').is_file():
+                if _read(directory / 'config', 'config.json') != json.loads(json.dumps(config)):
+                    raise ValueError(f'Stage D {arm}/{condition}: sealed config differs from this run; investigate')
+            else:
+                au.seal_run(directory / 'config', {'config.json': config})
+            ctx.expect(runs=[str((directory / d).relative_to(self.root)) for d in
+                             ['config'] + [f'b{i:05d}' for i in range(len(batches))]])
+            generator, done = None, 0
+            for index, batch in enumerate(batches):
+                bdir = directory / f'b{index:05d}'
+                if (bdir / 'complete.json').is_file():
+                    if [r['id'] for r in _jsonl_verified(bdir)] != batch:
+                        raise ValueError(f'Stage D {arm}/{condition} batch {index}: sealed items differ')
+                    done += 1
+                    continue
+                if generator is None:  # built only when some batch still needs generating
+                    generator, edit = self.backend.stage_d_generator(
+                        None if arm == 'untuned' else arm, adapters, size, self.root / EDITED_DIR / arm / condition,
+                        probe_ids=probe)
+                    if edit is not None:
+                        ctx.expect(runs=[str((directory / 'edit').relative_to(self.root))])
+                        if not (directory / 'edit' / 'complete.json').is_file():
+                            au.seal_run(directory / 'edit', {'edit.json': {k: v for k, v in edit.items()
+                                                                          if k != 'reused'}})
+                rows = [by_id[i] for i in batch]
+                scored = []
+                for r in self._generate(generator, rows, [batch]):
+                    score = score_gsm8k_flexible_v3(r['text'], gold[r['id']], capped=r['stop_reason'] != 'eos')
+                    scored.append(dict(r, batch=index, correct=bool(score['correct']), status=score['status'],
+                                       tokens=len(r['generated_ids']), capped=r['stop_reason'] != 'eos'))
+                au.seal_run(bdir, {'responses.jsonl': ''.join(json.dumps(x, sort_keys=True) + '\n' for x in scored)})
+                ctx.boundary()  # caps are enforced between generation batches
+            responses = stage_d_batches(self.root, arm, condition)
+            out[f'{arm}|{condition}'] = dict(accuracy=float(np.mean([r['correct'] for r in responses])),
+                                             batches_reused=done)
+        return out
+
+    def report(self, ctx):
+        freeze = _read(self.root / ab.FREEZE_DIR, 'freeze.json')
+        stats = self.record['statistics']
+        _, batches = self._discovery_batches()
+        discovery = {m: {} for m in METRICS}
+        for arm in self.arms:
+            parts = [self.units.read(au.unit_key('ab', arm, batch=i))[0] for i in range(len(batches))]
+            discovery['trace'][arm] = np.concatenate([p[('examples', 0, 'attr_trace')] for p in parts])
+            discovery['stop'][arm] = np.concatenate([p[('stop', 0, 'attr_stop')] for p in parts])
+        stage_c = {}
+        for arm in self.arms:
+            stage_c[arm] = {}
+            for metric in METRICS:
+                stage_c[arm][metric] = {}
+                for c in ab.conditions(self.root / ab.FREEZE_DIR, arm, metric, rehearsal=self.rehearsal):
+                    key = au.unit_key('c', arm, condition=c['name'])
+                    if c['status'] != 'run' or self.units.state(key) != 'sealed':
+                        continue
+                    arrays, _ = self.units.read(key)
+                    stage_c[arm][metric][c['name']] = dict(delta_trace=arrays[('examples', 0, 'delta_trace')][:, 0],
+                                                           delta_stop=arrays[('stop', 0, 'delta_stop')][:, 0],
+                                                           kl=arrays[('examples', 0, 'kl')][:, 0])
+        stage_d = {}
+        full = stage_d_batches(self.root, 'gold-sft', 'full')
+        if full is not None:
+            for condition in STAGE_D_RUNS['gold-sft'][1:]:
+                metric = condition.split('-')[1]
+                responses = stage_d_batches(self.root, 'gold-sft', condition)
+                if responses is not None and condition in stage_c.get('gold-sft', {}).get(metric, {}):
+                    stage_d[condition] = (full, responses)
+        concordance_c = {name: values for metric in METRICS for name, values in
+                         stage_c.get('gold-sft', {}).get(metric, {}).items()}
+        qual_floor = _read(self.root / QUAL_DIR, 'qualification.json')['resolution_floor']
+        settings = {k: stats[k] for k in ('resamples', 'seed', 'alpha', 'margin', 'sparse_lower', 'dense_upper',
+                                          'gate_singles_min')}
+        settings['resolution_floor'] = ar.resolution_floor(qual_floor['rule'], qual_floor['measured_batch_invariance'])
+        inputs = dict(settings=settings,
+                      provenance=self.backend.sources()['provenance'], discovery=discovery,
+                      unresolved_arms=self.backend.unresolved_arms(),
+                      freeze={arm: freeze['arms'][arm] for arm in self.arms}, stage_c=stage_c, stage_d={},
+                      neuron={}, compute=self._compute_records(), a_vs_a0=None)
+        report = ar.build(inputs)
+        report['rehearsal'] = self.rehearsal
+        qual = _read(self.root / QUAL_DIR, 'qualification.json')
+        floor_rule = qual['resolution_floor']
+        floor = ar.resolution_floor(floor_rule['rule'], floor_rule['measured_batch_invariance'])
+        frozen = {arm: freeze['arms'][arm] for arm in self.arms}
+        report['descriptive'] = dict(
+            report['descriptive'], resolution_floor=dict(floor_rule, value=floor),
+            concentration=ar.concentration_table(frozen, self._neuron_means(len(batches)),
+                                                 null_orders=stats['null_orders'], null_seed=stats['null_seed'],
+                                                 resolution_floor=floor),
+            a_vs_a0=ar.a_vs_a0(self.record['inputs'].get('init_check_rows'), frozen))
+        report['stage_d'] = self._stage_d_report()
+        if stage_d:  # concordance over gold-sft's generated removal conditions
+            report['concordance'] = ar.concordance(concordance_c, stage_d,
+                                                   ar.bootstrap_indices(len(next(iter(concordance_c.values()))['delta_trace']),
+                                                                        resamples=stats['resamples'], seed=stats['seed']),
+                                                   ar.bootstrap_indices(len(next(iter(stage_d.values()))[0]),
+                                                                        resamples=stats['resamples'], seed=stats['seed']))
+        au.seal_run(self.root / REPORT_DIR, {'report.json': report, 'report.md': ar.render(report)})
+        ctx.expect(runs=[REPORT_DIR])
+        return dict(gates={k: g['pass'] for k, g in report['gates'].items()}, primary1=report['primary1']['outcome'],
+                    primary3={m: {a: r['classification'] for a, r in report['primary3'][m].items()} for m in METRICS})
+
+
+def _jsonl_verified(directory):
+    au.verify_run(directory)
+    return _jsonl(Path(directory) / 'responses.jsonl')
+
+
+def stage_d_batches(root, arm, condition):
+    """All responses of one Stage D run in batch order, or None unless its config and every batch are sealed."""
+    directory = Path(root) / STAGE_D_DIR / arm / condition
+    if not (directory / 'config' / 'complete.json').is_file():
+        return None
+    config = _read(directory / 'config', 'config.json')
+    out = []
+    for index, batch in enumerate(config['batches']):
+        bdir = directory / f'b{index:05d}'
+        if not (bdir / 'complete.json').is_file():
+            return None
+        rows = _jsonl_verified(bdir)
+        if [r['id'] for r in rows] != batch:
+            raise ValueError(f'Stage D {arm}/{condition} batch {index}: sealed items differ from the config')
+        out += rows
+    return out
+
+
+def stage_d_adapters(freeze, arm, condition):
+    kind, metric = condition.split('-')
+    sel = freeze['arms'][arm][metric]
+    if kind == 'top10':
+        return list(sel['top10'])
+    return False if sel['controls']['group'] is None else list(sel['controls']['group'])
+
+
+def longest_probe(rows, budget):
+    """The first (longest-first) packed batch at this budget, or None if the longest row exceeds it."""
+    try:
+        return pack(rows, budget)[0]
+    except ValueError:
+        return None
+
+
+def invariance_budgets(sweep):
+    """The smallest and the selected budget among those the sweep exercised and that fit (review round 6, 2): a
+    budget skipped because the longest row exceeds it, or one that ran out of memory, is never packed."""
+    fitting = [c['budget'] for c in sweep['candidates'] if c.get('outcome') == 'ok' and c.get('fits')]
+    return sorted({min(fitting), sweep['selected']}) if fitting else []
+
+
+def batch_invariance(inst, rows, budgets):
+    """Per-example |Δattr| between singleton and packed batches at each budget, as a fraction of max |attr|."""
+    single = {}
+    for row in rows:
+        out = inst.attribute([row])
+        single[row['id']] = {m: out['attr'][m][0] for m in METRICS}
+    scale = {m: np.nanmax(np.abs([single[r['id']][m] for r in rows])) for m in METRICS}
+    worst_fraction, worst_abs = 0.0, 0.0
+    for budget in budgets:
+        for batch in pack(rows, budget):
+            out = inst.attribute(batch)
+            for k, row in enumerate(batch):
+                for m in METRICS:
+                    diff = np.abs(out['attr'][m][k] - single[row['id']][m])
+                    if np.isnan(diff).all():
+                        continue
+                    worst_abs = max(worst_abs, float(np.nanmax(diff)))
+                    if scale[m] > 0:
+                        worst_fraction = max(worst_fraction, float(np.nanmax(diff)) / scale[m])
+    return dict(max_fraction=worst_fraction, max_abs=worst_abs, budgets=list(budgets))
+
+
+def finite_difference_check(model, inst, rows, stop_ids, *, epsilon, adapters, neurons, reference_model=None):
+    """Central differences on explicit branch/neuron gates vs the instrument, for the top adapters and neurons.
+
+    The attribution is always the FP32 instrument's. With ``reference_model`` (an FP64 copy of the same arm; user
+    decision 2026-11-16) every perturbed forward pass runs in FP64: weights, activations, gates, log-softmax and
+    metric means. An FP32 central difference cannot resolve single-neuron effects (~1e-5): 06a r3 measured a max
+    relative error of 60.8 in FP32 and 0.078 in FP64 on gold-sft, with the same attributions."""
+    import torch
+    out = inst.attribute(rows)
+    ids, attention, positions = inst.batch(rows)
+    masks = [r['masks'] for r in rows]
+    n, errors, checked = len(rows), [], []
+    reference = model if reference_model is None else reference_model
+    dtype = next(reference.parameters()).dtype
+    if reference_model is not None:
+        if any(p.dtype != torch.float64 for p in reference_model.parameters()):
+            raise ValueError('the finite-difference reference must be an FP64 copy of the arm')
+        for (_, _, mine), (_, _, theirs) in zip(ai.adapter_modules(model), ai.adapter_modules(reference_model)):
+            if not torch.equal(mine.lora_B[inst.adapter].weight.double().cpu(),
+                               theirs.lora_B[inst.adapter].weight.cpu()):
+                raise ValueError('the FP64 reference is not the same arm (adapter weights differ)')
+        ids, attention, positions = ids.to(next(reference.parameters()).device), \
+            attention.to(next(reference.parameters()).device), positions.to(next(reference.parameters()).device)
+
+    def metric(name, gates=None, neuron=None):
+        with torch.no_grad(), ai.full_fp64(reference), ai.branch_gates(reference, gates or {}, inst.adapter), \
+                ai.neuron_gate(reference, neuron, inst.adapter):
+            logits = reference(input_ids=ids, attention_mask=attention, position_ids=positions,
+                               use_cache=False).logits
+        if name == 'trace':  # CUDA tensors reach NumPy only through .cpu() (review r4, 1)
+            return am.trace_loglik(logits, ids, masks).detach().cpu().numpy()
+        return am.stop_pull(logits, masks, stop_ids=stop_ids)[0].detach().cpu().numpy()
+
+    baseline = {name: metric(name) for name in METRICS}  # metric values at g = 1, for the noise estimate
+    items = []
+
+    def compare(name, got, kw_up, kw_down, *, kind, target):
+        fd = -(metric(name, **kw_up) - metric(name, **kw_down)) / (2 * epsilon)
+        ok = ~np.isnan(fd) & (np.abs(fd) > 0)
+        rel = np.abs(got[ok] - fd[ok]) / np.abs(fd[ok])
+        errors.extend(rel)
+        for k, r in enumerate(np.flatnonzero(ok)):  # reporting only (06a r3); the pass rule is unchanged
+            value = float(baseline[name][r])
+            items.append(dict(kind=kind, metric=name, target=target, row=rows[r]['id'], attribution=float(got[r]),
+                              finite_difference=float(fd[r]), abs_err=float(abs(got[r] - fd[r])),
+                              rel_err=float(rel[k]), metric_value=value,
+                              fd_noise_estimate=float(np.spacing(np.dtype(str(dtype).split('.')[-1]).type(abs(value))))
+                              / (2 * epsilon)))
+
+    for name in METRICS:
+        mean = np.nanmean(out['attr'][name], 0)
+        if np.isnan(mean).all():
+            continue
+        for index in ab.top_k(np.nan_to_num(mean), adapters):
+            compare(name, out['attr'][name][:, index], dict(gates={index: torch.full((n, 1, 1), 1 + epsilon, device=ids.device, dtype=dtype)}),
+                    dict(gates={index: torch.full((n, 1, 1), 1 - epsilon, device=ids.device, dtype=dtype)}),
+                    kind='adapter', target=dict(adapter=int(index)))
+            checked.append(dict(metric=name, adapter=int(index)))
+        layer = max(inst.down_index, key=lambda l: abs(np.nan_to_num(mean[inst.down_index[l]])))
+        values = np.nanmean(out['neuron'][name][layer], 0)
+        for j in np.argsort(-np.abs(values))[:neurons]:
+            compare(name, out['neuron'][name][layer][:, j],
+                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 + epsilon, device=ids.device, dtype=dtype))),
+                    dict(neuron=(layer, int(j), torch.full((n, 1, 1), 1 - epsilon, device=ids.device, dtype=dtype))),
+                    kind='neuron', target=dict(layer=int(layer), neuron=int(j)))
+            checked.append(dict(metric=name, layer=int(layer), neuron=int(j)))
+    errors = np.asarray(errors, dtype=np.float64)
+    return dict(median_rel_err=float(np.median(errors)) if len(errors) else float('inf'),
+                max_rel_err=float(errors.max()) if len(errors) else float('inf'), checked=checked, epsilon=epsilon,
+                items=items, worst=sorted(items, key=lambda i: -i['rel_err'])[:10],
+                precision='fp64' if dtype == torch.float64 else 'fp32',
+                parts=dict(attribution=f"{getattr(inst, 'precision', 'fp32')} (instrument; FP64 accumulation of products)",
+                           finite_difference='fp64 weights, activations (incl. attention softmax, RMSNorm and RoPE '
+                                             'via full_fp64), gates, log-softmax and metric means'
+                           if dtype == torch.float64 else 'fp32'),
+                note='central differences; fd_noise_estimate = ulp(|M|) / (2 epsilon) in the reference precision, '
+                     'an estimate of the rounding floor of each finite difference')
+
+
+def build(record, local_root, volume_root, *, backend=None, code_sha256=None):
+    if 'qualification' not in record or 'inputs' not in record:
+        raise StopBeforeProduction('launch record lacks the qualification settings or inputs block')
+    if backend is None:
+        from pilot_eval.attribution_backend import TransformersBackend
+        backend = TransformersBackend(record, volume_root)
+    return Stages(record, local_root, backend, code_sha256=code_sha256 or record['code_commit']).mapping()
+
+
+def _null():
+    from contextlib import nullcontext
+    return nullcontext()
