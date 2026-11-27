@@ -112,8 +112,8 @@ decisions:
   K2-D1: '[user 2026-11-26] Run A matched lambda 6.0e-4; trigger conditional Run B (headroom-scaled lambda) if < 4 survivors'
   K2-D2: '[user 2026-11-26] Rank 1 (read_lr 3.0e-3) across 2 seeds (42, 43); seed 43 runs on surviving lambda'
   K2-D3: '[user 2026-11-26] 64 steps/epoch: epoch 1 Gold batches (3..8); epochs 2..16 reshuffled 29x8 + 35x7 = 477'
-  K2-D4: '[proposed] val128 k=2 target generation engine on A100 (vLLM qualified sampler vs HF FP32 refinement)'
-  K2-D5: '[proposed] A100-80GB + sl-0 export order (compact survivor/metrics/delta-act JSONs + R1 checkpoints)'
+  K2-D4: '[user 2026-11-27] val128 k=2 targets generated with hf-fp32-ieee using exact k=2 sampling recipe (J=64, cap=1024, T=0.6, rep_pen=1.1, top_p=1.0, top_k=0, 4 attempts)'
+  K2-D5: '[user 2026-11-27] 1x A100-80GB + sl-0 export to Prasadmahadik/spar-sampling-sft-artifacts (compact survivor/metrics/delta-act JSONs + R1 checkpoints)'
 
 inputs:
   artifact_root: null                    # filled by `seal`

@@ -964,14 +964,8 @@ class TestRewireK2Launcher(unittest.TestCase):
 
 class TestK2DraftYAMLs(unittest.TestCase):
     def test_all_three_k2_drafts_match_schema(self):
-        self.assertEqual(k2p.draft_problems(REHEARSAL_YAML), [])
-        for draft in (MATCHED_YAML, SCALED_YAML):
-            probs = k2p.draft_problems(draft)
-            self.assertEqual(
-                sorted(p.split(' ')[0] for p in probs),
-                ['decisions.K2-D4', 'decisions.K2-D5'],
-                draft.name,
-            )
+        for draft in (REHEARSAL_YAML, MATCHED_YAML, SCALED_YAML):
+            self.assertEqual(k2p.draft_problems(draft), [], draft.name)
 
 
 if __name__ == '__main__':

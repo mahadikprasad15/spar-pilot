@@ -142,11 +142,21 @@ class TestSparseRewiringK2(unittest.TestCase):
         self.assertEqual(sp.draft_problems(GOLD_DRAFT), [])
 
     def test_k2_draft_refused_until_proposed_decisions_signed(self):
-        probs = k2p.draft_problems(K2_DRAFT)
-        self.assertEqual(sorted(p.split(' ')[0] for p in probs), ['decisions.K2-D4', 'decisions.K2-D5'])
+        # All checked-in K2 drafts are signed and ready for sealing
+        self.assertEqual(k2p.draft_problems(K2_DRAFT), [])
+        self.assertEqual(k2p.draft_problems(K2_SCALED_DRAFT), [])
+        # Any draft containing an unsigned [proposed] decision leaf MUST be refused
         with tempfile.TemporaryDirectory() as td:
+            td_p = Path(td)
+            unsigned = yaml.safe_load(K2_DRAFT.read_text())
+            unsigned['decisions']['K2-D4'] = '[proposed] unsigned engine choice'
+            unsigned['decisions']['K2-D5'] = '[proposed] unsigned export choice'
+            unsigned_path = td_p / 'unsigned.yaml'
+            unsigned_path.write_text(yaml.safe_dump(unsigned, sort_keys=False))
+            probs = k2p.draft_problems(unsigned_path)
+            self.assertEqual(sorted(p.split(' ')[0] for p in probs), ['decisions.K2-D4', 'decisions.K2-D5'])
             with self.assertRaises(LaunchRefused):
-                k2p.finalize_draft(K2_DRAFT, Path(td) / 'r.json', code_commit='abc123', pod_id='pod1', fill=FILL)
+                k2p.finalize_draft(unsigned_path, td_p / 'r.json', code_commit='abc123', pod_id='pod1', fill=FILL)
 
     def test_k2_signed_draft_seals_detects_tamper_and_binds_executable_sha(self):
         with tempfile.TemporaryDirectory() as td:
