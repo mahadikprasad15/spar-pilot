@@ -89,7 +89,7 @@ storage:
 
 evaluation:
   validation: {questions: 128, targets: val128-k2-targets, generator_engine: hf-fp32-ieee, ce_masks: deterministic, greedy_at: checkpoints}
-  cohort150: {steps: [64, 1024], role: evaluation-only}
+  cohort150: {steps: [1024], role: evaluation-only}
   cap: 1024
   eos_token_id: 151645
   repetition_penalty: 1.0

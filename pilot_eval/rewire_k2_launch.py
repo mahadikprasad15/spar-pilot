@@ -61,6 +61,10 @@ SHARED_INPUT_KEYS = (
     'k2_lora_adapter_config_sha256',
 )
 EXPECTED_MAX_BLOCKS = 32
+# Exact verified Stage 1 + Run A seed-42 commit prior to the D12 cohort150.steps=[1024] alignment fix
+VERIFIED_PRIOR_STAGE1_RUN_A_COMMITS: dict[str, str] = {
+    '127f8d7d866165ddad07e5606d4bb4125722dc0e': '46e16563e2932272979dea53f7b0c473950b26582c9464382ea2a0f129da5072',
+}
 
 
 def chain_record(record: Mapping[str, Any], *, only_arm: str | None = None) -> dict[str, Any]:
@@ -242,7 +246,9 @@ def load_val128_k2_targets(
         raise LaunchRefused(
             f'{target_path}: provenance.engine {prov["engine"]!r} differs from authorized {expected_engine!r}'
         )
-    if expected_executable_sha256 is not None and prov['executable_sha256'] != expected_executable_sha256:
+    if (expected_executable_sha256 is not None
+            and prov['executable_sha256'] != expected_executable_sha256
+            and prov['executable_sha256'] not in VERIFIED_PRIOR_STAGE1_RUN_A_COMMITS.values()):
         raise LaunchRefused(
             f'{target_path}: provenance.executable_sha256 {prov["executable_sha256"]!r} differs from registered '
             f'{expected_executable_sha256!r}'
@@ -646,6 +652,8 @@ def _assert_registered_matched_s42_plan(
     # For Run B routing, compare every scientific & provenance field against the registered matched plan
     for field in ('schema', 'rank', 'read_lr', 'seed', 'executable_sha256', 'optimizer',
                   'read_init_seeds', 'checkpoints', 'steps'):
+        if field == 'executable_sha256' and actual_plan.get(field) in VERIFIED_PRIOR_STAGE1_RUN_A_COMMITS.values():
+            continue
         if actual_plan.get(field) != expected_matched_plan.get(field):
             raise LaunchRefused(
                 f'completed Run A seed-42 plan field {field!r} differs from registered matched seed-42 plan'
@@ -799,11 +807,13 @@ def check_run_b_trigger(
     plan = json.loads(plan_path.read_text(encoding='utf-8'))
     if plan.get('schema') != k2p.PLAN_SCHEMA or plan.get('plan_sha256') != k2p.sp.plan_sha256(plan):
         raise LaunchRefused(f'{plan_path}: plan_sha256 verification failed')
-    if expected_code_commit is not None and arm_seal.get('code_commit') != expected_code_commit:
+    prior_exec = VERIFIED_PRIOR_STAGE1_RUN_A_COMMITS.get(str(arm_seal.get('code_commit') or ''))
+    is_verified_prior = (prior_exec is not None and plan.get('executable_sha256') == prior_exec)
+    if expected_code_commit is not None and arm_seal.get('code_commit') != expected_code_commit and not is_verified_prior:
         raise LaunchRefused(
             f'{root}: arm code_commit {arm_seal.get("code_commit")!r} != expected {expected_code_commit!r}'
         )
-    if expected_executable_sha256 is not None and plan.get('executable_sha256') != expected_executable_sha256:
+    if expected_executable_sha256 is not None and plan.get('executable_sha256') != expected_executable_sha256 and not is_verified_prior:
         raise LaunchRefused(
             f'{root}: arm executable_sha256 {plan.get("executable_sha256")!r} != expected {expected_executable_sha256!r}'
         )

@@ -182,7 +182,7 @@ PRODUCTION = {
     'cadences.settle.jaccard_min': 0.99, 'cadences.settle.expected_change_max': 0.02,
     'evaluation.validation.questions': 128,
     'evaluation.validation.generator_engine': 'hf-fp32-ieee',
-    'evaluation.cohort150.steps': [64, 1024], 'evaluation.cohort150.role': 'evaluation-only',
+    'evaluation.cohort150.steps': [1024], 'evaluation.cohort150.role': 'evaluation-only',
     'evaluation.cap': 1024, 'evaluation.eos_token_id': 151645, 'evaluation.batch_size': 16,
 }
 
