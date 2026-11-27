@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -185,6 +186,7 @@ class HFK2Engine:
         top_k: int = 0,
         repetition_penalty: float = 1.1,
         pad_token_id: int | None = None,
+        batch_size: int = 32,
     ) -> None:
         self.model = model
         self.stops = set(int(s) for s in stops)
@@ -193,6 +195,7 @@ class HFK2Engine:
         self.top_k = int(top_k)
         self.repetition_penalty = float(repetition_penalty)
         self.pad_token_id = pad_token_id
+        self.batch_size = max(1, int(batch_size))
         self.device = next(model.parameters()).device
 
     def clear_cache(self) -> None:
@@ -217,40 +220,131 @@ class HFK2Engine:
             kwargs['pad_token_id'] = int(self.pad_token_id)
         return kwargs
 
-    def generate(self, requests: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    def _sample_next_token(self, row_logits: Any, seen_ids: set[int], gen: Any) -> int:
         import torch
 
+        scores = row_logits
+        if self.repetition_penalty != 1.0 and seen_ids:
+            idx_t = torch.tensor(sorted(seen_ids), dtype=torch.long, device=scores.device)
+            gathered = scores.index_select(0, idx_t)
+            penalized = torch.where(
+                gathered < 0, gathered * self.repetition_penalty, gathered / self.repetition_penalty
+            )
+            scores = scores.clone()
+            scores.index_copy_(0, idx_t, penalized)
+        if self.temperature <= 0.0:
+            return int(torch.argmax(scores).item())
+        scores = scores / self.temperature
+        if 0 < self.top_k < scores.numel():
+            kth = torch.topk(scores, self.top_k).values[-1]
+            scores = scores.masked_fill(scores < kth, float('-inf'))
+        if 0.0 < self.top_p < 1.0:
+            sorted_scores, sorted_idx = torch.sort(scores, descending=True)
+            cum_probs = torch.cumsum(torch.softmax(sorted_scores, dim=-1), dim=-1)
+            drop = cum_probs > self.top_p
+            drop[1:] = drop[:-1].clone()
+            drop[0] = False
+            sorted_scores = sorted_scores.masked_fill(drop, float('-inf'))
+            probs = torch.softmax(sorted_scores, dim=-1)
+            pick = int(torch.multinomial(probs, num_samples=1, generator=gen).item())
+            return int(sorted_idx[pick].item())
+        probs = torch.softmax(scores, dim=-1)
+        return int(torch.multinomial(probs, num_samples=1, generator=gen).item())
+
+    def generate(self, requests: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Left-padded batched IEEE FP32 KV-cache decoding with independent per-request RNG seeds."""
+        import torch
+
+        if not requests:
+            return []
+        pad_id = int(self.pad_token_id) if self.pad_token_id is not None else 0
         outputs: list[dict[str, Any]] = []
         was_training = self.model.training
         self.model.eval()
         try:
-            with torch.no_grad():
-                for req in requests:
-                    prompt_ids = [int(t) for t in req['prompt_ids']]
-                    max_new = int(req['max_tokens'])
-                    seed = int(req['seed'])
-                    torch.manual_seed(seed)
-                    if torch.cuda.is_available():
-                        torch.cuda.manual_seed_all(seed)
-                    inp = torch.tensor([prompt_ids], dtype=torch.long, device=self.device)
-                    attn = torch.ones_like(inp)
-                    gen_kwargs = self.resolved_generation_kwargs(max_new_tokens=max_new)
-                    seq = self.model.generate(input_ids=inp, attention_mask=attn, **gen_kwargs)
-                    gen_ids = [int(t) for t in seq[0, len(prompt_ids):].tolist()]
-                    stop_pos = next((i for i, tok in enumerate(gen_ids) if tok in self.stops), None)
-                    if stop_pos is not None:
-                        gen_ids = gen_ids[:stop_pos + 1]
-                        finish_reason = 'stop'
-                        stop_reason = gen_ids[-1]
-                    else:
-                        gen_ids = gen_ids[:max_new]
-                        finish_reason = 'length'
-                        stop_reason = None
-                    outputs.append({
-                        'token_ids': gen_ids,
-                        'finish_reason': finish_reason,
-                        'stop_reason': stop_reason,
-                    })
+            with torch.inference_mode():
+                for chunk_start in range(0, len(requests), self.batch_size):
+                    chunk = list(requests[chunk_start:chunk_start + self.batch_size])
+                    prompts = [[int(t) for t in req['prompt_ids']] for req in chunk]
+                    max_news = [int(req['max_tokens']) for req in chunk]
+                    bsz = len(chunk)
+                    width = max(len(p) for p in prompts)
+                    batch_max = max(max_news)
+
+                    ids = torch.tensor(
+                        [[pad_id] * (width - len(p)) + p for p in prompts],
+                        dtype=torch.long,
+                        device=self.device,
+                    )
+                    attn = torch.tensor(
+                        [[0] * (width - len(p)) + [1] * len(p) for p in prompts],
+                        dtype=torch.long,
+                        device=self.device,
+                    )
+                    pos_ids = (attn.cumsum(dim=-1) - 1).clamp(min=0)
+                    gens = [
+                        torch.Generator(device=self.device).manual_seed(int(req['seed']))
+                        for req in chunk
+                    ]
+                    seen = [set(p) for p in prompts]
+                    generated: list[list[int]] = [[] for _ in range(bsz)]
+                    finished = [m <= 0 for m in max_news]
+
+                    past = None
+                    next_pos = pos_ids[:, -1:] + 1
+                    next_col = None
+                    for step_idx in range(batch_max):
+                        if all(finished):
+                            break
+                        if step_idx == 0:
+                            out = self.model(
+                                input_ids=ids,
+                                attention_mask=attn,
+                                position_ids=pos_ids,
+                                use_cache=True,
+                            )
+                        else:
+                            attn = torch.cat(
+                                [attn, torch.ones((bsz, 1), dtype=torch.long, device=self.device)],
+                                dim=1,
+                            )
+                            out = self.model(
+                                input_ids=next_col,
+                                attention_mask=attn,
+                                position_ids=next_pos,
+                                past_key_values=past,
+                                use_cache=True,
+                            )
+                            next_pos = next_pos + 1
+                        past = out.past_key_values
+                        step_logits = out.logits[:, -1, :].float()
+                        next_tokens = [pad_id] * bsz
+                        for i in range(bsz):
+                            if finished[i]:
+                                continue
+                            tok = self._sample_next_token(step_logits[i], seen[i], gens[i])
+                            generated[i].append(tok)
+                            seen[i].add(tok)
+                            next_tokens[i] = tok
+                            if tok in self.stops or len(generated[i]) >= max_news[i]:
+                                finished[i] = True
+                        next_col = torch.tensor(next_tokens, dtype=torch.long, device=self.device).unsqueeze(1)
+
+                    for i, gen_ids in enumerate(generated):
+                        stop_pos = next((j for j, tok in enumerate(gen_ids) if tok in self.stops), None)
+                        if stop_pos is not None:
+                            gen_ids = gen_ids[:stop_pos + 1]
+                            finish_reason = 'stop'
+                            stop_reason = gen_ids[-1]
+                        else:
+                            gen_ids = gen_ids[:max_news[i]]
+                            finish_reason = 'length'
+                            stop_reason = None
+                        outputs.append({
+                            'token_ids': gen_ids,
+                            'finish_reason': finish_reason,
+                            'stop_reason': stop_reason,
+                        })
         finally:
             self.model.train(was_training)
         return outputs
@@ -401,8 +495,15 @@ def generate_val128_k2_targets(
             continue
 
         resume_arg = active_resume_state if active_resume_retry == retry_idx else None
+        retry_t0 = time.monotonic()
 
         def _on_block(block_idx: int, states: dict[int, Any], rng_states: dict[int, Any], r_idx=retry_idx) -> None:
+            still_active = sum(1 for st in states.values() if st.get('end_state') is None)
+            print(
+                f'[stage1] retry={r_idx} block={block_idx} remaining={len(states)} active={still_active} '
+                f'elapsed={time.monotonic() - retry_t0:.1f}s',
+                flush=True,
+            )
             _save_progress(
                 active_retry=r_idx,
                 active_resume={
@@ -538,6 +639,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument('--max-retries', type=int, default=3)
     parser.add_argument('--data-seed', type=int, default=0)
     parser.add_argument('--block-limit', type=int, default=32)
+    parser.add_argument('--batch-size', type=int, default=32, help='HF batched generate chunk size (default: 32)')
     parser.add_argument('--skip-id-hash-check', action='store_true',
                         help='allow non-standard validation subset (for testing only)')
     args = parser.parse_args(argv)
@@ -587,6 +689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         top_k=DEFAULT_RECIPE['top_k'],
         repetition_penalty=DEFAULT_RECIPE['repetition_penalty'],
         pad_token_id=tok_ids['pad_token_id'],
+        batch_size=args.batch_size,
     )
     out_path = Path(args.out)
     prog_path = Path(args.progress) if args.progress else out_path.with_suffix(out_path.suffix + '.progress.json')

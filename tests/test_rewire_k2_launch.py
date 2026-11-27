@@ -547,13 +547,20 @@ class TestRewireK2Launcher(unittest.TestCase):
         self.assertEqual(row0['attempt_seed'], 1003)
         # Verify HFK2Engine resolved generation kwargs explicitly disable top_k (top_k=0)
         model = Qwen2ForCausalLM.from_pretrained(self.w['model_dir'], torch_dtype=torch.float32)
-        eng = valgen.HFK2Engine(model, stops=[EOS], pad_token_id=0)
+        eng = valgen.HFK2Engine(model, stops=[EOS], pad_token_id=0, batch_size=2)
         kw = eng.resolved_generation_kwargs(max_new_tokens=64)
         self.assertEqual(kw['top_k'], 0)
         self.assertEqual(kw['temperature'], 0.6)
         self.assertEqual(kw['top_p'], 1.0)
         self.assertEqual(kw['repetition_penalty'], 1.1)
         self.assertIsNone(kw['min_p'])
+        # Verify batched left-padded HFK2Engine matches batch_size=1 on variable-length prompts & per-row seeds
+        eng1 = valgen.HFK2Engine(model, stops=[EOS], pad_token_id=0, batch_size=1)
+        reqs = [
+            {'prompt_ids': [1, 3, 4], 'max_tokens': 5, 'seed': 101},
+            {'prompt_ids': [1, 5, 6, 7, 8], 'max_tokens': 4, 'seed': 202},
+        ]
+        self.assertEqual(eng.generate(reqs), eng1.generate(reqs))
         # Evidence preserved: decoded text, full attempts log, and terminal disposition for uncovered ID
         self.assertIn('text', row0)
         self.assertGreaterEqual(len(payload['attempts']), 6)
